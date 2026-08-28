@@ -1,0 +1,90 @@
+{
+  "id": "${ACCOUNT_ID}",
+  "name": "Player${ACCOUNT_ID}",
+  "campaign": "",
+  "ancestor_campaign": null,
+  "demographic": "",
+  "created": "${NOW}",
+  "last_login": "${NOW}",
+  "last_reward_date": null,
+  "concurrent_days": 1,
+  "matchmaker_group": "gen",
+  "completed_mapnode_mask": null,
+  "admin_flags": 0,
+  "account_flags": 0,
+  "completed_dungeons": 0,
+  "trophies": 0,
+  "basic_currency": 1000,
+  "premium_currency": 100,
+  "basic_keys": 0,
+  "uncommon_keys": 0,
+  "rare_keys": 0,
+  "legendary_keys": 0,
+  "buckets_weapon": 50,
+  "buckets_other": 15,
+  "active_avatar": "${AVATAR_ID}",
+  "highest_avatar": 1,
+  "account_avatars": [
+    {
+      "id": "${AVATAR_ID}",
+      "account_id": "${ACCOUNT_ID}",
+      "avatar_id": 101,
+      "skin_type": 151,
+      "experience": 0,
+      "completed_mapnode_mask": "",
+      "statupgrade1": 0,
+      "statupgrade2": 0,
+      "statupgrade3": 0,
+      "statupgrade4": 0,
+      "consumable1_id": 0,
+      "consumable1_count": 0,
+      "consumable2_id": 0,
+      "consumable2_count": 0,
+      "created": "${NOW}"
+    }
+  ],
+  "account_items": [
+    {
+      "id": "${STARTER_ITEM_ID}",
+      "item_id": 11001,
+      "account_id": "${ACCOUNT_ID}",
+      "power": 5,
+      "avatar_id": "${AVATAR_ID}",
+      "avatar_slot": 0,
+      "is_new": 0,
+      "requiredlevel": 1,
+      "rarity": 1,
+      "modifier1": 0,
+      "modifier2": 0,
+      "legendarymodifier": 0,
+      "created": "${NOW}"
+    }
+  ],
+  "account_attributes": [
+    {
+      "account_id": "${ACCOUNT_ID}",
+      "name": "optionsHudStyle",
+      "value": "1"
+    },
+    {
+      "account_id": "${ACCOUNT_ID}",
+      "name": "optionsGraphicsQuality",
+      "value": "high"
+    },
+    {
+      "account_id": "${ACCOUNT_ID}",
+      "name": "optionsMusicVolume",
+      "value": "0"
+    },
+    {
+      "account_id": "${ACCOUNT_ID}",
+      "name": "optionsSFXVolume",
+      "value": "0"
+    }
+  ],
+  "account_chests": [],
+  "account_stackables": [],
+  "account_pets": [],
+  "account_skins": [],
+  "account_boosters": []
+}

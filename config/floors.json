@@ -1,0 +1,11 @@
+{
+  "defaultFloor": "arena_gauntlet",
+  "floors": {
+    "arena_gauntlet": "castle/arena/db_floor_ARENA_GAUNTLET.json",
+    "tutorial": "castle/arena/db_floor_TUTORIAL_LEVEL_1.json",
+    "tutorial_boss": "castle/arena/db_floor_TUTORIAL_LEVEL_final.json",
+    "arena_gauntlet_2": "castle/arena/db_floor_ARENA_GAUNTLET_2.json"
+  },
+  "mapNodes": {},
+  "_note": "floors are nicknames for paths, used by tests and by defaultFloor. Which floors a node runs comes from the game data: MapPage.CustomTileset names a CustomMaps row carrying NumFloors and Floor1..FloorN. mapNodes overrides that per node, for trying a layout without touching the data; a bare string is read as a single-floor dungeon."
+}

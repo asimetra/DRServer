@@ -1,0 +1,33 @@
+# Only the database is containerised.
+#
+# The game server itself stays on the host: the Haxe client runs natively and
+# talks to 127.0.0.1, and the edit-restart-play loop is measured in seconds.
+# Putting the server in a container would add an image rebuild to every one of
+# those iterations for no benefit until there is something to deploy.
+#
+#   docker compose up -d        (or: npm run db:up, which also works with podman)
+#
+# The schema is applied automatically on first start, from db/schema.sql.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ods-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: open_dungeon
+      POSTGRES_USER: ods
+      POSTGRES_PASSWORD: ods
+    ports:
+      - "5432:5432"
+    volumes:
+      - ods-pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ods -d open_dungeon"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ods-pgdata:

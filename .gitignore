@@ -1,0 +1,36 @@
+data/
+node_modules/
+.omx/
+*.log
+node_modules
+logs/
+logs-fresh/
+*.jsonl
+
+# User-supplied compatibility data and private reverse-engineering evidence.
+/local-data/
+/game-data/Resources/
+
+# Everything derived from reading the client stays local. The exceptions are
+# named one by one, so a new private note cannot reach the public tree by
+# forgetting a rule, only by deliberately overriding one. The cost of that trade
+# is that a genuinely public document is invisible until it is listed here.
+/docs/*
+!/docs/client-setup.md
+!/docs/dc-schema.json
+!/docs/public-release.md
+
+# Client patch material, whole. The directory only ever holds work derived from
+# a decompiled binary.
+/tools/client-patches/
+
+# Floor catalogues a developer is trying out, including the ones the tools write
+# themselves. The shipped catalogue is the only public one.
+/config/floors.*.json
+!/config/floors.json
+
+# Reads fixtures that are not redistributable.
+/test/floor-build.test.js
+
+# Assets this server hands to clients; local to a deployment, not to the repo.
+/content/

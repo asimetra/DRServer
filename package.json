@@ -1,0 +1,26 @@
+{
+  "name": "open-dungeon-server",
+  "version": "0.1.0",
+  "description": "Independent HTTP and game-socket compatibility server",
+  "type": "module",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test --test-concurrency=1",
+    "check:public": "node tools/check-public-release.js",
+    "check:data": "node tools/sync-game-data.js --check",
+    "sync:data": "node tools/sync-game-data.js",
+    "db:up": "./tools/db.sh up",
+    "db:down": "./tools/db.sh down",
+    "db:reset": "./tools/db.sh reset",
+    "db:psql": "./tools/db.sh psql",
+    "test:public": "node tools/test-public.js"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
+  }
+}

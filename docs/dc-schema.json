@@ -1,0 +1,1567 @@
+{
+  "structs": {
+    "Attack": [
+      "i8",
+      "u8",
+      "u32",
+      "u32"
+    ],
+    "AttackChoreography": [
+      "Attack{?}",
+      "u8",
+      "f32",
+      "f32",
+      "u16",
+      "CombatResult{?}"
+    ],
+    "CombatResult": [
+      "u32",
+      "u32",
+      "i32",
+      "Attack{?}",
+      "u8",
+      "u8",
+      "u8",
+      "u8",
+      "u8",
+      "i8",
+      "i32",
+      "f32",
+      "u8"
+    ],
+    "ConsumableDetails": [
+      "u32",
+      "u16"
+    ],
+    "DungeonModifier": [
+      "u32",
+      "u8"
+    ],
+    "DungeonReport": [
+      "utf",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "f32",
+      "f32",
+      "u8",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u8",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32",
+      "u32"
+    ],
+    "DungeonTileUsage": [
+      "i32",
+      "i32",
+      "utf"
+    ],
+    "GameServerPartyMember": [
+      "u32",
+      "i8"
+    ],
+    "InfiniteMapNodeDetail": [
+      "u32",
+      "u32",
+      "u32"
+    ],
+    "InfiniteRewardData": [
+      "u32",
+      "u16",
+      "i8"
+    ],
+    "Swrapper": [
+      "utf"
+    ],
+    "WeaponDetails": [
+      "u32",
+      "u16",
+      "u8",
+      "u8",
+      "u32",
+      "u32",
+      "u32"
+    ]
+  },
+  "classes": [
+    {
+      "class": "DistributedBuffGameObject",
+      "fields": [
+        {
+          "name": "type",
+          "id": 292,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "effectedActor",
+          "id": 293,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "attackerActor",
+          "id": 294,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "type",
+        "effectedActor",
+        "attackerActor"
+      ]
+    },
+    {
+      "class": "DistributedDooberGameObject",
+      "fields": [
+        {
+          "name": "type",
+          "id": 287,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "position",
+          "id": 288,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "f32",
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "layer",
+          "id": 289,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "i8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "spawnFrom",
+          "id": 290,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "f32",
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "collectedBy",
+          "id": 291,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "type",
+        "position",
+        "layer"
+      ]
+    },
+    {
+      "class": "DistributedDungeonFloor",
+      "fields": [
+        {
+          "name": "mapNodeId",
+          "id": 192,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "coliseumTierConstant",
+          "id": 193,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "tileLibrary",
+          "id": 194,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "tiles",
+          "id": 195,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "DungeonTileUsage{i32 i32 utf}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "baseLining",
+          "id": 196,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "introMovieSwfFilePath",
+          "id": 197,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "introMovieAssetClassName",
+          "id": 198,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "currentFloorNum",
+          "id": 199,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "activeDungeonModifiers",
+          "id": 200,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "DungeonModifier{u32 u8}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "show_text",
+          "id": 201,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "play_sound",
+          "id": 202,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "trigger_camera_zoom",
+          "id": 203,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "trigger_camera_shake",
+          "id": 204,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "f32",
+              "f32",
+              "u8"
+            ],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "mapNodeId",
+        "coliseumTierConstant",
+        "tileLibrary",
+        "tiles",
+        "baseLining",
+        "introMovieSwfFilePath",
+        "introMovieAssetClassName",
+        "currentFloorNum",
+        "activeDungeonModifiers"
+      ]
+    },
+    {
+      "class": "DistributedDungeonSummary",
+      "fields": [
+        {
+          "name": "map_node_id",
+          "id": 274,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "report",
+          "id": 275,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "DungeonReport{utf u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 f32 f32 u8 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u32 u8 u32 u32 u32 u32 u32 u32}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "dungeon_name",
+          "id": 276,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "dungeonSuccess",
+          "id": 277,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "dungeonMod1",
+          "id": 278,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "dungeonMod2",
+          "id": 279,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "dungeonMod3",
+          "id": 280,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "dungeonMod4",
+          "id": 281,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "OpenChest",
+          "id": 282,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "TakeChest",
+          "id": 283,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "DropChest",
+          "id": 284,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "TransactionResponse",
+          "id": 285,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32",
+              "u8",
+              "u32",
+              "u32"
+            ],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "map_node_id",
+        "report",
+        "dungeon_name",
+        "dungeonSuccess",
+        "dungeonMod1",
+        "dungeonMod2",
+        "dungeonMod3",
+        "dungeonMod4"
+      ]
+    },
+    {
+      "class": "DistributedDungionArea",
+      "fields": [
+        {
+          "name": "tileLibrary",
+          "id": 211,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "Swrapper{utf}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "cacheNpc",
+          "id": 212,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "cacheSWC",
+          "id": 213,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "Swrapper{utf}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "floorReward",
+          "id": 214,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "floorEnding",
+          "id": 215,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "dungeonEnding",
+          "id": 216,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "floorfailing",
+          "id": 217,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "tellClientInfiniteRewardData",
+          "id": 218,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32",
+              "u16",
+              "u32",
+              "u16",
+              "InfiniteRewardData{u32 u16 i8}"
+            ],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "tileLibrary",
+        "cacheNpc",
+        "cacheSWC"
+      ]
+    },
+    {
+      "class": "DistributedNPCGameObject",
+      "fields": [
+        {
+          "name": "type",
+          "id": 130,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "level",
+          "id": 131,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "position",
+          "id": 132,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "f32",
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "heading",
+          "id": 133,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "scale",
+          "id": 134,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "flip",
+          "id": 135,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "hitPoints",
+          "id": 136,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "weaponDetails",
+          "id": 137,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "WeaponDetails{u32 u16 u8 u8 u32 u32 u32}"
+            ],
+            "repeat": 4
+          }
+        },
+        {
+          "name": "state",
+          "id": 138,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "team",
+          "id": 139,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "i8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "layer",
+          "id": 140,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "i8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "remoteTriggerState",
+          "id": 141,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "masterId",
+          "id": 142,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ReceiveAttackChoreography",
+          "id": 143,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "AttackChoreography{Attack{?} u8 f32 f32 u16 CombatResult{?}}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ReceiveCombatResult",
+          "id": 144,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "CombatResult{u32 u32 i32 Attack{?} u8 u8 u8 u8 u8 i8 i32 f32 u8}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ReceiveTimelineAction",
+          "id": 145,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "type",
+        "level",
+        "position",
+        "heading",
+        "scale",
+        "flip",
+        "hitPoints",
+        "weaponDetails",
+        "state",
+        "team",
+        "layer",
+        "remoteTriggerState",
+        "masterId"
+      ]
+    },
+    {
+      "class": "DistributedTownArea",
+      "fields": [
+        {
+          "name": "tileLibrary",
+          "id": 286,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "tileLibrary"
+      ]
+    },
+    {
+      "class": "DistributedTownFloor",
+      "fields": [
+        {
+          "name": "tileLibrary",
+          "id": 205,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "tiles",
+          "id": 206,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "DungeonTileUsage{i32 i32 utf}"
+            ],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "tileLibrary",
+        "tiles"
+      ]
+    },
+    {
+      "class": "HeroGameObject",
+      "fields": [
+        {
+          "name": "type",
+          "id": 146,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "position",
+          "id": 147,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "f32",
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "heading",
+          "id": 148,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "scale",
+          "id": 149,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "f32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "flip",
+          "id": 150,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "hitPoints",
+          "id": 151,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "weaponDetails",
+          "id": 152,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "WeaponDetails{u32 u16 u8 u8 u32 u32 u32}"
+            ],
+            "repeat": 4
+          }
+        },
+        {
+          "name": "consumableDetails",
+          "id": 153,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "ConsumableDetails{u32 u16}"
+            ],
+            "repeat": 2
+          }
+        },
+        {
+          "name": "healthBombsUsed",
+          "id": 154,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "partyBombsUsed",
+          "id": 155,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "playerID",
+          "id": 156,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "state",
+          "id": 157,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "team",
+          "id": 158,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "i8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ReceiveAttackChoreography",
+          "id": 159,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "AttackChoreography{Attack{?} u8 f32 f32 u16 CombatResult{?}}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ReceiveCombatResult",
+          "id": 160,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "CombatResult{u32 u32 i32 Attack{?} u8 u8 u8 u8 u8 i8 i32 f32 u8}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "skinType",
+          "id": 161,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "screenName",
+          "id": 162,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "manaPoints",
+          "id": 163,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "experiencePoints",
+          "id": 164,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "slotPoints",
+          "id": 165,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16"
+            ],
+            "repeat": 4
+          }
+        },
+        {
+          "name": "dungeonBusterPoints",
+          "id": 166,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "setAFK",
+          "id": 167,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ReportBuffEffect",
+          "id": 168,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32",
+              "i32",
+              "u32",
+              "i8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ReceivedBuffEffect",
+          "id": 169,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "i32",
+              "u32",
+              "i8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "TooFullForDoober",
+          "id": 170,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ProposeCombatResults",
+          "id": 171,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "ProposeAttackChoreography",
+          "id": 172,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "ProposeRevive",
+          "id": 173,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "ProposeSelfRevive",
+          "id": 174,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "ProposeSelfRevive_Resp",
+          "id": 175,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8",
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "PartyBomb",
+          "id": 176,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ProposeCreateNPC",
+          "id": 177,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "setStateAndAttackChoreography",
+          "id": 178,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf",
+              "AttackChoreography{Attack{?} u8 f32 f32 u16 CombatResult{?}}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "StopChoreography",
+          "id": 179,
+          "direction": "both",
+          "layout": {
+            "reads": [],
+            "repeat": 1
+          }
+        }
+      ],
+      "generate": [
+        "type",
+        "position",
+        "heading",
+        "scale",
+        "flip",
+        "hitPoints",
+        "weaponDetails",
+        "consumableDetails",
+        "healthBombsUsed",
+        "partyBombsUsed",
+        "playerID",
+        "state",
+        "team",
+        "skinType",
+        "screenName",
+        "manaPoints",
+        "experiencePoints",
+        "slotPoints",
+        "dungeonBusterPoints",
+        "setAFK"
+      ]
+    },
+    {
+      "class": "HeroGameObjectOwner",
+      "fields": [],
+      "generate": [
+        "type",
+        "position",
+        "heading",
+        "scale",
+        "flip",
+        "hitPoints",
+        "weaponDetails",
+        "consumableDetails",
+        "healthBombsUsed",
+        "partyBombsUsed",
+        "playerID",
+        "state",
+        "team",
+        "skinType",
+        "screenName",
+        "manaPoints",
+        "experiencePoints",
+        "slotPoints",
+        "dungeonBusterPoints",
+        "setAFK"
+      ]
+    },
+    {
+      "class": "MatchMaker",
+      "fields": [
+        {
+          "name": "InfiniteDetails",
+          "id": 295,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "InfiniteMapNodeDetail{u32 u32 u32}"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ClientRequestEntry",
+          "id": 296,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "ClientRequestEntryResponce",
+          "id": 297,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16",
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "RequestExit",
+          "id": 298,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "ClientExitComplete",
+          "id": 299,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u16"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ClientDataFlushExit",
+          "id": 300,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "ClientRequestPartyMemberInvite",
+          "id": 301,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "RequestPartyMemberInvite",
+          "id": 302,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "ClientRequestLeaveParty",
+          "id": 303,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "ClientInformPartyComposition",
+          "id": 304,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "GameServerPartyMember{u32 i8}"
+            ],
+            "repeat": 4
+          }
+        },
+        {
+          "name": "Proxy_ClientRequestEntryResponce",
+          "id": 305,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "RequestEntry",
+          "id": 306,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "AreaManagerStatus",
+          "id": 307,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "AreaStatus",
+          "id": 308,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "MatchMaker_Newgame",
+          "id": 309,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "RequestExitProxy",
+          "id": 310,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "AreaExit",
+          "id": 311,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "ForceAreaExit",
+          "id": 312,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "PlayerExit",
+          "id": 313,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "ReportAreaOutcome",
+          "id": 314,
+          "direction": "serverToClient",
+          "layout": null
+        },
+        {
+          "name": "TimingProbResp",
+          "id": 315,
+          "direction": "serverToClient",
+          "layout": null
+        }
+      ],
+      "generate": [
+        "InfiniteDetails"
+      ]
+    },
+    {
+      "class": "PlayerGameObject",
+      "fields": [
+        {
+          "name": "screenName",
+          "id": 180,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "basicCurrency",
+          "id": 181,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "Chat",
+          "id": 182,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "utf"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "ShowPlayerIsTyping",
+          "id": 183,
+          "direction": "both",
+          "layout": {
+            "reads": [
+              "u8"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "requesthero",
+          "id": 184,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "requestentry",
+          "id": 185,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "requestpartymemberinvite",
+          "id": 186,
+          "direction": "both",
+          "layout": null
+        },
+        {
+          "name": "requestexit",
+          "id": 187,
+          "direction": "serverToClient",
+          "layout": null
+        }
+      ],
+      "generate": [
+        "screenName"
+      ]
+    },
+    {
+      "class": "PlayerGameObjectOwner",
+      "fields": [],
+      "generate": [
+        "screenName",
+        "basicCurrency"
+      ]
+    },
+    {
+      "class": "PresenceManager",
+      "fields": [
+        {
+          "name": "friendState",
+          "id": 188,
+          "direction": "serverToClient",
+          "layout": {
+            "reads": [
+              "u8",
+              "u32",
+              "u32"
+            ],
+            "repeat": 1
+          }
+        },
+        {
+          "name": "addFriends",
+          "id": 189,
+          "direction": "both",
+          "layout": null
+        }
+      ],
+      "generate": []
+    }
+  ]
+}

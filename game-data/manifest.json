@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "source": "Resources/Levels/DB_GameMaster.json",
+      "target": "local-data/Resources/Levels/DB_GameMaster.json",
+      "sha256": "770218f71d9120d71433db8336eb6642474ba9af5c58317b441b5eed1cfbf139"
+    },
+    {
+      "source": "Resources/Levels/library_server.json",
+      "target": "local-data/Resources/Levels/library_server.json",
+      "sha256": "9fc9737462ccb3c426d31a68ceac10405050842b221539b2de9a29b01693a098"
+    },
+    {
+      "source": "Resources/Levels/castle/arena/db_floor_ARENA_GAUNTLET.json",
+      "target": "local-data/Resources/Levels/castle/arena/db_floor_ARENA_GAUNTLET.json",
+      "sha256": "d7964814d2f934e8a311024c2d3aecba2c953cf09272a49808d70904cf747ee2"
+    },
+    {
+      "source": "Resources/Levels/castle/arena/db_floor_TUTORIAL_LEVEL_1.json",
+      "target": "local-data/Resources/Levels/castle/arena/db_floor_TUTORIAL_LEVEL_1.json",
+      "sha256": "4947b01614bb4c3ae1325da7e7fd892739812f87c33429a43fc1493829435fcb"
+    },
+    {
+      "source": "Resources/Levels/castle/arena/db_tiles_ARENA_GAUNTLET.json",
+      "target": "local-data/Resources/Levels/castle/arena/db_tiles_ARENA_GAUNTLET.json",
+      "sha256": "369ab34af2e335f8d53efe76dbe827cb914cdc7dcc0b1f3f464b74bb68b5a5ed"
+    },
+    {
+      "source": "Resources/Levels/castle/arena/db_tiles_TUTORIAL_LEVEL.json",
+      "target": "local-data/Resources/Levels/castle/arena/db_tiles_TUTORIAL_LEVEL.json",
+      "sha256": "fc859faca40ce6cee71093cd0b50a0ca254fc489eb1dbbf9a05afbd5e9cf7e28"
+    },
+    {
+      "source": "Resources/Levels/castle/arena/db_floor_TUTORIAL_LEVEL_final.json",
+      "target": "local-data/Resources/Levels/castle/arena/db_floor_TUTORIAL_LEVEL_final.json",
+      "sha256": "3117e10da3a1f74bd01d5df879b3b3ae6713b2391a7ab0cefc295ea804005d2d"
+    },
+    {
+      "source": "Resources/Levels/castle/arena/db_floor_ARENA_GAUNTLET_2.json",
+      "target": "local-data/Resources/Levels/castle/arena/db_floor_ARENA_GAUNTLET_2.json",
+      "sha256": "13274c277f02dc285c352599fe9c8a7f7d3951ae06197d05d6117ffdb00f0f1a"
+    },
+    {
+      "source": "Resources/Levels/castle/arena/tiles.json",
+      "target": "local-data/Resources/Levels/castle/arena/tiles.json",
+      "sha256": "cd00d6af5d63956cf4cbeb45c19cc7ab76bd76231166a6f11caaf262ead90561"
+    },
+    {
+      "source": "Resources/Levels/castle/catacombs/tiles.json",
+      "target": "local-data/Resources/Levels/castle/catacombs/tiles.json",
+      "sha256": "8c506ca8744136c473e475a51b2511c22869361a9985763ba9a526dcc3b070b6"
+    },
+    {
+      "source": "Resources/Levels/castle/prison/tiles.json",
+      "target": "local-data/Resources/Levels/castle/prison/tiles.json",
+      "sha256": "fe303fb457871a95e629deddfd425a4b74d8362f4f8dc0de6a4773bd4d835bcc"
+    },
+    {
+      "source": "Resources/Levels/jungle/aztec/tiles.json",
+      "target": "local-data/Resources/Levels/jungle/aztec/tiles.json",
+      "sha256": "ac26d872018f9c72a730ecbc559ad35700c5677f34ab9485ddd2be8321f93f33"
+    },
+    {
+      "source": "Resources/Levels/jungle/dino/tiles.json",
+      "target": "local-data/Resources/Levels/jungle/dino/tiles.json",
+      "sha256": "2ef2f473c813efd514e3bda6a040b152caa2059a84883339e99c6df6755a2f92"
+    },
+    {
+      "source": "Resources/Levels/jungle/tribal/tiles.json",
+      "target": "local-data/Resources/Levels/jungle/tribal/tiles.json",
+      "sha256": "a8e935345b1d8168103d9b65b96481c551d8889e16ad6056504425508e4f2f95"
+    },
+    {
+      "source": "Resources/Levels/nordic/caves/tiles.json",
+      "target": "local-data/Resources/Levels/nordic/caves/tiles.json",
+      "sha256": "6f3c42e76393a777506e278a6c23edae33aef4527aa58b38852301dd49976dab"
+    },
+    {
+      "source": "Resources/Levels/nordic/temple/tiles.json",
+      "target": "local-data/Resources/Levels/nordic/temple/tiles.json",
+      "sha256": "20f005d1f4858a0ca4bf5eb179d0d9cf480baa029531a616a39ecbc9655fae58"
+    },
+    {
+      "source": "Resources/Levels/nordic/village/tiles.json",
+      "target": "local-data/Resources/Levels/nordic/village/tiles.json",
+      "sha256": "31e308cb214aef923b6848478330c0200a464ffd067798c54fbbf8fd50784635"
+    },
+    {
+      "source": "Resources/Levels/castle/arena/db_tiles_ARENA_GAUNTLET_2.json",
+      "target": "local-data/Resources/Levels/castle/arena/db_tiles_ARENA_GAUNTLET_2.json",
+      "sha256": "bd5a6f11abd168b47fe83329986feff548ea04ab849c3796d9548d4a77688ee6"
+    },
+    {
+      "source": "Resources/Levels/castle/catacombs/db_floor_CATACOMBS_GHOST_SAMURAI_RIVAL_BATTLE.json",
+      "target": "local-data/Resources/Levels/castle/catacombs/db_floor_CATACOMBS_GHOST_SAMURAI_RIVAL_BATTLE.json",
+      "sha256": "88c28f7ac647a8c7efe8537b7acbb82e88393734cd04e0bb1a20a095dc107839"
+    },
+    {
+      "source": "Resources/Levels/castle/catacombs/db_floor_CATACOMBS_VAMPIRE_HUNTER_RIVAL_BATTLE.json",
+      "target": "local-data/Resources/Levels/castle/catacombs/db_floor_CATACOMBS_VAMPIRE_HUNTER_RIVAL_BATTLE.json",
+      "sha256": "1c57f189074a06b71917021c0b77271785677bd068aafe2b2941cc902040335b"
+    },
+    {
+      "source": "Resources/Levels/castle/catacombs/db_tiles_CATACOMBS_GHOST_SAMURAI_RIVAL_BATTLE.json",
+      "target": "local-data/Resources/Levels/castle/catacombs/db_tiles_CATACOMBS_GHOST_SAMURAI_RIVAL_BATTLE.json",
+      "sha256": "48c0555ce9633f10a432b15bedb2dcd77dedacaf281459bf87d363cb85ade580"
+    },
+    {
+      "source": "Resources/Levels/castle/catacombs/db_tiles_CATACOMBS_VAMPIRE_HUNTER_RIVAL_BATTLE.json",
+      "target": "local-data/Resources/Levels/castle/catacombs/db_tiles_CATACOMBS_VAMPIRE_HUNTER_RIVAL_BATTLE.json",
+      "sha256": "f9ed6b993ea27429fb05b7d75f59ef326bde8541b9216594de8e905f6185cb78"
+    },
+    {
+      "source": "Resources/Levels/castle/prison/db_floor_PRISON_JUGGERNAUT_BOSS.json",
+      "target": "local-data/Resources/Levels/castle/prison/db_floor_PRISON_JUGGERNAUT_BOSS.json",
+      "sha256": "8ee77ecf7bf1f3116b26fbba62cbc677cb28eaa26e335f6664661a8397ea418e"
+    },
+    {
+      "source": "Resources/Levels/castle/prison/db_tiles_PRISON_JUGGERNAUT_BOSS.json",
+      "target": "local-data/Resources/Levels/castle/prison/db_tiles_PRISON_JUGGERNAUT_BOSS.json",
+      "sha256": "b05539b2f5fd9919d2b657a25603cc97c1146cffbc365c8292cca471647a9a08"
+    },
+    {
+      "source": "Resources/Levels/jungle/dino/db_floor_DINO_BOSS.json",
+      "target": "local-data/Resources/Levels/jungle/dino/db_floor_DINO_BOSS.json",
+      "sha256": "e12a52073c79be171775fe8a63086700da5c71949aabedc7d47039b69ff3e420"
+    },
+    {
+      "source": "Resources/Levels/jungle/dino/db_tiles_DINO_BOSS.json",
+      "target": "local-data/Resources/Levels/jungle/dino/db_tiles_DINO_BOSS.json",
+      "sha256": "e2e716d887863113c8c19bc27c8806d8ea1d88a3b5c7f4b21fb1754d010b7d70"
+    },
+    {
+      "source": "Resources/Levels/jungle/tribal/db_floor_LAVA_GOLEM_BOSS_1.json",
+      "target": "local-data/Resources/Levels/jungle/tribal/db_floor_LAVA_GOLEM_BOSS_1.json",
+      "sha256": "f94892385148a041b43b165530204c14f2be468eb0626f834a1d35fb8268488d"
+    },
+    {
+      "source": "Resources/Levels/jungle/tribal/db_floor_LAVA_GOLEM_BOSS_final.json",
+      "target": "local-data/Resources/Levels/jungle/tribal/db_floor_LAVA_GOLEM_BOSS_final.json",
+      "sha256": "4e361ce343196093f328d0766e10bd0a0c3637269082516ed979c31aa097a415"
+    },
+    {
+      "source": "Resources/Levels/jungle/tribal/db_tiles_LAVA_GOLEM_BOSS.json",
+      "target": "local-data/Resources/Levels/jungle/tribal/db_tiles_LAVA_GOLEM_BOSS.json",
+      "sha256": "298ef72513b1a34fc40489054a7656660d2bbb3857899600731461b8d3946f5e"
+    },
+    {
+      "source": "Resources/Levels/nordic/caves/db_floor_ICE_CAVES_PAPA_YETI_BOSS.json",
+      "target": "local-data/Resources/Levels/nordic/caves/db_floor_ICE_CAVES_PAPA_YETI_BOSS.json",
+      "sha256": "762947e8820a70b2b4c12504c7a5b459e9c3211209989d73c226894c5b44e7e6"
+    },
+    {
+      "source": "Resources/Levels/nordic/caves/db_floor_ICE_DRAGON_BOSS_1.json",
+      "target": "local-data/Resources/Levels/nordic/caves/db_floor_ICE_DRAGON_BOSS_1.json",
+      "sha256": "860032fbd2636fed40d43ed35127580404fb38536c8be16b2597fcaf630466ee"
+    },
+    {
+      "source": "Resources/Levels/nordic/caves/db_floor_ICE_DRAGON_BOSS_final.json",
+      "target": "local-data/Resources/Levels/nordic/caves/db_floor_ICE_DRAGON_BOSS_final.json",
+      "sha256": "d2a1c9cb0ca8b1bbbd1f0f2359a3b87e98dcc75232b2107e17c2212b049ce081"
+    },
+    {
+      "source": "Resources/Levels/nordic/caves/db_tiles_ICE_DRAGON_BOSS.json",
+      "target": "local-data/Resources/Levels/nordic/caves/db_tiles_ICE_DRAGON_BOSS.json",
+      "sha256": "170ef5f3269329220f7420e67c73ccd79ca8a50736368753862b8675a67f373a"
+    },
+    {
+      "source": "Resources/Levels/nordic/temple/db_floor_TEMPLE_FROST_TROLL_BOSS.json",
+      "target": "local-data/Resources/Levels/nordic/temple/db_floor_TEMPLE_FROST_TROLL_BOSS.json",
+      "sha256": "0149df92e8f7d67da43be8a817a1ae186f4e072ac4d39217a83eaabedf0b1a0a"
+    },
+    {
+      "source": "Resources/Levels/nordic/temple/db_tiles_TEMPLE_FROST_TROLL_BOSS.json",
+      "target": "local-data/Resources/Levels/nordic/temple/db_tiles_TEMPLE_FROST_TROLL_BOSS.json",
+      "sha256": "ec9f33d4457342a9d3891d22f86763a1a5a34eb080ea1e4cd54bd7fd4c18b914"
+    },
+    {
+      "source": "Resources/Levels/nordic/village/db_floor_VILLAGE_PRINCESS_DEFENSE.json",
+      "target": "local-data/Resources/Levels/nordic/village/db_floor_VILLAGE_PRINCESS_DEFENSE.json",
+      "sha256": "dcba4ec6de54857111a52424d78c14c38bd3e949a409e1ccc4e9c064fd8a2484"
+    },
+    {
+      "source": "Resources/Levels/nordic/village/db_tiles_VILLAGE_PRINCESS_DEFENSE.json",
+      "target": "local-data/Resources/Levels/nordic/village/db_tiles_VILLAGE_PRINCESS_DEFENSE.json",
+      "sha256": "474b29e9cc21a57e5c5bb34fe50419271a739962f27becf4385895e2a9dfb484"
+    },
+    {
+      "source": "Resources/Combat/AttackTimeline.json",
+      "target": "local-data/Resources/Combat/AttackTimeline.json",
+      "sha256": "fd41f3f13521dee6481a458505f7ccefaae003894fa80630785c93ebcc93097f"
+    }
+  ]
+}
