@@ -269,3 +269,41 @@ test("tutorial's proximity cage has a short collider-only release route", async 
     `release target is too far from the door: ${JSON.stringify(release.target)}`
   );
 });
+
+/**
+ * The collider index must not answer for colliders it was not built from.
+ *
+ * Narrowing the set by spreading the navigation object and replacing
+ * `colliders` is how callers ask what one part of the geometry alone would say
+ * — the wall audit does exactly this to separate static walls from raised
+ * triggers. That spread copies the index along with everything else, so an
+ * index that trusted only itself would keep answering for the full floor and
+ * report a hit on geometry the caller had just excluded. It did, and the audit
+ * moved a hit from trigger to static without a line of it changing.
+ */
+test("narrowing the collider set is not answered from the whole-floor index", () => {
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    tiles: [{ x: 0, y: 0 }],
+    tileSize: 900,
+    staticColliders: [rectangle(200, 200, 50, 50)],
+    triggerColliders: [
+      ["gate", { initialOn: true, onColliders: [rectangle(600, 600, 50, 50)], offColliders: [] }],
+    ],
+  });
+
+  const inTrigger = { x: 600, y: 600 };
+  assert.equal(isPositionBlocked(navigation, inTrigger, 0), true, "the raised gate blocks");
+
+  // The same question asked of the static geometry alone must say no, because
+  // the gate is not part of it.
+  const staticOnly = { ...navigation, colliders: navigation.staticColliders };
+  assert.equal(
+    isPositionBlocked(staticOnly, inTrigger, 0),
+    false,
+    "a narrowed set must not be answered from the full index"
+  );
+
+  // And the static collider is still found through the narrowed set.
+  assert.equal(isPositionBlocked(staticOnly, { x: 200, y: 200 }, 0), true);
+});

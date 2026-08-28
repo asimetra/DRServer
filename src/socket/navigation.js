@@ -78,12 +78,96 @@ const activeTriggerColliders = (navigation) => {
   return colliders;
 };
 
+/**
+ * How wide a bucket in the collider index is.
+ *
+ * Colliders on a catacombs floor run 30 to 580 units across, so 300 keeps the
+ * largest of them inside a handful of buckets while leaving the common small
+ * ones in one. Smaller buckets index faster but cost more memory and more
+ * bucket visits per query; this is the middle of that.
+ */
+const INDEX_CELL = 300;
+
+/** The axis-aligned box a collider occupies, rotation included. */
+const boundsOf = (collider) => {
+  if (collider.type === "circle") {
+    const r = collider.radius;
+    return { minX: collider.x - r, maxX: collider.x + r, minY: collider.y - r, maxY: collider.y + r };
+  }
+  const cosine = Math.abs(Math.cos(collider.angle));
+  const sine = Math.abs(Math.sin(collider.angle));
+  const spanX = collider.halfWidth * cosine + collider.halfHeight * sine;
+  const spanY = collider.halfWidth * sine + collider.halfHeight * cosine;
+  return {
+    minX: collider.x - spanX,
+    maxX: collider.x + spanX,
+    minY: collider.y - spanY,
+    maxY: collider.y + spanY,
+  };
+};
+
+/**
+ * A uniform grid over the active colliders, rebuilt with them.
+ *
+ * `isPositionBlocked` tested every collider on the floor against a circle of
+ * radius 26 — 762 of them on a catacombs floor spread over five thousand by
+ * eight thousand units, where at most a handful can be within reach of any one
+ * point. It was the single most expensive function on the server: 695ms of the
+ * 1493ms of real work in a six-session profile.
+ *
+ * The rotation terms are precomputed here for the same reason. `angle` cannot
+ * change without the colliders being rebuilt, so taking its cosine and sine on
+ * every test of every rectangle was work with a constant answer.
+ */
+const buildColliderIndex = (navigation) => {
+  const cells = new Map();
+  const prepared = navigation.colliders.map((collider) => ({
+    collider,
+    box: boundsOf(collider),
+    // Negated once, because overlapsRectangle rotates the point *into* the
+    // collider's frame rather than the other way about.
+    cosine: collider.type === "rectangle" ? Math.cos(-collider.angle) : 0,
+    sine: collider.type === "rectangle" ? Math.sin(-collider.angle) : 0,
+  }));
+
+  for (const entry of prepared) {
+    const { box } = entry;
+    const fromX = Math.floor(box.minX / INDEX_CELL);
+    const toX = Math.floor(box.maxX / INDEX_CELL);
+    const fromY = Math.floor(box.minY / INDEX_CELL);
+    const toY = Math.floor(box.maxY / INDEX_CELL);
+    for (let x = fromX; x <= toX; x++) {
+      for (let y = fromY; y <= toY; y++) {
+        const key = `${x},${y}`;
+        const bucket = cells.get(key);
+        if (bucket) bucket.push(entry);
+        else cells.set(key, [entry]);
+      }
+    }
+  }
+  /**
+   * Tied to the exact array it was built from.
+   *
+   * Callers narrow the collider set by spreading the navigation object and
+   * replacing `colliders` — `{ ...navigation, colliders: staticColliders }` is
+   * how the wall audit asks what the static geometry alone would say. That
+   * spread copies the index too, so an index that only knew its own contents
+   * would answer for colliders the caller had just excluded, silently. It did:
+   * the audit moved a hit from trigger geometry to static.
+   *
+   * Holding the source array makes the check an identity comparison, and a
+   * narrowed copy falls back to the linear scan by itself.
+   */
+  navigation.colliderIndex = { forColliders: navigation.colliders, cells };
+};
+
 const rebuildActiveColliders = (navigation) => {
   navigation.colliders = [
     ...navigation.staticColliders,
     ...activeTriggerColliders(navigation),
     ...[...navigation.obstacles.values()].flat(),
   ];
+  buildColliderIndex(navigation);
 };
 
 const invalidatePathfinding = (navigation) => {
@@ -217,9 +301,13 @@ export const segmentStaysOnAuthoredTiles = (navigation, from, to) => {
   return true;
 };
 
-const overlapsRectangle = (point, radius, collider) => {
-  const cosine = Math.cos(-collider.angle);
-  const sine = Math.sin(-collider.angle);
+const overlapsRectangle = (
+  point,
+  radius,
+  collider,
+  cosine = Math.cos(-collider.angle),
+  sine = Math.sin(-collider.angle)
+) => {
   const offsetX = point.x - collider.x;
   const offsetY = point.y - collider.y;
   const localX = offsetX * cosine - offsetY * sine;
@@ -253,12 +341,57 @@ export const isPositionBlocked = (
     return true;
   }
 
-  for (const collider of navigation.colliders) {
-    if (ignoredColliders?.has(collider)) continue;
-    if (collider.type === "circle") {
-      if (overlapsCircle(point, radius, collider)) return true;
-    } else if (collider.type === "rectangle") {
-      if (overlapsRectangle(point, radius, collider)) return true;
+  /**
+   * Only the colliders whose bucket the query circle touches.
+   *
+   * A point and a radius of 26 cannot reach anything more than 26 units away,
+   * so the buckets covering that square are the whole candidate set. Falls back
+   * to the flat list when there is no index, which keeps a hand-built
+   * navigation object in a test working without one.
+   */
+  const cached = navigation.colliderIndex;
+  const index = cached?.forColliders === navigation.colliders ? cached.cells : null;
+  if (!index) {
+    for (const collider of navigation.colliders) {
+      if (ignoredColliders?.has(collider)) continue;
+      if (collider.type === "circle") {
+        if (overlapsCircle(point, radius, collider)) return true;
+      } else if (collider.type === "rectangle") {
+        if (overlapsRectangle(point, radius, collider)) return true;
+      }
+    }
+    return false;
+  }
+
+  const fromX = Math.floor((point.x - radius) / INDEX_CELL);
+  const toX = Math.floor((point.x + radius) / INDEX_CELL);
+  const fromY = Math.floor((point.y - radius) / INDEX_CELL);
+  const toY = Math.floor((point.y + radius) / INDEX_CELL);
+
+  for (let x = fromX; x <= toX; x++) {
+    for (let y = fromY; y <= toY; y++) {
+      const bucket = index.get(`${x},${y}`);
+      if (!bucket) continue;
+      for (const entry of bucket) {
+        const { collider } = entry;
+        if (ignoredColliders?.has(collider)) continue;
+        // The box is the bucket's own filter: one collider can be listed in
+        // several buckets, and most of a bucket is not near the point.
+        const { box } = entry;
+        if (
+          point.x + radius < box.minX ||
+          point.x - radius > box.maxX ||
+          point.y + radius < box.minY ||
+          point.y - radius > box.maxY
+        ) {
+          continue;
+        }
+        if (collider.type === "circle") {
+          if (overlapsCircle(point, radius, collider)) return true;
+        } else if (collider.type === "rectangle") {
+          if (overlapsRectangle(point, radius, collider, entry.cosine, entry.sine)) return true;
+        }
+      }
     }
   }
   return false;
