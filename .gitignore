@@ -18,7 +18,6 @@ logs-fresh/
 /docs/*
 !/docs/client-setup.md
 !/docs/dc-schema.json
-!/docs/public-release.md
 
 # Client patch material, whole. The directory only ever holds work derived from
 # a decompiled binary.

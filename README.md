@@ -9,8 +9,8 @@ floor layouts, packet captures, or decompiled source. You must provide required
 compatibility data locally from a copy you are lawfully entitled to use.
 
 The project is unofficial and unaffiliated with the original game's developer,
-publisher, or trademark owners. See [NOTICE.md](NOTICE.md) and
-[docs/public-release.md](docs/public-release.md) before redistributing it.
+publisher, or trademark owners. See [NOTICE.md](NOTICE.md) before
+redistributing it.
 
 ## Requirements
 
@@ -36,17 +36,49 @@ be committed.
 npm start
 ```
 
-Defaults:
+That listens on loopback, which is the right default for trying it out but not
+for letting anybody else in. Defaults:
 
 - HTTP service: `127.0.0.1:8080`
 - game socket: `127.0.0.1:7198`
 - account storage: one JSON document per account under ignored `data/`
 - compatibility resources: ignored `local-data/Resources/`
 
-Point a compatible client at `http://127.0.0.1:8080` through its own local
+Point a compatible client at `http://127.0.0.1:8080` through its own
 configuration. The client executable and configuration are not part of this
 repository; see [docs/client-setup.md](docs/client-setup.md) for which keys in
-your own configuration file decide where it connects.
+that file decide where it connects.
+
+## Running it for other people
+
+Two variables. Bind somewhere reachable, and advertise an address the players
+can actually resolve:
+
+```bash
+ODS_HOST=0.0.0.0 ODS_PUBLIC_HOST=192.168.1.10 npm start
+```
+
+`ODS_HOST` is where both the HTTP service and the game socket bind.
+`ODS_PUBLIC_HOST` is what the server hands out during service discovery, and
+getting it wrong is the usual first failure: the client is told to connect to
+`127.0.0.1`, tries to reach itself, and finds nothing. Check the startup log,
+which prints exactly what it is advertising:
+
+```
+INFO  web services listening on http://0.0.0.0:8080
+INFO  advertising webServicesUrl http://192.168.1.10:8080
+INFO  advertising game socket 192.168.1.10:7198
+```
+
+Both ports have to be open, not just the HTTP one. Anything derived from the
+public host follows it automatically, including the content-override URL, so
+there is usually nothing else to set.
+
+**There is no authentication.** An account is whatever number a client claims,
+and the server creates one for any number it has not seen. That is fine among
+people you know and unsafe on the open internet, where anyone who guesses a
+number becomes that player. Until you add authentication yourself, keep this on
+a LAN, a VPN, or behind something that decides who may connect.
 
 ## Configuration
 
@@ -115,9 +147,8 @@ no client implementation bodies.
 This repository's history begins at a redistributable baseline rather than at
 the beginning of the work, because Git preserves deleted files and the early
 work involved material that is not ours to publish. What may and may not be
-redistributed is in [NOTICE.md](NOTICE.md); how that is enforced, and what to do
-if you fork this and publish your own version, is in
-[docs/public-release.md](docs/public-release.md).
+redistributed is in [NOTICE.md](NOTICE.md). `npm run check:public` checks the
+working tree and the history against that boundary.
 
 ## License
 
