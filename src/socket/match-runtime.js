@@ -17,7 +17,7 @@ import {
   prepareDungeonMember,
   rescaleNpcHealthForParty,
 } from "./dungeon.js";
-import { createMatchWorld, membersOf } from "./match-world.js";
+import { createMatchWorld, isLiveMember, membersOf } from "./match-world.js";
 import { dungeonMatches } from "./matches.js";
 import {
   heroGenerate,
@@ -266,7 +266,20 @@ export const leaveDungeonSession = (
     return false;
   }
 
-  const peers = [...membersOf(world)].filter((member) => member !== session);
+  /**
+   * Only members still reachable, not merely the other ones.
+   *
+   * Two players dropping in the same tick each run this, and the first to run
+   * used to count the second — whose own close handler had already marked it
+   * closed. That cost twice: `contextFor` throws on a closed member, and there
+   * is nothing above a socket `close` handler to catch it, so the process
+   * exits; and the party size below would have counted somebody who had
+   * already gone, rescaling the floor's health for a party larger than the one
+   * left playing.
+   */
+  const peers = [...membersOf(world)].filter(
+    (member) => member !== session && isLiveMember(member)
+  );
   if (notifyClient) {
     for (const { doid, owner } of dungeonTeardownFor(session, world)) {
       directSend(session, objectDisable(doid, owner));

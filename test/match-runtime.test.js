@@ -386,3 +386,41 @@ test("a socket closed while waiting for world readiness cannot reattach itself",
   assert.equal(host.world.liveMembers.has(joiner), false);
   assert.equal(hostResult.match.members.has(joiner), false);
 });
+
+/**
+ * Two players dropping at once must not take the server with them.
+ *
+ * A socket close marks its session `closed` and then tears the member out of
+ * the match, which ends by rescaling NPC health for whoever is left. "Whoever
+ * is left" was every other member, including ones whose own close handler had
+ * already run — and asking the world for a context on a closed member throws.
+ * Inside a socket `close` handler nothing catches that, so the process exits.
+ *
+ * Found by running twenty-five sessions and stopping them together: several
+ * shared a match, several closed in the same tick, and the server died. A pair
+ * is the smallest version of it.
+ */
+test("two members closing together tear down without throwing", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(2401, 1102401);
+  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+  const joiner = member(2402, 1102402);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {},
+  });
+
+  // Both sockets are gone before either teardown runs, which is what a
+  // simultaneous drop looks like from inside the close handlers.
+  host.closed = true;
+  joiner.closed = true;
+
+  assert.doesNotThrow(() => leaveDungeonSession(joiner, { registry }));
+  assert.doesNotThrow(() => leaveDungeonSession(host, { registry }));
+});

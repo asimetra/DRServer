@@ -157,6 +157,16 @@ const shouldSkipMember = (member, except) =>
   member.destroyed === true ||
   member.socket?.destroyed === true;
 
+/**
+ * Whether a member can still be sent to and given a context.
+ *
+ * Exported because leaving a match has to ask the same question this module
+ * asks internally. `attachMember` refuses a closed member rather than
+ * resurrect it, so anybody treating the remaining membership as reachable
+ * throws on the first peer that closed in the same tick.
+ */
+export const isLiveMember = (member) => !shouldSkipMember(member, null);
+
 const forgetSnapshotObject = (world, doid) => {
   const pending = [doid];
   const forgotten = new Set();
