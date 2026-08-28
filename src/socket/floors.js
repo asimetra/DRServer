@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
+import { envSetting } from "../env.js";
 import { generateFloor } from "./tilegen.js";
 import {
   mapNode,
@@ -790,8 +791,8 @@ export const floorPlanForMapNode = async (mapNodeId, { seed } = {}) => {
    */
   const runSeed =
     seed ??
-    (process.env.DR_FLOOR_SEED
-      ? Number(process.env.DR_FLOOR_SEED)
+    (envSetting("FLOOR_SEED")
+      ? Number(envSetting("FLOOR_SEED"))
       : Math.floor(Math.random() * 0x7fffffff));
 
   const floors = [];

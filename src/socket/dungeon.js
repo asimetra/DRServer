@@ -106,6 +106,7 @@ import {
   nearestClearPosition,
 } from "./navigation.js";
 import { config } from "../config.js";
+import { envFlag, envSetting } from "../env.js";
 import { info, warn } from "../log.js";
 import { cancelDungeonSummary, removeHeroFromFloor } from "./summary.js";
 import { spawnNpcRewards, spawnBossReward } from "./drops.js";
@@ -1687,7 +1688,7 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
   for (const member of members) {
     const context = contextForMember(member);
     await grantBuff(context, "SPAWN_INVULNERBILITY", { affectedActor: member.heroDoid });
-    for (const constant of (process.env.DR_HERO_BUFFS ?? "").split(",").filter(Boolean)) {
+    for (const constant of (envSetting("HERO_BUFFS") ?? "").split(",").filter(Boolean)) {
       const granted = await grantBuff(context, constant.trim(), {
         affectedActor: member.heroDoid,
       });
@@ -2135,8 +2136,8 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
 
   // Where this floor ends. An empty list means the last floor, and clearing it
   // finishes the dungeon rather than opening a door.
-  session.debugTriggers = process.env.DR_DEBUG_TRIGGERS === "1";
-  session.debugAi = process.env.DR_DEBUG_AI === "1";
+  session.debugTriggers = envFlag("DEBUG_TRIGGERS");
+  session.debugAi = envFlag("DEBUG_AI");
   session.rewardGenerators = rewardGeneratorIds(floor);
   session.floorExits = exitsOf(floor);
   session.floorTransition = false;

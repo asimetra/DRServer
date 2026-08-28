@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
 import { readJsonFile } from "./json-file.js";
+import { envSetting } from "./env.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..");
@@ -13,8 +14,7 @@ const asInt = (value, fallback) => {
 };
 
 /** Public ODS_* settings take precedence; DR_* remains a compatibility alias. */
-const setting = (environment, name) =>
-  environment[`ODS_${name}`] ?? environment[`DR_${name}`];
+const setting = (environment, name) => envSetting(name, environment);
 
 const configuredPath = ({ environmentValue, defaultValue, configDir }) =>
   environmentValue
@@ -130,7 +130,7 @@ export const loadServerConfig = (environment = process.env) => {
      * nothing. Set it and asset paths cross the wire as absolute URLs at this
      * base instead of as names the client resolves on its own disk.
      *
-     *   DR_CONTENT_URL=http://192.168.1.10:8080/content
+     *   ODS_CONTENT_URL=http://192.168.1.10:8080/content
      *
      * Needs the client's `download_root` set to "" in DbConfiguration/Config.json,
      * because the shipped default of "./" is prepended to whatever we send.

@@ -57,3 +57,36 @@ export const checkCompatibilityData = () => {
 
   return { required: entries.length, missing: missing.length };
 };
+
+/**
+ * Whether this server is supplying game data of its own, and at what address.
+ *
+ * Worth a line because the feature is invisible from the outside: it needs a
+ * matching pair of keys in the *client's* configuration, and if either side is
+ * unset the floors simply come off the player's disk with nothing said. An
+ * operator who has set one and not the other has no other way to find out.
+ */
+export const reportContentOverride = () => {
+  if (!config.contentBaseUrl || !config.contentDir) {
+    info("content override off; clients load all game data from their own disk");
+    return false;
+  }
+
+  let files = 0;
+  const count = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) count(path.join(directory, entry.name));
+      else files += 1;
+    }
+  };
+  try {
+    count(config.contentDir);
+  } catch {
+    warn(`content directory unreadable: ${config.contentDir}`);
+    return false;
+  }
+
+  info(`serving ${files} content files at ${config.contentBaseUrl}`);
+  info('  clients need download_root "" and a matching gameMasterPath');
+  return true;
+};

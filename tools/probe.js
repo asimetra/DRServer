@@ -26,17 +26,19 @@
  */
 import fs from "node:fs";
 import net from "node:net";
+import { envFlag, envSetting } from "../src/env.js";
 import { PacketWriter, PacketReader, drainFrames } from "../src/socket/packet.js";
 import { OP, CLID, DC_HASH, opcodeName } from "../src/socket/opcodes.js";
 import { FLID } from "../src/socket/matchmaker.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 
-const HOST = process.env.DR_PUBLIC_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.DR_SOCKET_PORT ?? 7198);
-const ACCOUNT_ID = Number(process.env.DR_ACCOUNT_ID ?? 1000000005);
-const TOKEN = process.env.DR_TOKEN ?? "probe-token";
+const HOST = envSetting("PUBLIC_HOST") ?? "127.0.0.1";
+const PORT = Number(envSetting("SOCKET_PORT") ?? 7198);
+const ACCOUNT_ID = Number(envSetting("ACCOUNT_ID") ?? 1000000005);
+const TOKEN = envSetting("TOKEN") ?? "probe-token";
 /** 50002 is the tutorial dungeon — the same floor the real client enters. */
-const MAP_NODE = Number(process.env.DR_MAP_NODE ?? 50002);
+const MAP_NODE = Number(envSetting("MAP_NODE") ?? 50002);
+
 
 const readI32 = (reader) => {
   const value = reader.buf.readInt32LE(reader.pos);
@@ -438,6 +440,8 @@ const state = {
   experienceDrop: null,
   busterDoober: null,
   busterQueue: [],
+  lastCrowdTarget: null,
+  crowdTried: 0,
   floorCrowd: 0,
   currentBusterDoober: null,
   foodDoober: null,
@@ -673,8 +677,19 @@ const decodeDoober = (reader, doid) => {
   state.doobersByDoid.set(doid, doober);
   state.doober ??= doober;
   if (mode === "drop" && state.sentKill) state.deathDoobers.set(doid, doober);
-  if (mode === "buster" && type >= 30010 && type <= 30012 && !state.busterDoober) {
-    state.busterDoober = doober;
+  if (mode === "buster" && type >= 30010 && type <= 30012) {
+    /**
+     * Every CROWD doober, not just the first one.
+     *
+     * Latching onto the first sighting and walking there once was enough to
+     * fail the whole run. Crowd drops where a large enemy died, which is not
+     * where the hero is standing, and a doober only lives for its row's
+     * `timetolive` — arrive after that and there is nothing to collect and
+     * nothing left to retry with. Gold is an easier problem because it lands
+     * underfoot; this one needs somewhere else to go next.
+     */
+    state.busterQueue.push(doober);
+    state.busterDoober ??= doober;
     state.seen.add("buster-doober");
   }
   if (mode === "buster-use" && type >= 30010 && type <= 30012) {
@@ -933,7 +948,7 @@ const buildNavigation = async () => {
  * it. Both halves are needed: the flag alone leaves the walking, and the walking
  * alone is refused.
  */
-const TELEPORT = process.env.DR_PROBE_TELEPORT === "1";
+const TELEPORT = envFlag("PROBE_TELEPORT");
 
 const walkHeroTo = (target, options, onArrive) => {
   if (TELEPORT) {
@@ -959,6 +974,32 @@ const walkHeroTo = (target, options, onArrive) => {
       }
     }
     walkHeroLine(waypoints, options, onArrive, token, target);
+  });
+};
+
+/**
+ * Walk at the Crowd, and try the next drop if this one is gone on arrival.
+ *
+ * Chained on arrival rather than on a timer. A timer looked simpler and was
+ * wrong: `walkHeroTo` cancels any walk still running, so a retry that fires
+ * while the hero is still crossing the floor stops it where it stands. Crowd
+ * lands three thousand units away — further than a retry interval anybody
+ * would pick — so every attempt cancelled the one before it and the hero never
+ * arrived anywhere at all.
+ */
+const walkToCrowd = () => {
+  const target = state.busterDoober;
+  if (!target || state.seen.has("buster-collected")) return;
+  state.lastCrowdTarget = target;
+  state.crowdTried = (state.crowdTried ?? 0) + 1;
+  console.log(
+    `-> walking hero ${state.heroDoid} onto CROWD doober ${target.doid} at ${target.x},${target.y}`
+  );
+  walkHeroTo({ x: target.x, y: target.y }, undefined, () => {
+    if (state.seen.has("buster-collected")) return;
+    state.busterQueue = state.busterQueue.filter((doober) => doober !== target);
+    state.busterDoober = state.busterQueue[0] ?? null;
+    if (state.busterDoober) walkToCrowd();
   });
 };
 
@@ -1179,15 +1220,15 @@ const killNpcPacket = (heroDoid, npcDoid, attackType = 920050, weaponSlot = 0) =
  * a walk that cannot finish must not stall the run.
  */
 const beginTour = () => {
-  const perKind = Number(process.env.DR_TOUR_PER_KIND ?? 2);
+  const perKind = Number(envSetting("TOUR_PER_KIND") ?? 2);
   const counted = new Map();
   const stops = (state.floorTraps ?? []).filter((trap) => {
     const seen = counted.get(trap.constant) ?? 0;
     counted.set(trap.constant, seen + 1);
     return seen < perKind;
   });
-  stops.length = Math.min(stops.length, Number(process.env.DR_TOUR_STOPS ?? 14));
-  const seconds = Number(process.env.DR_TOUR_DWELL ?? 3);
+  stops.length = Math.min(stops.length, Number(envSetting("TOUR_STOPS") ?? 14));
+  const seconds = Number(envSetting("TOUR_DWELL") ?? 3);
   console.log(
     `-> touring ${stops.length} of ${state.floorTraps?.length ?? 0} trap(s), ${seconds}s at each`
   );
@@ -1794,7 +1835,7 @@ let buffered = Buffer.alloc(0);
  * difference that lives between them. `DR_CAPTURE=<path>` and the two streams
  * become comparable.
  */
-const capturePath = process.env.DR_CAPTURE;
+const capturePath = envSetting("CAPTURE");
 const captureFile = capturePath ? fs.openSync(capturePath, "w") : null;
 const capture = (body) => {
   if (captureFile === null) return;
@@ -1904,10 +1945,17 @@ socket.on("data", (chunk) => {
       killNpc(socket, state.heroDoid, state.aiKnight.doid);
     }
 
+    /**
+     * Walk at the Crowd, and keep walking if it goes.
+     *
+     * Re-targets once the current one has had longer than a doober lives
+     * without being collected, which covers both of the ways a single attempt
+     * ends in nothing: an expiry on arrival, and a drop the navigation cannot
+     * reach at all.
+     */
     if (mode === "buster" && state.heroDoid && state.busterDoober && !state.walked) {
       state.walked = true;
-      console.log(`-> walking hero ${state.heroDoid} onto CROWD doober ${state.busterDoober.doid}`);
-      walkHeroTo({ x: state.busterDoober.x, y: state.busterDoober.y });
+      walkToCrowd();
     }
 
     if (
@@ -2163,13 +2211,39 @@ const timeoutMs =
     ? 3000
     : // A tour is as long as the walking it does, and the walking is the point.
       mode === "tour"
-      ? Number(process.env.DR_TOUR_STOPS ?? 14) * 12000
+      ? Number(envSetting("TOUR_STOPS") ?? 14) * 12000
       : mode === "revive"
         ? 15000
-        : mode === "boss" || mode === "poison-pot" || mode === "next-floor"
+        : // Crowd is not collected where it is dropped. It falls where a large
+          // enemy died and the hero has to cross the floor to it, sometimes
+          // more than once when the first drop expires on the way.
+          mode === "buster"
+          ? 30000
+          : mode === "boss" || mode === "poison-pot" || mode === "next-floor"
           ? 20000
           : 10000;
 function onDeadline() {
+  /**
+   * Where the hero got to, when what it was walking at is still named.
+   *
+   * "Missing buster-collected" does not say whether the pickup was refused or
+   * simply never reached, and those are opposite faults. The distance says
+   * which: inside the server's radius blames the collection, well outside it
+   * blames the walking.
+   */
+  const lastCrowd = state.lastCrowdTarget;
+  if (mode === "buster" && !state.seen.has("buster-collected") && lastCrowd) {
+    const here = state.heroPosition;
+    if (here) {
+      const away = Math.hypot(here.x - lastCrowd.x, here.y - lastCrowd.y);
+      console.log(
+        `   hero stopped at ${Math.round(here.x)},${Math.round(here.y)} — ` +
+          `${Math.round(away)} units from CROWD doober ${lastCrowd.doid} ` +
+          `at ${lastCrowd.x},${lastCrowd.y}; tried ${state.crowdTried ?? 0} drop(s)`
+      );
+    }
+  }
+
   /**
    * A meter that never filled is worth saying properly. Crowd points come from
    * CROWD doobers and from nothing else — Npc.CrowdPts is authored but not yet

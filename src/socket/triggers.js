@@ -1,6 +1,7 @@
 import { PacketWriter } from "./packet.js";
 import { OP } from "./opcodes.js";
 import { config } from "../config.js";
+import { envSetting } from "../env.js";
 import { info, warn } from "../log.js";
 import {
   clearHazardBeats,
@@ -832,7 +833,7 @@ export const trackTriggers = (session, floor) => {
   session.triggerableNames = new Map(
     (floor.placements.triggerable ?? []).map(({ id, constant }) => [id, constant])
   );
-  session.tracePattern = process.env.DR_TRACE ? new RegExp(process.env.DR_TRACE) : null;
+  session.tracePattern = envSetting("TRACE") ? new RegExp(envSetting("TRACE")) : null;
 
   session.triggers = floor.placements.trigger.map((trigger) => ({
     ...trigger,
