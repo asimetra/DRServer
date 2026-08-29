@@ -197,6 +197,10 @@ test("the cloud damages what the hero fights and never the hero", async () => {
     heading: 0,
   });
 
+  // Damage lands on its collider's own authored frame rather than in the call
+  // that placed the thing — see the beat scheduling in `strike`.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
   assert.equal(session.actors.get(500).hitPoints, 400, "the hero who placed it is untouched");
   assert.ok(session.actors.get(700).hitPoints < 500, "the knight beside it is not");
   assert.equal(session.actors.get(701).hitPoints, 500, "the cloud reaches fifty, not two hundred");
@@ -336,12 +340,15 @@ test("a crack performs as it lands, and runs along the ground", async () => {
     origin: { x: 1000, y: 1000 },
     heading: 0,
   });
+  // Announced in the same breath as the landing, so this needs no wait at all.
   const choreographies = session.sent.filter(
     (packet) => packet.length >= 10 && packet.readUInt16LE(8) === 143
   ).length;
   assert.ok(choreographies >= 1, "it announces itself as it lands, not as it goes");
 
-  await new Promise((resolve) => setTimeout(resolve, 900));
+  // The damage is the part that waits: eight colliders on frames 3 to 17, each
+  // striking on its own, so the last is 708ms behind the first.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
   assert.ok(session.actors.get(700).hitPoints < 900, "the crack reaches the one it runs under");
   assert.equal(
     session.actors.get(701).hitPoints,
@@ -425,10 +432,11 @@ test("a trap goes off once and is spent, rather than ticking like an aura", asyn
   });
 
   /**
-   * A throw that connects goes off at once, which is what the original does.
-   * That used to be invisible because the object was destroyed in the same
-   * millisecond; the blast now has the timeline's own pause to play in.
+   * A throw that connects goes off as it lands, but its damage arrives on the
+   * collider's authored frame — which is the whole distance between a bomb
+   * that explodes and a bomb that has already killed the room.
    */
+  await new Promise((resolve) => setTimeout(resolve, 500));
   assert.ok(session.actors.get(700).hitPoints < 900, "it catches what it lands on");
   /**
    * Still there, briefly. TM_TRAP_TRIPMINE puts its `suicide` on frame 23,
@@ -477,6 +485,8 @@ test("an aura keeps hitting for as long as it stands", async () => {
     origin: { x: 1000, y: 1000 },
     heading: 0,
   });
+  // The damage waits for its collider's authored frame; see `strike`.
+  await new Promise((resolve) => setTimeout(resolve, 500));
   const afterFirst = session.actors.get(700).hitPoints;
   assert.ok(afterFirst < 900, "the first beat lands");
   assert.ok(session.placeables.size > 0, "and it is still standing, unlike a trap");
@@ -602,6 +612,8 @@ test("a hit leaves the debuff its attack names, once", async () => {
     heading: 0,
   });
 
+  // The damage waits for its collider's authored frame; see `strike`.
+  await new Promise((resolve) => setTimeout(resolve, 500));
   const stuns = [...(session.activeBuffs?.values() ?? [])].filter(
     (active) => active.affectedActor === 700 && active.buff?.Constant === "STUN_L4"
   );
@@ -641,6 +653,9 @@ test("a burn keeps taking hit points for as long as it is authored to run", asyn
     origin: { x: 1000, y: 1000 },
     heading: 0,
   });
+
+  // The damage waits for its collider's authored frame; see `strike`.
+  await new Promise((resolve) => setTimeout(resolve, 500));
 
   const afterHit = session.actors.get(700).hitPoints;
   assert.ok(afterHit < 900000, "the fire lands its blow");

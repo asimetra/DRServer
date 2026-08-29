@@ -159,10 +159,42 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
   }
   const beats = [...byFrame.entries()].sort(([a], [b]) => a - b);
 
-  // The first beat is the one this call answers for; the rest follow it.
-  const [firstAt, firstColliders] = beats[0] ?? [0, colliders];
-  for (const [at, frameColliders] of beats.slice(1)) {
+  /**
+   * Every beat waits for its own frame, the first one included.
+   *
+   * The first used to be subtracted out — `at - firstAt` — so whatever the
+   * shape authored was discarded and the damage landed with the choreography.
+   * For a placeable whose collider is on frame 2 that is 83ms and invisible;
+   * for the consumable bombs, whose colliders are on frame 38, it is 1583ms,
+   * and it is the whole of "the room dies the moment I throw it".
+   *
+   * The official's own demolition bomb says so plainly once the right lines are
+   * read. Its full sequence, from the client's proposal:
+   *
+   *      0ms  -> propose CONSUMABLE_DEMOLITION_ATTACK
+   *    149ms  <- generate CONSUMABLE_DEMOLITION_BOMB
+   *    224ms  <- combat results on four crates and a crusher
+   *    229ms  <- hitPoints 0, and CONSUMABLE_DEMOLITION_BOMB_DEATH_ATTACK
+   *   1809ms  <- combat results on a BABY_YETI, an ICE_IMP, the crusher
+   *
+   * An earlier reading of this took the 224ms line for the explosion and
+   * concluded the authored frame was not the wait. It is not the explosion —
+   * those are scenery going down as the bomb lands. The explosion is the 1809,
+   * and 229 + 1583 is 1812. The arithmetic closes to three milliseconds.
+   *
+   * The NPC path has always honoured this frame, through `impactFrame`.
+   *
+   * The beats are tracked so that leaving the floor can cancel them, and only
+   * leaving the floor. A beat belongs to the strike rather than to the thing
+   * that struck: a bomb is dead long before its own explosion connects, so
+   * cancelling in `expirePlaceable` would throw away damage the blast has
+   * already committed to. `clearDungeonPlaceables` clears them, because a floor
+   * nobody is standing on has nothing left to hit.
+   */
+  live.beats ??= [];
+  for (const [at, frameColliders] of beats) {
     const timer = setTimeout(() => {
+      live.beats = live.beats?.filter((pending) => pending !== timer);
       if (!session.dungeonActive || session.floorDoid !== live.floorDoid) return;
       const caught = placeableVictims(session, doid, frameColliders);
       if (!caught.length) return;
@@ -171,15 +203,17 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
         victims: caught,
         weaponPower: live.weaponPower,
       }).catch((error) => warn(`[${session.id}] ${attack.Constant}: ${error.message}`));
-    }, at - firstAt);
+    }, at);
     timer.unref?.();
+    live.beats.push(timer);
   }
 
-  const hits = await performPlaceableAttack(session, doid, {
-    attack,
-    victims: beats.length ? placeableVictims(session, doid, firstColliders) : victims,
-    weaponPower: live.weaponPower,
-  });
+  /**
+   * What it caught when it went off, which is a different question from what it
+   * damages. Whether a trap is spent is settled by it performing at all; the
+   * damage arrives on its own frame above and cannot be waited for here.
+   */
+  const hits = victims.length;
   if (hits) info(`[${session.id}] ${live.constant} ${attack.Constant} hit ${hits}`);
 
   /**
@@ -432,13 +466,15 @@ export const spawnPlaceable = async (session, { action, origin, heading, weaponP
     /**
      * Everything checks the moment it lands, and what happens then depends on
      * whether anyone is there. An empty patch of floor leaves a trap standing
-     * and armed; a trap thrown into somebody goes off at once, which is what
-     * the original does when a throw connects in flight.
+     * and armed; a trap thrown into somebody goes off.
      *
-     * This looked wrong before only because the blast had nowhere to play: the
-     * object was created and destroyed between two frames. With the timeline's
-     * own `suicide` pause honoured, an immediate detonation is visible, and a
-     * trap that catches nothing simply waits.
+     * Checked synchronously. A delay lived here for a while on the reasoning
+     * that the client needs to have drawn the thing before it is told to
+     * animate it, but what actually made a bomb kill the room before its own
+     * explosion was the damage ignoring its collider's authored frame — see
+     * the beat scheduling in `strike`. With that honoured the pause earned
+     * nothing, and play confirmed it: nothing changed between 80ms and 10ms
+     * because neither is what the eye was seeing.
      */
     await tickSafely(session, doid);
     if (lifetimeMs > beatMs && session.placeables.has(doid)) {
@@ -448,25 +484,21 @@ export const spawnPlaceable = async (session, { action, origin, heading, weaponP
   }
 
   /**
-   * A fissure performs the moment it lands; a bomb waits and then goes off.
+   * A fissure performs the moment it lands, and so does a bomb.
    *
-   * Both carry their damage on `DeathAttack`, and firing it on the way out
-   * suits only the second. A crack in the ground has nothing else to do — no
-   * living attack at all — so its death attack *is* its performance, and
-   * announcing it as the object is removed sends the choreography and the
+   * Both carry their damage on `DeathAttack` and neither has a living attack,
+   * so this is where they announce themselves rather than on the way out.
+   * Announcing a crack as the object is removed sends the choreography and the
    * disable in the same breath: the client draws the first pose and never the
-   * run. Which is exactly the report — it appears for an instant and then
+   * run, which was exactly the report — it appears for an instant, then
    * nothing.
    *
-   * The captures separate the two cleanly. Measured from the generate, a
-   * choreography arrives at +91ms for the axe fissure and +83ms for the slow
-   * one, both removed around a second later; a garlic cloud's arrives at
-   * +1272ms of a 1327ms life and a firebomb's at +1687ms of 3834ms. The first
-   * pair announce as they land, the second pair as they go off.
-   *
-   * Having no living attack is what tells them apart, and it is also why: a
-   * placeable that can catch somebody has a reason to wait, and one that
-   * cannot has none.
+   * What separates a crack from a bomb is not when they perform but when they
+   * connect: the fissure's colliders run from frame 3, the bomb's sits on frame
+   * 38, and `strike` waits for each. Announcing both at once is what the
+   * captures show — measured from the generate, a choreography arrives at
+   * +91ms for the axe fissure and +83ms for the slow one, which is the round
+   * trip and not a pause anybody authored.
    */
   if (deathAttack && !livingAttack) {
     await strike(session, doid, live, deathAttack, { always: true });
@@ -747,6 +779,8 @@ export const clearDungeonPlaceables = (session) => {
   session.placeableSpawnTimers?.clear();
   for (const live of session.placeables?.values() ?? []) {
     clearInterval(live.ticker);
+    for (const beat of live.beats ?? []) clearTimeout(beat);
+    live.beats = [];
     clearTimeout(live.expiry);
   }
   session.placeables?.clear();
