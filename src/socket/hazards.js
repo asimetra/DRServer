@@ -1,6 +1,7 @@
 import { FRAMES_PER_SECOND } from "../gamemaster.js";
 import { npcHeadingUpdate } from "./ai.js";
 import {
+  isPartyHero,
   dealTrapHit,
   hazardVictims,
   hitPointsUpdate,
@@ -87,7 +88,7 @@ const beatsOf = (hazard) => {
  */
 const strike = (session, doid, hazard, colliders) => {
   for (const victim of hazardVictims(session, colliders, hazard)) {
-    if (hazard.heroOnly && victim.doid !== session.heroDoid) continue;
+    if (hazard.heroOnly && !isPartyHero(session, victim.doid)) continue;
     dealTrapHit(session, doid, hazard.attack, victim.doid, hazard.weaponPower);
   }
 };
@@ -270,7 +271,7 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
      */
     if (hazard.contactBomb && !nearEnoughToTrip(session, hazard).length) return;
     for (const victim of hazardVictims(session, colliders, hazard)) {
-      if (hazard.heroOnly && victim.doid !== session.heroDoid) continue;
+      if (hazard.heroOnly && !isPartyHero(session, victim.doid)) continue;
       if (now - (lastHitAt.get(victim.doid) ?? -Infinity) < cooldownMs) continue;
       lastHitAt.set(victim.doid, now);
       if (!bit && !hazard.heroOnly) {

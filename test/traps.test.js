@@ -2425,3 +2425,77 @@ test("a bomb that has gone off is taken off the floor", async () => {
     clearHazardBeats(session);
   }
 });
+
+/**
+ * A ground trap hurts everybody standing on it, not just whoever started it.
+ *
+ * `heroOnly` means "heroes, not monsters" — it is set from the trap's layer,
+ * because a hazard drawn under the sorted plane is scenery to an NPC. It was
+ * implemented as `victim.doid !== session.heroDoid`, which is the same thing
+ * when there is one hero and quietly the wrong thing when there are two: the
+ * timer belongs to whichever member's context raised it, so only that player
+ * ever took damage.
+ *
+ * Reported from play — two in a dungeon, one hurt by the spikes and one walking
+ * through them untouched.
+ */
+test("a ground trap hurts every hero standing in it, not only the timer's owner", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"] });
+  const { npcForConstant, attackForConstant } = await import("../src/gamemaster.js");
+  const { loadNavigationLibrary } = await import("../src/socket/navigation.js");
+  const { raiseHazard, clearHazardBeats } = await import("../src/socket/hazards.js");
+  await loadNavigationLibrary();
+
+  const npc = await npcForConstant("NORDIC_CAVE_SPIKETRAP");
+  const attack = await attackForConstant(npc.Attack1);
+  const spikeDoid = 9500;
+  const hostHero = 7101;
+  const peerHero = 7102;
+
+  const session = {
+    id: 28,
+    dungeonActive: true,
+    // The context that raised the trap belongs to the host, as it would if the
+    // host stepped on it first.
+    heroDoid: hostHero,
+    heroPosition: { x: 1000, y: 1010 },
+    // The shared world knows both heroes; this is what the filter should ask.
+    playerActors: new Set([hostHero, peerHero]),
+    objects: new Map([
+      [hostHero, CLID.HeroGameObject],
+      [peerHero, CLID.HeroGameObject],
+      [spikeDoid, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      [hostHero, {
+        hitPoints: 4000, maxHitPoints: 4000, collisionRadius: 22,
+        constant: "RANGER", position: { x: 1000, y: 1010 },
+      }],
+      [peerHero, {
+        hitPoints: 4000, maxHitPoints: 4000, collisionRadius: 22,
+        constant: "RANGER", position: { x: 1000, y: 1010 },
+      }],
+    ]),
+    triggerableDoids: new Map([["spikes", spikeDoid]]),
+    triggerableHazards: new Map([
+      ["spikes", {
+        attack, npc, heroOnly: true,
+        position: { x: 1000, y: 1000 },
+        combatColliders: [{ type: "circle", x: 1000, y: 1000, radius: 34, frame: 0 }],
+      }],
+    ]),
+    send: () => {},
+  };
+
+  raiseHazard(session, "spikes");
+  t.mock.timers.tick(100);
+  for (let drain = 0; drain < 4; drain += 1) await settle();
+  await settle();
+  clearHazardBeats(session);
+
+  assert.ok(session.actors.get(hostHero).hitPoints < 4000, "the host is hurt");
+  assert.ok(
+    session.actors.get(peerHero).hitPoints < 4000,
+    "and so is the other player standing in the same spikes"
+  );
+});

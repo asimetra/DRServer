@@ -1022,6 +1022,20 @@ export const heroStateAndChoreography = ({
  * The tick came to within one percent of the blast that started it (1059
  * against 1068), so it is priced like the attack that applied it.
  */
+/**
+ * Whether a doid is one of the party's heroes — any of them, not one of them.
+ *
+ * Several rules here are about *kind*: heroes do not burn, a ground trap hurts
+ * heroes and not monsters. Written against `session.heroDoid` each of them
+ * answered a question about identity instead, which is the same answer while
+ * there is one hero and the wrong one as soon as there are two.
+ *
+ * `playerActors` is the shared world's set of hero doids. A session without one
+ * is solo or a fixture, where its single hero is the whole party.
+ */
+export const isPartyHero = (session, doid) =>
+  session?.playerActors?.has(doid) ?? doid === session?.heroDoid;
+
 const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) => {
   /**
    * The hero does not burn.
@@ -1039,8 +1053,14 @@ const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) =
    * An argument from absence, and flagged as one in docs/evidence.md. The buff
    * is still granted: traps are seen to leave things on the hero — fifteen
    * TAR_SLOW off the tarpit — and it is only the damage that never arrives.
+   *
+   * Asked of the party, not of one hero. Written against `session.heroDoid`
+   * this was true for whoever's context applied the buff and false for
+   * everybody else, so in a party the host did not burn and the other players
+   * did — the same shape as the ground trap that hurt only one of two people
+   * standing in it.
    */
-  if (victimDoid === session.heroDoid) return;
+  if (isPartyHero(session, victimDoid)) return;
 
   if (buff?.BuffType !== "DAMAGE_OVER_TIME" || !(damage > 0)) return;
   const ticks = Math.max(0, Math.round(Number(buff.Duration ?? 0)));

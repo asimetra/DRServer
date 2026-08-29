@@ -322,3 +322,57 @@ test("a burn ticks on a monster and never on the hero", async (t) => {
   t.mock.timers.tick(10000);
   assert.equal(spared.actors.get(10).hitPoints, 200, "the hero does not");
 });
+
+/**
+ * No hero burns — including the ones who did not start the timer.
+ *
+ * The rule is about kind, not identity: the corpus has 625 damage-over-time
+ * ticks and not one names a hero, with 152 flame-jet hits on the hero to have
+ * taken the chance. But it was written `victimDoid === session.heroDoid`, the
+ * same shape as the ground-trap bug — true for one hero and quietly false for
+ * everybody else in the party.
+ *
+ * So in a two-player dungeon the host did not burn and the other player did,
+ * which is very likely what "the hero gets poisoned" looked like from inside
+ * the game.
+ */
+test("a burn spares every hero in the party, not only the session's own", async (t) => {
+  const { applyTargetBuff } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  t.mock.timers.enable({ apis: ["setInterval"] });
+
+  const hostHero = 10;
+  const peerHero = 11;
+  const session = {
+    id: 2,
+    heroDoid: hostHero,
+    playerActors: new Set([hostHero, peerHero]),
+    dungeonActive: true,
+    floorDoid: 55,
+    dungeonZone: 0,
+    allocateDoid: () => 900,
+    objects: new Map([
+      [hostHero, CLID.HeroGameObject],
+      [peerHero, CLID.HeroGameObject],
+    ]),
+    actors: new Map([
+      [hostHero, { hitPoints: 200, maxHitPoints: 200 }],
+      [peerHero, { hitPoints: 200, maxHitPoints: 200 }],
+    ]),
+    send: () => {},
+  };
+
+  await applyTargetBuff(session, {
+    attack: { TargetBuff1: "FIRE_L1" },
+    victimDoid: peerHero,
+    attackerDoid: 30,
+    damage: 24,
+  });
+  t.mock.timers.tick(10000);
+
+  assert.equal(
+    session.actors.get(peerHero).hitPoints,
+    200,
+    "the other player does not burn either"
+  );
+});
