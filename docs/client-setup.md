@@ -1,11 +1,8 @@
 # Pointing a client at your server
 
-This page assumes you already have a client you are lawfully entitled to use.
-This project does not distribute one, does not link to one, and cannot help you
-obtain one. If you do not have a copy, this page is not useful to you.
-
-Everything below is a change to **your own configuration file, on your own
-machine**. Nothing here modifies, patches, or redistributes the client.
+This page assumes you already have a client you are lawfully entitled to use;
+it is not distributed or linked here. Everything below is a change to one JSON
+file in your own copy — nothing is patched or replaced.
 
 ## The short version
 
@@ -189,8 +186,7 @@ npm run check:data
 
 The server starts without it and will tell you at startup that it is missing,
 but dungeons will not load until it is imported. See
-[../README.md](../README.md) for the rest of the setup and
-[../NOTICE.md](../NOTICE.md) for what may and may not be redistributed.
+[../README.md](../README.md) for the rest of the setup.
 
 ## A complete example
 

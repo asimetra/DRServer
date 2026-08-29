@@ -3,14 +3,9 @@
 An independent HTTP and game-socket compatibility server for a dungeon-crawler
 client.
 
-This repository contains independently written server code. It intentionally
-does **not** distribute the original client, artwork, audio, game-data tables,
-floor layouts, packet captures, or decompiled source. You must provide required
-compatibility data locally from a copy you are lawfully entitled to use.
-
-The project is unofficial and unaffiliated with the original game's developer,
-publisher, or trademark owners. See [NOTICE.md](NOTICE.md) before
-redistributing it.
+Server code only: no client, no assets, no game data. You supply those locally
+from a copy you are lawfully entitled to use. Unaffiliated with the original
+game's developer, publisher, or trademark owners — see [NOTICE.md](NOTICE.md).
 
 ## Requirements
 
@@ -27,8 +22,7 @@ npm run check:data
 ```
 
 The import command reads only the files listed in `game-data/manifest.json` and
-copies them to `local-data/`. Neither directory contents nor capture logs should
-be committed.
+copies them to `local-data/`, which is ignored.
 
 ## Run
 
@@ -129,22 +123,15 @@ npm run check:public
 ```text
 config/       server-owned defaults and account templates
 db/           optional Postgres schema
-docs/         public architecture and release notes
-src/          independently written HTTP/socket server
+docs/         setup notes, and dc-schema.json: a generated table of protocol
+              class names and field ids, with no implementation bodies
+src/          HTTP and game-socket server
 test/         unit and local conformance tests
 tools/        import, inspection and release utilities
 game-data/    tracked import manifest only; no original file contents
 local-data/   ignored user-supplied compatibility data
 ```
 
-Protocol class names, numeric field ids, and required client-side filenames may
-still appear in the compatibility layer. They identify an interface; they are
-not project branding and are not bundled copies of the corresponding files.
-`docs/dc-schema.json` is a generated table of those interface facts and contains
-no client implementation bodies.
-
 ## License
 
-The independently written source code is available under GPL-3.0-or-later.
-That license does not grant rights to any third-party client, assets, game data,
-captures, names, logos, or trademarks.
+GPL-3.0-or-later.

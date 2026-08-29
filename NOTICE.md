@@ -18,13 +18,5 @@ The public repository must not contain:
 - packet captures, authentication tokens, account identifiers, or private logs;
 - third-party logos or marketing artwork.
 
-Users are responsible for supplying compatibility data locally from a copy they
-are lawfully entitled to use and for complying with the law that applies to
-them. Compatibility identifiers such as protocol class names, numeric ids, and
-required local filenames may remain in source where technically necessary. The
-generated protocol schema records those identifiers and field types, not client
-implementation code.
-
-This notice is operational guidance, not legal advice. Obtain advice from a
-qualified lawyer before publishing or operating the project in a jurisdiction
-where the applicable rights or reverse-engineering exceptions are uncertain.
+Users supply compatibility data locally from a copy they are lawfully entitled
+to use.
