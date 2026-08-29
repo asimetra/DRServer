@@ -19,9 +19,30 @@
  * ninety-seven of something and never run out.
  */
 import { nextObjectId } from "./accounts.js";
+import { stackableById } from "./gamemaster.js";
 
-/** What a hero can carry into a dungeon, per slot. */
+/**
+ * What a hero can carry into a dungeon, when the item does not say.
+ *
+ * Nine was every item's limit here, and it is not a rule — it is the commonest
+ * value of a column. `Stackables.EquipLimit` is the authored per-item answer
+ * and it takes three values:
+ *
+ *    1   HEALTH_BOMB, PARTY_BOMB, and the six coin/XP potions
+ *    5   all five consumable bombs, and the health/mana party potions
+ *    9   the twenty ordinary potions
+ *
+ * The client enforces its own, so carrying nine of something it caps at five
+ * put the two out of step — reported from play as bombs filling only five of
+ * the slot this server had granted nine for.
+ */
 export const CARRY_LIMIT = 9;
+
+const carryLimitFor = async (stackId) => {
+  const row = await stackableById(stackId);
+  const authored = Number(row?.EquipLimit ?? 0);
+  return authored > 0 ? authored : CARRY_LIMIT;
+};
 
 /** Slots are one-based in the account fields and there are exactly two. */
 const SLOTS = [1, 2];
@@ -121,7 +142,7 @@ export const reconcileConsumables = async (account, avatar) => {
       continue;
     }
 
-    const carried = Math.min(CARRY_LIMIT, total);
+    const carried = Math.min(await carryLimitFor(stackId), total);
     avatar[field.count] = carried;
     await setBagged(account, stackId, total - carried);
   }

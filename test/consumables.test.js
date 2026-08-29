@@ -10,7 +10,14 @@ import { CARRY_LIMIT, reconcileConsumables } from "../src/consumables.js";
  * these tests is that the pair moves as one quantity and neither half is the
  * source of truth on its own.
  */
-const accountWith = ({ slot = 0, bag = null, id = 70003 } = {}) => {
+/**
+ * 70000 is CONSUMABLE_HEALTH_POTION, whose authored `EquipLimit` is 9.
+ *
+ * It used to be 70003, the mana party potion, which is a 5. That did not matter
+ * while every item shared one hardcoded limit and it does now: the cap is per
+ * item, so a test about capping has to name an item whose cap it knows.
+ */
+const accountWith = ({ slot = 0, bag = null, id = 70000 } = {}) => {
   const avatar = {
     id: 1,
     consumable1_id: slot === null ? 0 : id,
@@ -26,7 +33,7 @@ const accountWith = ({ slot = 0, bag = null, id = 70003 } = {}) => {
   return { account, avatar };
 };
 
-const bagCount = (account, id = 70003) =>
+const bagCount = (account, id = 70000) =>
   account.account_stackables.find((row) => row.stack_id === id)?.count ?? null;
 
 test("the carried amount is capped and the rest stays in the bag", async () => {
@@ -105,7 +112,8 @@ test("an empty slot is left alone, and does not help itself to the bag", async (
  */
 test("two slots on one stack share the bag instead of each taking nine", async () => {
   const { account, avatar } = accountWith({ slot: 0, bag: 12 });
-  avatar.consumable2_id = 70003;
+  // The same stack in both slots, so both draw the same item's own limit of 9.
+  avatar.consumable2_id = 70000;
   avatar.consumable2_count = 0;
 
   await reconcileConsumables(account, avatar);
@@ -188,4 +196,23 @@ test("zero rows are swept from the bag, not only the ones a slot names", async (
     [60001, 70014],
     "the empty row is gone and the others are untouched"
   );
+});
+
+test("the cap is the item's own, not one number for everything", async () => {
+  // Stackables.EquipLimit takes three values: 1 for the health and party bombs
+  // and the coin/XP potions, 5 for the five consumable bombs and the party
+  // health/mana potions, 9 for the twenty ordinary potions. The client enforces
+  // its own, so a server handing out nine of a five put the two out of step.
+  const bomb = accountWith({ slot: 40, bag: null, id: 70023 }); // CONSUMABLE_ICE_BOMB
+  await reconcileConsumables(bomb.account, bomb.avatar);
+  assert.equal(bomb.avatar.consumable1_count, 5, "a bomb carries five");
+  assert.equal(bagCount(bomb.account, 70023), 35, "and the rest waits in the bag");
+
+  const potion = accountWith({ slot: 40, bag: null, id: 70000 });
+  await reconcileConsumables(potion.account, potion.avatar);
+  assert.equal(potion.avatar.consumable1_count, 9, "an ordinary potion carries nine");
+
+  const partyBomb = accountWith({ slot: 40, bag: null, id: 60018 }); // PARTY_BOMB
+  await reconcileConsumables(partyBomb.account, partyBomb.avatar);
+  assert.equal(partyBomb.avatar.consumable1_count, 1, "a party bomb carries one");
 });
