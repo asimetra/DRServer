@@ -60,11 +60,29 @@ const addStackable = async (account, stackId, count, nextId) => {
 };
 
 /**
+ * An offer names its modifiers; an account row stores the number.
+ *
+ * `OfferDetails` carries constants — `CRIT_DAMAGE_4`, `DAMAGE_1` — in all 3840
+ * modifier columns of its 3080 weapon offers, and every one of them resolves.
+ * Passing the name through is silent at each place it is later read:
+ * `ItemInfo.parseJson` keeps a modifier only while `toNumberField` returns
+ * something above zero, and a name returns NaN, so the weapon reached storage,
+ * the dungeon and the summary with nothing to show. The same value reaches the
+ * wire as a u32.
+ */
+export const modifierIdFor = (gm, value, table = "Modifiers") => {
+  if (value === undefined || value === null || value === "") return 0;
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber)) return asNumber;
+  return Number(gm.raw[table]?.find((row) => row.Constant === value)?.Id ?? 0);
+};
+
+/**
  * Weapons bought from the shop come with their statistics already decided —
  * power, level, rarity and up to three modifiers are columns on the offer, not
  * a roll. That is the difference between a purchase and a chest.
  */
-const grantWeapon = async (account, detail, nextId) => ({
+const grantWeapon = async (account, detail, nextId, gm) => ({
   id: await nextId(),
   item_id: detail.WeaponId,
   account_id: account.id,
@@ -74,11 +92,14 @@ const grantWeapon = async (account, detail, nextId) => ({
   is_new: 1,
   requiredlevel: detail.Level ?? 1,
   rarity: detail.Rarity ?? 1,
-  modifier1: detail.Modifier1 ?? 0,
-  modifier2: detail.Modifier2 ?? 0,
-  legendarymodifier: detail.Modifier3 ?? 0,
+  modifier1: modifierIdFor(gm, detail.Modifier1),
+  modifier2: modifierIdFor(gm, detail.Modifier2),
+  legendarymodifier: modifierIdFor(gm, detail.Modifier3, "LegendaryModifiers"),
   created: new Date().toISOString(),
 });
+
+/** The shop's own grant, exported so its resolution can be tested directly. */
+export const grantWeaponForTest = grantWeapon;
 
 /**
  * The two weapons a newly bought hero arrives with, one per slot.
@@ -126,7 +147,7 @@ const applyDetail = async ({ account, detail, gm, nextId, granted }) => {
     const rarityId = gm.raw.Rarity.find((row) => row.Type === detail.Rarity)?.Id ?? 1;
     account.account_items = [
       ...(account.account_items ?? []),
-      await grantWeapon(account, { ...detail, Rarity: rarityId }, nextId),
+      await grantWeapon(account, { ...detail, Rarity: rarityId }, nextId, gm),
     ];
     touched.add("account_items");
   }

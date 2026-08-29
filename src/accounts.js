@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
+import { loadGameMaster } from "./gamemaster.js";
+import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
 import { info, warn } from "./log.js";
 import {
@@ -146,6 +148,41 @@ export const repairAvatarInstanceIds = (account) => {
 };
 
 /**
+ * Weapons whose modifiers were stored under their name rather than their id.
+ *
+ * `OfferDetails` names them and the shop wrote the name straight through, which
+ * nothing complains about: the item sits in the bag at the right rarity, and
+ * every reader of the modifier quietly discards it — `ItemInfo.parseJson`
+ * because NaN fails its `> 0` guard, the wire because it encodes a u32, and
+ * this server's own sell price because it sums the pair. So the rows are
+ * repaired on load; leaving them would mean a player only ever finding out by
+ * noticing an absence.
+ */
+const COLUMNS = [
+  ["modifier1", "Modifiers"],
+  ["modifier2", "Modifiers"],
+  ["legendarymodifier", "LegendaryModifiers"],
+];
+
+export const repairItemModifiers = async (account) => {
+  const items = account.account_items ?? [];
+  if (!items.some((item) => COLUMNS.some(([column]) => typeof item?.[column] === "string"))) {
+    return 0;
+  }
+
+  const gm = await loadGameMaster();
+  let repaired = 0;
+  for (const item of items) {
+    for (const [column, table] of COLUMNS) {
+      if (typeof item?.[column] !== "string") continue;
+      item[column] = modifierIdFor(gm, item[column], table);
+      repaired += 1;
+    }
+  }
+  return repaired;
+};
+
+/**
  * Account attributes are the client's preference store.
  *
  * The checked-in template supplies defaults for new and legacy accounts, while
@@ -204,7 +241,10 @@ const repairLoadedAccount = async (account) => {
   const migratedAvatars = repairAvatarInstanceIds(account);
   const restoredProgress = repairActiveAvatarProgress(account);
   const restoredAttributes = await repairAccountAttributes(account);
-  if (!migratedAvatars && !restoredProgress && !restoredAttributes) return account;
+  const namedModifiers = await repairItemModifiers(account);
+  if (!migratedAvatars && !restoredProgress && !restoredAttributes && !namedModifiers) {
+    return account;
+  }
 
   await saveAccount(account);
   if (migratedAvatars) {
@@ -217,6 +257,9 @@ const repairLoadedAccount = async (account) => {
   }
   if (restoredAttributes) {
     info(`accounts: restored default preferences for account ${account.id}`);
+  }
+  if (namedModifiers) {
+    info(`accounts: gave ${namedModifiers} named weapon modifier(s) their ids`);
   }
   return account;
 };
