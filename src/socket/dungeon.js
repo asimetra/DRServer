@@ -57,6 +57,8 @@ import {
 import { stockFloor } from "./population.js";
 import { preloadFor } from "./precache.js";
 import { loadAccount } from "../accounts.js";
+import { reconcileConsumables } from "../consumables.js";
+import { queueAccountSave } from "./rewards.js";
 import {
   CLIENT_PERSISTENT_OBJECT_ID_MAX,
   isClientLocalObjectId,
@@ -2376,6 +2378,24 @@ const disablePriority = (clid) => {
 
 /** Stops per-dungeon work while preserving the session's MatchMaker/login. */
 export const leaveDungeon = (session, { notifyClient = false } = {}) => {
+  /**
+   * Powerups settle up here, whatever brought the run to an end.
+   *
+   * Winning, wiping, walking out and dropping the connection all arrive at this
+   * function, so this is the one place that has to know the rule — the four of
+   * them do not each need a branch. Whatever was not drunk goes back in the bag
+   * and the slot is topped up to the carry limit out of it, which is the same
+   * call as the one equipping makes.
+   *
+   * Deliberately not awaited: teardown is synchronous and the account save is
+   * queued anyway. A failure here must not stop a player leaving a dungeon.
+   */
+  if (session.dungeonAccount && session.dungeonAvatar) {
+    reconcileConsumables(session.dungeonAccount, session.dungeonAvatar)
+      .then(() => session.queueAccountSave?.(session) ?? queueAccountSave(session))
+      .catch((problem) => warn(`[${session.id}] powerup reconcile failed: ${problem.message}`));
+  }
+
   // Back in town, which the client reads as online and not in a dungeon.
   setPresenceLocation(session, 0);
   session.dungeonEpoch = (session.dungeonEpoch ?? 0) + 1;
