@@ -99,6 +99,32 @@ test("the death hook still finds the body it is about to bury", async () => {
  * falls to zero the moment the last monster dies, which is exactly when the
  * floor should clear. So the floor remembers how many it had.
  */
+/**
+ * A barrel is not gone until it has finished going off.
+ *
+ * Taking the object away at the moment of death is a mistake this server has
+ * already made once and recorded: "the bomb vanished without exploding". The
+ * official does not make it. Of 9047 recorded deaths 96% are told they died
+ * within 120ms of losing their last hit point — the granularity of its own
+ * loop — but a distinct 3.5% wait between 1.5 and 4 seconds, which is where
+ * the authored death attacks land: a barrel's blast runs 1208ms, a thrown
+ * bomb's 1583ms, and the party bomb's 2792ms.
+ */
+test("a barrel keeps its body until its blast has finished", async (t) => {
+  const { applyDamage } = await import("../src/socket/combat.js");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { sent, session } = build();
+  session.actors.get(700).deathEffectMs = 1208;
+
+  applyDamage(session, 700, 10);
+  assert.ok(session.actors.has(700), "it is still there while the blast plays");
+  assert.ok(!disablesIn(sent).includes(700), "and the client still has it to draw");
+
+  t.mock.timers.tick(1208);
+  assert.ok(!session.actors.has(700), "and only then does it go");
+  assert.ok(disablesIn(sent).includes(700), "along with the object itself");
+});
+
 test("a floor still clears once its last enemy is gone rather than merely dead", () => {
   const session = {
     id: 1,

@@ -42,6 +42,7 @@ import {
   loadGameMaster,
   mapNode,
   dooberById,
+  FRAMES_PER_SECOND,
 } from "../gamemaster.js";
 import {
   maxHitPoints,
@@ -589,6 +590,18 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       // Only real enemies gate floor completion; smashing every barrel is not
       // what finishes a dungeon.
       isEnemy: npc.CharType === "ENEMY",
+      /**
+       * How long this one is still worth drawing after it dies.
+       *
+       * Whatever it does as it breaks is choreographed, and the client cannot
+       * draw an object it has been told to destroy — see applyDamage, which
+       * holds the death announcement open for exactly this long.
+       */
+      deathEffectMs: deathColliders.length
+        ? Math.max(0, ...deathColliders.map((collider) => Number(collider.frame) || 0)) /
+          FRAMES_PER_SECOND *
+          1000
+        : 0,
       /**
        * A gate breaks rather than dying — see applyDamage.
        *

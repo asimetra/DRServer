@@ -367,33 +367,55 @@ export const applyDamage = (session, doid, damage, announce) => {
      * temple blasts.
      */
     actor.onDeathAttack?.(doid);
-    if (actor.permCorpse) {
-      // A gate does not die, it breaks. Twenty-four rows author PermCorpse —
-      // the arena gates, the secret walls, the smashable exits — and the
-      // captured one switched its trigger state and stayed standing.
-      session.send(triggerStateUpdate(doid, 0));
-    } else {
+    const callItDead = () => {
+      if (actor.permCorpse) {
+        // A gate does not die, it breaks. Twenty-four rows author PermCorpse —
+        // the arena gates, the secret walls, the smashable exits — and the
+        // captured one switched its trigger state and stayed standing.
+        session.send(triggerStateUpdate(doid, 0));
+        return;
+      }
       // Every party hero is recoverably "down", not only the hero belonging to
       // whichever member context happened to run this hit. AI is shared and may
       // resolve a lethal hit through the host context against a remote hero.
       // Comparing doids there classified that remote hero as an NPC and bypassed
       // ActorReviveState, including both the rescue sensor and bomb screen.
       session.send(stateUpdate(doid, clid, recoverableHero ? "down" : "dead"));
-    }
-    actor.onDeath?.(doid);
-    if (recoverableHero) (session.beginFloorFailing ?? beginFloorFailing)(session);
-    else {
+    };
+    /**
+     * A body that is still going off is not ready to be taken away, and the
+     * blast is drawn by the object doing it: destroy that and the barrel
+     * vanishes without exploding. This server has made that mistake once
+     * already and left the note on `retireSpentBomb`.
+     *
+     * The official waits. Of 9047 recorded deaths 96% are called dead within
+     * 120ms of losing the last hit point — the granularity of its own loop —
+     * and a separate 3.5% wait between 1.5 and 4 seconds, which is where the
+     * authored blasts land: 1208ms for a barrel, 1583ms for a thrown bomb,
+     * 2792ms for the party bomb.
+     *
+     * A gate has nothing to play and a hero is only down, so neither waits.
+     */
+    const blastMs =
+      recoverableHero || actor.permCorpse ? 0 : Math.max(0, Number(actor.deathEffectMs) || 0);
+    const retire = () => {
       /**
        * After the death hook, never before it: the loot drop, the death attack
        * and the boss chest all place themselves by reading this actor's
        * position, and each quietly falls back to the spawn point when the
        * actor is missing. Clearing it early does not break anything loudly, it
        * just moves the reward back to where the monster came from.
-       *
-       * A gate is exempt — it breaks in place and stays standing to be walked
-       * into. So is a hero, which is down rather than dead and can be revived.
        */
-      if (!actor.permCorpse) removeActor(session, doid);
+      if (!recoverableHero && !actor.permCorpse) removeActor(session, doid);
+    };
+
+    if (blastMs > 0) setTimeout(() => (callItDead(), retire()), blastMs).unref?.();
+    else callItDead();
+
+    actor.onDeath?.(doid);
+    if (recoverableHero) (session.beginFloorFailing ?? beginFloorFailing)(session);
+    else {
+      if (blastMs <= 0) retire();
       checkFloorCleared(session);
     }
   }
