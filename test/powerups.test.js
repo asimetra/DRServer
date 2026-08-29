@@ -382,7 +382,17 @@ test("a health potion is charged to the account and actually heals", async () =>
 
   assert.equal(session.heroConsumables[0].count, 1, "the slot is spent");
   assert.equal(session.dungeonAvatar.consumable1_count, 1, "and so is the avatar's own count");
-  assert.equal(session.dungeonAccount.account_stackables[0].count, 3, "and the stock");
+  /**
+   * The bag is the reserve, and one potion is one charge.
+   *
+   * This asserted a decrement here as well, which was invisible only because
+   * equipping moved the whole stack out of the bag and left nothing behind to
+   * decrement. Now that the bag holds everything over the carry limit, taking
+   * one from each would charge a player twice for one drink. The single charge
+   * is the *total* falling by one — the slot pays for it, and leaving the
+   * dungeon tops the slot back up out of the reserve.
+   */
+  assert.equal(session.dungeonAccount.account_stackables[0].count, 4, "the reserve is untouched");
   // PercentHealthDamageValue 1 against a 400 maximum, from 100.
   assert.equal(session.actors.get(500).hitPoints, 400);
 });

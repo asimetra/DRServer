@@ -61,15 +61,41 @@ const creates = (frames, clid) => frames.flatMap((frame) => {
     const actual = reader.u16();
     const doid = reader.u32();
     reader.u32();
-    return actual === clid ? [{ owner: true, doid }] : [];
+    return actual === clid ? [{ owner: true, doid, frame }] : [];
   }
   if (opcode !== OP.CLIENT_CREATE_OBJECT_REQUIRED_RESP) return [];
   const parent = reader.u32();
   reader.u32();
   const actual = reader.u16();
   const doid = reader.u32();
-  return actual === clid ? [{ owner: false, doid, parent }] : [];
+  return actual === clid ? [{ owner: false, doid, parent, frame }] : [];
 });
+
+/**
+ * The first consumable slot as the client receives it.
+ *
+ * Walked rather than indexed, because the offset is the sum of everything the
+ * hero body writes before it and a hard-coded number would silently point at a
+ * weapon modifier the day any of that changes.
+ */
+const consumableCountOf = (frame) => {
+  const reader = new PacketReader(frame.subarray(2));
+  reader.u16(); // opcode
+  reader.u16(); // clid
+  reader.u32(); // doid
+  reader.u32(); // parent
+  reader.u32(); // zone
+  reader.u32(); // heroType
+  reader.f32(); reader.f32(); reader.f32(); reader.f32(); // x, y, heading, scale
+  reader.u8();  // flip
+  reader.u16(); // hitPoints
+  for (let i = 0; i < 4; i++) {
+    reader.u32(); reader.u16(); reader.u8(); reader.u8();
+    reader.u32(); reader.u32(); reader.u32();
+  }
+  reader.u32(); // slot 1 type
+  return reader.u16();
+};
 
 test("joining and leaving rescales live NPC health without healing damage", () => {
   const host = member(901, 1_200_901);
@@ -165,4 +191,56 @@ test("one floor transition regenerates every party hero for every recipient", as
     [world.floorDoid]
   );
   assert.equal(world.snapshotCreates.has(oldFloor), false);
+});
+
+/**
+ * A potion drunk on one floor is still gone on the next.
+ *
+ * "Nine for the whole dungeon" is only true if a doorway does not restock the
+ * hero. Every floor rebuilds each party member from `heroSpawn`, and the
+ * consumable pair inside it is captured once when the dungeon is entered — so
+ * what makes a spend survive is that the pair is mutated in place rather than
+ * rebuilt from the avatar. Read off the wire rather than off the session,
+ * because the number the client is told is the one that decides this.
+ */
+test("a spent powerup is still spent on the next floor", async (t) => {
+  const host = member(1101, 1_201_101);
+  const oldArea = 41_000;
+  const oldFloor = 41_001;
+  host.objects.set(oldArea, CLID.DistributedDungionArea);
+  host.objects.set(oldFloor, CLID.DistributedDungeonFloor);
+  host.actors.set(host.heroDoid, { hitPoints: 200, maxHitPoints: 200, position: { x: 0, y: 0 } });
+  host.heroSpawn.consumables = [{ type: 70000, count: 9 }, {}];
+
+  const match = { id: 2, members: new Set([host]), floorIndex: 0 };
+  const world = createMatchWorld(match, host);
+  t.after(() => {
+    world.destroy();
+    host.stopManaRegen?.();
+  });
+  world.areaDoid = oldArea;
+  world.floorDoid = oldFloor;
+  world.mapNodeId = 50002;
+  world.floorPlan = await floorPlanForMapNode(50002);
+  world.floorCount = floorCountOf(world.floorPlan);
+  world.floorIndex = 0;
+  world.dungeonZone = 10;
+  world.dungeonActive = true;
+  world.dungeonEpoch = 1;
+  world.tierConstant = "TIER_1";
+  world.playerActors = new Set([host.heroDoid]);
+
+  // Two drunk on this floor, the way useConsumable spends them.
+  host.heroSpawn.consumables[0].count -= 2;
+  host.sent.length = 0;
+
+  assert.equal(await advanceFloor(world.contextFor(host)), true);
+
+  const owned = creates(host.sent, CLID.HeroGameObject).find((create) => create.owner);
+  assert.ok(owned, "the new floor generates the hero it owns");
+  assert.equal(
+    consumableCountOf(owned.frame),
+    7,
+    "the next floor carries what is left, not the nine that were equipped"
+  );
 });

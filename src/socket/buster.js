@@ -246,14 +246,22 @@ const hasPowerupWeapon = async (session, attack, weaponSlot) => {
  * account's stackable stock. Writing only the session's copy would have let a
  * reconnect hand the potion straight back.
  */
+/**
+ * Takes one off what the hero is carrying, and nothing else.
+ *
+ * The bag is deliberately untouched. It used to be decremented here as well,
+ * which was invisible only because equipping moved the whole stack out of the
+ * bag and left nothing there to decrement. Now that the bag holds everything
+ * over the carry limit, taking one from both would charge the player twice for
+ * every potion.
+ *
+ * What the bag is for is the next reconcile: leaving the dungeon tops the slot
+ * back up out of it, so a potion drunk on floor three is paid for once, from
+ * the total.
+ */
 const spendStackable = (session, stackId, slot, remaining) => {
   const avatar = session.dungeonAvatar;
   if (avatar) avatar[`consumable${slot + 1}_count`] = remaining;
-
-  const stock = session.dungeonAccount?.account_stackables?.find(
-    (row) => Number(row.stack_id) === Number(stackId)
-  );
-  if (stock) stock.count = Math.max(0, (stock.count ?? 0) - 1);
 
   session.queueAccountSave?.(session) ?? queueAccountSave(session);
 };

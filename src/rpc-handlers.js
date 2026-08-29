@@ -9,6 +9,7 @@ import {
 } from "./accounts.js";
 import { openChest, pickWeighted, ChestError, NOTHING_AWARDED } from "./chests.js";
 import { loadGameMaster } from "./gamemaster.js";
+import { moveConsumableToSlot, reconcileConsumables } from "./consumables.js";
 import { purchaseOffer, weaponSaleValue, stackableSaleValue, petSaleValue, StoreError } from "./store.js";
 import { statPointsEarned, heroLevel, STAT_CAP, STAT_SLOTS } from "./progression.js";
 import {
@@ -586,16 +587,16 @@ register("avatarmanager/equipConsumableOnAvatar", async ([accountId, avatarId, s
   const avatar = findAvatar(account, avatarId);
   if (!avatar) throw new Error(`no avatar ${avatarId} on account ${accountId}`);
 
-  const row = (account.account_stackables ?? []).find((entry) => entry.stack_id === Number(stackId));
-  if (!row) throw new Error(`no stackable ${stackId} in the bag`);
-
-  const field = consumableFields(slot);
-  // Whatever was in the slot goes back to the bag before the new stack moves in.
-  await returnToBag(account, avatar[field.id], avatar[field.count]);
-
-  avatar[field.id] = row.stack_id;
-  avatar[field.count] = row.count ?? 0;
-  account.account_stackables = account.account_stackables.filter((entry) => entry.id !== row.id);
+  /**
+   * Asked for wherever it is, not only in the bag.
+   *
+   * The bag was the only place this looked, and equipping is what takes a stack
+   * out of the bag — so moving a powerup from one slot to the other threw "no
+   * stackable in the bag" and left the client's equip screen blank. It is the
+   * same request whether the stack is bagged or already worn.
+   */
+  const moved = await moveConsumableToSlot(account, avatar, stackId, slot);
+  if (!moved) throw new Error(`no stackable ${stackId} in the bag or in a slot`);
 
   await saveAccount(account);
   return accountHeader(account, ["account_avatars", "account_stackables"]);
