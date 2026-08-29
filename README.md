@@ -142,14 +142,6 @@ not project branding and are not bundled copies of the corresponding files.
 `docs/dc-schema.json` is a generated table of those interface facts and contains
 no client implementation bodies.
 
-## Redistribution
-
-This repository's history begins at a redistributable baseline rather than at
-the beginning of the work, because Git preserves deleted files and the early
-work involved material that is not ours to publish. What may and may not be
-redistributed is in [NOTICE.md](NOTICE.md). `npm run check:public` checks the
-working tree and the history against that boundary.
-
 ## License
 
 The independently written source code is available under GPL-3.0-or-later.
