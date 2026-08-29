@@ -322,7 +322,7 @@ test("late join does not recreate an NPC that already died", async () => {
     received.some(({ clid }) => clid === CLID.DistributedNPCGameObject),
     false
   );
-  assert.equal(world.objects.has(deadNpcDoid), true, "live teardown still owns the corpse doid");
+  assert.equal(world.objects.has(deadNpcDoid), false, "and the corpse left the shared world");
 });
 
 test("one member leaving preserves the shared world and disables only that remote peer", async () => {

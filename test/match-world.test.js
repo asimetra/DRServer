@@ -452,7 +452,7 @@ test("an NPC death stays visible live but is absent from future late-join snapsh
     ),
     "clients already in the fight still receive the death"
   );
-  assert.equal(world.objects.has(npcDoid), true, "the corpse remains in live teardown state");
+  assert.equal(world.objects.has(npcDoid), false, "and the corpse is dropped from the world");
   assert.equal(world.snapshotCreates.has(npcDoid), false, "a late join never recreates the corpse");
   assert.equal(
     world.snapshotFrames("children").some(

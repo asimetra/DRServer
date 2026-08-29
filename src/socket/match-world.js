@@ -82,6 +82,9 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "summaryDoid",
   "victoryDelayMs",
   "floorCleared",
+  // How many enemies this floor has spawned, which is party-wide floor state
+  // for the same reason floorCleared is: it decides when the floor is done.
+  "enemiesSeen",
   "rewardGenerators",
   "floorExits",
   "floorTransition",
@@ -345,8 +348,8 @@ export const createMatchWorld = (match, seedSession) => {
         const clid = this.objects.get(doid);
         // Current members must see the death animation, but a future member
         // must not recreate the corpse and immediately replay that animation.
-        // Forget at the terminal state rather than waiting for a later disable:
-        // some corpses remain on the live floor until its final teardown.
+        // The disable that follows a death would forget it anyway; this forgets
+        // it a line earlier, and still covers whatever dies without one.
         if (isNpcDeathState(body, clid, fieldId)) {
           forgetSnapshotObject(this, doid);
           return true;

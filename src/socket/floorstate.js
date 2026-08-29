@@ -329,7 +329,15 @@ export const checkFloorCleared = (session) => {
     if (!actor.dead) alive++;
   }
 
-  if (!enemies || alive > 0) return false;
+  /**
+   * A floor with no enemies at all is not a cleared floor, or smashing the
+   * last barrel in an empty room would end the dungeon. That used to be read
+   * off the floor, which worked only while corpses stayed on it; they are
+   * dropped as they die now, so the floor is asked what it once held.
+   * `enemies` remains the answer for anything that never spawned through the
+   * generators, such as a hand-built floor in a test.
+   */
+  if (!(session.enemiesSeen || enemies) || alive > 0) return false;
 
   session.floorCleared = true;
   // A burning mob can die after the hero has dropped, which wins the floor with

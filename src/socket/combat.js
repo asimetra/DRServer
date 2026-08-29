@@ -20,6 +20,7 @@ import {
 } from "./buffs.js";
 import { buffForConstant } from "../gamemaster.js";
 import { beginFloorFailing, checkFloorCleared } from "./floorstate.js";
+import { objectDisable } from "./objects.js";
 import { grantMana, queueAccountSave } from "./rewards.js";
 import { collisionPointOf, hasLineOfSight, isPositionBlocked } from "./navigation.js";
 import { worldColliders } from "./heading.js";
@@ -381,8 +382,39 @@ export const applyDamage = (session, doid, damage, announce) => {
     }
     actor.onDeath?.(doid);
     if (recoverableHero) (session.beginFloorFailing ?? beginFloorFailing)(session);
-    else checkFloorCleared(session);
+    else {
+      /**
+       * After the death hook, never before it: the loot drop, the death attack
+       * and the boss chest all place themselves by reading this actor's
+       * position, and each quietly falls back to the spawn point when the
+       * actor is missing. Clearing it early does not break anything loudly, it
+       * just moves the reward back to where the monster came from.
+       *
+       * A gate is exempt — it breaks in place and stays standing to be walked
+       * into. So is a hero, which is down rather than dead and can be revived.
+       */
+      if (!actor.permCorpse) removeActor(session, doid);
+      checkFloorCleared(session);
+    }
   }
+  return true;
+};
+
+/**
+ * Takes a dead actor off the floor, as the official does within a millisecond
+ * of announcing the death — 9015 of the 9051 recorded monster deaths are
+ * followed by a disable, none later than 43ms, and the remainder are the ones
+ * still standing when the recording stops.
+ *
+ * Keeping them was costing real work rather than memory: every floor sweep
+ * walks `actors`, so a catacombs floor that ended with 141 enemies was paying
+ * for all of them on every trap tick and every AI search long after the last
+ * one could do anything.
+ */
+const removeActor = (session, doid) => {
+  if (!session.actors?.delete(doid)) return false;
+  session.objects?.delete(doid);
+  session.send(objectDisable(doid));
   return true;
 };
 

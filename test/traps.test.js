@@ -2045,7 +2045,8 @@ test("a suicide trigger destroys the npc it names, once the floor stands", async
 
   session.floorSettled = true;
   setTargets(session, { targets: ["boom"] }, true);
-  assert.ok(session.actors.get(barrelDoid).dead, "and then the barrel goes off");
+  // "and then they are gone" — the barrel is disabled as it dies, not left standing.
+  assert.ok(!session.actors.has(barrelDoid), "and then the barrel goes off");
 });
 
 /**

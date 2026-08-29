@@ -779,6 +779,14 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
             }
           : null,
     });
+    /**
+     * The floor counts the enemies it has seen because it cannot count the
+     * ones it still holds: a corpse is disabled and dropped the moment it
+     * dies, so by the time the last one falls there is nothing left to count.
+     * See checkFloorCleared, which needs to tell "everything is dead" apart
+     * from "there was never anything here".
+     */
+    if (npc.CharType === "ENEMY") session.enemiesSeen = (session.enemiesSeen ?? 0) + 1;
   }
 
   addNavigationObstacle(session.navigation, npcDoid, navigationColliders);
@@ -1961,6 +1969,7 @@ export const enterDungeon = async (
   const isActive = () => session.dungeonActive && session.dungeonEpoch === dungeonEpoch;
   session.dungeonActive = true;
   session.floorCleared = false;
+  session.enemiesSeen = 0;
   // Production creates DistributedDungeonSummary in the dungeon interest zone.
   session.dungeonZone = 10;
   session.mapNodeId = mapNodeId;
@@ -2491,6 +2500,7 @@ const advanceFloorUnlocked = async (session) => {
 
   session.floorIndex = next;
   session.floorCleared = false;
+  session.enemiesSeen = 0;
 
   const floorDoid = session.allocateDoid(CLID.DistributedDungeonFloor);
   session.floorDoid = floorDoid;
