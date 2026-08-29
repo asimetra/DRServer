@@ -244,7 +244,12 @@ test("five-member summaries put each recipient first and expose at most four rep
       return doid;
     },
   }));
-  const world = createMatchWorld({ id: 1, members: new Set(members) }, members[0]);
+  const privilegedFifth = members[4];
+  const world = createMatchWorld({
+    id: 1,
+    members: new Set(members),
+    privilegedMembers: new Set([privilegedFifth]),
+  }, members[0]);
   for (const member of members.slice(1)) world.contextFor(member);
 
   for (const recipient of members) {
@@ -254,6 +259,69 @@ test("five-member summaries put each recipient first and expose at most four rep
     assert.equal(reports[0].kills, recipient.dungeonContribution.kills);
     assert.equal(new Set(reports.map((report) => report.id)).size, 4);
   }
+
+  for (const recipient of members.slice(0, 4)) {
+    const reports = projectDungeonReports(world.contextFor(recipient), recipient, true);
+    assert.equal(
+      reports.some((report) => report.id === privilegedFifth.playerDoid),
+      false,
+      "the original four keep their complete four-player score screen"
+    );
+  }
+  const adminReports = projectDungeonReports(
+    world.contextFor(privilegedFifth),
+    privilegedFifth,
+    true
+  );
+  assert.equal(adminReports[0].id, privilegedFifth.playerDoid);
+  assert.deepEqual(
+    adminReports.slice(1).map((report) => report.id),
+    members.slice(0, 3).map((member) => member.playerDoid),
+    "the fifth member receives a safe local-first four-slot projection"
+  );
+});
+
+test("summary visibility uses the privilege marker rather than admin join order", () => {
+  const normal = {
+    accountId: 901,
+    playerDoid: 901,
+    dungeonAccount: { id: 901, name: "Normal" },
+    dungeonAvatar: { avatar_id: 101 },
+    socket: { destroyed: false },
+    objects: new Map(),
+    actors: new Map(),
+    doobers: new Map(),
+    send: () => {},
+    allocateDoid: () => 9901,
+  };
+  const earlyAdmin = {
+    ...normal,
+    accountId: 902,
+    playerDoid: 902,
+    dungeonAccount: { id: 902, name: "Admin" },
+    objects: new Map(),
+    actors: new Map(),
+    doobers: new Map(),
+    socket: { destroyed: false },
+  };
+  const match = {
+    id: 2,
+    members: new Set([earlyAdmin, normal]),
+    privilegedMembers: new Set([earlyAdmin]),
+  };
+  const world = createMatchWorld(match, earlyAdmin);
+  world.contextFor(normal);
+
+  assert.deepEqual(
+    projectDungeonReports(world.contextFor(normal), normal, true).map((report) => report.id),
+    [normal.playerDoid],
+    "ordinary recipients never expose the marked admin"
+  );
+  assert.deepEqual(
+    projectDungeonReports(world.contextFor(earlyAdmin), earlyAdmin, true).map((report) => report.id),
+    [earlyAdmin.playerDoid, normal.playerDoid],
+    "the admin keeps its own slot-zero report"
+  );
 });
 
 test("summary object is emitted at most once per dungeon", () => {

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { joinDungeonMatch, leaveDungeonSession } from "../src/socket/match-runtime.js";
+import { prepareDungeonMember } from "../src/socket/dungeon.js";
+import { beginFloorFailing, clearFloorFailing } from "../src/socket/floorstate.js";
 import { DungeonMatchRegistry } from "../src/socket/matches.js";
 import {
   dungeonAreaGenerate,
@@ -13,7 +15,7 @@ import {
 } from "../src/socket/objects.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
-import { applyDamage } from "../src/socket/combat.js";
+import { applyDamage, hitPointsUpdate } from "../src/socket/combat.js";
 
 let nextDoid = 9000;
 
@@ -212,6 +214,72 @@ test("late join replays one shared world in captured parent/owner order", async 
   assert.equal(host.world, joiner.world);
   assert.equal(host.world.actors.has(joiner.heroDoid), true);
   assert.equal(host.world.playerActors.has(joiner.heroDoid), true);
+});
+
+test("match admission account data is reused for host and late-join preparation", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(1051, 1101051);
+  const hostAccount = { marker: "host account" };
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  hosted.account = hostAccount;
+  let hostPreparedWith;
+  await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: async (context, mapNodeId, options) => {
+      hostPreparedWith = options.account;
+      return buildFixtureWorld(context, mapNodeId);
+    },
+  });
+
+  const joiner = member(1052, 1101052);
+  const joinerAccount = { marker: "joiner account" };
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  joined.account = joinerAccount;
+  let joinerPreparedWith;
+  await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: async (session, options) => {
+      joinerPreparedWith = options.account;
+      return prepareFixture(session, options);
+    },
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {},
+  });
+
+  assert.equal(hostPreparedWith, hostAccount);
+  assert.equal(joinerPreparedWith, joinerAccount);
+});
+
+test("member preparation starts each dungeon with fresh completion and summary state", async () => {
+  const session = member(1061, 1200001061);
+  session.floorPlan = { npcLevel: 1 };
+  session.completionAwarded = true;
+  session.receivedTrophy = 9;
+  session.dungeonTreasures = [{ chestId: 7 }];
+  session.dungeonContribution = { kills: 99, damage: 9999 };
+  const account = {
+    id: session.accountId,
+    name: "FreshRun",
+    basic_currency: 100,
+    active_avatar: session.fixtureAvatarDoid,
+    account_avatars: [{
+      id: session.fixtureAvatarDoid,
+      avatar_id: 101,
+      skin_type: 151,
+      experience: 0,
+    }],
+    account_items: [],
+  };
+
+  await prepareDungeonMember(session, {
+    account,
+    sendPlayerOwner: false,
+  });
+
+  assert.equal(session.dungeonAccount, account);
+  assert.equal(session.completionAwarded, false);
+  assert.equal(session.receivedTrophy, 0);
+  assert.deepEqual(session.dungeonTreasures, []);
+  assert.deepEqual(session.dungeonContribution, { kills: 0, damage: 0 });
 });
 
 test("late join does not recreate an NPC that already died", async () => {
@@ -423,4 +491,201 @@ test("two members closing together tear down without throwing", async () => {
 
   assert.doesNotThrow(() => leaveDungeonSession(joiner, { registry }));
   assert.doesNotThrow(() => leaveDungeonSession(host, { registry }));
+});
+
+/**
+ * The reported bug, through the real join path rather than a stand-in.
+ *
+ * A party wipes, the shared countdown starts, and somebody joins the match
+ * before it runs out. They arrive on full health, so the floor is no longer
+ * lost — but only a revive used to say so, and the timer ended the run with a
+ * live player standing on it.
+ */
+test("joining a wiped match stops the defeat countdown", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(2501, 1102501);
+  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+
+  // The host goes down, which is the whole party while it is alone.
+  const world = host.world;
+  const hostActor = world.actors.get(host.heroDoid);
+  hostActor.dead = true;
+  hostActor.hitPoints = 0;
+  beginFloorFailing(world.contextFor(host));
+  assert.ok(world.floorFailingTimer, "the wipe started a countdown");
+
+  const joiner = member(2502, 1102502);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {},
+  });
+
+  // The load-bearing part: a joiner arrives standing. If that ever stopped
+  // being true the countdown would be right to keep running, and this test
+  // would be asserting the wrong thing for the wrong reason.
+  const joinerActor = world.actors.get(joiner.heroDoid);
+  assert.equal(joinerActor.dead, undefined, "the joiner is not down");
+  assert.ok(joinerActor.hitPoints > 0, "and arrives on health");
+
+  assert.equal(world.floorFailingTimer, null, "so the countdown stops");
+});
+
+/**
+ * The other half of the same rule, through the real leave path.
+ *
+ * Two players, one already down. The one still standing disconnects, which is
+ * not a death and so was never a reason to check anything — but it leaves a
+ * floor with nobody up on it. The countdown has to start, or the corpse left
+ * behind waits for an ending that has no way to arrive.
+ */
+test("the last player standing leaving a match starts the defeat countdown", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(2601, 1102601);
+  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+  const joiner = member(2602, 1102602);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {},
+  });
+
+  const world = host.world;
+  // The host goes down; the joiner is still up, so nothing should be running.
+  world.actors.get(host.heroDoid).dead = true;
+  assert.ok(!world.floorFailingTimer, "one down out of two is not a wipe");
+
+  leaveDungeonSession(joiner, { registry });
+
+  assert.ok(world.floorFailingTimer, "the survivor leaving is one");
+  clearFloorFailing(world.contextFor(host));
+});
+
+test("two simultaneous late joins serialize and receive each other's remote objects", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(2701, 1102701);
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+
+  const first = member(2702, 1102702);
+  const second = member(2703, 1102703);
+  const firstResult = registry.resolve({ session: first, mapNodeId: 50082 });
+  const secondResult = registry.resolve({ session: second, mapNodeId: 50082 });
+  const yieldOnce = async () => new Promise((resolve) => setImmediate(resolve));
+  const options = {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: yieldOnce,
+  };
+
+  await Promise.all([
+    joinDungeonMatch(first, firstResult, { mapNodeId: 50082 }, options),
+    joinDungeonMatch(second, secondResult, { mapNodeId: 50082 }, options),
+  ]);
+
+  const firstObjects = first.sent.map(frameHead);
+  const secondObjects = second.sent.map(frameHead);
+  for (const [recipient, frames, peer] of [
+    [first, firstObjects, second],
+    [second, secondObjects, first],
+  ]) {
+    assert.equal(
+      frames.some(({ clid, doid }) => clid === CLID.PlayerGameObject && doid === peer.playerDoid),
+      true,
+      `${recipient.accountId} sees peer ${peer.accountId}'s player object`
+    );
+    assert.equal(
+      frames.some(({ clid, doid }) => clid === CLID.HeroGameObject && doid === peer.heroDoid),
+      true,
+      `${recipient.accountId} sees peer ${peer.accountId}'s hero object`
+    );
+  }
+  assert.equal(host.world.liveMembers.size, 3);
+  assert.equal(host.world.playerActors.size, 3);
+});
+
+test("disconnect during late-join asset wait rolls every pending world mutation back", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(2801, 1102801);
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+
+  const joiner = member(2802, 1102802);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  let enteredWait;
+  const waiting = new Promise((resolve) => {
+    enteredWait = resolve;
+  });
+  let continueJoin;
+  const blocked = new Promise((resolve) => {
+    continueJoin = resolve;
+  });
+  const joining = joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {
+      enteredWait();
+      await blocked;
+    },
+  });
+
+  await waiting;
+  const world = host.world;
+  assert.equal(world.actors.has(joiner.heroDoid), true, "the pending mutation is installed");
+  joiner.closed = true;
+  leaveDungeonSession(joiner, { registry });
+  continueJoin();
+
+  await assert.rejects(joining, /disconnected during entry/);
+  assert.equal(world.actors.has(joiner.heroDoid), false);
+  assert.equal(world.objects.has(joiner.heroDoid), false);
+  assert.equal(world.objects.has(joiner.playerDoid), false);
+  assert.equal(world.playerActors.has(joiner.heroDoid), false);
+  assert.equal(world.liveMembers.has(joiner), false);
+  assert.equal(hosted.match.members.has(joiner), false);
+});
+
+test("late join stays broadcast-inactive until its ordered snapshot is complete", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(2901, 1102901);
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+
+  const joiner = member(2902, 1102902);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const npcDoid = [...host.world.objects].find(
+    ([, clid]) => clid === CLID.DistributedNPCGameObject
+  )[0];
+  const liveUpdate = hitPointsUpdate(npcDoid, CLID.DistributedNPCGameObject, 77);
+  await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {
+      host.world.contextFor(host).send(liveUpdate);
+      assert.equal(
+        joiner.sent.includes(liveUpdate),
+        false,
+        "a joiner without its floor must not receive live world traffic"
+      );
+    },
+  });
 });

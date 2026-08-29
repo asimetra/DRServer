@@ -166,7 +166,24 @@ export const buildDungeonReport = (session, success = false) => {
 
 export const projectDungeonReports = (session, recipient, success) => {
   const members = [...membersOf(session)];
-  const ordered = [recipient, ...members.filter((member) => member !== recipient)];
+  const privileged = worldOf(session)?.match?.privilegedMembers;
+  /**
+   * The wire vector is length-prefixed, but the native score screen is not:
+   * every visible array and animation is backed by stats_a..stats_d. Keep the
+   * local member first because slot zero owns its XP, trophy and chest flow,
+   * then expose at most three ordinary peers. Privileged members are marked by
+   * admission rather than inferred from join order, so ordinary players never
+   * see an admin report even when that admin joined before the fifth slot. An
+   * admin still receives its own local report first, followed by ordinary
+   * peers. Sending the same first four to everybody would make the
+   * fifth member operate another player's slot-zero rewards.
+   */
+  const ordered = [
+    recipient,
+    ...members.filter(
+      (member) => member !== recipient && !privileged?.has(member)
+    ),
+  ];
   return ordered.slice(0, 4).map((member) =>
     buildDungeonReport(member.world?.contextFor(member) ?? member, success)
   );
@@ -262,6 +279,7 @@ export const sendDungeonSummary = (session, success) => {
    */
   removeHeroFromFloor(session);
   const cleared = clearFloorObjects(session);
+  worldOf(session)?.quiesce?.();
   info(
     `[${session.id}] generated DungeonSummary doid=${doid} success=${success ? 1 : 0} ` +
       `(${cleared} dungeon object(s) disabled)`

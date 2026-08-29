@@ -120,6 +120,16 @@ export const handleField = (session, fieldId, reader) => {
         return true;
       }
 
+      // A second entry request on the same live session is not a late join; it
+      // would prepare the same hero into its current world a second time. Door
+      // transitions explicitly leave their old match before resolving the new
+      // one, so refusing here cannot block that legitimate path.
+      if (session.dungeonMatch || session.world || session.dungeonActive) {
+        warn(`[${session.id}] refusing duplicate dungeon entry on an active session`);
+        session.send(buildEntryResponse(session.matchMakerDoid, ENTRY_ERROR.GAME_NOT_ENTERABLE));
+        return true;
+      }
+
       if (session.entryPromise) return true;
       session.entryPromise = (async () => {
         const result = await resolveMatchEntry(session, request);

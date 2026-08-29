@@ -22,6 +22,7 @@ process.env.DR_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "dr-one-sessio
 
 const { onConnection } = await import("../src/socket/index.js");
 const { clearPresence, isOnline, sessionHolding } = await import("../src/socket/presence.js");
+const { dungeonMatches } = await import("../src/socket/matches.js");
 const { PacketWriter } = await import("../src/socket/packet.js");
 const { OP } = await import("../src/socket/opcodes.js");
 
@@ -104,6 +105,35 @@ test("a second login on one account puts the first one off it", async (t) => {
   assert.ok(!second.socket.destroyed, "the newcomer keeps the account");
   assert.equal(sessionHolding(1000000005), second.session);
   assert.ok(isOnline(1000000005), "and is still online: one player, one session");
+});
+
+test("a displaced session releases its dungeon before a graceful socket close completes", async (t) => {
+  clearPresence();
+  t.after(clearPresence);
+
+  const first = await connect(1000000005);
+  const opened = dungeonMatches.resolve({
+    session: first.session,
+    mapNodeId: 50082,
+  });
+  assert.equal(opened.match.members.has(first.session), true);
+
+  // Model a slow peer: Node accepted the FIN request, but no close event has
+  // arrived yet. Match cleanup must not depend on that event.
+  first.socket.end = () => {
+    first.socket.ended = true;
+  };
+  await connect(1000000005);
+
+  assert.equal(first.session.closed, true);
+  assert.equal(first.socket.ended, true);
+  assert.equal(first.socket.destroyed, false, "the close event is deliberately still pending");
+  assert.equal(opened.match.state, "closed");
+  assert.equal(dungeonMatches.matches.has(opened.match.id), false);
+  assert.equal(dungeonMatches.matchByAccount.has(1000000005), false);
+  assert.equal(first.session.dungeonMatch, undefined);
+
+  first.socket.destroy();
 });
 
 test("displacing does not take the account offline for everybody else", async (t) => {

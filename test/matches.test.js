@@ -118,14 +118,16 @@ test("one server-authorized admin may occupy the fifth slot", () => {
   }
   assert.equal(original.members.size, 4);
 
+  const adminMember = player(99);
   const admin = registry.resolve({
-    session: player(99),
+    session: adminMember,
     friendId: host.accountId,
     adminOverride: true,
   });
   assert.equal(admin.match, original);
   assert.equal(admin.created, false);
   assert.equal(original.members.size, 5);
+  assert.equal(original.privilegedMembers.has(adminMember), true);
 
   const sixth = registry.resolve({
     session: player(100),
@@ -353,6 +355,40 @@ test("leaving removes membership and an empty match is closed", () => {
   assert.equal(member.dungeonMatch, undefined);
 });
 
+test("privileged membership follows the admitted session and is cleared on leave", () => {
+  const registry = new DungeonMatchRegistry();
+  const admin = player(801);
+  const match = registry.resolve({
+    session: admin,
+    mapNodeId: 50002,
+    adminOverride: true,
+  }).match;
+
+  assert.equal(match.privilegedMembers.has(admin), true);
+  registry.remove(admin);
+  assert.equal(match.privilegedMembers.has(admin), false);
+  assert.equal(match.state, "closed");
+});
+
+test("a second session for one account cannot orphan the first account's match", () => {
+  const registry = new DungeonMatchRegistry();
+  const first = player(700);
+  const original = registry.resolve({ session: first, mapNodeId: 50002 }).match;
+  const duplicate = player(700);
+
+  const refused = registry.resolve({ session: duplicate, mapNodeId: 50055 });
+
+  assert.equal(refused.match, null);
+  assert.equal(refused.error, "game_not_enterable");
+  assert.equal(registry.matches.size, 1, "the rejected empty candidate room was closed");
+  assert.equal(original.members.size, 1);
+  assert.equal(original.members.has(first), true);
+  assert.equal(original.members.has(duplicate), false);
+  assert.equal(registry.matchByAccount.get(first.accountId), original);
+  assert.equal(first.dungeonMatch, original);
+  assert.equal(duplicate.dungeonMatch, undefined);
+});
+
 /**
  * A run that has ended is not a game anyone can join.
  *
@@ -391,4 +427,20 @@ test("a finished run refuses a join instead of hanging it", async () => {
 
   // And whoever is reading the report is still in it.
   assert.equal(opened.match.members.size, 1);
+});
+
+test("a finished match is evicted after its bounded report-screen TTL", async () => {
+  const registry = new DungeonMatchRegistry({ finishedMatchTtlMs: 5 });
+  const host = player(901);
+  const opened = registry.resolve({ session: host, mapNodeId: 50082 });
+
+  registry.finish(opened.match);
+  assert.equal(opened.match.state, "finished");
+  await new Promise((resolve) => setTimeout(resolve, 15));
+
+  assert.equal(opened.match.state, "closed");
+  assert.equal(registry.matches.size, 0);
+  assert.equal(registry.matchByAccount.size, 0);
+  assert.equal(registry.publicByKey.size, 0);
+  assert.equal(host.dungeonMatch, undefined);
 });

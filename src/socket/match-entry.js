@@ -114,9 +114,13 @@ export const resolveMatchEntry = async (
     };
   }
 
-  return registry.resolve({
+  const resolved = registry.resolve({
     ...entry,
     eligibleForExplicitJoin,
     adminOverride,
   });
+  // Progression/admin checks already paid for this read. Hand the same object
+  // to dungeon construction so an accepted entry does not immediately read
+  // the account file a second time.
+  return account ? { ...resolved, account } : resolved;
 };

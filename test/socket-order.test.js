@@ -281,6 +281,17 @@ test("a full write buffer keeps reading paused until it drains", async () => {
   assert.equal(socket.paused, false, "and then it runs again");
 });
 
+test("a slow multiplayer recipient is disconnected before its outbound buffer is unbounded", () => {
+  const socket = fakeSocket();
+  socket.writableLength = config.maxOutboundBufferBytes;
+  const session = onConnection(socket);
+
+  assert.equal(session.send(Buffer.alloc(1)), false);
+  assert.equal(session.closed, true);
+  assert.equal(socket.destroyed, true);
+  assert.equal(socket.written.length, 0, "the frame is refused instead of buffered");
+});
+
 /** And the inverse: draining output does not resume a socket the queue holds. */
 test("a writable drain does not resume while the queue is high", async () => {
   const socket = fakeSocket();

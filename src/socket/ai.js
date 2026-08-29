@@ -43,6 +43,150 @@ const collisionRadius = (actor) =>
 const sameWave = (actor, other) =>
   actor.ai?.wave?.group && actor.ai.wave.group === other.ai?.wave?.group;
 
+/**
+ * How close this monster is allowed to stand to a hero.
+ *
+ * Bodies touching. The corpus is unambiguous that this and not the attack
+ * range is where the walk ends — for a monster standing still in a fight, the
+ * fifth percentile of its distance to the hero sits on the sum of the two
+ * bodies whatever its range happens to be:
+ *
+ *   KNIGHT            p05 67   bodies 67.9   Range  80
+ *   SKELETON_WARRIOR  p05 67   bodies 67.1   Range  80
+ *   BABY_YETI         p05 65   bodies 67.9   Range  65
+ *   RAPTOR            p05 69   bodies 71.9   Range 100
+ *   KNIGHT_HALBERD    p05 69   bodies 67.9   Range 140
+ *
+ * KNIGHT_HALBERD settles it. Its range is 140 and its bodies meet at 68, and
+ * its distances pile up in the 60-80 bin with a *trough* from there to 140 —
+ * so it is walking to contact and not stopping at its reach. Ours stopped at
+ * the reach, which put a halberd knight in a ring 140 units off the player
+ * poking at them, and a marksman in one 600 units out.
+ *
+ * Never inside the bodies, whatever the reach says. This used to allow a
+ * monster whose body is wider than its swing to stand *inside* the player so it
+ * could still connect, on the reasoning that a dragon which cannot bite is not
+ * what the table says. Thirteen of the 98 fighting rows qualified and the worst
+ * of them, GIANT_LEECH, was parked 69 units inside the player — and on the
+ * client the local hero is the only dynamic body in the room, so a monster
+ * inside it is not a monster standing close, it is the player being shoved. A
+ * BABY_YETI sat 10.4 units in for half of every tick it was engaged.
+ *
+ * The official does not do it. For those same rows its standing distance is at
+ * or beyond the bodies: BRUTE_CAVE p05 98 against bodies of 87, GREEN_BRUTE 85
+ * against 78, JUNGLE_LEECH 66 against 67, BABY_YETI 65 against 68. The reason
+ * it can afford to is that those monsters have a longer attack than the one
+ * this server gives them — BRUTE_CAVE's swings in the corpus are EN_FART_ATTACK
+ * at range 250, not the range-80 `Attack1` we read. So the clamp was
+ * compensating for a missing attack by moving the body, and the compensation
+ * belongs on the attack instead: see `heroReach` below.
+ *
+ * And except for the ones that do not want contact. `keepDistance` carries the
+ * kiters' standoff from the NPC row; see where it is read in dungeon.js for the
+ * corpus behind it.
+ */
+const heroContact = (actor, hero) => collisionRadius(actor) + collisionRadius(hero);
+
+const heroStandoff = (actor, hero) => {
+  const contact = heroContact(actor, hero);
+  const reach = Math.max(12, (actor.ai?.attackRange ?? contact) - 8);
+  return Math.max(contact, Math.min(actor.ai?.keepDistance ?? 0, reach));
+};
+
+/**
+ * How far this one may swing from.
+ *
+ * The furthest of its attacks, or the width of the two bodies if that is
+ * greater. The second case used to be thirteen rows and is now three —
+ * GIANT_LEECH, BIG_LEECH and BABY_YETI — because reading `Attack2` and
+ * `Attack3` gave the other ten something that does reach: the four brutes and
+ * the dragon all carry EN_FART_ATTACK at range 250 against bodies of 87 to 206.
+ * For the three left, a leech whose body meets the player's at 131 and whose
+ * bite reaches 70 could never bite on range alone. Letting it hit what it is
+ * physically touching costs nothing, where moving its body inside the player
+ * cost the player being shoved.
+ */
+const heroReach = (actor, hero) => Math.max(actor.ai?.attackRange ?? 0, heroContact(actor, hero));
+
+/**
+ * The one position this server must never send: a body inside the player's.
+ *
+ * On the client the local hero is the only dynamic Box2D body in the room. Every
+ * monster collider is static — `CircleNavCollider.buildBody` takes a plain
+ * `B2BodyDef`, which is static by default, and `HeroGameObjectOwner` is the only
+ * thing that ever assigns `b2_dynamicBody`. That asymmetry is the whole story of
+ * the shoving:
+ *
+ *   a static body a player walks into does nothing. The player is blocked and
+ *   stops, which is ordinary collision and how it should feel;
+ *
+ *   a static body *moved into* the player is resolved by Box2D's position
+ *   correction, and since only one of the two can move, the player is what
+ *   moves. That is the slide.
+ *
+ * So the question is not how close a monster stands, it is how often we send it
+ * somewhere overlapping. Measured on six knights round one player, before this:
+ * 7.3% of emitted positions overlapped while the player stood still, and 14.9%
+ * while the player walked — one in seven, a median of 6.3 units deep and up to
+ * 43. Walking is worse for the obvious reason, that the chase aims at where the
+ * player was last heard from and the player is no longer there.
+ *
+ * Clamping the destination rather than the step, and before navigation rather
+ * than after, so a wall still wins the argument.
+ */
+const keptOutOfHeroes = (target, actor, heroes) => {
+  let { x, y } = target;
+  for (const hero of heroes) {
+    if (!hero.position || !hero.actor) continue;
+    const contact = heroContact(actor, hero.actor);
+    let dx = x - hero.position.x;
+    let dy = y - hero.position.y;
+    let distance = Math.hypot(dx, dy);
+    if (distance >= contact) continue;
+    // Exactly on top of the player has no direction to be pushed out along;
+    // any fixed one will do, and the chase will correct it next tick.
+    if (distance < 0.001) {
+      dx = 1;
+      dy = 0;
+      distance = 1;
+    }
+    x = hero.position.x + (dx / distance) * contact;
+    y = hero.position.y + (dy / distance) * contact;
+  }
+  return { x, y };
+};
+
+/**
+ * The attacks it could use from here, right now.
+ *
+ * Three things have to hold, and all three are authored on the attack row.
+ * `MinRange` and `Range` are the band — a spear throw with a MinRange of 400 is
+ * not a thing an imp does to someone standing on its toes — and `AI_RechargeT`
+ * is that attack's own cooldown, which is what makes a shaman's fifteen-second
+ * summon rare among its three-second bolts. The band's top is widened to the
+ * bodies for the same reason `heroReach` is.
+ *
+ * An `ai` built before this existed, or by a test, has its single attack
+ * promoted into the same shape rather than being special-cased below.
+ */
+const usableAttacks = (ai, distance, contact, now) => {
+  ai.attacks ??= [
+    {
+      attackType: ai.attackType,
+      range: ai.attackRange ?? 0,
+      minRange: 0,
+      rechargeMs: 0,
+      readyAt: 0,
+    },
+  ];
+  return ai.attacks.filter(
+    (attack) =>
+      now >= (attack.readyAt ?? 0) &&
+      distance >= (attack.minRange ?? 0) &&
+      distance <= Math.max(attack.range ?? 0, contact)
+  );
+};
+
 const clearNpcTarget = (actor) => {
   const { ai } = actor;
   if (!ai) return;
@@ -150,30 +294,13 @@ const separationDisplacement = (doid, actor, spatialIndex, heroDoids) => {
          * A burst may stand shoulder to shoulder; it may not stand inside
          * itself. Unrelated NPCs keep a little air between them as well.
          *
-         * Against the player it is bodies exactly — close enough to still be in
-         * reach of whatever they are swinging, far enough not to stand where
-         * the player is standing.
+         * Measured against the official for monsters standing in a fight, the
+         * nearest peer sits on the sum of the two bodies: KNIGHT p25 84 against
+         * 84, BRUTE p25 85 against 88, ICE_IMP p25 70 against 70. The player is
+         * the same rule with one exception, which `heroStandoff` carries.
          */
-        /**
-         * Against the player, never further than it can swing.
-         *
-         * Holding a monster a body's width off the hero is right until the body
-         * is wider than the reach, and then it is a monster that hovers outside
-         * its own attack for ever. Two of the game's 117 attackable rows are
-         * exactly that — Red Dragon, body 120, and Blue Dragon, body 100, both
-         * authored with a range of 80 — and a dragon that cannot bite is not
-         * what the table says. It was already true before anything here kept
-         * them apart properly: measured, the Red Dragon settled at 179 and
-         * never once got inside its 80.
-         *
-         * So the bar against the hero is the body or the reach, whichever is
-         * the smaller. For everything of ordinary size the body is smaller and
-         * nothing changes; only the ones big enough to trap themselves are let
-         * closer.
-         */
-        const reach = Math.max(12, (actor.ai?.attackRange ?? bodies) - 8);
         const minimumDistance = heroDoids.has(otherDoid)
-          ? Math.min(bodies, reach)
+          ? heroStandoff(actor, other)
           : sameWave(actor, other)
             ? bodies
             : bodies + 8;
@@ -313,7 +440,8 @@ const advanceNpcRelease = (
   deltaSeconds,
   spatialIndex,
   heroDoid,
-  heroPosition
+  heroPosition,
+  heroes = []
 ) => {
   const { ai } = actor;
   const release = ai.release;
@@ -387,13 +515,21 @@ const advanceNpcRelease = (
   const separation = spatialIndex
     ? boundedPush(separationDisplacement(doid, actor, spatialIndex, heroDoids), ai, deltaSeconds)
     : { x: 0, y: 0 };
+  // A cage exit may not run through the player either; see `keptOutOfHeroes`.
+  // The release point is a doorway, not a destination, and walking a body into
+  // the one dynamic body on the client shoves the player whatever the reason.
+  const wanted = keptOutOfHeroes(
+    {
+      x: actor.position.x + ((release.target.x - actor.position.x) / distance) * travel + separation.x,
+      y: actor.position.y + ((release.target.y - actor.position.y) / distance) * travel + separation.y,
+    },
+    actor,
+    heroes
+  );
   const nextPosition = moveWithNavigation(
     session.navigation,
     actor.position,
-    {
-      x: ((release.target.x - actor.position.x) / distance) * travel + separation.x,
-      y: ((release.target.y - actor.position.y) / distance) * travel + separation.y,
-    },
+    { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
     radius,
     { ignoredColliders: release.ignoredColliders }
   );
@@ -479,7 +615,8 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         deltaSeconds,
         spatialIndex,
         victim.doid,
-        target
+        target,
+        heroes
       )
     ) continue;
 
@@ -538,11 +675,35 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const crowding = separationDisplacement(doid, actor, spatialIndex, heroDoids);
     const separation = boundedPush(crowding, ai, deltaSeconds);
 
+    /**
+     * The walk ends where the bodies meet, not where the swing starts.
+     *
+     * Stopping at `attackRange` drew every pack as a ring of the same radius
+     * with the player alone in the middle: a halberd knight held 140 off, a
+     * marksman 600, and a whole wave of one kind at identical range from the
+     * player and from each other. The official does not do that — see
+     * `heroStandoff` for the corpus that says where it does stop — and the
+     * range is only ever asked one question, which is whether the thing may
+     * swing from where it now stands. That question is still below.
+     */
+    const standoff = heroStandoff(actor, victim.actor);
     let chaseX = 0;
     let chaseY = 0;
-    if (route.waypoint && (distance > ai.attackRange || !route.direct)) {
+    /**
+     * A lunge overrides the walk for as long as it lasts.
+     *
+     * It is the attack moving the monster, not the monster deciding to go
+     * somewhere, so the chase does not get a say — an imp that has just hopped
+     * backwards must not spend the same tick walking forwards again. Debuffs
+     * still apply: `MOVEMENT` zero is a stun, and a stunned thing does not
+     * charge.
+     */
+    if (ai.lunge && now < ai.lunge.until) {
+      chaseX = ai.lunge.x * mobility * deltaSeconds;
+      chaseY = ai.lunge.y * mobility * deltaSeconds;
+    } else if (route.waypoint && (distance > standoff || !route.direct)) {
       const waypointDistance = distanceTo(actor.position, route.waypoint);
-      const remaining = route.direct ? Math.max(0, distance - ai.attackRange) : waypointDistance;
+      const remaining = route.direct ? Math.max(0, distance - standoff) : waypointDistance;
       const chaseTravel = Math.min(speed * deltaSeconds, remaining);
       if (waypointDistance > 0.001) {
         chaseX = ((route.waypoint.x - actor.position.x) / waypointDistance) * chaseTravel;
@@ -557,12 +718,17 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     // Both halves arrive already bounded — the chase by the debuffed speed and
     // the push by the undebuffed one — so clamping the sum again here is what
     // used to take the separation back out of it.
-    const requestedTravel = Math.hypot(moveX, moveY);
+    const wanted = keptOutOfHeroes(
+      { x: actor.position.x + moveX, y: actor.position.y + moveY },
+      actor,
+      heroes
+    );
+    const requestedTravel = distanceTo(actor.position, wanted);
     if (requestedTravel > 0.001) {
       const nextPosition = moveWithNavigation(
         session.navigation,
         actor.position,
-        { x: moveX, y: moveY },
+        { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
         collisionRadius(actor)
       );
       const actualTravel = distanceTo(actor.position, nextPosition);
@@ -581,7 +747,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       target,
       0
     );
-    if (distance > ai.attackRange || !clearAttack) {
+    if (distance > heroReach(actor, victim.actor) || !clearAttack) {
       ai.state = route.waypoint ? "chase" : "blocked";
       continue;
     }
@@ -593,11 +759,45 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     if (stunned) continue;
     if (now < ai.nextAttackAt) continue;
 
+    /**
+     * Which of its moves this swing is.
+     *
+     * Being in reach is not the same as having something to throw: an imp
+     * standing on the player is inside the MinRange of its spear and may have
+     * spent its headbutt, and the honest answer then is that this swing does not
+     * happen. Not rolling the cadence in that case is deliberate — it retries on
+     * the next tick rather than burning the interval on a swing it could not
+     * make.
+     */
+    const choices = usableAttacks(ai, distance, heroContact(actor, victim.actor), now);
+    if (!choices.length) continue;
+    const chosen = choices[Math.floor(Math.random() * choices.length)];
+    chosen.readyAt = now + (chosen.rechargeMs ?? 0);
+
+    /**
+     * The lunge the attack itself carries, if it carries one.
+     *
+     * A constant velocity for `MoveDuration` at `MoveAngle` degrees off the way
+     * it is facing, which is what the client does for the player and what the
+     * corpus shows the official doing for monsters. `faceTarget` ran a moment
+     * ago, so the heading is at the victim and an angle of 0 is a charge at
+     * them while 180 is a hop backwards.
+     */
+    if (chosen.moveAmount > 0 && chosen.moveDurationMs > 0) {
+      const angle = ((actor.heading + chosen.moveAngle) * Math.PI) / 180;
+      const speed = chosen.moveAmount / (chosen.moveDurationMs / 1000);
+      ai.lunge = {
+        until: now + chosen.moveDurationMs,
+        x: Math.cos(angle) * speed,
+        y: Math.sin(angle) * speed,
+      };
+    }
+
     ai.nextAttackAt = now + attackIntervalMs(ai);
     // Awaited so the hit lands before the tick moves on: damage is the
     // server's own bookkeeping and must not race the next frame.
     const victimSession = victim.member.world?.contextFor(victim.member) ?? victim.member;
-    await performNpcAttack(victimSession, doid, ai);
+    await performNpcAttack(victimSession, doid, { ...ai, ...chosen });
   }
 };
 

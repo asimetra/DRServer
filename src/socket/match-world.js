@@ -78,6 +78,8 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "floorFinished",
   "floorSettled",
   "victoryTimer",
+  "summaryTimer",
+  "summaryDoid",
   "victoryDelayMs",
   "floorCleared",
   "rewardGenerators",
@@ -86,6 +88,7 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "debugTriggers",
   "debugAi",
   "suicideFired",
+  "speakers",
   "playerActors",
   "activeBuffs",
   "buffTimers",
@@ -119,12 +122,12 @@ const activeMembersOf = (match) => {
   return members;
 };
 
-const attachMember = (world, member) => {
+const bindMember = (world, member, { activate = true } = {}) => {
   if (!member) return member;
   if (world.destroyed) throw new Error("cannot attach a member to a destroyed match world");
   if (shouldSkipMember(member, null)) throw new Error("cannot attach a closed match member");
   activeMembersOf(world.match).add(member);
-  world.liveMembers.add(member);
+  if (activate) world.liveMembers.add(member);
   member.world = world;
   return member;
 };
@@ -137,8 +140,51 @@ const bodyOf = (frame) =>
 
 const updateKey = (doid, fieldId) => `${doid}:${fieldId}`;
 
+/** DistributedNPCGameObject transform fields. */
+const NPC_POSITION_FIELD = 132;
+const NPC_HEADING_FIELD = 133;
+
 /** DistributedNPCGameObject::state(String). */
 const NPC_STATE_FIELD = 138;
+
+/**
+ * Byte offsets in a complete framed visible NPC generate.
+ *
+ * length(2), opcode(2), parent(4), zone(4), clid(2), doid(4),
+ * npcType(4), level(1), x(4), y(4), heading(4).
+ */
+const NPC_CREATE_X_OFFSET = 23;
+const NPC_CREATE_Y_OFFSET = 27;
+const NPC_CREATE_HEADING_OFFSET = 31;
+const NPC_CREATE_TRANSFORM_END = NPC_CREATE_HEADING_OFFSET + 4;
+
+/**
+ * A late join needs the world as it is now, not the create history that led to
+ * it. Folding the authoritative actor transform into a cloned create avoids a
+ * visible spawn-position -> current-position teleport. This runs only while a
+ * snapshot is requested; ordinary AI ticks keep their existing O(1) update.
+ */
+const currentNpcCreateFrame = (world, entry) => {
+  if (
+    entry.clid !== CLID.DistributedNPCGameObject ||
+    entry.frame.length < NPC_CREATE_TRANSFORM_END
+  ) {
+    return null;
+  }
+  const actor = world.actors.get(entry.doid);
+  const x = Number(actor?.position?.x);
+  const y = Number(actor?.position?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+  const frame = Buffer.from(entry.frame);
+  frame.writeFloatLE(x, NPC_CREATE_X_OFFSET);
+  frame.writeFloatLE(y, NPC_CREATE_Y_OFFSET);
+  const heading = Number(actor?.heading);
+  if (Number.isFinite(heading)) {
+    frame.writeFloatLE(heading, NPC_CREATE_HEADING_OFFSET);
+  }
+  return frame;
+};
 
 const isNpcDeathState = (body, clid, fieldId) => {
   if (clid !== CLID.DistributedNPCGameObject || fieldId !== NPC_STATE_FIELD) return false;
@@ -263,11 +309,13 @@ export const createMatchWorld = (match, seedSession) => {
     destroyed: false,
     ready: false,
     readyPromise,
+    operationTail: Promise.resolve(),
     contexts: new WeakMap(),
     liveMembers: new Set(),
     snapshotCreates: new Map(),
     snapshotUpdates: new Map(),
     snapshotClosure: null,
+    quiesced: false,
     allocateDoid(clid) {
       return seedSession.allocateDoid.call(this, clid);
     },
@@ -366,6 +414,7 @@ export const createMatchWorld = (match, seedSession) => {
     },
     snapshotFrames(phase = "all") {
       const infrastructureDoids = new Set();
+      const foldedNpcTransforms = new Set();
       const frames = [];
       for (const entry of this.snapshotCreates.values()) {
         const area = entry.clid === CLID.DistributedDungionArea;
@@ -379,7 +428,9 @@ export const createMatchWorld = (match, seedSession) => {
           (phase === "foundation" && infrastructure) ||
           (phase === "children" && !infrastructure)
         ) {
-          frames.push(entry.frame);
+          const currentNpc = currentNpcCreateFrame(this, entry);
+          frames.push(currentNpc ?? entry.frame);
+          if (currentNpc) foldedNpcTransforms.add(entry.doid);
         }
       }
       for (const update of this.snapshotUpdates.values()) {
@@ -387,6 +438,12 @@ export const createMatchWorld = (match, seedSession) => {
         const area = entry?.clid === CLID.DistributedDungionArea;
         const floor = entry?.clid === CLID.DistributedDungeonFloor;
         const infrastructure = infrastructureDoids.has(update.doid);
+        if (
+          foldedNpcTransforms.has(update.doid) &&
+          (update.fieldId === NPC_POSITION_FIELD || update.fieldId === NPC_HEADING_FIELD)
+        ) {
+          continue;
+        }
         if (
           phase === "all" ||
           (phase === "area" && area) ||
@@ -432,14 +489,70 @@ export const createMatchWorld = (match, seedSession) => {
       settleReady(true);
       return true;
     },
-    contextFor(member) {
+    runExclusive(operation) {
+      const before = this.operationTail.catch(() => undefined);
+      const running = before.then(() => {
+        if (this.destroyed) throw new Error("cannot operate on a destroyed match world");
+        return operation();
+      });
+      this.operationTail = running.catch(() => undefined);
+      return running;
+    },
+    contextFor(member, { activate = true } = {}) {
       if (this.destroyed) throw new Error("cannot create a context for a destroyed match world");
-      attachMember(this, member);
+      bindMember(this, member, { activate });
       const cached = this.contexts.get(member);
       if (cached) return cached;
       const context = new Proxy({}, proxyHandlerFor(this, member));
       this.contexts.set(member, context);
       return context;
+    },
+    quiesce() {
+      this.quiesced = true;
+      this.dungeonActive = false;
+      this.dungeonEpoch = (this.dungeonEpoch ?? 0) + 1;
+
+      for (const key of ["stopTriggers", "stopAi", "stopTrapProjectiles"]) {
+        if (typeof this[key] === "function") this[key]();
+        this[key] = null;
+      }
+      for (const stop of this.generatorStops?.values?.() ?? []) stop?.();
+      this.generatorStops?.clear?.();
+      for (const stops of [this.hazardBeats, this.turretAims]) {
+        for (const stop of stops?.values?.() ?? []) stop?.();
+        stops?.clear?.();
+      }
+
+      for (const timer of [this.floorFailingTimer, this.victoryTimer, this.summaryTimer]) {
+        clearTimeout(timer);
+      }
+      this.floorFailingTimer = null;
+      this.victoryTimer = null;
+      this.summaryTimer = null;
+
+      for (const timers of [this.logicGateTimers, this.buffTimers, this.dooberTimers]) {
+        for (const timer of timers?.values?.() ?? []) clearTimeout(timer);
+        timers?.clear?.();
+      }
+      for (const timers of [this.powerupSpawnTimers, this.placeableSpawnTimers]) {
+        for (const timer of timers ?? []) clearTimeout(timer);
+        timers?.clear?.();
+      }
+      for (const timer of this.damageOverTimeTimers ?? []) clearInterval(timer);
+      this.damageOverTimeTimers?.clear?.();
+      for (const live of this.placeables?.values?.() ?? []) {
+        clearInterval(live.ticker);
+        clearTimeout(live.expiry);
+      }
+      this.placeables?.clear?.();
+      this.activeBuffs?.clear?.();
+      this.powerupCooldownUntil?.clear?.();
+
+      for (const member of activeMembersOf(this.match)) {
+        member.stopManaRegen?.();
+        member.stopManaRegen = null;
+      }
+      return true;
     },
     detachMember(member) {
       if (!member) return false;
@@ -453,19 +566,9 @@ export const createMatchWorld = (match, seedSession) => {
       if (this.destroyed) return false;
       this.destroyed = true;
       this.active = false;
-      this.dungeonActive = false;
-      this.dungeonEpoch = (this.dungeonEpoch ?? 0) + 1;
+      this.quiesce();
       if (!this.ready) settleReady(false);
       if (this.match?.world === this) this.match.world = null;
-      for (const stop of [
-        this.stopTriggers,
-        this.stopAi,
-        this.stopTrapProjectiles,
-      ]) {
-        if (typeof stop === "function") stop();
-      }
-      for (const stop of this.generatorStops?.values?.() ?? []) stop?.();
-      this.generatorStops?.clear?.();
       for (const member of activeMembersOf(this.match)) {
         this.contexts.delete(member);
         if (member.world === this) member.world = null;
@@ -474,12 +577,15 @@ export const createMatchWorld = (match, seedSession) => {
       this.snapshotCreates.clear();
       this.snapshotUpdates.clear();
       this.snapshotClosure = null;
+      this.objects.clear();
+      this.actors.clear();
+      this.doobers.clear();
       return true;
     },
   };
 
   snapshotSharedState(world, seedSession);
-  attachMember(world, seedSession);
+  bindMember(world, seedSession);
   match.world = world;
   return world;
 };

@@ -15,6 +15,7 @@
 import { getMapNodeBit } from "../map-progress.js";
 
 export const MAX_DUNGEON_PLAYERS = 4;
+const DEFAULT_FINISHED_MATCH_TTL_MS = 10 * 60 * 1000;
 /** Bit 0 is reserved locally for server-authorized dungeon administration. */
 export const DUNGEON_ADMIN_OVERRIDE_FLAG = 1;
 
@@ -71,9 +72,14 @@ export const activeAvatarEligibleForExplicitJoin = (account, node, mapNodes) => 
 };
 
 export class DungeonMatchRegistry {
-  constructor({ maxPlayers = MAX_DUNGEON_PLAYERS, publicFloorZeroOnly = true } = {}) {
+  constructor({
+    maxPlayers = MAX_DUNGEON_PLAYERS,
+    publicFloorZeroOnly = true,
+    finishedMatchTtlMs = DEFAULT_FINISHED_MATCH_TTL_MS,
+  } = {}) {
     this.maxPlayers = maxPlayers;
     this.publicFloorZeroOnly = publicFloorZeroOnly;
+    this.finishedMatchTtlMs = Math.max(0, Number(finishedMatchTtlMs) || 0);
     this.nextId = 1;
     this.matches = new Map();
     this.matchByAccount = new Map();
@@ -90,6 +96,8 @@ export class DungeonMatchRegistry {
       private: Boolean(privateMatch),
       floorIndex: 0,
       members: new Set(),
+      /** Server-authorized members hidden from ordinary four-slot scorecards. */
+      privilegedMembers: new Set(),
       state: "forming",
       createdAt: Date.now(),
       world: null,
@@ -123,6 +131,10 @@ export class DungeonMatchRegistry {
       if (remaining.length) this.publicByKey.set(key, remaining);
       else this.publicByKey.delete(key);
     }
+    if (this.finishedMatchTtlMs > 0) {
+      match.finishTimer = setTimeout(() => this.close(match), this.finishedMatchTtlMs);
+      match.finishTimer.unref?.();
+    }
     return true;
   }
 
@@ -140,8 +152,23 @@ export class DungeonMatchRegistry {
     if (!this.canJoin(match, { adminOverride })) return false;
     if (!session?.accountId) throw new Error("a matched session needs an account id");
     const previous = this.matchByAccount.get(session.accountId);
-    if (previous && previous !== match) this.remove(session);
+    if (previous) {
+      const previousMember = [...previous.members].find(
+        (member) => member.accountId === session.accountId
+      );
+      // The socket layer normally displaces and tears down the old session
+      // first. Keep the registry fail-closed as well: an async admission from
+      // that displaced session must not evict or coexist with the live one.
+      if (previousMember && (previousMember !== session || previous !== match)) return false;
+      if (previousMember === session && previous === match) {
+        if (adminOverride === true) match.privilegedMembers?.add(session);
+        return true;
+      }
+      // Repair a stale index that has no corresponding member.
+      this.matchByAccount.delete(session.accountId);
+    }
     match.members.add(session);
+    if (adminOverride === true) match.privilegedMembers?.add(session);
     match.state = "active";
     session.dungeonMatch = match;
     this.matchByAccount.set(session.accountId, match);
@@ -153,6 +180,7 @@ export class DungeonMatchRegistry {
     if (!match) return null;
     if (match.world?.detachMember) match.world.detachMember(session);
     else match.members.delete(session);
+    match.privilegedMembers?.delete(session);
     if (session?.accountId && this.matchByAccount.get(session.accountId) === match) {
       this.matchByAccount.delete(session.accountId);
     }
@@ -164,6 +192,8 @@ export class DungeonMatchRegistry {
   close(match) {
     if (!match || match.state === "closed") return false;
     match.state = "closed";
+    clearTimeout(match.finishTimer);
+    match.finishTimer = null;
     this.matches.delete(match.id);
     match.world?.destroy?.();
     if (!match.private) {
@@ -177,6 +207,7 @@ export class DungeonMatchRegistry {
       if (member.dungeonMatch === match) delete member.dungeonMatch;
     }
     match.members.clear();
+    match.privilegedMembers?.clear();
     return true;
   }
 
@@ -240,7 +271,14 @@ export class DungeonMatchRegistry {
         };
       }
       const match = target;
-      this.add(match, session, { adminOverride: privileged });
+      if (!this.add(match, session, { adminOverride: privileged })) {
+        return {
+          match: null,
+          created: false,
+          source: mapId ? "map" : "friend",
+          error: "game_not_enterable",
+        };
+      }
       return { match, created: false, source: mapId ? "map" : "friend" };
     }
 
@@ -258,11 +296,26 @@ export class DungeonMatchRegistry {
     }
     if (!match) {
       match = this.create({ mapNodeId, group, privateMatch: Boolean(friendOnly) });
-      this.add(match, session, { adminOverride: privileged });
+      if (!this.add(match, session, { adminOverride: privileged })) {
+        this.close(match);
+        return {
+          match: null,
+          created: false,
+          source: friendOnly ? "private" : "public",
+          error: "game_not_enterable",
+        };
+      }
       return { match, created: true, source: friendOnly ? "private" : "public" };
     }
 
-    this.add(match, session, { adminOverride: privileged });
+    if (!this.add(match, session, { adminOverride: privileged })) {
+      return {
+        match: null,
+        created: false,
+        source: "public",
+        error: "game_not_enterable",
+      };
+    }
     return { match, created: false, source: "public" };
   }
 }

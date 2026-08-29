@@ -18,6 +18,7 @@ test("normal public matching loads the server-owned role once per session", asyn
   const registry = new DungeonMatchRegistry();
   const session = player(1);
   const node = { Id: 50002, NodeType: "BOSS", BitIndex: 0 };
+  const account = { admin_flags: 0 };
   let accountLoads = 0;
   const result = await resolveMatchEntry(
     session,
@@ -26,7 +27,7 @@ test("normal public matching loads the server-owned role once per session", asyn
       registry,
       loadAccountById: async () => {
         accountLoads++;
-        return { admin_flags: 0 };
+        return account;
       },
       loadGameMasterData: async () => ({
         raw: { MapPage: [node] },
@@ -37,6 +38,7 @@ test("normal public matching loads the server-owned role once per session", asyn
 
   assert.equal(result.match.mapNodeId, 50002);
   assert.equal(result.source, "public");
+  assert.equal(result.account, account, "the admission read is reusable by dungeon setup");
   const repeated = await resolveMatchEntry(session, request({ mapNodeId: 50002 }), {
     registry,
     loadAccountById: async () => {

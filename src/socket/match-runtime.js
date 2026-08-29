@@ -17,6 +17,7 @@ import {
   prepareDungeonMember,
   rescaleNpcHealthForParty,
 } from "./dungeon.js";
+import { refreshFloorFailing } from "./floorstate.js";
 import { createMatchWorld, isLiveMember, membersOf } from "./match-world.js";
 import { dungeonMatches } from "./matches.js";
 import {
@@ -128,10 +129,12 @@ const sendRemoteHeroState = (recipient, peer, world) => {
  * The successful MatchMaker response is sent by the caller immediately before
  * this function, matching the captured wire order.
  */
-export const joinDungeonMatch = async (
+const joinDungeonMatchLocked = async (
   session,
   result,
   request,
+  world,
+  buildHost,
   {
     buildFirstMember = enterDungeon,
     prepareMember = prepareDungeonMember,
@@ -144,10 +147,11 @@ export const joinDungeonMatch = async (
   if (!match) throw new Error("joinDungeonMatch needs an admitted match");
   requireOpenMember(session);
 
-  if (!match.world) {
-    const world = createMatchWorld(match, session);
+  if (buildHost) {
     const context = world.contextFor(session);
-    const built = await buildFirstMember(context, match.mapNodeId);
+    const built = await buildFirstMember(context, match.mapNodeId, {
+      account: result.account,
+    });
     requireOpenMember(session);
     if (world.destroyed) throw new Error(`match ${match.id} world closed during build`);
     if (!built) {
@@ -163,13 +167,15 @@ export const joinDungeonMatch = async (
     return { match, world, lateJoin: false };
   }
 
-  const world = match.world;
   if (!(await world.readyPromise) || world.destroyed) {
     throw new Error(`match ${match.id} world did not become ready`);
   }
   requireOpenMember(session);
 
-  const prepared = await prepareMember(session, { sendPlayerOwner: false });
+  const prepared = await prepareMember(session, {
+    sendPlayerOwner: false,
+    account: result.account,
+  });
   requireOpenMember(session);
   if (!prepared) throw new Error(`member ${session.accountId} preparation was cancelled`);
   session.dungeonActive = true;
@@ -177,6 +183,9 @@ export const joinDungeonMatch = async (
   session.mapNodeId = match.mapNodeId;
   session.floorIndex = world.floorIndex ?? match.floorIndex ?? 0;
   setPresenceLocation(session, match.mapNodeId);
+  // Bound for teardown, but deliberately absent from liveMembers until the
+  // ordered snapshot has created this member's area/floor/owner objects.
+  const context = world.contextFor(session, { activate: false });
 
   const existing = [...membersOf(world)];
   const friend = request.friendId
@@ -187,38 +196,44 @@ export const joinDungeonMatch = async (
 
   rememberMemberObjects(session, world);
   installHeroActor(session, world, position);
-  // The floor may have been generated while only the host was attached. Bring
-  // every live NPC to the new party scale before this member receives its
-  // compact snapshot; existing members see the same authoritative HP update.
-  if (existing[0]) {
-    rescaleNpcHealthForParty(world.contextFor(existing[0]), existing.length + 1);
-  }
+  const liveExisting = () => existing.filter(
+    (member) => isLiveMember(member) && membersOf(world).has(member)
+  );
 
   // Captured order: local player, area, remote players, floor, local hero,
   // remote heroes, current floor children/state, interest closure.
   directSend(session, playerFrame(session, true, world.areaDoid));
   world.sendSnapshot(session, "area");
-  for (const peer of existing) directSend(session, playerFrame(peer, false, world.areaDoid));
+  for (const peer of liveExisting()) {
+    directSend(session, playerFrame(peer, false, world.areaDoid));
+  }
   // DistributedDungionArea starts asynchronous tile-library/cache loading.
   // The ordinary first-member path waits before creating its floor; replay must
   // preserve that gap or TileFactory reads a library that is not in cache yet.
   await waitForAssets();
   requireOpenMember(session);
+  // Bring every live NPC to the party size that will exist when this member is
+  // activated. Publishing through the pending context updates incumbents and
+  // the compact snapshot, but not the joiner before its floor exists.
+  rescaleNpcHealthForParty(context, membersOf(world).size + 1);
   world.sendSnapshot(session, "floor");
   directSend(session, heroFrame(session, true, world.floorDoid, position));
-  for (const peer of existing) {
+  const peers = liveExisting();
+  for (const peer of peers) {
     directSend(session, heroFrame(peer, false, world.floorDoid, memberPosition(peer, position)));
     sendRemoteHeroState(session, peer, world);
   }
   world.sendSnapshot(session, "children");
 
   // Existing clients already have the world; they receive only the new member.
-  for (const peer of existing) {
+  for (const peer of peers) {
     directSend(peer, playerFrame(session, false, world.areaDoid));
     directSend(peer, heroFrame(session, false, world.floorDoid, position));
   }
 
-  const context = world.contextFor(session);
+  world.contextFor(session);
+  /** A joiner arrives standing, so a wipe in progress is no longer a wipe. */
+  refreshFloorFailing(context);
   await grantArrivalBuff(context, "SPAWN_INVULNERBILITY", {
     affectedActor: session.heroDoid,
   });
@@ -226,6 +241,17 @@ export const joinDungeonMatch = async (
   session.stopManaRegen = await beginManaRegen(context);
   info(`[${session.id}] joined match ${match.id} on floor ${session.floorIndex + 1}`);
   return { match, world, lateJoin: true };
+};
+
+export const joinDungeonMatch = async (session, result, request, options = {}) => {
+  const match = result?.match;
+  if (!match) throw new Error("joinDungeonMatch needs an admitted match");
+  requireOpenMember(session);
+  const buildHost = !match.world;
+  const world = match.world ?? createMatchWorld(match, session);
+  return world.runExclusive(() =>
+    joinDungeonMatchLocked(session, result, request, world, buildHost, options)
+  );
 };
 
 const disablePriority = (clid) => {
@@ -303,6 +329,16 @@ export const leaveDungeonSession = (
   registry.remove(session);
   if (peers[0]) {
     rescaleNpcHealthForParty(world.contextFor(peers[0]), peers.length);
+    /**
+     * Leaving changes who is standing as much as dying does.
+     *
+     * The last player on their feet walking out leaves a floor of corpses.
+     * Nothing else would ever fail it — the countdown starts on a death, and
+     * there is no death left to come — so the run hung with no ending on the
+     * way. Asked after the departing member is out of the shared maps, so the
+     * question is about the party that remains.
+     */
+    refreshFloorFailing(world.contextFor(peers[0]));
   }
   return true;
 };

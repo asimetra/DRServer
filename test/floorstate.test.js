@@ -5,12 +5,15 @@ import {
   beginFloorFailing,
   buildDungeonEnding,
   cancelFloorFailing,
+  cancelVictory,
   checkFloorCleared,
   clearFloorFailing,
   completeFloor,
+  refreshFloorFailing,
   reportFloorFailed,
 } from "../src/socket/floorstate.js";
 import { createMatchWorld } from "../src/socket/match-world.js";
+import { dungeonMatches } from "../src/socket/matches.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
 
@@ -100,6 +103,45 @@ test("a shared-world victory awards every remaining member once", async () => {
 
   assert.deepEqual(awarded.sort((a, b) => a - b), [10, 11]);
   world.destroy();
+});
+
+test("final-floor completion closes matchmaking before the victory delay", () => {
+  let nextDoid = 70_000;
+  const host = {
+    id: 70,
+    accountId: 70,
+    objects: new Map(),
+    actors: new Map(),
+    doobers: new Map(),
+    socket: { destroyed: false },
+    send: () => {},
+    allocateDoid(clid) {
+      const doid = nextDoid++;
+      if (clid !== undefined) this.objects.set(doid, clid);
+      return doid;
+    },
+  };
+  const opened = dungeonMatches.resolve({ session: host, mapNodeId: 50082 });
+  const world = createMatchWorld(opened.match, host);
+  world.areaDoid = 700;
+  world.floorIndex = 0;
+  world.floorCount = 1;
+  world.dungeonActive = true;
+  world.victoryDelayMs = 60_000;
+  const context = world.contextFor(host);
+
+  assert.equal(completeFloor(context), true);
+  assert.equal(opened.match.state, "finished");
+  const refused = dungeonMatches.resolve({
+    session: { accountId: 71 },
+    friendId: host.accountId,
+    eligibleForExplicitJoin: true,
+  });
+  assert.equal(refused.match, null);
+  assert.equal(refused.error, "run_finished");
+
+  cancelVictory(context);
+  dungeonMatches.remove(host);
 });
 
 test("an unopened generator prevents premature victory", async () => {
@@ -397,4 +439,145 @@ test("letting it run out is what loses the run", (t) => {
 
   t.mock.timers.tick(1);
   assert.deepEqual(failures, [9], "it ends when the number on screen runs out");
+});
+
+/**
+ * Somebody arriving is somebody standing.
+ *
+ * The countdown means "nobody is up", and it is cancelled when a hero is
+ * revived — but a late joiner is the same fact by a different route. They enter
+ * on full health, so the party is no longer wiped, and the run should not end
+ * underneath them. Nothing re-asked the question on join, so the timer ran to
+ * the end and failed a floor that had a live player standing on it.
+ */
+test("a late joiner stops a running defeat countdown", () => {
+  const sent = [];
+  const session = {
+    id: 9,
+    areaDoid: 2000,
+    send: (frame) => sent.push(frame),
+    actors: new Map([[500, { hitPoints: 0, dead: true }]]),
+    playerActors: new Set([500]),
+  };
+
+  beginFloorFailing(session);
+  assert.ok(session.floorFailingTimer, "the wipe starts the countdown");
+  const afterStart = sent.length;
+
+  // A second player arrives, alive, exactly as the join path registers them.
+  session.actors.set(600, { hitPoints: 205, maxHitPoints: 205 });
+  session.playerActors.add(600);
+
+  refreshFloorFailing(session);
+
+  assert.equal(session.floorFailingTimer, null, "the countdown is dropped");
+  assert.equal(sent.length, afterStart + 1, "and the client is told it stopped");
+});
+
+/**
+ * The guard that makes the re-check safe to call anywhere.
+ *
+ * This is not a join story — a joiner arrives standing, which is the test
+ * above. It is the property that lets `refreshFloorFailing` be called on any
+ * membership change without having to know which change it was: asking again
+ * while the party is still down must leave a correct countdown running, and
+ * must not send the client a second, contradictory number.
+ */
+test("re-checking while everybody is still down leaves the countdown alone", () => {
+  const sent = [];
+  const session = {
+    id: 10,
+    areaDoid: 2000,
+    send: (frame) => sent.push(frame),
+    actors: new Map([[500, { dead: true }]]),
+    playerActors: new Set([500]),
+  };
+
+  beginFloorFailing(session);
+  const timer = session.floorFailingTimer;
+  const afterStart = sent.length;
+
+  session.actors.set(600, { dead: true });
+  session.playerActors.add(600);
+  refreshFloorFailing(session);
+
+  assert.equal(session.floorFailingTimer, timer, "the same countdown keeps running");
+  assert.equal(sent.length, afterStart, "and the client is told nothing new");
+});
+
+/**
+ * The rule, stated once: the countdown runs exactly while nobody is up.
+ *
+ * Cancelling on revive and on join was two answers to one question, and it
+ * missed the third way the answer changes — somebody leaving. The last player
+ * standing walking out leaves a floor of corpses, which is a wipe arrived at
+ * by a different route, and nothing started the countdown for it. The run hung
+ * with nobody able to finish it and no ending on the way.
+ *
+ * So the re-check restores the rule in both directions rather than only
+ * stopping what is already running.
+ */
+test("the last player standing leaving starts the countdown", () => {
+  const sent = [];
+  const session = {
+    id: 11,
+    areaDoid: 2000,
+    send: (frame) => sent.push(frame),
+    actors: new Map([
+      [500, { dead: true }],
+      [600, { hitPoints: 205, maxHitPoints: 205 }],
+    ]),
+    playerActors: new Set([500, 600]),
+  };
+
+  refreshFloorFailing(session);
+  assert.equal(session.floorFailingTimer, undefined, "somebody is up, so nothing runs");
+
+  // The one on their feet leaves, the way leaveDungeonSession removes them.
+  session.playerActors.delete(600);
+  session.actors.delete(600);
+  refreshFloorFailing(session);
+
+  assert.ok(session.floorFailingTimer, "the corpses left behind are a wipe");
+  clearFloorFailing(session);
+});
+
+test("a downed player leaving does not start a countdown while others stand", () => {
+  const session = {
+    id: 12,
+    areaDoid: 2000,
+    send: () => {},
+    actors: new Map([
+      [500, { dead: true }],
+      [600, { hitPoints: 205, maxHitPoints: 205 }],
+    ]),
+    playerActors: new Set([500, 600]),
+  };
+
+  session.playerActors.delete(500);
+  session.actors.delete(500);
+  refreshFloorFailing(session);
+
+  assert.equal(session.floorFailingTimer, undefined, "the survivor is still playing");
+});
+
+/**
+ * An empty floor is not a wipe.
+ *
+ * `everyPlayerDown` answers true for a party of nobody, which is correct for
+ * the question it is asked but wrong as a reason to start a countdown: the last
+ * member leaving tears the world down, and a timer started on the way out would
+ * fire into it.
+ */
+test("the last member leaving starts no countdown at all", () => {
+  const session = {
+    id: 13,
+    areaDoid: 2000,
+    send: () => {},
+    actors: new Map(),
+    playerActors: new Set(),
+  };
+
+  refreshFloorFailing(session);
+  assert.equal(session.floorFailingTimer, undefined, "nobody left to fail");
 });

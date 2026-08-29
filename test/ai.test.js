@@ -211,13 +211,27 @@ test("overlapping melee NPCs separate instead of stacking on the hero", async ()
   session.objects.set(secondDoid, CLID.DistributedNPCGameObject);
   session.actors.set(secondDoid, second);
 
-  await tickNpcAi(session, 1000, 0.1);
+  /**
+   * Over several ticks, not one.
+   *
+   * They start on the same point *and* inside the hero's body, which is a state
+   * the server no longer produces — nothing it sends may overlap the player, see
+   * `keptOutOfHeroes`. So the first tick now spends part of its budget lifting
+   * them out of him and gets 32.7 apart where it used to get 35. Where they end
+   * up is what this is about, and that is strictly better than it was: 78 apart,
+   * both exactly at contact, and completely still from the eighth tick on.
+   */
+  for (let tick = 0; tick < 10; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
 
   const spacing = Math.hypot(
     first.position.x - second.position.x,
     first.position.y - second.position.y
   );
-  assert.ok(spacing >= 35, `expected visible separation, got ${spacing}`);
+  assert.ok(spacing >= 70, `expected visible separation, got ${spacing}`);
+  for (const npc of [first, second]) {
+    const fromHero = Math.hypot(npc.position.x, npc.position.y);
+    assert.ok(fromHero >= 70 - 0.01, `and neither left standing inside him: ${fromHero}`);
+  }
   assert.equal(first.ai.state, "attack");
   assert.equal(second.ai.state, "attack");
 });
@@ -870,4 +884,146 @@ test("every action a timeline authors is loosed, on its own frame", async () => 
     ],
   });
   assert.equal(session.activeTrapProjectiles.length, 3, "a fan is three arrows, not one");
+});
+
+/**
+ * An NPC row carries `Attack1`, `Attack2` and `Attack3` and this server read
+ * only the first, so every monster in the game had one move for its whole life.
+ * Counting `attackType` off the field-143 choreographies in 66 official
+ * recordings: ICE_IMP 531/493/378 across its three, SHAMAN_IMP 230/148/138/110,
+ * RAPTOR 99/65, LION 120/31.
+ */
+test("a monster with three attacks uses more than the first one", async () => {
+  const { session, knightDoid, sent } = makeSession();
+  const npc = session.actors.get(knightDoid);
+  npc.position = { x: 60, y: 0 };
+  npc.ai.engaged = true;
+  npc.ai.attackRange = 300;
+  npc.ai.attacks = [
+    { attackType: 920050, range: 300, minRange: 0, rechargeMs: 0, readyAt: 0, damage: 1, impactFrame: 0 },
+    { attackType: 920163, range: 300, minRange: 0, rechargeMs: 0, readyAt: 0, damage: 1, impactFrame: 0 },
+    { attackType: 920051, range: 300, minRange: 0, rechargeMs: 0, readyAt: 0, damage: 1, impactFrame: 0 },
+  ];
+
+  for (let tick = 0; tick < 400; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+
+  const used = new Set(
+    sent
+      .map(readUpdate)
+      .filter((packet) => packet.fieldId === 143)
+      .map((packet) => {
+        packet.reader.u8();
+        packet.reader.u8();
+        return packet.reader.u32();
+      })
+  );
+  assert.equal(used.size, 3, `all three should appear, saw ${[...used].join(",")}`);
+});
+
+/**
+ * `MinRange` is the bottom of an attack's band. EN_ICE_IMP_ATTACK is a spear
+ * throw with a MinRange of 400, so it is not a thing an imp does to someone
+ * standing on its toes.
+ */
+test("an attack with a MinRange is not used from inside it", async () => {
+  const { session, knightDoid, sent } = makeSession();
+  const npc = session.actors.get(knightDoid);
+  npc.position = { x: 60, y: 0 };
+  npc.ai.engaged = true;
+  npc.ai.attackRange = 700;
+  npc.ai.attacks = [
+    { attackType: 920163, range: 700, minRange: 400, rechargeMs: 0, readyAt: 0, damage: 1, impactFrame: 0 },
+    { attackType: 920050, range: 700, minRange: 0, rechargeMs: 0, readyAt: 0, damage: 1, impactFrame: 0 },
+  ];
+
+  for (let tick = 0; tick < 200; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+
+  const used = sent
+    .map(readUpdate)
+    .filter((packet) => packet.fieldId === 143)
+    .map((packet) => {
+      packet.reader.u8();
+      packet.reader.u8();
+      return packet.reader.u32();
+    });
+  assert.ok(used.length > 0, "it still attacks with the one that fits");
+  assert.ok(!used.includes(920163), "but never with the one it is stood inside the range of");
+});
+
+/**
+ * `AI_RechargeT` is each attack's own cooldown — half a second for an ordinary
+ * melee and fifteen for a shaman's summon, which is what keeps the summon rare
+ * among its three-second bolts.
+ */
+test("an attack's own recharge keeps it from being spammed", async () => {
+  const { session, knightDoid, sent } = makeSession();
+  const npc = session.actors.get(knightDoid);
+  npc.position = { x: 60, y: 0 };
+  npc.ai.engaged = true;
+  npc.ai.attackTimerMs = 500;
+  npc.ai.attackRandMs = 0;
+  npc.ai.attacks = [
+    { attackType: 920050, range: 300, minRange: 0, rechargeMs: 0, readyAt: 0, damage: 1, impactFrame: 0 },
+    { attackType: 920163, range: 300, minRange: 0, rechargeMs: 15000, readyAt: 0, damage: 1, impactFrame: 0 },
+  ];
+  npc.ai.attackRange = 300;
+
+  // Thirty seconds: the cheap one is free to fire throughout, the expensive one
+  // may come round twice.
+  for (let tick = 0; tick < 300; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+
+  const counts = new Map();
+  for (const packet of sent.map(readUpdate).filter((p) => p.fieldId === 143)) {
+    packet.reader.u8();
+    packet.reader.u8();
+    const id = packet.reader.u32();
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  assert.ok((counts.get(920050) ?? 0) > 10, "the half-second one is used freely");
+  assert.ok(
+    (counts.get(920163) ?? 0) <= 3,
+    `the fifteen-second one is rationed: ${counts.get(920163)} in 30s`
+  );
+});
+
+/**
+ * Some attacks move the thing making them, and the client does it only for the
+ * local player — `AttackAutoMoveTimelineAction.buildFromJson` returns the action
+ * `if (param1.isOwner)` and null otherwise. So a monster's lunge is the
+ * server's. Measured on 66 recordings, taking each NPC's furthest displacement
+ * after a swing against the way it was facing: HEADBUTT (400@0) went 252 at
+ * +0.99, BACKOFF (500@180) went 202 at -0.99, against 25-49 at +0.7 for the
+ * attacks that author no move at all.
+ */
+test("an attack that authors a backwards move takes the monster backwards", async () => {
+  const { session, knightDoid } = makeSession();
+  const npc = session.actors.get(knightDoid);
+  npc.position = { x: 60, y: 0 };
+  npc.ai.engaged = true;
+  npc.ai.attacks = [
+    {
+      attackType: 920050,
+      range: 300,
+      minRange: 0,
+      rechargeMs: 0,
+      readyAt: 0,
+      damage: 1,
+      impactFrame: 0,
+      moveAmount: 500,
+      moveAngle: 180,
+      moveDurationMs: 500,
+    },
+  ];
+  npc.ai.attackRange = 300;
+
+  // One swing, then just the move: far enough apart that nothing else fires.
+  await tickNpcAi(session, 1000, 0.1);
+  for (let tick = 1; tick <= 5; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+
+  // It was at x=60 facing the hero at the origin, so backwards is +x.
+  assert.ok(
+    npc.position.x > 200,
+    `it should have hopped away from him, ended at x=${npc.position.x.toFixed(0)}`
+  );
+  assert.ok(Math.abs(npc.position.y) < 40, "and straight back, not off to one side");
 });

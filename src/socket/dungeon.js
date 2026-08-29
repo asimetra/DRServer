@@ -124,7 +124,7 @@ import {
   startTrapProjectiles,
   killAllEnemies,
 } from "./combat.js";
-import { membersOf } from "./match-world.js";
+import { isLiveMember, membersOf, worldOf } from "./match-world.js";
 
 /**
  * Everything a client earned the right to do, forgotten together.
@@ -146,6 +146,24 @@ const clearSecurityState = (session) => {
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A generator stop must wake its current wait, not merely set a later flag. */
+const generatorSleep = (runtime, ms) => {
+  if (runtime.stopped || !(ms > 0)) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (runtime.cancelWait === finish) runtime.cancelWait = null;
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    timer.unref?.();
+    runtime.cancelWait = finish;
+  });
+};
 
 /**
  * How long a jail stays open to let one out, measured off the real server:
@@ -358,6 +376,84 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
   const nativeProjectileRow =
     nativeAttack?.Projectile && (await projectileForConstant(nativeAttack.Projectile));
   const nativeLaunches = nativeAttack ? await projectileLaunches(nativeAttack.AttackTimeline) : [];
+
+  /**
+   * Everything it can swing, not just the first one.
+   *
+   * An NPC row carries `Attack1`, `Attack2` and `Attack3`, and this server read
+   * only the first — so every monster in the game had one move for its whole
+   * life. The official does not play that way. Counting `attackType` off the
+   * field-143 choreographies in 66 recordings:
+   *
+   *   ICE_IMP        ATTACK 531, HEADBUTT 493, BACKOFF 378
+   *   SHAMAN_IMP     ICE_IMP_ATTACK 230, SHAMAN_ATTACK 148, FREEZE 138, SPAWN 110
+   *   RAPTOR         BITE 99, TACKLE 65
+   *   LION           ROAR 120, TACKLE 31
+   *
+   * LION is the one that shows how much was missing: its `Attack1` is
+   * EN_MONSTER_CLAW at range 80, and the corpus had lions swinging from 528
+   * units away, which looked like a broken range gate for as long as the only
+   * attack considered was the first. It is EN_LION_ROAR, `Attack3`, range 800.
+   *
+   * Three columns on the attack row decide when each is available and this reads
+   * all three: `MinRange` and `Range` are the band it may be used from —
+   * EN_ICE_IMP_ATTACK is a spear throw with a MinRange of 400, so an imp in your
+   * face cannot use it — and `AI_RechargeT` is that attack's own cooldown, half
+   * a second for the ordinary melee and up to fifteen for the specials, which is
+   * what keeps a shaman's summon rare while its bolt is common.
+   *
+   * Which of the currently-usable ones it picks is a uniform choice. The corpus
+   * does not settle that: the counts above are close enough together to rule out
+   * a strict slot preference and too noisy to fit anything finer.
+   */
+  const attackSet = [];
+  for (const slot of ["Attack1", "Attack2", "Attack3"]) {
+    const named = npc[slot];
+    if (!named) continue;
+    const attack = await attackForConstant(named);
+    if (!attack) continue;
+    const shape = await attackColliders(attack.AttackTimeline);
+    const projectileRow = attack.Projectile && (await projectileForConstant(attack.Projectile));
+    attackSet.push({
+      attackType: attack.Id,
+      range: Math.max(20, attack.Range ?? 80),
+      minRange: Math.max(0, Number(attack.MinRange ?? 0)),
+      rechargeMs: Math.max(0, Number(attack.AI_RechargeT ?? 0) * 1000),
+      readyAt: 0,
+      weaponPower: nativeWeapon?.Power ?? 1,
+      damage: Math.max(
+        1,
+        Math.round((nativeWeapon?.Power ?? 1) * Math.abs(attack.DamageMod ?? -1))
+      ),
+      attackColliders: shape,
+      projectile: projectileRow || null,
+      projectileLaunches: await projectileLaunches(attack.AttackTimeline),
+      impactFrame: shape.length ? Math.min(...shape.map((collider) => Number(collider.frame ?? 0))) : 0,
+      /**
+       * Some attacks move the thing making them, and it is the server's job.
+       *
+       * `AttackAutoMoveTimelineAction.buildFromJson` in the client returns the
+       * action only `if (param1.isOwner)` — so the client auto-moves the local
+       * player and nothing else, and a monster's lunge is nobody's but ours.
+       *
+       * Measured over 66 recordings, taking each NPC's furthest displacement in
+       * the window after a swing, against the direction it was facing:
+       *
+       *   EN_ICE_IMP_ATTACK_HEADBUTT  400@0     769 swings  went 252  facing +0.99
+       *   EN_ICE_IMP_ATTACK_BACKOFF   500@180   690 swings  went 202  facing -0.99
+       *   EN_LION_TACKLE               40@0      36 swings  went  56  facing +0.96
+       *   attacks authoring no move    ---     ~8000 swings went  25-49  facing +0.7
+       *
+       * The direction is not ambiguous. The distance falls short of the
+       * authored amount because a charge stops against whatever it runs into,
+       * which is what running it through the ordinary movement clamps does.
+       */
+      moveAmount: Math.max(0, Number(attack.MoveAmount ?? 0)),
+      moveAngle: Number(attack.MoveAngle ?? 0),
+      moveDurationMs: Math.max(0, Number(attack.MoveDuration ?? 0) * 1000),
+    });
+  }
+  if (!context.isActive()) return emptyResult;
   const rewardData = (npc.HP ?? 100) > 0 ? await deathRewardDataForNpc(npc) : null;
   if (!context.isActive()) return emptyResult;
   const weapons = nativeWeapon
@@ -596,7 +692,42 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
               disengageDistance,
               moveSpeed: npc.BaseMove ?? 180,
               collisionRadius,
-              attackRange: Math.max(20, nativeAttack.Range ?? 80),
+              // The furthest any of its attacks reaches. This is the "may it
+              // swing from here at all" bar; which attack it then uses is
+              // decided per swing against that attack's own band.
+              attackRange: Math.max(20, ...attackSet.map((attack) => attack.range)),
+              attacks: attackSet,
+              /**
+               * How far off the player this one wants to stay, for the ones
+               * that want to stay off it at all.
+               *
+               * `Aggro_AI_Type` splits the 98 fighting rows three ways —
+               * 78 CHASE_AI, 13 KITE_AI, 7 TELEPORT_AI — and until now nothing
+               * here read it. Measured on the official, the difference is
+               * plain: a chaser's distance to a player it is fighting peaks at
+               * the two bodies touching, while a kiter's has a small bump there
+               * and then a broad plateau much further out.
+               *
+               *   KNIGHT_MARKSMAN  KITE   plateau 240-460, mode 340-360
+               *   SKELETON_ARCHER  KITE   plateau 200-460, mode 260-280
+               *   ICE_IMP          CHASE  peak at 60-80, its bodies meet at 57
+               *
+               * `MinFleeDistMult` times the attack's range lands inside that
+               * plateau for every kiter the corpus covers: 300 for the two
+               * archers above, 350 for KNIGHT_THROWING against a measured p25
+               * of 305, 70 for KNIGHT_HALBERD against a measured p05 of 69.
+               *
+               * This is a standoff and not kiting. A real kiter backs away when
+               * you close and `FleeTimer`/`FleeTimerRand` say for how long;
+               * none of that is here. It only stops a marksman walking into
+               * your face, which is what walking to contact would otherwise
+               * make it do.
+               */
+              keepDistance:
+                npc.Aggro_AI_Type === "CHASE_AI"
+                  ? 0
+                  : Math.max(0, Number(npc.MinFleeDistMult ?? 0)) *
+                    Math.max(0, Number(nativeAttack.Range ?? 0)),
               /**
                * Both halves of the cadence, because the second one is the
                * difference between a fight and a drum roll.
@@ -1059,7 +1190,7 @@ const spawnGeneratorWave = async (context, runtime) => {
   const maxPopulation = Math.max(1, Number(placement.maxPopulation ?? 1));
 
   for (let index = 0; index < maxSpawns; index++) {
-    if (index > 0 && intervalMs > 0) await sleep(intervalMs);
+    if (index > 0 && intervalMs > 0) await generatorSleep(runtime, intervalMs);
     if (!context.isActive() || runtime.stopped) break;
 
     /**
@@ -1069,7 +1200,7 @@ const spawnGeneratorWave = async (context, runtime) => {
      */
     while (runtime.alive >= maxPopulation) {
       if (!context.isActive() || runtime.stopped) return;
-      await sleep(250);
+      await generatorSleep(runtime, 250);
     }
     if (!context.isActive() || runtime.stopped) break;
 
@@ -1153,6 +1284,7 @@ const buildGenerators = async (context, placements) => {
       completed: false,
       spawnedDoids: new Set(),
       spawnPromise: null,
+      cancelWait: null,
     };
     session.generators.set(placement.id, runtime);
 
@@ -1184,6 +1316,8 @@ const buildGenerators = async (context, placements) => {
     session.generatorStops.set(placement.id, () => {
       if (runtime.stopped) return;
       runtime.stopped = true;
+      runtime.cancelWait?.();
+      runtime.cancelWait = null;
       info(`[${session.id}] generator ${placement.id} stopped — input went low`);
     });
     session.generatorHandlers.set(placement.id, start);
@@ -1631,7 +1765,9 @@ const BUILDERS = {
 };
 
 const dungeonMembers = (session) =>
-  [...membersOf(session)].filter((member) => member?.heroSpawn && member?.heroDoid);
+  [...membersOf(session)].filter(
+    (member) => isLiveMember(member) && member?.heroSpawn && member?.heroDoid
+  );
 
 const contextForMember = (member) => member.world?.contextFor(member) ?? member;
 
@@ -1714,9 +1850,9 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
  */
 export const prepareDungeonMember = async (
   session,
-  { isActive = () => true, sendPlayerOwner = true } = {}
+  { isActive = () => true, sendPlayerOwner = true, account: providedAccount } = {}
 ) => {
-  const account = await loadAccount(session.accountId);
+  const account = providedAccount ?? await loadAccount(session.accountId);
   if (!isActive()) return false;
   const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
   if (!avatar) {
@@ -1733,6 +1869,9 @@ export const prepareDungeonMember = async (
   };
   session.dungeonRewards = { gold: 0, gems: 0, xp: 0 };
   session.dungeonContribution = { kills: 0, damage: 0 };
+  session.dungeonTreasures = [];
+  session.completionAwarded = false;
+  session.receivedTrophy = 0;
   session.playerDoid = session.accountId;
   session.objects.set(session.playerDoid, CLID.PlayerGameObject);
   if (sendPlayerOwner) {
@@ -1809,7 +1948,11 @@ export const prepareDungeonMember = async (
  *   hero   — weapons are only built once a floor exists
  *   world  — NPCs, pickups and the rest hang off the floor
  */
-export const enterDungeon = async (session, mapNodeId) => {
+export const enterDungeon = async (
+  session,
+  mapNodeId,
+  { account: providedAccount } = {}
+) => {
   leaveDungeon(session, { notifyClient: true });
   const dungeonEpoch = session.dungeonEpoch;
   const isActive = () => session.dungeonActive && session.dungeonEpoch === dungeonEpoch;
@@ -1822,6 +1965,9 @@ export const enterDungeon = async (session, mapNodeId) => {
   setPresenceLocation(session, mapNodeId);
   session.dungeonRewards = { gold: 0, gems: 0, xp: 0 };
   session.dungeonContribution = { kills: 0, damage: 0 };
+  session.dungeonTreasures = [];
+  session.completionAwarded = false;
+  session.receivedTrophy = 0;
   /**
    * Whether this node is a file or a layout is the node's own business — twelve
    * of them name a CustomTileset and the rest do not. Everything past here
@@ -1875,7 +2021,6 @@ export const enterDungeon = async (session, mapNodeId) => {
   session.tierConstant = node?.TierRank ?? "";
   // What finishing this node is worth, and which bit it sets on the world map.
   session.mapPage = node;
-  session.completionAwarded = false;
   session.send(
     dungeonFloorGenerate({
       doid: floorDoid,
@@ -1892,7 +2037,7 @@ export const enterDungeon = async (session, mapNodeId) => {
   session.floorDoid = floorDoid;
   info(`[${session.id}] generated DungeonFloor doid=${floorDoid} (${floor.tiles.length} tiles)`);
 
-  const account = await loadAccount(session.accountId);
+  const account = providedAccount ?? await loadAccount(session.accountId);
   if (!isActive()) return false;
   /**
    * Which hero enters is not the client's call. `requesthero` and `requestentry`
@@ -2274,7 +2419,7 @@ export const checkFloorExit = (session, position) => {
  *
  * The hero keeps its doid across the move; only its parent changes.
  */
-export const advanceFloor = async (session) => {
+const advanceFloorUnlocked = async (session) => {
   const next = (session.floorIndex ?? 0) + 1;
   if (next >= (session.floorCount ?? 1) || !session.areaDoid) return false;
 
@@ -2366,6 +2511,14 @@ export const advanceFloor = async (session) => {
   if (!isActive()) return false;
 
   return buildFloorWorld(session, { floor, floorDoid, isActive });
+};
+
+/** Joins and floor rebuilds may never expose the same world half-built. */
+export const advanceFloor = (session) => {
+  const world = worldOf(session);
+  return world
+    ? world.runExclusive(() => advanceFloorUnlocked(session))
+    : advanceFloorUnlocked(session);
 };
 
 const disablePriority = (clid) => {
@@ -2463,6 +2616,14 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "dungeonZone",
     "mapNodeId",
     "dungeonRewards",
+    "dungeonContribution",
+    "dungeonTreasures",
+    "completionAwarded",
+    "receivedTrophy",
+    "heroConsumables",
+    "heroStats",
+    "heroSpawn",
+    "dungeonBusterAttack",
     "dungeonBusterPoints",
     "maxDungeonBusterPoints",
     "heroManaPoints",

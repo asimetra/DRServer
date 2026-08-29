@@ -5,6 +5,7 @@ import { info, warn } from "../log.js";
 import { scheduleDungeonSummary } from "./summary.js";
 import { awardDungeonCompletion } from "./rewards.js";
 import { membersOf } from "./match-world.js";
+import { dungeonMatches } from "./matches.js";
 
 /**
  * Floor outcome.
@@ -85,6 +86,22 @@ const everyPlayerDown = (session) => {
 };
 
 /**
+ * Whether there is a party here at all.
+ *
+ * `everyPlayerDown` answers true for a party of nobody, which is right for the
+ * question it is asked and wrong as a reason to start a countdown. The last
+ * member leaving takes the world with it, and a timer started on the way out
+ * would fire into the wreckage.
+ */
+const anyPlayerPresent = (session) => {
+  const players = session.playerActors ?? [session.heroDoid];
+  for (const doid of players) {
+    if (session.actors?.get(doid)) return true;
+  }
+  return false;
+};
+
+/**
  * How long the number on screen actually takes to run out.
  *
  * Not the number itself. FloorEndingGui shows a start clip and tweens it away
@@ -128,6 +145,36 @@ export const cancelFloorFailing = (session) => {
   if (!session.floorFailingTimer) return;
   clearFloorFailing(session);
   if (session.areaDoid) session.send(buildFloorFailing(session.areaDoid, 0));
+};
+
+/**
+ * Restores the one rule this file has: the countdown runs exactly while
+ * nobody is up.
+ *
+ * Written as an invariant rather than as a list of events, because the list
+ * kept being wrong. Death started it and a revive stopped it; then joining had
+ * to stop it too, since a joiner arrives standing; and leaving had to be able
+ * to *start* it, since the last player on their feet walking out leaves a floor
+ * of corpses that nothing else would ever fail. Three events, one question, and
+ * every new way to change the party was another chance to forget one.
+ *
+ * So this asks the question instead of trusting the caller to know the answer,
+ * and it moves in both directions. Anything that changes who is in the party or
+ * whether they are standing can call it, including twice, including when
+ * nothing changed.
+ */
+export const refreshFloorFailing = (session) => {
+  const down = everyPlayerDown(session);
+
+  if (session.floorFailingTimer) {
+    if (down) return;
+    cancelFloorFailing(session);
+    info(`[${session.id}] somebody is up again — defeat countdown stopped`);
+    return;
+  }
+
+  if (!down || !anyPlayerPresent(session)) return;
+  beginFloorFailing(session);
 };
 
 /** Drops the timer without telling a client that may already be gone. */
@@ -210,6 +257,12 @@ export const completeFloor = (session) => {
     session.advanceFloor?.(session);
     return true;
   }
+
+  // Clearing the final floor is the admission boundary. The loot/victory
+  // delay remains playable for current members, but nobody new may enter it
+  // and be included in the completion-award loop below.
+  const match = session.dungeonMatch ?? session.world?.match;
+  if (match) dungeonMatches.finish(match);
 
   /**
    * The win is announced late, not at once. A captured tutorial run spaces it

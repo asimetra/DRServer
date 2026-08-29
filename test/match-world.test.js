@@ -12,6 +12,7 @@ import {
 } from "../src/socket/match-world.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketWriter } from "../src/socket/packet.js";
+import { npcGenerate } from "../src/socket/objects.js";
 
 let nextDoid = 5000;
 
@@ -65,11 +66,16 @@ test("shared fields route through the world and member fields stay local", () =>
 
   context.floorIndex = 7;
   context.heroManaPoints = 40;
+  context.summaryTimer = "shared-summary-timer";
+  context.summaryDoid = 8080;
   assert.equal(world.floorIndex, 7);
   assert.equal(match.floorIndex, 7);
   assert.equal(joiner.floorIndex, 99);
   assert.equal(joiner.heroManaPoints, 40);
   assert.equal(world.heroManaPoints, undefined);
+  assert.equal(world.summaryTimer, "shared-summary-timer");
+  assert.equal(world.summaryDoid, 8080);
+  assert.equal(joiner.summaryTimer, undefined);
 
   delete context.signalValues;
   delete context.heroManaPoints;
@@ -186,9 +192,26 @@ test("destroy is idempotent and clears the match world binding", () => {
   const match = { members: new Set([host, joiner]) };
   const world = createMatchWorld(match, host);
   let generatorStops = 0;
+  let hazardStops = 0;
+  let manaStops = 0;
   world.dungeonActive = true;
   world.dungeonEpoch = 4;
   world.generatorStops = new Map([["wave", () => generatorStops++]]);
+  world.hazardBeats = new Map([["trap", () => hazardStops++]]);
+  world.turretAims = new Map([["turret", () => hazardStops++]]);
+  world.buffTimers = new Map([[1, setTimeout(() => assert.fail("buff timer survived"), 60_000)]]);
+  world.damageOverTimeTimers = new Set([
+    setInterval(() => assert.fail("DoT timer survived"), 60_000),
+  ]);
+  world.placeables = new Map([[
+    2,
+    {
+      ticker: setInterval(() => assert.fail("placeable ticker survived"), 60_000),
+      expiry: setTimeout(() => assert.fail("placeable expiry survived"), 60_000),
+    },
+  ]]);
+  host.stopManaRegen = () => manaStops++;
+  joiner.stopManaRegen = () => manaStops++;
 
   world.contextFor(joiner);
   assert.equal(world.destroy(), true);
@@ -198,6 +221,13 @@ test("destroy is idempotent and clears the match world binding", () => {
   assert.equal(world.dungeonActive, false);
   assert.equal(world.dungeonEpoch, 5);
   assert.equal(generatorStops, 1);
+  assert.equal(hazardStops, 2);
+  assert.equal(manaStops, 2);
+  assert.equal(world.buffTimers.size, 0);
+  assert.equal(world.damageOverTimeTimers.size, 0);
+  assert.equal(world.placeables.size, 0);
+  assert.equal(world.objects.size, 0);
+  assert.equal(world.actors.size, 0);
   assert.equal(match.world, null);
   assert.equal(worldOf(host), null);
   assert.equal(worldOf(joiner), null);
@@ -233,6 +263,21 @@ const fieldUpdate = (doid, fieldId, value) =>
     .u32(value)
     .frame();
 
+const npcPositionUpdate = (doid, { x, y }) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(doid)
+    .u16(132)
+    .f32(x)
+    .f32(y)
+    .frame();
+
+const npcHeadingUpdate = (doid, heading) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(doid)
+    .u16(133)
+    .f32(heading)
+    .frame();
+
 test("snapshot compacts shared creates and field state without owner/member objects", () => {
   const host = member(60);
   const joiner = member(61);
@@ -261,6 +306,40 @@ test("snapshot compacts shared creates and field state without owner/member obje
   assert.deepEqual(joiner.sent, [area, floor, npc, newHp, closure]);
 });
 
+test("late-join NPC creates use the current transform instead of teleporting from spawn", () => {
+  const host = member(62);
+  const world = createMatchWorld({ members: new Set([host]) }, host);
+  const context = world.contextFor(host);
+  const doid = 6201;
+  const spawn = npcGenerate({
+    doid,
+    parent: 6200,
+    npcType: 318,
+    position: { x: 10, y: 20 },
+    heading: 5,
+  });
+  const current = { x: 190, y: 280 };
+  world.objects.set(doid, CLID.DistributedNPCGameObject);
+  world.actors.set(doid, {
+    hitPoints: 100,
+    position: { ...current },
+    heading: 135,
+  });
+
+  context.send(spawn);
+  context.send(npcPositionUpdate(doid, current));
+  context.send(npcHeadingUpdate(doid, 135));
+
+  const frames = world.snapshotFrames("children");
+  assert.equal(frames.length, 1, "the folded create replaces redundant transform updates");
+  assert.notEqual(frames[0], spawn, "the stored historical create is not mutated");
+  assert.equal(frames[0].readFloatLE(23), current.x);
+  assert.equal(frames[0].readFloatLE(27), current.y);
+  assert.equal(frames[0].readFloatLE(31), 135);
+  assert.equal(spawn.readFloatLE(23), 10, "the original spawn remains historical state");
+  assert.equal(spawn.readFloatLE(27), 20);
+});
+
 test("admitted members receive no partial broadcasts before their snapshot activates", () => {
   const host = member(65);
   const pending = member(66);
@@ -269,6 +348,10 @@ test("admitted members receive no partial broadcasts before their snapshot activ
   const frame = visibleGenerate(CLID.DistributedNPCGameObject, 6501);
   world.objects.set(6501, CLID.DistributedNPCGameObject);
 
+  const pendingContext = world.contextFor(pending, { activate: false });
+  assert.equal(pending.world, world, "pending cleanup can still find its world");
+  assert.equal(world.liveMembers.has(pending), false);
+
   world.contextFor(host).send(frame);
   assert.deepEqual(host.sent, [frame]);
   assert.deepEqual(pending.sent, []);
@@ -276,6 +359,32 @@ test("admitted members receive no partial broadcasts before their snapshot activ
   world.contextFor(pending);
   world.contextFor(host).send(frame);
   assert.deepEqual(pending.sent, [frame]);
+});
+
+test("match operations execute one at a time in submission order", async () => {
+  const host = member(67);
+  const world = createMatchWorld({ members: new Set([host]) }, host);
+  const events = [];
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  const first = world.runExclusive(async () => {
+    events.push("first:start");
+    await firstGate;
+    events.push("first:end");
+  });
+  const second = world.runExclusive(async () => {
+    events.push("second:start");
+    events.push("second:end");
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["first:start"]);
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ["first:start", "first:end", "second:start", "second:end"]);
 });
 
 test("disable removes stale state and a new floor snapshot retains only the area", () => {

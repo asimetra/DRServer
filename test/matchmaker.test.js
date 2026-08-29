@@ -144,6 +144,35 @@ test("joining a friend who already left returns Friend Not Found, not Internal E
   assert.equal(response.u16(), ENTRY_ERROR.FRIEND_NOT_FOUND);
 });
 
+test("an active session cannot enter its current dungeon a second time", () => {
+  const sent = [];
+  const session = {
+    id: 71,
+    accountId: 1000000005,
+    matchMakerDoid: 9001,
+    dungeonActive: true,
+    send: (frame) => sent.push(frame),
+  };
+  const request = new PacketWriter()
+    .utf("{}")
+    .u32(0)
+    .u32(50082)
+    .u32(0)
+    .u32(0)
+    .u8(0)
+    .utf("")
+    .body();
+
+  assert.equal(handleField(session, FLID.ClientRequestEntry, new PacketReader(request)), true);
+  assert.equal(session.entryPromise, undefined, "no second admission/build starts");
+
+  const response = new PacketReader(sent[0].subarray(2));
+  assert.equal(response.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
+  assert.equal(response.u32(), session.matchMakerDoid);
+  assert.equal(response.u16(), FLID.ClientRequestEntryResponce);
+  assert.equal(response.u16(), ENTRY_ERROR.GAME_NOT_ENTERABLE);
+});
+
 test("exit completion matches the production response payload", () => {
   const reader = new PacketReader(buildExitComplete(9001).subarray(2));
 

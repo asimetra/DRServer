@@ -497,7 +497,7 @@ const handlePacket = (session, body) => {
       return handleFieldUpdate(session, reader);
     case OP.CLIENT_LOGOUT:
       info(`${describe(session)} logout requested`);
-      return session.socket.end();
+      return session.close("logout requested", { flush: true });
     default:
       if (!noteViolation(session, RULE.unknownOpcode, `${opcodeName(opcode)}`)) return undefined;
       return unimplemented(
@@ -553,12 +553,22 @@ export const onConnection = (socket) => {
      * also stops us generating more to send.
      */
     send: (frame) => {
+      if (session.closed || socket.destroyed) return false;
+      const bufferedBytes = Number(socket.writableLength ?? 0);
+      if (bufferedBytes + frame.length > config.maxOutboundBufferBytes) {
+        warn(
+          `${describe(session)} outbound buffer saturated: ` +
+            `${bufferedBytes} + ${frame.length} > ${config.maxOutboundBufferBytes}`
+        );
+        closeSession("outbound buffer saturated");
+        return false;
+      }
       recordSent(session, frame);
-      if (socket.destroyed) return;
       if (!socket.write(frame)) {
         session.pausedForWrite = true;
         updateReadFlow();
       }
+      return true;
     },
   };
 
@@ -576,6 +586,10 @@ export const onConnection = (socket) => {
     session.queue.length = 0;
     session.queuedBytes = 0;
     leavePresence(session);
+    // `socket.end()` may wait indefinitely for a slow peer before emitting
+    // close. Release the match/world now so a displaced or logging-out player
+    // cannot keep a ghost room and all of its timers alive during that wait.
+    leaveDungeonSession(session);
     buffered = Buffer.alloc(0);
     info(`${describe(session)} closing: ${why}`);
     /**
