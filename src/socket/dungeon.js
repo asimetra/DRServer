@@ -57,9 +57,8 @@ import {
 } from "../npc-stats.js";
 import { stockFloor } from "./population.js";
 import { preloadFor } from "./precache.js";
-import { loadAccount } from "../accounts.js";
+import { loadAccount, saveAccount } from "../accounts.js";
 import { reconcileConsumables } from "../consumables.js";
-import { queueAccountSave } from "./rewards.js";
 import {
   CLIENT_PERSISTENT_OBJECT_ID_MAX,
   isClientLocalObjectId,
@@ -2574,25 +2573,63 @@ const disablePriority = (clid) => {
   return 1;
 };
 
-/** Stops per-dungeon work while preserving the session's MatchMaker/login. */
+/**
+ * Puts the run's powerups back where the carry rule says they belong.
+ *
+ * Winning, wiping, walking out and dropping the connection all arrive at
+ * `leaveDungeon`, so this is the one place that has to know the rule — the four
+ * of them do not each need a branch. Whatever was not drunk goes back in the
+ * bag and the slot is topped up out of it, which is the same call equipping
+ * makes.
+ *
+ * Everything it needs is taken *before* the teardown below runs, because the
+ * teardown deletes it. This used to end in `queueAccountSave(session)`, which
+ * opens by reading `session.dungeonAccount` — deleted by then, so it returned
+ * null and the settled account was never written down. The rule had run
+ * correctly and died in memory.
+ *
+ * Reported from play: spend the last of a powerup, kill the process rather than
+ * walking out, and the slot still shows the item at "x0". Every exit path had
+ * it; a hard quit is only where it shows, because the others save again on the
+ * way out for their own reasons.
+ *
+ * Chained onto whatever save is already in flight so the two cannot land out of
+ * order — `saveAccountToFile` serialises on entry, so a save that started
+ * earlier holds an older snapshot and must not rename over a newer one.
+ *
+ * Both save seams are kept, the way the other callers keep them. A session
+ * carrying its own `queueAccountSave` has said how it wants to be saved, and
+ * `saveAccount` writes a file named after `account.id` — so a session that
+ * overrides the save because it has no real account behind it should not be
+ * quietly handed to the real one.
+ */
+const settleConsumables = (session) => {
+  const account = session.dungeonAccount;
+  const avatar = session.dungeonAvatar;
+  if (!account || !avatar) return null;
+
+  // Read now, because the teardown deletes `persistDungeonAccount` too.
+  const queued = session.queueAccountSave;
+  const persist = session.persistDungeonAccount ?? saveAccount;
+  const save = queued ? () => queued(session) : () => persist(account);
+
+  return (session.rewardSavePromise ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => reconcileConsumables(account, avatar))
+    .then(save)
+    .catch((problem) => warn(`[${session.id}] powerup reconcile failed: ${problem.message}`));
+};
+
+/**
+ * Stops per-dungeon work while preserving the session's MatchMaker/login.
+ *
+ * Synchronous, and stays that way: three callers rely on the world being torn
+ * down by the time this returns. The settle above is the one thing still
+ * running when it does, and it is handed back for a caller that wants to wait —
+ * production does not, tests do.
+ */
 export const leaveDungeon = (session, { notifyClient = false } = {}) => {
-  /**
-   * Powerups settle up here, whatever brought the run to an end.
-   *
-   * Winning, wiping, walking out and dropping the connection all arrive at this
-   * function, so this is the one place that has to know the rule — the four of
-   * them do not each need a branch. Whatever was not drunk goes back in the bag
-   * and the slot is topped up to the carry limit out of it, which is the same
-   * call as the one equipping makes.
-   *
-   * Deliberately not awaited: teardown is synchronous and the account save is
-   * queued anyway. A failure here must not stop a player leaving a dungeon.
-   */
-  if (session.dungeonAccount && session.dungeonAvatar) {
-    reconcileConsumables(session.dungeonAccount, session.dungeonAvatar)
-      .then(() => session.queueAccountSave?.(session) ?? queueAccountSave(session))
-      .catch((problem) => warn(`[${session.id}] powerup reconcile failed: ${problem.message}`));
-  }
+  const settled = settleConsumables(session);
 
   // Back in town, which the client reads as online and not in a dungeon.
   setPresenceLocation(session, 0);
@@ -2699,4 +2736,6 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   ]) {
     delete session[key];
   }
+
+  return settled;
 };

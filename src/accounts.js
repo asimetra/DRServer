@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
+import { repairSpentPowerups } from "./powerup-slots.js";
 import { info, warn } from "./log.js";
 import {
   ACCOUNT_OBJECT_ID_FLOOR,
@@ -242,7 +243,14 @@ const repairLoadedAccount = async (account) => {
   const restoredProgress = repairActiveAvatarProgress(account);
   const restoredAttributes = await repairAccountAttributes(account);
   const namedModifiers = await repairItemModifiers(account);
-  if (!migratedAvatars && !restoredProgress && !restoredAttributes && !namedModifiers) {
+  const spentPowerups = repairSpentPowerups(account);
+  if (
+    !migratedAvatars &&
+    !restoredProgress &&
+    !restoredAttributes &&
+    !namedModifiers &&
+    !spentPowerups
+  ) {
     return account;
   }
 
@@ -260,6 +268,9 @@ const repairLoadedAccount = async (account) => {
   }
   if (namedModifiers) {
     info(`accounts: gave ${namedModifiers} named weapon modifier(s) their ids`);
+  }
+  if (spentPowerups) {
+    info(`accounts: cleared ${spentPowerups} spent powerup(s) from account ${account.id}`);
   }
   return account;
 };

@@ -20,6 +20,7 @@
  */
 import { nextObjectId } from "./accounts.js";
 import { stackableById } from "./gamemaster.js";
+import { SLOTS, fieldsFor, positive } from "./powerup-slots.js";
 
 /**
  * What a hero can carry into a dungeon, when the item does not say.
@@ -42,19 +43,6 @@ const carryLimitFor = async (stackId) => {
   const row = await stackableById(stackId);
   const authored = Number(row?.EquipLimit ?? 0);
   return authored > 0 ? authored : CARRY_LIMIT;
-};
-
-/** Slots are one-based in the account fields and there are exactly two. */
-const SLOTS = [1, 2];
-
-const fieldsFor = (slot) => ({
-  id: `consumable${slot}_id`,
-  count: `consumable${slot}_count`,
-});
-
-const positive = (value) => {
-  const number = Number(value ?? 0);
-  return Number.isFinite(number) && number > 0 ? Math.trunc(number) : 0;
 };
 
 /**
@@ -89,17 +77,6 @@ const setBagged = async (account, stackId, count) => {
 };
 
 /**
- * Restores the rule for both powerup slots of one avatar.
- *
- * Slots are settled in order rather than in parallel: both draw from the same
- * bag, so telling each of them independently that it may have nine would
- * invent stock when the same stack sits in both.
- *
- * An empty slot is left alone. Nothing is equipped there, so there is no item
- * whose total this could be about, and helping itself to something from the bag
- * would be equipping on the player's behalf.
- */
-/**
  * Drops every bag row that has reached zero, not only the ones a slot names.
  *
  * The slot loop below can only clean up stacks something is equipped to, so a
@@ -114,6 +91,21 @@ const sweepEmptyRows = (account) => {
   );
 };
 
+/**
+ * Restores the rule for both powerup slots of one avatar.
+ *
+ * Slots are settled in order rather than in parallel: both draw from the same
+ * bag, so telling each of them independently that it may have nine would
+ * invent stock when the same stack sits in both.
+ *
+ * An empty slot is left alone. Nothing is equipped there, so there is no item
+ * whose total this could be about, and helping itself to something from the bag
+ * would be equipping on the player's behalf.
+ *
+ * This is the half that tops up, so it belongs to a run ending or an equip and
+ * not to an account load — see `repairSpentPowerups` for the half that is safe
+ * anywhere.
+ */
 export const reconcileConsumables = async (account, avatar) => {
   if (!avatar) {
     sweepEmptyRows(account);

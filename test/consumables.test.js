@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CARRY_LIMIT, reconcileConsumables } from "../src/consumables.js";
+import { leaveDungeon } from "../src/socket/dungeon.js";
+import { repairSpentPowerups } from "../src/powerup-slots.js";
 
 /**
  * An account with one powerup slot filled and a bag behind it.
@@ -215,4 +217,137 @@ test("the cap is the item's own, not one number for everything", async () => {
   const partyBomb = accountWith({ slot: 40, bag: null, id: 60018 }); // PARTY_BOMB
   await reconcileConsumables(partyBomb.account, partyBomb.avatar);
   assert.equal(partyBomb.avatar.consumable1_count, 1, "a party bomb carries one");
+});
+
+/**
+ * Reported from play: spend the last of a powerup in a dungeon, kill the game
+ * process rather than walking out, come back, and the slot still shows the item
+ * with "x0" on it — something the player can neither use nor clear.
+ *
+ * The rule itself was never wrong. `reconcileConsumables` releases a slot whose
+ * total has reached zero, and it did. What was wrong is that nobody wrote the
+ * result down: `leaveDungeon` starts the reconcile without awaiting it and then
+ * tears the session down in the same synchronous run, and the save it queues
+ * afterwards reads `session.dungeonAccount` — which teardown has already
+ * deleted. The queue returns null and the corrected account dies in memory.
+ *
+ * Every exit path had this; a hard quit is only where it shows, because a clean
+ * exit has other things that save on the way out.
+ */
+test("a slot emptied in a dungeon is still empty after the session is torn down", async () => {
+  const { account, avatar } = accountWith({ slot: 0, bag: null, id: 70023 });
+
+  const saved = [];
+  const session = {
+    id: 21,
+    objects: new Map(),
+    send: () => {},
+    dungeonActive: true,
+    dungeonAccount: account,
+    dungeonAvatar: avatar,
+    persistDungeonAccount: async (value) => {
+      // What reaches storage, at the moment it reaches it.
+      saved.push(structuredClone(value));
+    },
+  };
+
+  // The settle is what is still running when teardown returns, so it is what
+  // `leaveDungeon` hands back. Nothing in production waits for it.
+  await leaveDungeon(session);
+
+  assert.equal(saved.length, 1, "leaving writes the settled account down");
+  assert.equal(
+    saved.at(-1).account_avatars[0].consumable1_id,
+    0,
+    "and what it writes has released the slot, not left an x0 in it"
+  );
+});
+
+/**
+ * The settle waits for a save that is already in flight.
+ *
+ * `saveAccountToFile` serialises the account on entry and renames afterwards,
+ * so two saves running at once are two snapshots racing to be last. A reward
+ * save started before the powerups settled holds the older one; letting it
+ * rename second would put the x0 back on disk after it had been cleared.
+ */
+test("a save already running cannot overwrite the settled powerups", async () => {
+  const { account, avatar } = accountWith({ slot: 0, bag: null, id: 70023 });
+
+  const saved = [];
+  let releaseFirst;
+  const firstInFlight = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  const session = {
+    id: 22,
+    objects: new Map(),
+    send: () => {},
+    dungeonActive: true,
+    dungeonAccount: account,
+    dungeonAvatar: avatar,
+    persistDungeonAccount: async (value) => {
+      saved.push(structuredClone(value));
+    },
+  };
+
+  // A reward save that has taken its snapshot and not yet finished writing.
+  const stale = structuredClone(account);
+  session.rewardSavePromise = firstInFlight.then(() => saved.push(stale));
+
+  const settled = leaveDungeon(session);
+  releaseFirst();
+  await settled;
+
+  assert.deepEqual(
+    saved.map((value) => value.account_avatars[0].consumable1_id),
+    [70023, 0],
+    "the older snapshot lands first, and the settled one lands last"
+  );
+});
+
+/**
+ * The repair for accounts already written with an x0 in them.
+ *
+ * Only the clearing half of the rule, because this runs on every account load
+ * and some of those loads happen during a run — topping a slot up there would
+ * hand back powerups the player had already spent. So the property that matters
+ * as much as the clearing is what it refuses to do.
+ */
+test("a slot with nothing behind it is released on load, and a live one is not", () => {
+  const { account, avatar } = accountWith({ slot: 0, bag: null, id: 70023 });
+  avatar.consumable2_id = 70000;
+  avatar.consumable2_count = 4;
+
+  assert.equal(repairSpentPowerups(account), 1, "one slot was spent, one was not");
+  assert.equal(avatar.consumable1_id, 0, "the spent slot stops being reserved");
+  assert.equal(avatar.consumable2_id, 70000, "and the one still holding something is left alone");
+  assert.equal(avatar.consumable2_count, 4);
+});
+
+test("a slot that still has a bag behind it is not released", () => {
+  const { account, avatar } = accountWith({ slot: 0, bag: 6, id: 70023 });
+
+  assert.equal(repairSpentPowerups(account), 0, "nothing is wrong here");
+  assert.equal(avatar.consumable1_id, 70023, "the slot keeps its item");
+  assert.equal(avatar.consumable1_count, 0, "and is emphatically not refilled from the bag");
+  assert.equal(bagCount(account, 70023), 6, "which is still all there");
+});
+
+test("bag rows at zero are dropped, and a clean account is left untouched", () => {
+  const avatar = { id: 1, consumable1_id: 0, consumable1_count: 0, consumable2_id: 0, consumable2_count: 0 };
+  const account = {
+    id: 6,
+    account_avatars: [avatar],
+    account_stackables: [
+      { id: 1, account_id: 6, stack_id: 60001, count: 12 },
+      { id: 2, account_id: 6, stack_id: 60018, count: 0 },
+    ],
+  };
+
+  assert.equal(repairSpentPowerups(account), 1);
+  assert.deepEqual(account.account_stackables.map((row) => row.stack_id), [60001]);
+  // Returning zero is what keeps a load from writing the file back for nothing.
+  assert.equal(repairSpentPowerups(account), 0, "and it is idempotent");
 });
