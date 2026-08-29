@@ -2624,3 +2624,67 @@ test("a fallen player blocks a trap arrow instead of letting it through", async 
     "the player behind the body is not hit through it"
   );
 });
+
+/**
+ * A dead monster is not cover.
+ *
+ * Killed NPCs keep their entry in `actors` with `dead` set — nothing removes
+ * them on the ordinary kill path — so making *every* fallen actor stop a bolt
+ * turned each corpse into a shield. An arrow trap with anything dead in front
+ * of it stopped hurting anybody, which is not what the client draws: it fades a
+ * dead monster out and keeps drawing a downed player.
+ *
+ * Only a fallen hero blocks. Reported from play, as a hero that stopped taking
+ * arrow damage after fighting near the trap.
+ */
+test("a monster's corpse does not shield the hero from a trap arrow", async () => {
+  const { tickTrapProjectiles, performTrapAttack } = await import("../src/socket/combat.js");
+  const { npcForConstant, attackForConstant, projectileForConstant } = await import(
+    "../src/gamemaster.js"
+  );
+
+  const npc = await npcForConstant("CASTLE_ARENA_TRAP_ARROW_A");
+  const attack = await attackForConstant(npc.Attack1);
+  const projectile = await projectileForConstant(attack.Projectile);
+  const emitter = 9800;
+  const corpse = 8401;
+  const hero = 7401;
+
+  const session = {
+    id: 32,
+    dungeonActive: true,
+    heroDoid: hero,
+    heroPosition: { x: 1600, y: 1000 },
+    playerActors: new Set([hero]),
+    navigation: null,
+    objects: new Map([
+      [hero, CLID.HeroGameObject],
+      [corpse, CLID.DistributedNPCGameObject],
+      [emitter, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      // A knight killed in front of the trap, still in the map as every kill
+      // leaves it.
+      [corpse, { hitPoints: 0, maxHitPoints: 400, dead: true, collisionRadius: 35,
+                 constant: "KNIGHT", isEnemy: true, team: TEAM.ENEMIES,
+                 position: { x: 1200, y: 1000 } }],
+      [hero, { hitPoints: 4000, maxHitPoints: 4000, collisionRadius: 22,
+               constant: "RANGER", team: TEAM.PLAYERS, position: { x: 1600, y: 1000 } }],
+    ]),
+    send: () => {},
+  };
+
+  await performTrapAttack(session, emitter, {
+    attack, npc, projectile,
+    team: TEAM.ENVIRONMENT,
+    position: { x: 1000, y: 1000 },
+    heading: 0,
+    combatColliders: [],
+  });
+  for (let step = 0; step < 20; step += 1) await tickTrapProjectiles(session, 0.05);
+
+  assert.ok(
+    session.actors.get(hero).hitPoints < 4000,
+    "the arrow reaches the hero through the corpse"
+  );
+});

@@ -475,15 +475,19 @@ const teamAllowsHit = (attack, attackerTeam, victimTeam) => {
 /**
  * Who a trap can reach.
  *
- * `includeFallen` is for the one caller that needs the dead: a projectile is
- * stopped by a body whether or not the body is still standing, which is what
- * the client draws. Everything else asks who can be *hurt*, and a corpse
- * cannot, so the default leaves them out.
+ * `includeFallen` is for the one caller that needs a body rather than a target:
+ * a projectile is stopped by a downed player, which is what the client draws.
+ * It admits fallen *heroes* only — a dead monster is faded out and is not cover
+ * — and everything else asks who can be hurt, which a corpse cannot be.
  */
 const trapVictims = (session, { attack, attackerTeam, includeFallen = false } = {}) => {
   const victims = [];
   for (const [doid, actor] of session.actors ?? []) {
-    if (!includeFallen && actor.dead) continue;
+    // Only a fallen *hero* counts as still being there. Killing an NPC leaves
+    // its entry in the map with `dead` set — nothing removes it on the ordinary
+    // path — so admitting every corpse turned each dead monster into cover and
+    // an arrow trap with anything dead in front of it stopped hurting anybody.
+    if (actor.dead && !(includeFallen && isPartyHero(session, doid))) continue;
     if (!RECEIVE_FIELD_BY_CLID[session.objects?.get(doid)]) continue;
     if (attack && !teamAllowsHit(attack, attackerTeam, actor.team)) continue;
     /**
