@@ -6,6 +6,7 @@ import {
 } from "../gamemaster.js";
 import { info, warn } from "../log.js";
 import { grantBuff, hasAbility } from "./buffs.js";
+import { heroMembersOf } from "./match-world.js";
 import {
   healHero,
   queueAccountSave,
@@ -65,20 +66,52 @@ const spawnSelfBuff = async (session, attack) => {
  * speed scroll and SPEED_BOOSTER_L3 among them. Nothing applied those, so the
  * scroll spent its thirty-five Mana and granted nothing.
  *
- * Only when the attack does not already name a `SelfBuff`. Where both are
- * present the two are for different people — the Berserker's Dungeon Buster
- * gives its caster BERSERK_DB and its targets BERSERK, and eight party potions
- * name the same buff in both fields — so the caster keeps taking the self one
- * and the target one is for the party. That is a second client on the floor,
- * which nothing here models yet.
+ * Where both fields are present the two are for different people — the
+ * Berserker's Dungeon Buster gives its caster BERSERK_DB and its targets
+ * BERSERK, and the party potions name the same buff in both — so the caster
+ * takes the self one and the target one is for everybody else. That used to be
+ * skipped outright, on the grounds that a second client on the floor was not
+ * modelled. It is now, and twelve of the 33 consumable attacks are party
+ * potions carrying `TargetBuff1` with `AffectsOthers`, every one of which was
+ * buffing only the person who drank it.
+ *
+ * The official does it one generate per affected actor. Measured, a party
+ * mushroom in a three-player floor:
+ *
+ *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on 50386075
+ *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on 1100183818  <- the drinker
+ *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on 1100379173
  *
  * The scrolls have no SelfBuff at all, so their caster *is* the target, which
- * is the case this exists for.
+ * is the case this originally existed for and still covers.
  */
 const buffFriendlyTarget = async (session, attack) => {
-  if (attack.Team !== "FRIENDLY" || !attack.TargetBuff1 || attack.SelfBuff) return null;
+  if (attack.Team !== "FRIENDLY" || !attack.TargetBuff1) return null;
   if (!session.floorDoid || !session.heroDoid) return null;
-  return grantBuff(session, attack.TargetBuff1, { affectedActor: session.heroDoid });
+
+  const granted = [];
+
+  // No SelfBuff means the caster is one of the targets rather than being
+  // covered separately. With one, the self half has already been granted.
+  if (!attack.SelfBuff) {
+    granted.push(await grantBuff(session, attack.TargetBuff1, { affectedActor: session.heroDoid }));
+  }
+
+  /**
+   * And everyone else, whenever the attack says it reaches them. This is not
+   * only the party potions: of the 19 friendly attacks that name a TargetBuff1
+   * and no SelfBuff, 17 carry `AffectsOthers` — both speed pulses, BACON_BOOST,
+   * PARTY_BOMB_HEAL_ATTACK, BATTLE_RAGE, SKELETON_DANCE. Every one of them was
+   * buffing only the person who cast it.
+   */
+  if (attack.AffectsOthers) {
+    for (const doid of heroMembersOf(session).keys()) {
+      if (doid === session.heroDoid) continue;
+      granted.push(await grantBuff(session, attack.TargetBuff1, { affectedActor: doid }));
+    }
+  }
+
+  return granted.length ? granted : null;
 };
 
 /**
@@ -314,13 +347,18 @@ const useConsumable = async (session, attack, slot) => {
 
   const healed = healHero(session, attack.DoPercentHealthDamage ? attack.PercentHealthDamageValue : 0);
   const buff = attack.SelfBuff ? await grantBuff(session, attack.SelfBuff) : null;
+  // And the party's half of it. Twelve of the 33 consumable attacks are party
+  // potions naming the same buff in `SelfBuff` and `TargetBuff1`; only the
+  // drinker was ever getting one.
+  const shared = await buffFriendlyTarget(session, attack);
   // A thrown bomb is a placeable like any other; the slot it came from indexes
   // the powerups, so the weapon slot is not this one's to give.
   await schedulePlaceables(session, attack);
   info(
     `[${session.id}] used ${stackable.Constant} from slot ${slot}, ${equipped.count} left` +
       (healed ? `; healed ${healed}` : "") +
-      (buff ? `; ${attack.SelfBuff}` : "")
+      (buff ? `; ${attack.SelfBuff}` : "") +
+      (Array.isArray(shared) ? `; ${attack.TargetBuff1} to ${shared.length} others` : "")
   );
   return true;
 };
