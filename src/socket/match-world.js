@@ -72,6 +72,7 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "trapNames",
   "tracePattern",
   "triggers",
+  "releaseProximityActor",
   "turretAims",
   "hazardBeats",
   "floorFailingTimer",
@@ -500,6 +501,9 @@ export const createMatchWorld = (match, seedSession) => {
       });
       this.operationTail = running.catch(() => undefined);
       return running;
+    },
+    isActiveMember(member) {
+      return this.liveMembers.has(member) && isLiveMember(member);
     },
     contextFor(member, { activate = true } = {}) {
       if (this.destroyed) throw new Error("cannot create a context for a destroyed match world");

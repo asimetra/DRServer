@@ -440,11 +440,38 @@ const muzzleOf = (hazard) => ({
   y: hazard.position.y + (hazard.launch?.yOffset ?? 0),
 });
 
+/** The closest live party hero this turret can actually reach. */
+const turretTarget = (session, hazard) => {
+  const muzzle = muzzleOf(hazard);
+  const candidates = [];
+  for (const doid of session.playerActors ?? [session.heroDoid]) {
+    const actor = session.actors?.get(doid);
+    const position = actor?.position ?? (doid === session.heroDoid ? session.heroPosition : null);
+    if (!actor?.dead && position && withinReach(hazard, position)) {
+      candidates.push({
+        doid,
+        position,
+        distance: Math.hypot(position.x - muzzle.x, position.y - muzzle.y),
+      });
+    }
+  }
+  candidates.sort((a, b) => a.distance - b.distance || Number(a.doid) - Number(b.doid));
+  return candidates[0] ?? null;
+};
+
 /** The heading a tracking turret should carry in its initial generate. */
-export const initialTurretHeading = ({ attack, projectile, position, launch, hero }) => {
+export const initialTurretHeading = ({ attack, projectile, position, launch, hero, heroes }) => {
   const hazard = { attack, projectile, position, launch };
-  if (!position || !hero || !isTurret(hazard) || !withinReach(hazard, hero)) return null;
-  return bearing(muzzleOf(hazard), hero);
+  if (!position || !isTurret(hazard)) return null;
+  const muzzle = muzzleOf(hazard);
+  const target = [...(heroes ?? []), ...(hero ? [hero] : [])]
+    .filter((candidate) => candidate && withinReach(hazard, candidate))
+    .map((candidate) => ({
+      position: candidate,
+      distance: Math.hypot(candidate.x - muzzle.x, candidate.y - muzzle.y),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  return target ? bearing(muzzle, target.position) : null;
 };
 
 const turned = (from, to) => Math.abs((((to - from) % 360) + 540) % 360 - 180);
@@ -467,14 +494,17 @@ export const aimTurret = (session, targetId) => {
   const doid = session.triggerableDoids?.get(targetId);
   const hazard = session.triggerableHazards?.get(targetId);
   if (doid === undefined || !hazard?.position || !isTurret(hazard)) return false;
-  const hero = session.heroPosition;
-  if (!hero) return false;
-  if (!withinReach(hazard, hero)) return false;
+  const target = turretTarget(session, hazard);
+  if (!target) {
+    hazard.targetActorDoid = null;
+    return false;
+  }
+  hazard.targetActorDoid = target.doid;
 
   // Aimed from where the shot leaves, not from the mount: the client draws the
   // fireball out of the statue's hands, so a line drawn from its feet is
   // parallel to the flame rather than the same as it. See projectileLaunch.
-  const heading = bearing(muzzleOf(hazard), hero);
+  const heading = bearing(muzzleOf(hazard), target.position);
   const current = hazard.heading ?? hazard.position.heading ?? 0;
   // Already pointing there: the client has the right angle and needs no word.
   if (turned(current, heading) < AIM_DEADZONE_DEGREES) return false;
@@ -528,8 +558,12 @@ export const raiseHazard = (session, targetId) => {
      * `hazard.heading`. Sending the aim in the same breath as the shot is what
      * keeps those the same line — see aimTurret.
      */
-    const reaches = () =>
-      !isTurret(hazard) || !session.heroPosition || withinReach(hazard, session.heroPosition);
+    const reaches = () => {
+      if (!isTurret(hazard)) return true;
+      const target = turretTarget(session, hazard);
+      hazard.targetActorDoid = target?.doid ?? null;
+      return Boolean(target);
+    };
 
     if (reaches()) {
       aimTurret(session, targetId);

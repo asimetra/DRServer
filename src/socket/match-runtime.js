@@ -45,6 +45,19 @@ const requireOpenMember = (member) => {
   }
 };
 
+const requireJoinableWorld = (match, world, member) => {
+  if (
+    !match?.members?.has(member) ||
+    match?.state === "closed" ||
+    match?.state === "finished" ||
+    world?.destroyed ||
+    world?.quiesced ||
+    world?.dungeonActive === false
+  ) {
+    throw new Error(`match ${match?.id ?? "(unknown)"} no longer accepts joins`);
+  }
+};
+
 const waitForFloorAssets = () =>
   new Promise((resolve) => setTimeout(resolve, config.floorDelayMs));
 
@@ -105,8 +118,6 @@ const installHeroActor = (member, world, position) => {
     position: { ...position },
     team: TEAM.PLAYERS,
   });
-  world.playerActors ??= new Set();
-  world.playerActors.add(member.heroDoid);
   member.heroPosition = { ...position };
   member.reportedHeroPosition = { ...position };
   member.heroPositionAt = Date.now();
@@ -173,6 +184,7 @@ const joinDungeonMatchLocked = async (
   if (!(await world.readyPromise) || world.destroyed) {
     throw new Error(`match ${match.id} world did not become ready`);
   }
+  requireJoinableWorld(match, world, session);
   requireOpenMember(session);
 
   const prepared = await prepareMember(session, {
@@ -180,6 +192,7 @@ const joinDungeonMatchLocked = async (
     account: result.account,
   });
   requireOpenMember(session);
+  requireJoinableWorld(match, world, session);
   if (!prepared) throw new Error(`member ${session.accountId} preparation was cancelled`);
   session.dungeonActive = true;
   session.dungeonZone = world.dungeonZone ?? 10;
@@ -215,6 +228,7 @@ const joinDungeonMatchLocked = async (
   // preserve that gap or TileFactory reads a library that is not in cache yet.
   await waitForAssets();
   requireOpenMember(session);
+  requireJoinableWorld(match, world, session);
   // Bring every live NPC to the party size that will exist when this member is
   // activated. Publishing through the pending context updates incumbents and
   // the compact snapshot, but not the joiner before its floor exists.
@@ -234,6 +248,9 @@ const joinDungeonMatchLocked = async (
     directSend(peer, heroFrame(session, false, world.floorDoid, position));
   }
 
+  requireJoinableWorld(match, world, session);
+  world.playerActors ??= new Set();
+  world.playerActors.add(session.heroDoid);
   world.contextFor(session);
   /** A joiner arrives standing, so a wipe in progress is no longer a wipe. */
   refreshFloorFailing(context);
@@ -252,9 +269,20 @@ export const joinDungeonMatch = async (session, result, request, options = {}) =
   requireOpenMember(session);
   const buildHost = !match.world;
   const world = match.world ?? createMatchWorld(match, session);
-  return world.runExclusive(() =>
-    joinDungeonMatchLocked(session, result, request, world, buildHost, options)
-  );
+  try {
+    return await world.runExclusive(() =>
+      joinDungeonMatchLocked(session, result, request, world, buildHost, options)
+    );
+  } catch (error) {
+    // A joiner can already be queued behind the first build. If that build
+    // throws without settling readiness, every queued member waits forever and
+    // the still-public match keeps accepting more of them.
+    if (buildHost && !world.ready) {
+      match.state = "failed";
+      world.destroy();
+    }
+    throw error;
+  }
 };
 
 const disablePriority = (clid) => {
@@ -309,6 +337,9 @@ export const leaveDungeonSession = (
   const peers = [...membersOf(world)].filter(
     (member) => member !== session && isLiveMember(member)
   );
+  if (peers[0] && typeof world.releaseProximityActor === "function") {
+    world.releaseProximityActor(world.contextFor(peers[0]), session.heroDoid);
+  }
   if (notifyClient) {
     for (const { doid, owner } of dungeonTeardownFor(session, world)) {
       directSend(session, objectDisable(doid, owner));

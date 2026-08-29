@@ -1587,6 +1587,54 @@ test("a turret turns to the hero and fires where it points", async () => {
   stopTurretAim(session, "loki");
 });
 
+test("a multiplayer turret aims at the nearest live hero, not the timer owner", async () => {
+  const { attackForConstant, npcForConstant, projectileForConstant } = await import(
+    "../src/gamemaster.js"
+  );
+  const { aimTurret } = await import("../src/socket/hazards.js");
+
+  const npc = await npcForConstant("NORDIC_TEMPLE_TRAP_STATUE_LOKI");
+  const attack = await attackForConstant(npc.Attack1);
+  const projectile = await projectileForConstant(attack.Projectile);
+  const hostHero = 7301;
+  const peerHero = 7302;
+  const pendingHero = 7303;
+  const statueDoid = 9730;
+  const sent = [];
+  const hazard = {
+    attack,
+    npc,
+    projectile,
+    position: { x: 1000, y: 1000, heading: 0 },
+    launch: { xOffset: 0, yOffset: 0 },
+  };
+  const session = {
+    id: 73,
+    dungeonActive: true,
+    heroDoid: hostHero,
+    // The timer belongs to this member, who is east of the statue.
+    heroPosition: { x: 1300, y: 1000 },
+    playerActors: new Set([hostHero, peerHero]),
+    actors: new Map([
+      [hostHero, { position: { x: 1300, y: 1000 }, dead: false }],
+      // The peer is nearer, directly north.
+      [peerHero, { position: { x: 1000, y: 1100 }, dead: false }],
+      // Even nearer, but not active until its snapshot completes.
+      [pendingHero, { position: { x: 1000, y: 1010 }, dead: false }],
+    ]),
+    triggerableDoids: new Map([["loki", statueDoid]]),
+    triggerableHazards: new Map([["loki", hazard]]),
+    send: (frame) => sent.push(frame),
+  };
+
+  assert.equal(aimTurret(session, "loki"), true);
+  const update = readUpdateHead(sent[0]);
+  assert.equal(update.doid, statueDoid);
+  assert.equal(update.fieldId, 133);
+  assert.ok(Math.abs(update.reader.f32() - 90) < 0.01);
+  assert.equal(hazard.targetActorDoid, peerHero);
+});
+
 /**
  * Dying inside a proximity trigger releases it.
  *
@@ -2498,6 +2546,31 @@ test("a ground trap hurts every hero standing in it, not only the timer's owner"
   assert.ok(
     session.actors.get(peerHero).hitPoints < 4000,
     "and so is the other player standing in the same spikes"
+  );
+});
+
+test("a hero whose late-join snapshot is pending is not yet a trap victim", async () => {
+  const { hazardVictims } = await import("../src/socket/combat.js");
+  const activeHero = 7151;
+  const pendingHero = 7152;
+  const collider = { type: "circle", x: 1000, y: 1000, radius: 40 };
+  const session = {
+    heroDoid: activeHero,
+    heroPosition: { x: 1000, y: 1000 },
+    playerActors: new Set([activeHero]),
+    objects: new Map([
+      [activeHero, CLID.HeroGameObject],
+      [pendingHero, CLID.HeroGameObject],
+    ]),
+    actors: new Map([
+      [activeHero, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
+      [pendingHero, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
+    ]),
+  };
+
+  assert.deepEqual(
+    hazardVictims(session, [collider]).map(({ doid }) => doid),
+    [activeHero]
   );
 });
 

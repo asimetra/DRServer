@@ -139,10 +139,14 @@ export class DungeonMatchRegistry {
   }
 
   canJoin(match, { publicSearch = false, adminOverride = false } = {}) {
-    if (!match || match.state === "closed" || match.state === "finished") return false;
+    if (!match || !["forming", "active"].includes(match.state)) return false;
     const privileged = adminOverride === true;
-    const capacity = this.maxPlayers + (privileged ? 1 : 0);
-    if (match.members.size >= capacity) return false;
+    const privilegedCount = match.privilegedMembers?.size ?? 0;
+    const ordinaryCount = Math.max(0, match.members.size - privilegedCount);
+    // The administrator is an out-of-band observer/player and never consumes
+    // one of the four native party slots. At most one such member is admitted,
+    // regardless of whether it arrived before or after the ordinary party.
+    if (privileged ? privilegedCount >= 1 : ordinaryCount >= this.maxPlayers) return false;
     // Original captures allow explicit late join on later floors. The requested
     // simplification applies only to random/public filling.
     return privileged || !publicSearch || !this.publicFloorZeroOnly || match.floorIndex === 0;
@@ -205,6 +209,11 @@ export class DungeonMatchRegistry {
     for (const member of match.members) {
       if (this.matchByAccount.get(member.accountId) === match) this.matchByAccount.delete(member.accountId);
       if (member.dungeonMatch === match) delete member.dungeonMatch;
+      // A finished-room TTL can close while the client still has its report
+      // open. Its world binding is gone at this point; the raw per-connection
+      // flag must agree or MatchMaker will reject every later entry as a
+      // duplicate active dungeon.
+      member.dungeonActive = false;
     }
     match.members.clear();
     match.privilegedMembers?.clear();
@@ -265,6 +274,8 @@ export class DungeonMatchRegistry {
           error:
             target.state === "finished"
               ? "run_finished"
+              : target.state === "failed"
+                ? "game_not_enterable"
               : mapId
                 ? "map_full"
                 : "friend_full",

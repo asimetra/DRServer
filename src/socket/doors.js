@@ -14,7 +14,12 @@
  * preload the way a mid-run floor swap would be.
  */
 import { error, info } from "../log.js";
-import { ENTRY_ERROR, buildEntryResponse, entryErrorCodeFor } from "./matchmaker.js";
+import {
+  ENTRY_ERROR,
+  buildEntryResponse,
+  entryErrorCodeFor,
+  rememberMatchMakerGroup,
+} from "./matchmaker.js";
 import { joinDungeonMatch, leaveDungeonSession } from "./match-runtime.js";
 import { resolveMatchEntry } from "./match-entry.js";
 
@@ -87,6 +92,7 @@ export const walkThrough = async (
 
     connection.send(buildEntryResponse(connection.matchMakerDoid, 0, result.match.mapNodeId));
     await join(connection, result, request);
+    rememberMatchMakerGroup(connection, result.match);
     info(`[${session.id}] walked through to ${node}`);
     return true;
   } catch (problem) {

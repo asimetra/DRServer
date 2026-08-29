@@ -200,6 +200,12 @@ const handleFieldUpdate = (member, reader) => {
 
   // Gameplay state reads shared maps through the member's world context while
   // login, MatchMaker and socket lifecycle remain on the raw connection session.
+  // Admission and snapshot activation are separate states. An owner may begin
+  // sending position/attack fields as soon as its hero object exists, while
+  // the rest of its floor is still being replayed. Processing those fields via
+  // `contextFor(member)` would activate it implicitly and leak live traffic
+  // before the ordered snapshot is complete.
+  if (member.world && !member.world.isActiveMember(member)) return;
   const session = member.world?.contextFor(member) ?? member;
 
   if (doid === session.heroDoid && fieldId === FLID_HERO_POSITION) {

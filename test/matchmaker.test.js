@@ -8,6 +8,7 @@ import {
   FLID,
   handleField,
   entryErrorCodeFor,
+  rememberMatchMakerGroup,
 } from "../src/socket/matchmaker.js";
 import {
   heroGenerate,
@@ -114,6 +115,12 @@ test("expected entry refusals use the messages already shipped in the client", (
   assert.equal(entryErrorCodeFor({ error: "ultimate_in_progress" }), ENTRY_ERROR.ULTIMATE_IN_PROGRESS);
   assert.equal(entryErrorCodeFor({ error: "bad_map_node" }), ENTRY_ERROR.BAD_MAP_NODE);
   assert.equal(entryErrorCodeFor({ error: "unexpected" }), ENTRY_ERROR.INTERNAL);
+});
+
+test("an accepted match persists its cohort for server-driven doorway entries", () => {
+  const session = {};
+  assert.equal(rememberMatchMakerGroup(session, { group: "region:eu" }), "region:eu");
+  assert.equal(session.matchMakerGroup, "region:eu");
 });
 
 test("joining a friend who already left returns Friend Not Found, not Internal Error", async () => {

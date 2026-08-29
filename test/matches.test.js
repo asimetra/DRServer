@@ -11,8 +11,29 @@ import {
   hasDungeonAdminOverride,
   MAX_DUNGEON_PLAYERS,
 } from "../src/socket/matches.js";
+import { nearestPartyHeroPosition } from "../src/socket/dungeon.js";
 
 const player = (accountId) => ({ accountId });
+
+test("shared floor planning chooses the nearest live party hero, not the context owner", () => {
+  const session = {
+    heroDoid: 1,
+    heroPosition: { x: 5000, y: 5000 },
+    playerActors: new Set([1, 2, 3]),
+    actors: new Map([
+      [1, { position: { x: 5000, y: 5000 }, dead: false }],
+      [2, { position: { x: 120, y: 100 }, dead: false }],
+      [3, { position: { x: 105, y: 100 }, dead: true }],
+      // Prepared for late-join replay, but absent from active playerActors.
+      [4, { position: { x: 101, y: 100 }, dead: false }],
+    ]),
+  };
+
+  assert.deepEqual(nearestPartyHeroPosition(session, { x: 100, y: 100 }), {
+    x: 120,
+    y: 100,
+  });
+});
 
 test("only server-stored admin flag bit zero enables the dungeon override", () => {
   assert.equal(hasDungeonAdminOverride({ admin_flags: 0 }), false);
@@ -137,6 +158,27 @@ test("one server-authorized admin may occupy the fifth slot", () => {
   assert.equal(sixth.match, null);
   assert.equal(sixth.error, "friend_full");
   assert.equal(original.members.size, 5);
+});
+
+test("a privileged member never consumes one of the four ordinary player slots", () => {
+  const registry = new DungeonMatchRegistry();
+  const admin = player(150);
+  const original = registry.resolve({
+    session: admin,
+    mapNodeId: 50047,
+    adminOverride: true,
+  }).match;
+
+  const ordinary = Array.from({ length: MAX_DUNGEON_PLAYERS }, (_, index) =>
+    registry.resolve({ session: player(151 + index), mapNodeId: 50047 })
+  );
+
+  assert.ok(ordinary.every(({ match }) => match === original));
+  assert.equal(original.members.size, MAX_DUNGEON_PLAYERS + 1);
+  assert.equal(original.privilegedMembers.size, 1);
+
+  const overflow = registry.resolve({ session: player(199), mapNodeId: 50047 });
+  assert.notEqual(overflow.match, original, "a fifth ordinary player starts another room");
 });
 
 test("an admin public search may fill an advanced floor as the fifth member", () => {
@@ -432,6 +474,7 @@ test("a finished run refuses a join instead of hanging it", async () => {
 test("a finished match is evicted after its bounded report-screen TTL", async () => {
   const registry = new DungeonMatchRegistry({ finishedMatchTtlMs: 5 });
   const host = player(901);
+  host.dungeonActive = true;
   const opened = registry.resolve({ session: host, mapNodeId: 50082 });
 
   registry.finish(opened.match);
@@ -443,4 +486,5 @@ test("a finished match is evicted after its bounded report-screen TTL", async ()
   assert.equal(registry.matchByAccount.size, 0);
   assert.equal(registry.publicByKey.size, 0);
   assert.equal(host.dungeonMatch, undefined);
+  assert.equal(host.dungeonActive, false, "the session may enter another dungeon after TTL");
 });

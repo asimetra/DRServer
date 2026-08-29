@@ -132,6 +132,37 @@ test("an accepted owner choreography is relayed once to the remote hero on field
   world.destroy();
 });
 
+test("gameplay packets cannot activate a member whose late-join snapshot is pending", async () => {
+  const hostSocket = fakeSocket();
+  const pendingSocket = fakeSocket();
+  const host = onConnection(hostSocket);
+  const pending = onConnection(pendingSocket);
+  host.accountId = 120;
+  pending.accountId = 121;
+  host.heroDoid = 520;
+  pending.heroDoid = 521;
+  host.heroPosition = { x: 10, y: 20 };
+  pending.heroPosition = { x: 10, y: 20 };
+  const world = createMatchWorld({ id: 3, members: new Set([host, pending]) }, host);
+  world.contextFor(host);
+  world.contextFor(pending, { activate: false });
+  world.objects.set(host.heroDoid, CLID.HeroGameObject);
+  world.objects.set(pending.heroDoid, CLID.HeroGameObject);
+  world.actors.set(host.heroDoid, { position: { x: 10, y: 20 }, hitPoints: 100 });
+  world.actors.set(pending.heroDoid, { position: { x: 10, y: 20 }, hitPoints: 100 });
+
+  pendingSocket.emit(
+    "data",
+    fieldUpdate(pending.heroDoid, 147, new PacketWriter().f32(90).f32(80).body())
+  );
+  await settle();
+
+  assert.equal(world.liveMembers.has(pending), false);
+  assert.deepEqual(pending.heroPosition, { x: 10, y: 20 });
+  assert.equal(hostSocket.written.length, 0, "no pre-snapshot movement leaks to incumbents");
+  world.destroy();
+});
+
 test("an ally revive choreography followed by field 173 raises the downed hero", async () => {
   const ownerSocket = fakeSocket();
   const peerSocket = fakeSocket();

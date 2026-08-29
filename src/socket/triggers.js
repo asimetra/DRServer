@@ -680,6 +680,35 @@ const illuminate = (session, trigger) => {
   );
 };
 
+const applyProximityState = (session, trigger, inside) => {
+  if (inside === trigger.on) return false;
+  if (trigger.triggerOnce && trigger.fired) return false;
+
+  trigger.on = inside;
+  if (inside && trigger.triggerOnce) trigger.fired = true;
+  if (inside) {
+    // The highlight describes shared world state, so the first party member in
+    // is enough. Speech and doorway travel are per-member and handled below.
+    illuminate(session, trigger);
+  }
+  emitSignal(session, trigger.id, inside);
+  info(`[${session.id}] trigger ${trigger.constant} ${inside ? "entered" : "left"}`);
+  return true;
+};
+
+/** Removes one hero from every shared proximity zone immediately. */
+export const releaseProximityActor = (session, heroDoid) => {
+  if (heroDoid === undefined || heroDoid === null) return 0;
+  let changed = 0;
+  for (const trigger of session.triggers ?? []) {
+    if (!trigger.constant.startsWith("PROXIMITY")) continue;
+    trigger.occupants ??= new Set();
+    if (!trigger.occupants.delete(heroDoid)) continue;
+    if (applyProximityState(session, trigger, trigger.occupants.size > 0)) changed++;
+  }
+  return changed;
+};
+
 export const updateProximityTriggers = (session, position) => {
   const hero = session.actors?.get(session.heroDoid);
   const at = collisionPointOf(hero, position);
@@ -698,28 +727,37 @@ export const updateProximityTriggers = (session, position) => {
   for (const trigger of session.triggers ?? []) {
     if (!trigger.constant.startsWith("PROXIMITY")) continue;
 
-    const inside = !down && withinReach(at, trigger, trigger.radius);
-    if (inside === trigger.on) continue;
-    if (trigger.triggerOnce && trigger.fired) continue;
+    trigger.occupants ??= new Set();
+    // Disconnects and deaths may happen between position packets. Prune them
+    // whenever any party member reports movement so stale occupants cannot
+    // hold a switch high.
+    for (const occupant of trigger.occupants) {
+      if (
+        (session.playerActors && !session.playerActors.has(occupant)) ||
+        session.actors?.get(occupant)?.dead ||
+        !session.actors?.has(occupant)
+      ) {
+        trigger.occupants.delete(occupant);
+      }
+    }
 
-    trigger.on = inside;
-    if (inside && trigger.triggerOnce) trigger.fired = true;
-    if (inside) {
+    const memberInside = !down && withinReach(at, trigger, trigger.radius);
+    const memberEntered = memberInside && !trigger.occupants.has(session.heroDoid);
+    const alreadyFired = trigger.triggerOnce && trigger.fired;
+    if (memberInside) trigger.occupants.add(session.heroDoid);
+    else trigger.occupants.delete(session.heroDoid);
+    if (memberEntered && !alreadyFired) {
+      // These are addressed to one connection. A second player crossing while
+      // the shared signal is already high still needs its own line and its own
+      // doorway transition.
       announce(session, trigger);
-      illuminate(session, trigger);
-      /**
-       * And last, because it takes the floor away: crossing a threshold tears
-       * this dungeon down, so anything the doorway had to say must already
-       * have been said.
-       */
       if (trigger.destination) {
         walkThrough(session, trigger.destination).catch((problem) =>
           warn(`[${session.id}] door failed: ${problem.message}`)
         );
       }
     }
-    emitSignal(session, trigger.id, inside);
-    info(`[${session.id}] trigger ${trigger.constant} ${inside ? "entered" : "left"}`);
+    applyProximityState(session, trigger, trigger.occupants.size > 0);
   }
 };
 
@@ -840,7 +878,11 @@ export const trackTriggers = (session, floor) => {
     targets: floor.wiring.get(trigger.id) ?? [],
     on: false,
     fired: false,
+    occupants: new Set(),
   }));
+  // Kept on the run so combat/disconnect teardown can release a hero without
+  // importing this module back through the doors -> match-runtime cycle.
+  session.releaseProximityActor = releaseProximityActor;
 
   /**
    * What a source is before anything has happened.

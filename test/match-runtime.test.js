@@ -455,6 +455,54 @@ test("a socket closed while waiting for world readiness cannot reattach itself",
   assert.equal(hostResult.match.members.has(joiner), false);
 });
 
+test("a failed host build releases every joiner waiting on world readiness", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(4051, 1104051);
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  let enteredBuild;
+  const building = new Promise((resolve) => {
+    enteredBuild = resolve;
+  });
+  let failBuild;
+  const blocked = new Promise((_, reject) => {
+    failBuild = reject;
+  });
+  const hostJoin = joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: async () => {
+      enteredBuild();
+      return blocked;
+    },
+  });
+  await building;
+
+  const joiner = member(4052, 1104052);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const waiting = joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {},
+  });
+
+  failBuild(new Error("fixture world build failed"));
+  await assert.rejects(hostJoin, /fixture world build failed/);
+  await assert.rejects(
+    Promise.race([
+      waiting,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("joiner remained stuck on readiness")), 100)
+      ),
+    ]),
+    /world did not become ready|destroyed match world/
+  );
+  assert.equal(hosted.match.state, "failed");
+  assert.equal(hosted.match.world, null);
+
+  leaveDungeonSession(host, { registry });
+  leaveDungeonSession(joiner, { registry });
+  assert.equal(registry.matches.size, 0);
+});
+
 /**
  * Two players dropping at once must not take the server with them.
  *
@@ -648,6 +696,11 @@ test("disconnect during late-join asset wait rolls every pending world mutation 
   await waiting;
   const world = host.world;
   assert.equal(world.actors.has(joiner.heroDoid), true, "the pending mutation is installed");
+  assert.equal(
+    world.playerActors.has(joiner.heroDoid),
+    false,
+    "prepared is not the same as active party member"
+  );
   joiner.closed = true;
   leaveDungeonSession(joiner, { registry });
   continueJoin();
@@ -688,4 +741,79 @@ test("late join stays broadcast-inactive until its ordered snapshot is complete"
       );
     },
   });
+});
+
+test("a run finishing during asset replay cannot activate the pending joiner", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(3001, 1103001);
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+
+  const joiner = member(3002, 1103002);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  let enteredWait;
+  const waiting = new Promise((resolve) => {
+    enteredWait = resolve;
+  });
+  let continueJoin;
+  const blocked = new Promise((resolve) => {
+    continueJoin = resolve;
+  });
+  const joining = joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {
+      enteredWait();
+      await blocked;
+    },
+  });
+
+  await waiting;
+  registry.finish(joined.match);
+  continueJoin();
+  await assert.rejects(joining, /no longer accepts joins/);
+  const joinerHeroDoid = joiner.heroDoid;
+  leaveDungeonSession(joiner, { registry });
+  assert.equal(host.world.liveMembers.has(joiner), false);
+  assert.equal(host.world.playerActors.has(joinerHeroDoid), false);
+});
+
+test("a pending joiner that requests exit cannot be reattached after asset replay", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(3101, 1103101);
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+
+  const joiner = member(3102, 1103102);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  let enteredWait;
+  const waiting = new Promise((resolve) => {
+    enteredWait = resolve;
+  });
+  let continueJoin;
+  const blocked = new Promise((resolve) => {
+    continueJoin = resolve;
+  });
+  const joining = joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {
+      enteredWait();
+      await blocked;
+    },
+  });
+
+  await waiting;
+  leaveDungeonSession(joiner, { registry });
+  continueJoin();
+  await assert.rejects(joining, /no longer accepts joins/);
+  assert.equal(host.world.liveMembers.has(joiner), false);
+  assert.equal(joined.match.members.has(joiner), false);
+  assert.equal(joiner.world, null);
 });

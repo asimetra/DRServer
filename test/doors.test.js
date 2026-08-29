@@ -74,6 +74,52 @@ test("the loop fires a threshold on entry and not while you stand in it", () => 
   assert.equal(entries, 2, "and again when you come back");
 });
 
+test("one party member leaving a proximity zone does not release another member", () => {
+  const trigger = doorway({ destination: undefined, chatText: "A shared threshold." });
+  const heard = [];
+  const actors = new Map([
+    [501, { position: { x: 480, y: 500 }, collisionRadius: 20 }],
+    [502, { position: { x: 490, y: 500 }, collisionRadius: 20 }],
+  ]);
+  const shared = {
+    actors,
+    playerActors: new Set([501, 502]),
+    triggers: [trigger],
+    signalValues: new Map(),
+    signalTargets: new Map(),
+    send: () => {},
+  };
+  const first = {
+    ...shared,
+    id: 51,
+    heroDoid: 501,
+    playerDoid: 601,
+    sendDirect: () => heard.push(501),
+  };
+  const second = {
+    ...shared,
+    id: 52,
+    heroDoid: 502,
+    playerDoid: 602,
+    sendDirect: () => heard.push(502),
+  };
+
+  updateProximityTriggers(first, actors.get(501).position);
+  updateProximityTriggers(second, actors.get(502).position);
+  assert.equal(trigger.on, true);
+  assert.deepEqual(heard, [501, 502], "each entrant receives its per-member event");
+
+  actors.get(501).position = { x: 4000, y: 4000 };
+  updateProximityTriggers(first, actors.get(501).position);
+  assert.equal(trigger.on, true, "the second hero still holds the shared zone high");
+  assert.equal(shared.signalValues.get(trigger.id), true);
+
+  actors.get(502).position = { x: 4000, y: 4000 };
+  updateProximityTriggers(second, actors.get(502).position);
+  assert.equal(trigger.on, false);
+  assert.equal(shared.signalValues.get(trigger.id), false);
+});
+
 /**
  * A refusal is answered the way a refused map click is, so the client shows the
  * popup it already owns rather than leaving somebody standing in a doorway that
@@ -94,6 +140,28 @@ test("a refused crossing is answered, not swallowed", async () => {
   assert.equal(crossed, false);
   assert.equal(sent.length, 1, "the client is told");
   assert.equal(session.walkingThrough, false, "and the doorway is usable again");
+});
+
+test("a failed doorway join does not replace the connection's matchmaking cohort", async () => {
+  const { walkThrough } = await import("../src/socket/doors.js");
+  const session = {
+    id: 18,
+    accountId: 18,
+    matchMakerDoid: 19,
+    matchMakerGroup: "stable-group",
+    send: () => {},
+  };
+
+  assert.equal(
+    await walkThrough(session, 50009, {
+      resolve: async () => ({ match: { mapNodeId: 50009, group: "failed-group" } }),
+      join: async () => {
+        throw new Error("fixture join failed");
+      },
+    }),
+    false
+  );
+  assert.equal(session.matchMakerGroup, "stable-group");
 });
 
 /**

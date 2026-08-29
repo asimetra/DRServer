@@ -352,6 +352,9 @@ export const applyDamage = (session, doid, damage, announce) => {
   if (actor.hitPoints === 0) {
     actor.dead = true;
     const recoverableHero = clid === CLID.HeroGameObject;
+    if (recoverableHero && typeof session.releaseProximityActor === "function") {
+      session.releaseProximityActor(session, doid);
+    }
     /**
      * Whatever it does as it breaks goes out *before* it is called dead.
      *
@@ -542,7 +545,12 @@ const trapVictims = (session, { attack, attackerTeam, includeFallen = false } = 
     // path — so admitting every corpse turned each dead monster into cover and
     // an arrow trap with anything dead in front of it stopped hurting anybody.
     if (actor.dead && !(includeFallen && isPartyHero(session, doid))) continue;
-    if (!RECEIVE_FIELD_BY_CLID[session.objects?.get(doid)]) continue;
+    const clid = session.objects?.get(doid);
+    if (!RECEIVE_FIELD_BY_CLID[clid]) continue;
+    // A late join installs its actor before replay so its create/state can be
+    // composed, but it is not part of live gameplay until snapshot activation.
+    // Without this, shared traps could damage an unseen hero during that gap.
+    if (clid === CLID.HeroGameObject && !isPartyHero(session, doid)) continue;
     if (attack && !teamAllowsHit(attack, attackerTeam, actor.team)) continue;
     /**
      * The session's cached position is preferred for its own hero because it is
@@ -1051,12 +1059,16 @@ export const performTrapAttack = async (session, attackerDoid, hazard) => {
    * other player named nobody and drew nothing, for everybody.
    */
   const struck = caught.find(({ doid }) => isPartyHero(session, doid));
+  const aimedHero = isPartyHero(session, hazard?.targetActorDoid) &&
+      !session.actors?.get(hazard.targetActorDoid)?.dead
+    ? hazard.targetActorDoid
+    : 0;
 
   session.send(
     npcAttackChoreography({
       doid: attackerDoid,
       attackType: attack?.Id,
-      targetActorDoid: struck?.doid ?? 0,
+      targetActorDoid: struck?.doid ?? aimedHero,
     })
   );
 

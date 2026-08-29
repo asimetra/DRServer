@@ -101,6 +101,13 @@ export const entryErrorCodeFor = ({ error: reason, source } = {}) => {
   }
 };
 
+/** The cohort follows a connection through server-driven doorway entries. */
+export const rememberMatchMakerGroup = (session, match) => {
+  const group = String(match?.group ?? "");
+  session.matchMakerGroup = group;
+  return group;
+};
+
 export const handleField = (session, fieldId, reader) => {
   switch (fieldId) {
     case FLID.ClientRequestEntry: {
@@ -146,6 +153,7 @@ export const handleField = (session, fieldId, reader) => {
         // Production answers before generating the local player/area objects.
         session.send(buildEntryResponse(session.matchMakerDoid, 0, result.match.mapNodeId));
         await joinDungeonMatch(session, result, request);
+        rememberMatchMakerGroup(session, result.match);
       })()
         .catch((err) => {
           error(`[${session.id}] dungeon entry failed: ${err.stack ?? err}`);

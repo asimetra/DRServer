@@ -977,8 +977,23 @@ const buildCollectables = async (context, placements) => {
   return built;
 };
 
-const heroPosition = (session) =>
-  session.heroPosition ?? session.actors?.get(session.heroDoid)?.position ?? null;
+/** Nearest live party member to a world decision, with a solo fallback. */
+export const nearestPartyHeroPosition = (session, origin = { x: 0, y: 0 }) => {
+  const candidates = [];
+  for (const doid of session.playerActors ?? [session.heroDoid]) {
+    const actor = session.actors?.get(doid);
+    const position = actor?.position ?? (doid === session.heroDoid ? session.heroPosition : null);
+    if (!actor?.dead && position) {
+      candidates.push({
+        doid,
+        position,
+        distance: Math.hypot(position.x - origin.x, position.y - origin.y),
+      });
+    }
+  }
+  candidates.sort((a, b) => a.distance - b.distance || Number(a.doid) - Number(b.doid));
+  return candidates[0]?.position ?? null;
+};
 
 /**
  * Keeps a burst visually compact while orienting its small variation to the
@@ -1080,7 +1095,7 @@ const generatorSpawn = (session, runtime, npc) => {
    * Quantised to a tile so a moving player does not make every spawn redo the
    * search; a step of a whole tile is what it takes to change the answer.
    */
-  const hero = heroPosition(session);
+  const hero = nearestPartyHeroPosition(session, placement);
   const heroCell = hero ? `${Math.round(hero.x / 900)},${Math.round(hero.y / 900)}` : "none";
   const cacheKey = `${collisionRadius}:${navigation?.revision ?? 0}:${heroCell}`;
   runtime.releasePlans ??= new Map();
@@ -1104,7 +1119,7 @@ const generatorSpawn = (session, runtime, npc) => {
   if (!release && isPositionBlocked(navigation, placement, collisionRadius)) {
     // Reachable from where the hero is, so nobody is released into a pocket on
     // the wrong side of a wall.
-    const hero = heroPosition(session) ?? session.heroPosition ?? null;
+    const hero = nearestPartyHeroPosition(session, placement);
     const clear = nearestClearPosition(navigation, placement, collisionRadius, {
       // Out of the wall towards the room, wherever the room happens to be.
       towards: hero,
@@ -1562,6 +1577,10 @@ const buildTriggerables = async (context, placements) => {
       position: placement,
       launch,
       hero: session.heroPosition,
+      heroes: [...(session.playerActors ?? [])]
+        .map((doid) => session.actors?.get(doid))
+        .filter((actor) => actor && !actor.dead && actor.position)
+        .map((actor) => actor.position),
     });
 
     const doid = await spawnNpc(context, placement.constant, placement, placement.scale, {
@@ -2664,6 +2683,7 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "triggerableAttacks",
     "triggerableStatefulAttacks",
     "triggers",
+    "releaseProximityActor",
     "weaponPower",
     "rewardSavePromise",
     "persistDungeonAccount",
