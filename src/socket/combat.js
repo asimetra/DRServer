@@ -472,12 +472,29 @@ const teamAllowsHit = (attack, attackerTeam, victimTeam) => {
     : attackerTeam !== victimTeam;
 };
 
-const trapVictims = (session, { attack, attackerTeam } = {}) => {
+/**
+ * Who a trap can reach.
+ *
+ * `includeFallen` is for the one caller that needs the dead: a projectile is
+ * stopped by a body whether or not the body is still standing, which is what
+ * the client draws. Everything else asks who can be *hurt*, and a corpse
+ * cannot, so the default leaves them out.
+ */
+const trapVictims = (session, { attack, attackerTeam, includeFallen = false } = {}) => {
   const victims = [];
   for (const [doid, actor] of session.actors ?? []) {
-    if (actor.dead || !RECEIVE_FIELD_BY_CLID[session.objects?.get(doid)]) continue;
+    if (!includeFallen && actor.dead) continue;
+    if (!RECEIVE_FIELD_BY_CLID[session.objects?.get(doid)]) continue;
     if (attack && !teamAllowsHit(attack, attackerTeam, actor.team)) continue;
-    const position = doid === session.heroDoid ? session.heroPosition : actor.position;
+    /**
+     * The session's cached position is preferred for its own hero because it is
+     * the fresher of the two, but it is only a preference. Reading it as the
+     * *only* source dropped that actor out of the list whenever the cache was
+     * empty — and an actor missing from this list is not merely unhurt, it also
+     * stops a projectile from noticing it at all.
+     */
+    const position =
+      (doid === session.heroDoid ? session.heroPosition : null) ?? actor.position;
     if (position) victims.push({ doid, actor, position });
   }
   return victims;
@@ -770,7 +787,6 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
   const active = session.activeTrapProjectiles ?? [];
   if (!active.length || !(deltaSeconds > 0)) return 0;
 
-  const victim = session.actors?.get(session.heroDoid);
   const survivors = [];
   let hits = 0;
 
@@ -857,6 +873,7 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
     const struck = trapVictims(session, {
       attack: projectile.attack,
       attackerTeam: projectile.attackerTeam,
+      includeFallen: true,
     }).find(
       ({ doid, actor, position }) =>
         doid !== projectile.ignoreDoid &&
@@ -867,6 +884,19 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
           projectile.radius + Math.max(0, actor.collisionRadius ?? 30)
         )
     );
+    /**
+     * A body stops the shot whether or not it is still standing.
+     *
+     * The client draws the bolt hitting the fallen player, so a server that
+     * flew it through the corpse and hurt whoever was behind disagreed with
+     * what everybody could see. The corpse takes nothing, which is why the
+     * flight ends here rather than falling through to the damage below.
+     */
+    if (struck?.actor?.dead) {
+      projectile.onDeath?.(nextPosition);
+      continue;
+    }
+
     if (struck) {
       // A thrown trap carries no attack of its own: it is the delivery, and
       // what it leaves behind is the weapon.

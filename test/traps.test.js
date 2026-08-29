@@ -2558,3 +2558,69 @@ test("a trap names the hero it caught, not the session's own", async () => {
   reader.u8(); reader.u8(); reader.u32();     // weaponSlot, isConsumable, attackType
   assert.equal(reader.u32(), peerHero, "aimed at the player actually standing in it");
 });
+
+/**
+ * A body stops an arrow, even when it is a corpse.
+ *
+ * `trapVictims` skips the dead, which is right for who a trap may hurt and
+ * wrong for what stops a bolt: the arrow went straight through the fallen
+ * player and hit whoever stood behind. The client draws it stopping — the
+ * report is of an arrow visibly blocked by a body while the player behind took
+ * the damage — so the two sides disagreed about where the shot ended.
+ *
+ * A corpse blocks and takes nothing. That is one rule covering both halves.
+ */
+test("a fallen player blocks a trap arrow instead of letting it through", async () => {
+  const { tickTrapProjectiles, performTrapAttack } = await import("../src/socket/combat.js");
+  const { npcForConstant, attackForConstant, projectileForConstant } = await import(
+    "../src/gamemaster.js"
+  );
+
+  const npc = await npcForConstant("CASTLE_ARENA_TRAP_ARROW_A");
+  const attack = await attackForConstant(npc.Attack1);
+  // Without the projectile row nothing is launched at all, and the test would
+  // pass by firing no arrow rather than by stopping one.
+  const projectile = await projectileForConstant(attack.Projectile);
+  const emitter = 9700;
+  const fallen = 7301;
+  const behind = 7302;
+
+  const session = {
+    id: 31,
+    dungeonActive: true,
+    heroDoid: fallen,
+    playerActors: new Set([fallen, behind]),
+    navigation: null,
+    objects: new Map([
+      [fallen, CLID.HeroGameObject],
+      [behind, CLID.HeroGameObject],
+      [emitter, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      // Down, and directly in the line of fire.
+      [fallen, { hitPoints: 0, maxHitPoints: 4000, dead: true, collisionRadius: 22,
+                 constant: "RANGER", team: TEAM.PLAYERS, position: { x: 1200, y: 1000 } }],
+      // Alive, further along the same line.
+      [behind, { hitPoints: 4000, maxHitPoints: 4000, collisionRadius: 22,
+                 constant: "RANGER", team: TEAM.PLAYERS, position: { x: 1600, y: 1000 } }],
+    ]),
+    send: () => {},
+  };
+
+  await performTrapAttack(session, emitter, {
+    attack,
+    npc,
+    projectile,
+    team: TEAM.ENVIRONMENT,
+    position: { x: 1000, y: 1000 },
+    heading: 0,
+    combatColliders: [],
+  });
+  for (let step = 0; step < 20; step += 1) await tickTrapProjectiles(session, 0.05);
+
+  assert.equal(
+    session.actors.get(behind).hitPoints,
+    4000,
+    "the player behind the body is not hit through it"
+  );
+});
