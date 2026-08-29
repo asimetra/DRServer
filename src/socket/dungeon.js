@@ -1798,6 +1798,9 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
       maxHitPoints: spawn.effectiveHitPoints,
       collisionRadius: spawn.collisionRadius,
       constant: spawn.constant,
+      // On the actor, so the floor prices a hit on any hero the same way it
+      // prices one on a monster: from the actor, not from a connection.
+      stats: member.heroStats,
       position: { ...at },
       team: TEAM.PLAYERS,
     });

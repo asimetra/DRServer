@@ -528,6 +528,22 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
     attack,
     weaponPower
   );
+  /**
+   * `||` cannot tell "could not price it" from "priced it at nothing".
+   *
+   * Zero is a real answer: it is what `computeDamage` returns when the victim's
+   * defence meets the hit, and the corpus sends it — 299 combat results carry a
+   * damage of zero, across 39 attack types including plain monster swings like
+   * EN_ARROW_SHOT and EN_MACE_CHOP. Flooring it back up contradicts that.
+   *
+   * Left alone because it is not worth a point of nothing. The percent-health
+   * traps return above and never arrive here; the nine flat ones that do all
+   * author DamageMod -1 against attackers with no offence stat, so one point of
+   * the matching defence already zeroes them and the whole disagreement is 1
+   * damage versus 0. None of the nine appears in any recording, so there is no
+   * measurement to settle which the game did, and the cross-wired defence
+   * columns above make this a bad place to guess.
+   */
   return priced || Math.max(1, Math.round(Math.abs(attack?.DamageMod ?? -1)));
 };
 
@@ -1496,11 +1512,30 @@ export const performNpcAttack = async (session, attackerDoid, ai) => {
  *
  * Returned as a positive magnitude; the caller negates it for the wire.
  */
+/**
+ * Asked of the floor rather than of a connection.
+ *
+ * A monster's numbers come from its `constant`, which anything holding the
+ * floor can look up. A hero's lived on its own session, so this had to ask "is
+ * this doid the session's own hero?" to find them — and any other member of the
+ * party fell through to an NPC lookup that cannot succeed, because no hero
+ * constant is in the Npc table. Their defence silently counted as zero, and the
+ * lookup warned about a missing NPC on every hit.
+ *
+ * That question was also the only reason floor code had a notion of *whose*
+ * hero at all. A server has no self: a hazard firing, a bomb going off and a
+ * monster swinging happen to actors on a floor, and which connection is holding
+ * the timer is not part of the arithmetic. Heroes now carry their numbers on
+ * the actor, like everything else on the floor does.
+ */
 const statsFor = async (session, doid) => {
+  const actor = session.actors?.get(doid);
+  if (actor?.stats) return actor.stats;
+  // For a hero installed before its stats were known, and for hand-built
+  // sessions in tests that predate the actor carrying them.
   if (doid === session.heroDoid) return session.heroStats;
-  const constant = session.actors?.get(doid)?.constant;
-  if (!constant) return undefined;
-  return npcStats(await loadGameMaster(), await npcForConstant(constant));
+  if (!actor?.constant) return undefined;
+  return npcStats(await loadGameMaster(), await npcForConstant(actor.constant));
 };
 
 /**

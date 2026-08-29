@@ -376,3 +376,119 @@ test("a burn spares every hero in the party, not only the session's own", async 
     "the other player does not burn either"
   );
 });
+
+/**
+ * A flat-damage trap prices both players the same.
+ *
+ * `statsFor` answers with the session's own hero stats for its own hero and
+ * otherwise looks the doid up as an NPC. A hero is not an NPC — none of the six
+ * hero constants appears in the Npc table — so a party member who was not the
+ * session's own hero had no defence at all in the arithmetic.
+ *
+ * Reachable since ground traps stopped hurting only one of the party: 9 of the
+ * 174 trap rows deal flat damage rather than a share of the bar, and those are
+ * the ones that go through this path.
+ */
+test("a flat trap costs both heroes the same, whichever session priced it", async () => {
+  const { dealTrapHit } = await import("../src/socket/combat.js");
+  const { attackForConstant, npcForConstant } = await import("../src/gamemaster.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+
+  const trap = await npcForConstant("JURASSIC_TRIBAL_TRAP_SLICER_A");
+  const attack = await attackForConstant(trap.Attack1);
+  assert.ok(!attack.DoPercentHealthDamage, "this one is priced, not a share of the bar");
+
+  const hostHero = 10;
+  const peerHero = 11;
+  const trapDoid = 20;
+  const hero = () => ({ hitPoints: 4000, maxHitPoints: 4000, constant: "BERSERKER" });
+
+  const session = {
+    id: 3,
+    heroDoid: hostHero,
+    playerActors: new Set([hostHero, peerHero]),
+    dungeonActive: true,
+    /**
+     * Non-zero on purpose. `statAt` answers 0 for a missing vector, so a hero
+     * with no defence would be priced identically to one the lookup failed for
+     * and the test would pass without proving anything.
+     */
+    heroStats: new Map([["MELEE_DEF", 40], ["SHOOT_DEF", 40], ["MAGIC_DEF", 40]]),
+    objects: new Map([
+      [hostHero, CLID.HeroGameObject],
+      [peerHero, CLID.HeroGameObject],
+      [trapDoid, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([[hostHero, hero()], [peerHero, hero()], [trapDoid, { constant: trap.Constant }]]),
+    send: () => {},
+  };
+
+  await dealTrapHit(session, trapDoid, attack, hostHero, 1);
+  await dealTrapHit(session, trapDoid, attack, peerHero, 1);
+
+  const hostLost = 4000 - session.actors.get(hostHero).hitPoints;
+  const peerLost = 4000 - session.actors.get(peerHero).hitPoints;
+  assert.ok(hostLost > 0, "the session's own hero is hurt");
+  assert.equal(peerLost, hostLost, "and the other player pays exactly the same");
+});
+
+/**
+ * The floor answers for every hero, without being told whose session it is.
+ *
+ * A monster's numbers come from its `constant` — the floor can look them up.
+ * A hero's lived on the connection instead, so combat had to ask "is this doid
+ * the session's own hero?" to find them, and any other party member fell
+ * through to an NPC lookup that cannot succeed: no hero constant is in the Npc
+ * table. That question is the whole reason floor code had a notion of *whose*
+ * hero at all, and a server has no self.
+ *
+ * With the numbers on the actor, both heroes are just actors on a floor.
+ */
+test("both heroes are priced from the floor, not from a session", async () => {
+  const { performPlaceableAttack } = await import("../src/socket/combat.js");
+  const { attackForConstant } = await import("../src/gamemaster.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+
+  /**
+   * A placeable rather than a trap, because trapDamage floors a fully-defended
+   * hit back up to the attack's DamageMod, which would hide the difference this
+   * test exists to see.
+   *
+   * SHOOT_DEF against a melee hit is not a typo: the shipped game resists MELEE
+   * with SHOOT_DEF and SHOOTING with MELEE_DEF, and combat-damage.js keeps that
+   * cross-wiring on purpose.
+   */
+  const attack = await attackForConstant("EN_FROST_DRAGON_STOMP");
+  const armoured = () => ({
+    hitPoints: 4000, maxHitPoints: 4000, constant: "BERSERKER",
+    stats: new Map([["SHOOT_DEF", 40]]),
+  });
+  const bare = () => ({ hitPoints: 4000, maxHitPoints: 4000, constant: "BERSERKER" });
+
+  const session = {
+    id: 4,
+    // Deliberately neither hero: floor damage must not need a session's own.
+    heroDoid: 0,
+    playerActors: new Set([10, 11, 12]),
+    dungeonActive: true,
+    objects: new Map([
+      [10, CLID.HeroGameObject], [11, CLID.HeroGameObject],
+      [12, CLID.HeroGameObject], [20, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      [10, armoured()], [11, armoured()], [12, bare()],
+      [20, { constant: "JURASSIC_TRIBAL_TRAP_SLICER_A" }],
+    ]),
+    send: () => {},
+  };
+
+  const victims = [10, 11, 12].map((doid) => ({ doid, actor: session.actors.get(doid) }));
+  await performPlaceableAttack(session, 20, { attack, victims, weaponPower: 1 });
+  const lost = (doid) => 4000 - session.actors.get(doid).hitPoints;
+
+  assert.equal(lost(11), lost(10), "two armoured heroes pay the same");
+  assert.ok(
+    lost(12) > lost(10),
+    `armour has to matter or this proves nothing: bare ${lost(12)} vs armoured ${lost(10)}`
+  );
+});
