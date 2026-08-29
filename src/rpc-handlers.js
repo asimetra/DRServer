@@ -214,7 +214,69 @@ const withInventory = (account) => accountHeader(account, ["account_items"]);
 
 const respondWithAccount = async (params) => accountHeader(await loadAccount(Number(params[1])));
 
-register("avatarrecord/setSkin", respondWithAccount);
+/**
+ * avatarrecord/setSkin — params [token, accountId, avatarInstanceId, skinId].
+ *
+ * Costumes. This was registered against the stub that answers with the account
+ * and writes nothing, so picking one succeeded and changed nothing at all: the
+ * fourth parameter went on the floor and every avatar stayed on the skin it was
+ * born in, however many the player had bought.
+ *
+ * Two things are checked here rather than taken from the request. The client
+ * does refuse a skin the player does not own before it calls, but a check only
+ * the client makes is not a check; and a skin names the hero it belongs to, so
+ * a Berserker asking for the Ranger's costume is refused whatever it owns.
+ *
+ * A hero's own default skin is not an entitlement anybody buys and is not in
+ * `account_skins`, so it is allowed on its own hero without one.
+ */
+register("avatarrecord/setSkin", async ([, accountId, avatarInstanceId, skinId]) => {
+  const account = await loadAccount(Number(accountId));
+  const avatar = findAvatar(account, avatarInstanceId);
+  if (!avatar) throw new Error(`no avatar ${avatarInstanceId} on account ${accountId}`);
+
+  const wanted = Number(skinId);
+  const gm = await loadGameMaster();
+  const skin = (gm.raw?.Skins ?? []).find((row) => Number(row.Id) === wanted);
+  const hero = gm.heroById?.get(Number(avatar.avatar_id));
+
+  /**
+   * A refused change answers with the account rather than an error.
+   *
+   * The client has already applied the skin locally before it calls — the
+   * tavern sets `skinId` and then sends — and it does not handle a failure from
+   * this call at all: `RPC_updateAvatarSkin` passes an `updateFailure` that
+   * only forwards to a callback this path never assigns, so an error is
+   * swallowed or delivered to whatever the last screen happened to leave there.
+   * Throwing would leave the player looking at a costume the server had
+   * refused, with nothing to correct it.
+   *
+   * Answering with the account does correct it: the avatar parse reads
+   * `skin_type` straight back into `skinId`, so the optimistic change is undone
+   * by the reply. The attempt is refused, the player sees the truth, and the
+   * server says so in its log.
+   */
+  const refuse = (why) => {
+    warn(`rpc: refused skin ${skinId} for avatar ${avatar.id} on ${accountId}: ${why}`);
+    return accountHeader(account, ["account_avatars"]);
+  };
+
+  if (!skin) return refuse("no such skin");
+  if (skin.ForHero !== hero?.Constant) {
+    return refuse(`${skin.Constant} belongs to ${skin.ForHero}, not ${hero?.Constant}`);
+  }
+
+  // A hero's own default is not an entitlement anybody buys, so it is not in
+  // account_skins and is allowed on its own hero without being there.
+  const isDefault = skin.Constant === hero.DefaultSkin;
+  const owned = (account.account_skins ?? []).some((row) => Number(row.skin_type) === wanted);
+  if (!isDefault && !owned) return refuse(`account does not own ${skin.Constant}`);
+
+  avatar.skin_type = wanted;
+  await saveAccount(account);
+  info(`rpc: ${accountId} wears ${skin.Constant} on avatar ${avatar.id}`);
+  return accountHeader(account, ["account_avatars"]);
+});
 
 /**
  * avatarrecord/updateAvatarSlots — params

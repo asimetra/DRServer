@@ -381,3 +381,83 @@ test("retraining a hero with nothing placed is refused, not charged", async () =
   await assert.rejects(() => dispatch("store", "PurchaseOffer", [ACCOUNT, 0, 51303, "token", {}]));
   assert.equal((await loadAccount(ACCOUNT)).premium_currency, 100, "a refused retrain is free");
 });
+
+/**
+ * Costumes.
+ *
+ * `avatarrecord/setSkin` was registered against a stub that answered with the
+ * account and wrote nothing, so choosing a costume succeeded and changed
+ * nothing: the client sends (token, accountId, avatarId, skinId) and the fourth
+ * value went on the floor. One live account owned two skins with every avatar
+ * still on its default.
+ *
+ * The ownership check is the server's own rather than the client's. The client
+ * does check — `doesPlayerOwnSkin` refuses before it calls — but a check only
+ * the client makes is not a check.
+ */
+test("setSkin puts an owned costume on the avatar", async () => {
+  const account = await freshAccount();
+  const avatar = account.account_avatars.find((row) => row.avatar_id === 101);
+  account.account_skins = [{ id: 1, account_id: ACCOUNT, skin_type: 161 }];
+  await saveAccount(account);
+
+  await dispatch("avatarrecord", "setSkin", ["token", ACCOUNT, avatar.id, 161]);
+
+  const saved = await loadAccount(ACCOUNT);
+  assert.equal(
+    saved.account_avatars.find((row) => row.id === avatar.id).skin_type,
+    161,
+    "BRAVEHEART_BERSERKER is worn"
+  );
+});
+
+test("a costume the account does not own is refused", async () => {
+  const account = await freshAccount();
+  const avatar = account.account_avatars.find((row) => row.avatar_id === 101);
+  account.account_skins = [];
+  avatar.skin_type = 151;
+  await saveAccount(account);
+
+  const answer = await dispatch("avatarrecord", "setSkin", ["token", ACCOUNT, avatar.id, 161]);
+
+  const saved = await loadAccount(ACCOUNT);
+  assert.equal(saved.account_avatars.find((row) => row.id === avatar.id).skin_type, 151);
+  assert.equal(
+    answer.account_avatars.find((row) => row.id === avatar.id).skin_type,
+    151,
+    "and the client is told the truth, so its optimistic change is undone"
+  );
+});
+
+/**
+ * Skins name the hero they are for, and a Berserker cannot wear the Ranger's.
+ * The client will not offer it, so this is about what a request can ask for
+ * rather than about what the screen shows.
+ */
+test("a costume belonging to another hero is refused", async () => {
+  const account = await freshAccount();
+  const berserker = account.account_avatars.find((row) => row.avatar_id === 101);
+  account.account_skins = [{ id: 1, account_id: ACCOUNT, skin_type: 176 }];
+  berserker.skin_type = 151;
+  await saveAccount(account);
+
+  const answer = await dispatch("avatarrecord", "setSkin", ["token", ACCOUNT, berserker.id, 176]);
+
+  const saved = await loadAccount(ACCOUNT);
+  assert.equal(saved.account_avatars.find((row) => row.id === berserker.id).skin_type, 151);
+  assert.equal(answer.account_avatars.find((row) => row.id === berserker.id).skin_type, 151);
+});
+
+/** A hero always owns the skin it was born in, which is not in account_skins. */
+test("the default costume needs no entitlement", async () => {
+  const account = await freshAccount();
+  const avatar = account.account_avatars.find((row) => row.avatar_id === 101);
+  account.account_skins = [];
+  avatar.skin_type = 161;
+  await saveAccount(account);
+
+  await dispatch("avatarrecord", "setSkin", ["token", ACCOUNT, avatar.id, 151]);
+
+  const saved = await loadAccount(ACCOUNT);
+  assert.equal(saved.account_avatars.find((row) => row.id === avatar.id).skin_type, 151);
+});
