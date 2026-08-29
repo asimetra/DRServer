@@ -2499,3 +2499,62 @@ test("a ground trap hurts every hero standing in it, not only the timer's owner"
     "and so is the other player standing in the same spikes"
   );
 });
+
+/**
+ * The trap aims its effect at whoever it caught.
+ *
+ * `targetActorDoid` is where the client plays a "play at target" effect, and a
+ * zero is not a neutral choice: `PlayEffectTimelineAction` returns without
+ * playing anything when the target is missing. The official names one 20852
+ * times out of 25003, so this is a field it uses rather than one it ignores.
+ *
+ * It was read as "did this catch *my* hero", which in a party is only true for
+ * whichever member's context the timer belongs to — so a trap that caught the
+ * other player named nobody and drew nothing, for everyone.
+ */
+test("a trap names the hero it caught, not the session's own", async () => {
+  const { performTrapAttack } = await import("../src/socket/combat.js");
+  const { npcForConstant, attackForConstant } = await import("../src/gamemaster.js");
+  const { PacketReader } = await import("../src/socket/packet.js");
+
+  const npc = await npcForConstant("NORDIC_CAVE_SPIKETRAP");
+  const attack = await attackForConstant(npc.Attack1);
+  const trapDoid = 9600;
+  const hostHero = 7201;
+  const peerHero = 7202;
+  const sent = [];
+
+  const session = {
+    id: 30,
+    dungeonActive: true,
+    // The timer belongs to the host, but only the other player is standing in it.
+    heroDoid: hostHero,
+    playerActors: new Set([hostHero, peerHero]),
+    objects: new Map([
+      [hostHero, CLID.HeroGameObject],
+      [peerHero, CLID.HeroGameObject],
+      [trapDoid, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      [hostHero, { hitPoints: 4000, maxHitPoints: 4000, collisionRadius: 22,
+                   constant: "RANGER", position: { x: 9000, y: 9000 } }],
+      [peerHero, { hitPoints: 4000, maxHitPoints: 4000, collisionRadius: 22,
+                   constant: "RANGER", position: { x: 1000, y: 1010 } }],
+    ]),
+    send: (frame) => sent.push(frame),
+  };
+
+  await performTrapAttack(session, trapDoid, {
+    attack,
+    npc,
+    position: { x: 1000, y: 1000 },
+    combatColliders: [{ type: "circle", x: 1000, y: 1000, radius: 34, frame: 0 }],
+  });
+
+  const choreography = sent.find((frame) => frame.readUInt16LE(8) === 143);
+  assert.ok(choreography, "the trap animates");
+  const reader = new PacketReader(choreography.subarray(2));
+  reader.u16(); reader.u32(); reader.u16();   // opcode, doid, field
+  reader.u8(); reader.u8(); reader.u32();     // weaponSlot, isConsumable, attackType
+  assert.equal(reader.u32(), peerHero, "aimed at the player actually standing in it");
+});

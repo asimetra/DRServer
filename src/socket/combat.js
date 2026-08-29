@@ -949,13 +949,26 @@ export const performTrapAttack = async (session, attackerDoid, hazard) => {
     : trapVictims(session, { attack, attackerTeam: hazard?.team }).filter(({ actor, position }) =>
         areaTrapHits(hazard, position, actor)
       );
-  const hitHero = caught.some(({ doid }) => doid === session.heroDoid);
+  /**
+   * Whoever it caught, not whoever owns the timer.
+   *
+   * `targetActorDoid` is where the client plays an effect authored to play at
+   * its target, and zero is not neutral: `PlayEffectTimelineAction` returns
+   * without drawing anything when there is no target to place it on. The
+   * corpus names one on 20852 of 25003 choreographies, so it is a field the
+   * game uses rather than one it leaves empty.
+   *
+   * Asked as "did this catch *my* hero", it was only ever true for the member
+   * whose context the trap fired in — so in a party a trap that caught the
+   * other player named nobody and drew nothing, for everybody.
+   */
+  const struck = caught.find(({ doid }) => isPartyHero(session, doid));
 
   session.send(
     npcAttackChoreography({
       doid: attackerDoid,
       attackType: attack?.Id,
-      targetActorDoid: hitHero ? session.heroDoid : 0,
+      targetActorDoid: struck?.doid ?? 0,
     })
   );
 
