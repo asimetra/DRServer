@@ -89,6 +89,7 @@ remain supported as legacy aliases while the migration is completed.
 |---|---|---|
 | `ODS_HOST` / `ODS_PORT` | `127.0.0.1` / `8080` | Bind address |
 | `ODS_PUBLIC_HOST` | `127.0.0.1` | Host advertised to the client |
+| `ODS_SERVER_NAME` | `Server` | Name the server answers commands under |
 | `ODS_SOCKET_PORT` | `7198` | Game socket port |
 | `ODS_RESOURCES_DIR` | `local-data/Resources` | User-supplied compatibility data |
 | `ODS_DATA_DIR` | `data/` | Local account storage |

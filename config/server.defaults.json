@@ -2,6 +2,7 @@
   "host": "127.0.0.1",
   "port": 8080,
   "publicHost": "127.0.0.1",
+  "serverName": "Server",
   "gameSocketPort": 7198,
   "permissive": true,
   "dataDir": "../data",
@@ -13,12 +14,13 @@
   "dungeonsEnabled": true,
   "floorDelayMs": 3000,
   "npcFilter": "all",
-  "npcAggroRadius": 1800,
+  "npcAggroRadius": 900,
   "trapCycleMs": 2000,
   "npcAiTickMs": 100,
   "startFloor": 1,
   "projectileTickMs": 20,
   "dungeonSummaryDelayMs": 5000,
   "pickupRadius": 120,
-  "logBodyLimit": 600
+  "logBodyLimit": 600,
+  "maxOutboundBufferBytes": 4194304
 }

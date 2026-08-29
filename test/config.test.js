@@ -17,8 +17,9 @@ test("JSON defaults make the server independent from the client repository", () 
   assert.equal(loaded.resourcesDir, path.join(serverRoot, "local-data", "Resources"));
   assert.equal(loaded.accountTemplateFile, path.join(serverRoot, "config", "account-template.json"));
   assert.equal(loaded.floorCatalogFile, path.join(serverRoot, "config", "floors.json"));
-  assert.equal(loaded.npcAggroRadius, 1800);
+  assert.equal(loaded.npcAggroRadius, 900);
   assert.equal(loaded.projectileTickMs, 20);
+  assert.equal(loaded.maxOutboundBufferBytes, 4 * 1024 * 1024);
 });
 
 test("environment values override JSON defaults", () => {
@@ -44,9 +45,11 @@ test("public ODS settings take precedence over legacy DR aliases", () => {
     ODS_PORT: "28080",
     DR_PORT: "18080",
     ODS_RESOURCES_DIR: "./vendor-resources",
+    ODS_MAX_OUTBOUND_BUFFER_BYTES: "2097152",
   });
 
   assert.equal(loaded.host, "127.0.0.2");
   assert.equal(loaded.port, 28080);
   assert.equal(loaded.resourcesDir, path.resolve("./vendor-resources"));
+  assert.equal(loaded.maxOutboundBufferBytes, 2 * 1024 * 1024);
 });

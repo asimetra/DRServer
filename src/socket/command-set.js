@@ -28,7 +28,7 @@ export const registerBuiltinCommands = () => {
     summary: "list the commands you can run",
     run: ({ reply, rank }) => {
       const mine = commands().filter((command) => rank >= command.role);
-      if (!mine.length) return reply("you have no commands");
+      if (!mine.length) return reply.warn("you have no commands");
       reply(`commands for ${roleName(rank)}:`);
       for (const command of mine) {
         const usage = command.usage ? ` ${command.usage}` : "";
@@ -67,7 +67,7 @@ export const registerBuiltinCommands = () => {
     summary: "say where you are",
     run: ({ session, reply }) => {
       const at = session.heroPosition;
-      if (!at) return reply("nowhere yet — you are not on a floor");
+      if (!at) return reply.warn("nowhere yet — you are not on a floor");
       reply(`x ${Math.round(at.x)}, y ${Math.round(at.y)} on floor ${session.floorDoid ?? "?"}`);
     },
   });
@@ -100,7 +100,7 @@ export const registerBuiltinCommands = () => {
     run: ({ session, args, reply }) => {
       if (args.length < 2) throw new Error(`usage: ${COMMAND_PREFIX}tp <x> <y>`);
       const to = { x: number(args[0], "x"), y: number(args[1], "y") };
-      if (!session.heroDoid) return reply("you are not on a floor");
+      if (!session.heroDoid) return reply.warn("you are not on a floor");
 
       session.heroPosition = to;
       session.reportedHeroPosition = to;
@@ -120,7 +120,7 @@ export const registerBuiltinCommands = () => {
     summary: "set your health, or read it",
     run: ({ session, args, reply }) => {
       const hero = session.actors?.get(session.heroDoid);
-      if (!hero) return reply("you are not on a floor");
+      if (!hero) return reply.warn("you are not on a floor");
       if (!args.length) return reply(`${hero.hitPoints} of ${hero.maxHitPoints}`);
 
       const wanted = Math.max(0, Math.round(number(args[0], "amount")));

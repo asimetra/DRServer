@@ -98,6 +98,16 @@ export const loadServerConfig = (environment = process.env) => {
     movementMode: mode(setting(environment, "MOVEMENT_MODE") ?? "enforce"),
 
     /**
+     * What this server calls itself when it answers a command.
+     *
+     * In the defaults file rather than env-only because it is identity a
+     * deployment keeps, and the file is where somebody looks to find out what
+     * their server is called. The environment still overrides it for a process,
+     * which is the same layering every setting here uses.
+     */
+    serverName: setting(environment, "SERVER_NAME") ?? defaults.serverName,
+
+    /**
      * Account ids that count as admin whatever their stored rank says.
      *
      * The first admin has to come from somewhere. Ranks live on the account and
@@ -270,6 +280,15 @@ export const loadServerConfig = (environment = process.env) => {
 
     /** Truncation limit for logged request/response bodies. */
     logBodyLimit: asInt(setting(environment, "LOG_LIMIT"), defaults.logBodyLimit),
+
+    /** Hard per-socket cap for multiplayer broadcasts waiting in Node memory. */
+    maxOutboundBufferBytes: Math.max(
+      64 * 1024,
+      asInt(
+        setting(environment, "MAX_OUTBOUND_BUFFER_BYTES"),
+        defaults.maxOutboundBufferBytes ?? 4 * 1024 * 1024
+      )
+    ),
   };
 };
 

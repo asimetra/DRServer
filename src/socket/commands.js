@@ -60,13 +60,31 @@ const parse = (text) => {
 };
 
 /**
+ * Guarantees the reply a command is handed has both halves.
+ *
+ * Commands call `reply.warn` to refuse, and the chat path supplies one that
+ * answers in a different colour. But `runCommand` is also called directly — by
+ * tests, and by anything else that wants to run a line — and those callers pass
+ * a plain function. Normalising here means a command can rely on `.warn`
+ * existing without every caller having to know that it should: a refusal loses
+ * its colour, which is cosmetic, instead of throwing, which is not.
+ */
+const withWarn = (reply) => {
+  if (typeof reply?.warn === "function") return reply;
+  const wrapped = (text) => reply(text);
+  wrapped.warn = wrapped;
+  return wrapped;
+};
+
+/**
  * Runs a line if it is a command, and says whether it was one.
  *
  * A line that starts with the prefix is always consumed, even when it names
  * nothing: relaying `/tp 100 200` to the room after refusing it would broadcast
  * the attempt to everybody, and a typo would be published as chat.
  */
-export const runCommand = async (session, line, reply = () => {}) => {
+export const runCommand = async (session, line, rawReply = () => {}) => {
+  const reply = withWarn(rawReply);
   const text = String(line ?? "");
   if (!text.startsWith(COMMAND_PREFIX)) return false;
 
@@ -74,7 +92,7 @@ export const runCommand = async (session, line, reply = () => {}) => {
 
   const command = registry.get(name);
   if (!command) {
-    reply(`unknown command "${name}" — try ${COMMAND_PREFIX}help`);
+    reply.warn(`unknown command "${name}" — try ${COMMAND_PREFIX}help`);
     return true;
   }
 
@@ -82,7 +100,7 @@ export const runCommand = async (session, line, reply = () => {}) => {
   if (rank < command.role) {
     // Deliberately says what it needs. Hiding a command's existence from
     // somebody who just typed its exact name protects nothing.
-    reply(`${COMMAND_PREFIX}${name} needs ${roleName(command.role)}; you are ${roleName(rank)}`);
+    reply.warn(`${COMMAND_PREFIX}${name} needs ${roleName(command.role)}; you are ${roleName(rank)}`);
     return true;
   }
 
@@ -92,7 +110,7 @@ export const runCommand = async (session, line, reply = () => {}) => {
   } catch (error) {
     // The caller gets the reason; a command that throws is a bug in the command
     // and not a reason to drop the session.
-    reply(`${COMMAND_PREFIX}${name} failed: ${error.message}`);
+    reply.warn(`${COMMAND_PREFIX}${name} failed: ${error.message}`);
     warn(`[${session.id}] ${COMMAND_PREFIX}${name} threw: ${error.stack ?? error.message}`);
   }
   return true;
