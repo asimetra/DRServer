@@ -4,6 +4,7 @@ import { info } from "../log.js";
 import { CLID } from "./opcodes.js";
 import { dungeonSummaryGenerate, objectDisable } from "./objects.js";
 import { membersOf, worldOf } from "./match-world.js";
+import { settleDungeonAccount } from "./settle-account.js";
 
 /**
  * Takes the hero off the floor, once.
@@ -272,6 +273,20 @@ export const sendDungeonSummary = (session, success) => {
       reports: projectDungeonReports(session, member, success),
     }));
   }
+  /**
+   * The run is written down here, and this is the last time the server writes
+   * a whole account from the session's own copy.
+   *
+   * The report is where the run's numbers stop moving, and it is also where the
+   * client starts handing the player an inventory — opening a chest sends them
+   * straight into it, still inside the dungeon, where equipping and dropping go
+   * out as JSON-RPC against a freshly read account. A second write on the way
+   * out would be a snapshot from before all of that, and would undo it.
+   */
+  for (const member of members) {
+    settleDungeonAccount(member.world?.contextFor(member) ?? member);
+  }
+
   /**
    * And now the hero comes off the floor, if walking out has not already taken
    * it. The captured boss run removes all four heroes 52ms after the summary —
