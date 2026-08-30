@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
+import { heldAccount } from "./account-registry.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
@@ -331,8 +332,22 @@ export const withTwoAccountLocks = async (first, second, work) => {
   return withAccountLock(low, () => withAccountLock(high, work));
 };
 
-/** Loads an account, creating a fresh one on first sight. */
+/**
+ * Loads an account, creating a fresh one on first sight.
+ *
+ * An account somebody is already playing is handed back as the object they are
+ * playing, not as a second copy of it — see `src/account-registry.js` for why.
+ * Re-reading the file here is what let a JSON-RPC edit and a dungeon session
+ * hold divergent versions of one row, with the later save silently discarding
+ * the other.
+ */
 export const loadAccount = async (id) => {
+  const live = heldAccount(id);
+  if (live) return live;
+  return readAccount(id);
+};
+
+const readAccount = async (id) => {
   if (usingDatabase()) {
     const existing = await (await db()).loadAccount(id);
     if (existing) return repairLoadedAccount(existing);

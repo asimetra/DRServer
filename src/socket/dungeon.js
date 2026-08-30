@@ -111,6 +111,7 @@ import { envFlag, envSetting } from "../env.js";
 import { info, warn } from "../log.js";
 import { cancelDungeonSummary, removeHeroFromFloor } from "./summary.js";
 import { settleDungeonAccount } from "./settle-account.js";
+import { holdAccount, releaseAccount } from "../account-registry.js";
 import { spawnNpcRewards, spawnBossReward } from "./drops.js";
 import { clearDungeonBuffs, grantBuff } from "./buffs.js";
 import { clearDungeonPowerups } from "./powerups.js";
@@ -1982,7 +1983,7 @@ export const prepareDungeonMember = async (
     );
   }
 
-  session.dungeonAccount = account;
+  session.dungeonAccount = holdAccount(account);
   session.dungeonAvatar = avatar;
   session.dungeonStart = {
     basicCurrency: account.basic_currency ?? 0,
@@ -2179,7 +2180,7 @@ export const enterDungeon = async (
       `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
     );
   }
-  session.dungeonAccount = account;
+  session.dungeonAccount = holdAccount(account);
   session.dungeonAvatar = avatar;
   session.dungeonStart = {
     basicCurrency: account.basic_currency ?? 0,
@@ -2707,6 +2708,16 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   }
   session.actors?.clear();
   session.doobers?.clear();
+
+  /**
+   * Let go of the shared account before the reference to it goes.
+   *
+   * Released here rather than when the socket closes because this is where the
+   * session stops being one of the people playing it: from now on it changes
+   * nothing, so the next JSON-RPC should read storage again rather than a copy
+   * this run happened to leave behind.
+   */
+  if (session.dungeonAccount) releaseAccount(session.dungeonAccount.id);
 
   for (const key of [
     "areaDoid",
