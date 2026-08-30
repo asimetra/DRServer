@@ -123,6 +123,50 @@ const buffFriendlyTarget = async (session, attack) => {
 };
 
 /**
+ * The buster potions, and the only thing that ever fills the meter.
+ *
+ * A Dungeon Buster costs 120 Crowd, and Crowd arrives two, six and twenty at a
+ * time from the pickups enemies leave — so on the way up from zero the meter is
+ * a long grind. The two `RefillDungeonBuster` attacks are the shortcut, and
+ * without them the buster is effectively unreachable, which is how it looked in
+ * play: the meter crept to 2, then 4, and never went anywhere.
+ *
+ * Read off the official wire rather than guessed. Twice in one recorded fight:
+ *
+ *   21:57:54.808  CONSUMABLE_STAT_BUSTER_POTION_ATTACK
+ *   21:57:54.947  buster points = 120        (full, 139ms later)
+ *   21:57:55.959  DBUSTER_IRON_LEGION        (CrowdCost 120)
+ *   21:57:56.137  buster points = 0
+ *
+ * Full rather than topped up: the second of those started from 2 and still
+ * landed on exactly 120. Each hero's own maximum, because that is its own
+ * buster's CrowdCost.
+ *
+ * The party bottle reaches the rest of the group the same way the party buffs
+ * do — it is the one of the two that carries `AffectsOthers`.
+ */
+const refillDungeonBuster = (session, attack) => {
+  if (!attack.RefillDungeonBuster) return 0;
+
+  const fill = (context) => {
+    const full = Math.max(1, Number(context.maxDungeonBusterPoints ?? 0));
+    context.dungeonBusterPoints = full;
+    context.send?.(heroDungeonBusterPointsUpdate(context.heroDoid, full));
+  };
+
+  fill(session);
+  let filled = 1;
+  if (attack.AffectsOthers) {
+    for (const [doid, member] of heroMembersOf(session)) {
+      if (doid === session.heroDoid) continue;
+      fill(member.world?.contextFor(member) ?? member);
+      filled += 1;
+    }
+  }
+  return filled;
+};
+
+/**
  * Every attack any weapon or hero can grant, built once.
  *
  * `hasPowerupWeapon` opens with `if (!isPowerupAttack(attack)) return true`, so
@@ -359,6 +403,9 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
   // potions naming the same buff in `SelfBuff` and `TargetBuff1`; only the
   // drinker was ever getting one.
   const shared = await buffFriendlyTarget(session, attack);
+  // Here rather than beside the other grants below, because both attacks that
+  // refill are bottles: the consumable branch returns before that code runs.
+  const refilled = refillDungeonBuster(session, attack);
   // A thrown bomb is a placeable like any other; the slot it came from indexes
   // the powerups, so the weapon slot is not this one's to give.
   await schedulePlaceables(session, attack, 0, { playSpeed });
@@ -366,6 +413,7 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
     `[${session.id}] used ${stackable.Constant} from slot ${slot}, ${equipped.count} left` +
       (healed ? `; healed ${healed}` : "") +
       (buff ? `; ${attack.SelfBuff}` : "") +
+      (refilled ? `; Dungeon Buster refilled for ${refilled}` : "") +
       (Array.isArray(shared) ? `; ${attack.TargetBuff1} to ${shared.length} others` : "")
   );
   return true;
@@ -488,11 +536,6 @@ export const handleProposeAttackChoreography = async (
       );
   }
   /**
-   * Outside the Crowd branch. A self buff is a property of the attack, not of
-   * its price, and every stat potion costs no Crowd at all — so while this sat
-   * inside the branch above, none of them ever granted anything.
-   */
-  /**
    * The attack is happening, so its wait starts now. Every row that authors a
    * CooldownLength gets one, not only the ones that cook something — and the
    * wait is the one the client computes, not the authored seconds, since a
@@ -517,6 +560,11 @@ export const handleProposeAttackChoreography = async (
   // And, when the throw leaves something behind, the right to land it once.
   await notePlacementPermit(session, attack, weaponSlot);
 
+  /**
+   * Outside the Crowd branch. A self buff is a property of the attack, not of
+   * its price, and every stat potion costs no Crowd at all — so while this sat
+   * inside the branch above, none of them ever granted anything.
+   */
   await spawnSelfBuff(session, attack);
   await buffFriendlyTarget(session, attack);
   await schedulePowerup(session, attack);

@@ -1187,3 +1187,119 @@ test("a Dungeon Buster comes from the slot it is sent on", async () => {
     "and the cast is recorded against it"
   );
 });
+
+/**
+ * The buster potions, which are the only thing that fills the meter.
+ *
+ * A Dungeon Buster costs 120 Crowd and Crowd arrives 2, 6 and 20 at a time, so
+ * without these the meter never gets there — in play it crept to 2, then 4, and
+ * stopped. The official wire shows the shortcut twice in one fight: the potion,
+ * then 120 about 140ms later, then the buster, then 0.
+ *
+ * Both refilling attacks are bottles, so this only ever runs down the consumable
+ * branch — which returns before the rest of the cast handling.
+ */
+const consumableProposal = (attackType) =>
+  new PacketWriter()
+    .u8(0)
+    .u8(1)
+    .u32(attackType)
+    .u32(0)
+    .u8(0)
+    .f32(1)
+    .f32(1)
+    .u16(0)
+    .body();
+
+const BUSTER_POTION = 910508;
+const BUSTER_PARTY_POTION = 910513;
+
+const drinkerSession = (sent, overrides = {}) => ({
+  id: 33,
+  heroDoid: 500,
+  floorDoid: 400,
+  dungeonZone: 10,
+  dungeonBusterPoints: 2,
+  maxDungeonBusterPoints: 120,
+  dungeonBusterAttack: "DBUSTER_IRON_LEGION",
+  heroWeapons: [{ type: 11001 }],
+  // Its UsageAttack is what useConsumable matches the cast against.
+  heroConsumables: [{ type: 70009, count: 3 }],
+  objects: new Map([
+    [400, CLID.DistributedDungeonFloor],
+    [500, CLID.HeroGameObject],
+  ]),
+  allocateDoid(clid) {
+    this.objects.set(600, clid);
+    return 600;
+  },
+  send: (frame) => sent.push(frame),
+  ...overrides,
+});
+
+test("a buster potion fills the Dungeon Buster meter", async () => {
+  const sent = [];
+  const session = drinkerSession(sent);
+
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(consumableProposal(BUSTER_POTION))
+  );
+
+  assert.equal(session.dungeonBusterPoints, 120, "full, not topped up");
+
+  const update = sent
+    .map((frame) => new PacketReader(frame.subarray(2)))
+    .find((reader) => {
+      reader.u16();
+      reader.u32();
+      return reader.u16() === 166;
+    });
+  assert.ok(update, "and the client is told, on field 166");
+  assert.equal(update.u32(), 120);
+});
+
+test("the meter fills to the hero's own buster cost", async () => {
+  const sent = [];
+  const session = drinkerSession(sent, { maxDungeonBusterPoints: 80 });
+
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(consumableProposal(BUSTER_POTION))
+  );
+
+  assert.equal(session.dungeonBusterPoints, 80);
+});
+
+/**
+ * Only one of the two carries AffectsOthers, and it is the party bottle. The
+ * solo one must not reach anybody else.
+ */
+test("the solo bottle fills only the drinker", async () => {
+  const sent = [];
+  const session = drinkerSession(sent);
+  const peer = { heroDoid: 501, dungeonBusterPoints: 5, maxDungeonBusterPoints: 120, send: () => {} };
+  session.dungeonMatch = { world: null };
+  session.member = session;
+
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(consumableProposal(BUSTER_POTION))
+  );
+
+  assert.equal(peer.dungeonBusterPoints, 5, "untouched");
+});
+
+test("a potion that does not refill leaves the meter alone", async () => {
+  const sent = [];
+  const session = drinkerSession(sent, {
+    heroConsumables: [{ type: 70006, count: 3 }],
+  });
+
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(consumableProposal(910505))
+  );
+
+  assert.equal(session.dungeonBusterPoints, 2, "still where it was");
+});
