@@ -11,6 +11,8 @@ import {
   releaseAccount,
 } from "../src/account-registry.js";
 import { loadAccount } from "../src/accounts.js";
+import { openChest } from "../src/chests.js";
+import { purchaseOffer } from "../src/store.js";
 import { config } from "../src/config.js";
 
 /**
@@ -111,4 +113,51 @@ test("holding something without an id is refused rather than pooled", () => {
   const orphan = { name: "no id" };
   assert.equal(holdAccount(orphan), orphan);
   assert.equal(heldAccount(undefined), null);
+});
+
+/**
+ * Buying a key at the report screen, which is where the two halves meet.
+ *
+ * The client will not send OpenChest until it believes it has a key: with none,
+ * `openChestCallback` puts up the keyless panel, buys one through
+ * `StoreServices.purchaseOffer` — a JSON-RPC — and only opens the chest from
+ * that call's success handler.
+ *
+ * So the purchase lands through the RPC path and the open reads the dungeon
+ * session's account. Those were two copies of one row, and the key went to the
+ * one the chest was not opened from: every keyless open at the report screen
+ * would have been refused for a key the player had just paid for.
+ */
+test("a key bought through the RPC path opens the chest the session is holding", async () => {
+  const id = anId();
+  let objectId = 5_000_000;
+  const nextId = async () => ++objectId;
+
+  const heldBySession = {
+    id,
+    basic_currency: 10_000,
+    basic_keys: 0,
+    buckets_weapon: 50,
+    account_items: [],
+    account_avatars: [{ id: 1, avatar_id: 101, experience: 0 }],
+    account_chests: [{ id: 700, account_id: id, chest_id: 60001 }],
+  };
+  holdAccount(heldBySession);
+
+  // The keyless panel's purchase: Rarity.KeyOfferId for COMMON, one basic key.
+  const forTheRpc = await loadAccount(id);
+  await purchaseOffer({ account: forTheRpc, offerId: 51201, nextId, free: false });
+
+  // And the open, which reads what the dungeon session is holding.
+  const reward = await openChest({
+    account: heldBySession,
+    chestInstanceId: 700,
+    heroInstanceId: 1,
+    nextId,
+    random: () => 0.01,
+  });
+
+  assert.ok(reward.WeaponId, "the chest opened with the key just bought");
+  assert.equal(heldBySession.basic_keys, 0, "bought one, spent one");
+  assert.equal(heldBySession.basic_currency, 9_000, "and the coin left the account once");
 });
