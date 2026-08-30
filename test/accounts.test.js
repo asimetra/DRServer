@@ -5,12 +5,12 @@ import path from "node:path";
 import test, { after } from "node:test";
 
 const dataDir = await mkdtemp(path.join(tmpdir(), "ods-accounts-test-"));
-process.env.DR_DATA_DIR = dataDir;
+process.env.ODS_DATA_DIR = dataDir;
 
 const { createAccount, loadAccount, saveAccount } = await import("../src/accounts.js");
 
 after(async () => {
-  delete process.env.DR_DATA_DIR;
+  delete process.env.ODS_DATA_DIR;
   await rm(dataDir, { recursive: true, force: true });
 });
 

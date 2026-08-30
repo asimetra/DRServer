@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test --test-concurrency=1",
+    "test": "node tools/run-tests.js",
     "check:public": "node tools/check-public-release.js",
     "check:data": "node tools/sync-game-data.js --check",
     "sync:data": "node tools/sync-game-data.js",
