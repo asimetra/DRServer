@@ -192,3 +192,51 @@ test("never awards enemy or legacy weapons", async () => {
     assert.ok(!weapon.Constant.includes("LEGACY"), `${weapon.Constant} is retired`);
   }
 });
+
+/**
+ * The budget is for weapons the player is carrying around, not for the one in
+ * their hands. The client's own count is `unequippedWeaponCount`, and its
+ * `isEquipped` is `avatarId != 0` — so a weapon on an avatar takes no slot.
+ *
+ * Counting them here refused an open the client's screen said there was room
+ * for. On the largest local account that was seventeen slots of daylight.
+ */
+test("a weapon in use does not fill the storage it is not sitting in", async () => {
+  const account = accountWith(BERSERKER, {
+    buckets_weapon: 1,
+    account_items: [{ id: 1, avatar_id: 1 }],
+  });
+
+  const reward = await open(account);
+
+  assert.ok(reward.WeaponId, "the open goes through");
+  assert.equal(account.account_chests.length, 0, "and the chest is spent");
+});
+
+/**
+ * Opening does not make the account any fuller. The chest goes and a weapon
+ * arrives, so by the client's count — which includes chests — the number on the
+ * screen does not move at all.
+ *
+ * Which is why chests are deliberately absent from this gate. Counting them
+ * would leave a player whose storage is full *of chests* unable to open any of
+ * them: the things filling the account would be the reason it could not be
+ * emptied.
+ */
+test("chests are not what stops a chest being opened", async () => {
+  const account = accountWith(BERSERKER, {
+    buckets_weapon: 1,
+    account_items: [],
+    account_chests: [
+      { id: 9, account_id: 1000000005, chest_id: LEGENDARY_CHEST },
+      { id: 10, account_id: 1000000005, chest_id: LEGENDARY_CHEST },
+      { id: 11, account_id: 1000000005, chest_id: LEGENDARY_CHEST },
+    ],
+  });
+
+  const reward = await open(account);
+
+  assert.ok(reward.WeaponId, "a full-of-chests account can still open one");
+  assert.equal(account.account_chests.length, 2, "the opened one is gone");
+  assert.equal(account.account_items.length, 1, "and its weapon took the freed slot");
+});

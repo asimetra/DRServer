@@ -1,4 +1,5 @@
 import { loadGameMaster } from "./gamemaster.js";
+import { occupiedSlots, storageLimit } from "./inventory-space.js";
 import { warn } from "./log.js";
 
 /**
@@ -141,7 +142,14 @@ const applyDetail = async ({ account, detail, gm, nextId, granted }) => {
   const touched = new Set();
 
   if (detail.WeaponId) {
-    if ((account.account_items ?? []).length >= (account.buckets_weapon ?? 0)) {
+    /**
+     * Buying adds a weapon, so this one does make the account fuller — and here
+     * the chests count, because the client counts them. Its own store guard is
+     * `granted + unequippedWeaponCount > limit`, where the tally on both sides
+     * includes chests. Refusing costs the player nothing: the price is taken
+     * below, only once the grant has succeeded.
+     */
+    if (occupiedSlots(account) >= storageLimit(account)) {
       throw new StoreError(REFUSED, "weapon storage is full");
     }
     const rarityId = gm.raw.Rarity.find((row) => row.Type === detail.Rarity)?.Id ?? 1;

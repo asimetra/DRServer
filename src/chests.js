@@ -1,4 +1,5 @@
 import { loadGameMaster } from "./gamemaster.js";
+import { storageLimit, unequippedWeapons } from "./inventory-space.js";
 import { warn } from "./log.js";
 
 /**
@@ -254,7 +255,16 @@ export const openChest = async ({ account, chestInstanceId, heroInstanceId, next
   const rarity = gm.raw.Rarity.find((entry) => entry.Type === gmChest.Rarity);
   if (!rarity) throw new ChestError(NOTHING_AWARDED, `no rarity row for ${gmChest.Rarity}`);
 
-  if ((account.account_items ?? []).length >= (account.buckets_weapon ?? 0)) {
+  /**
+   * Room for the weapon this is about to become.
+   *
+   * Unequipped weapons only, and deliberately not the chests. Opening does not
+   * make the account fuller — the chest goes and a weapon arrives, and the
+   * client counts both, so the number on its screen does not move. Gating that
+   * on the chests would leave a player whose storage is full *of chests* unable
+   * to open any of them.
+   */
+  if (unequippedWeapons(account) >= storageLimit(account)) {
     // What the -537 in every early capture actually meant: a full account.
     throw new ChestError(NOTHING_AWARDED, "weapon storage is full");
   }

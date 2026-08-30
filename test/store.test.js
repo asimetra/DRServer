@@ -266,3 +266,35 @@ test("matches the payouts the official server gave", async () => {
     assert.equal(weaponSaleValue(gm, item), paid, label);
   }
 });
+
+/**
+ * A held chest takes a weapon slot, because the client says it does.
+ *
+ * `unequippedWeaponCount` is unequipped weapons *plus* `mChests.length`, and the
+ * store's own guard adds what the offer would grant on top of it before
+ * comparing against the limit. The server counted neither the chests nor the
+ * offer, so it would happily sell into space the client had already spent.
+ */
+test("a chest in the account takes a weapon slot, the way the client counts it", async () => {
+  const target = account({
+    buckets_weapon: 1,
+    account_items: [],
+    account_chests: [{ id: 9, account_id: 1000000005, chest_id: 60004 }],
+  });
+
+  await assert.rejects(() => buy(target, RECRUIT_SWORD), { code: REFUSED });
+  assert.equal(target.basic_currency, 100000, "and nothing is charged for the refusal");
+});
+
+/** The same rule as everywhere else: a weapon in use is not a weapon in storage. */
+test("a weapon in use leaves its slot free to buy into", async () => {
+  const target = account({
+    buckets_weapon: 1,
+    account_items: [{ id: 1, avatar_id: 1 }],
+  });
+
+  const { touched } = await buy(target, RECRUIT_SWORD);
+
+  assert.ok(touched.includes("account_items"), "the purchase goes through");
+  assert.equal(target.account_items.length, 2);
+});
