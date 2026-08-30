@@ -3,7 +3,7 @@ import { loadAccount } from "./accounts.js";
 import { dispatch } from "./rpc.js";
 import { info, warn } from "./log.js";
 import { serveContent } from "./content.js";
-import { verifyToken } from "./auth.js";
+import { tokenProblem } from "./auth.js";
 
 const json = (body, status = 200) => ({
   status,
@@ -32,9 +32,14 @@ export const authorise = (req) => {
 
   const accountId = callerOf(req);
   const token = req.headers?.["x-validation-token"];
-  if (accountId !== null && verifyToken(accountId, token)) return null;
+  const problem =
+    accountId === null ? "no account id" : tokenProblem(accountId, token);
+  if (problem === null) return null;
 
-  warn(`api: refused a request claiming account ${req.headers?.["x-account-id"] ?? "?"}`);
+  // Which of the three it was, because "invalid" answered a client sending
+  // nonsense, a token that ran out last week and one signed under an older
+  // secret all alike, and those want three different answers from an operator.
+  warn(`api: refused account ${req.headers?.["x-account-id"] ?? "?"} — ${problem}`);
   return json({ error: "invalid account or validation token" }, 401);
 };
 

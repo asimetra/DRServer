@@ -51,25 +51,42 @@ export const issueToken = (
   return `${at}:${sign(secret, Number(accountId), at)}`;
 };
 
-export const verifyToken = (accountId, token, { secret = config.tokenSecret } = {}) => {
-  if (!secret || typeof token !== "string") return false;
+/**
+ * Why a token was refused, or null when it was not.
+ *
+ * Three quite different failures used to answer `false` alike — a token from
+ * an older secret, one that ran out last week, and a client sending something
+ * that was never a token — so a player reporting "it does not work" and an
+ * operator reading the log both learned nothing. Naming them costs a string.
+ */
+export const tokenProblem = (accountId, token, { secret = config.tokenSecret } = {}) => {
+  if (!secret) return "this server has no signing secret";
+  if (typeof token !== "string" || !token) return "no token";
 
   const shape = SHAPE.exec(token);
-  if (!shape) return false;
+  if (!shape) return "malformed: not an expiry and a signature";
 
   const [, expiry, signature] = shape;
-  if (Number(expiry) <= Math.floor(Date.now() / 1000)) return false;
+  if (Number(expiry) <= Math.floor(Date.now() / 1000)) {
+    return `expired ${new Date(Number(expiry) * 1000).toISOString()}`;
+  }
 
   /**
    * Compared in constant time. Both sides are 64 hex characters by the time
    * they reach here — the pattern above guarantees the length, which
    * timingSafeEqual requires and throws over.
    */
-  return timingSafeEqual(
+  const matches = timingSafeEqual(
     Buffer.from(signature, "hex"),
     Buffer.from(sign(secret, Number(accountId), Number(expiry)), "hex")
   );
+  // Signed for another account, or under a secret this server does not hold;
+  // the two are the same arithmetic and cannot be told apart from here.
+  return matches ? null : "signature does not match this account or this secret";
 };
+
+export const verifyToken = (accountId, token, options) =>
+  tokenProblem(accountId, token, options) === null;
 
 /**
  * Whether this server is checking at all.

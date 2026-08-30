@@ -1,6 +1,6 @@
 import net from "node:net";
 import { config, invalidModes } from "../config.js";
-import { verifyToken } from "../auth.js";
+import { tokenProblem } from "../auth.js";
 import { error, info, truncate, unimplemented, warn } from "../log.js";
 import { CLID, DC_HASH, OP, opcodeName } from "./opcodes.js";
 import { MalformedPacketError, PacketReader, PacketWriter, drainFrames } from "./packet.js";
@@ -97,7 +97,6 @@ const handleLogin = (session, reader) => {
   const displaced = sessionHolding(login.accountId);
 
   session.accountId = login.accountId;
-  session.token = login.token;
 
   info(
     `${describe(session)} login version=${login.version} account=${login.accountId} ` +
@@ -110,8 +109,9 @@ const handleLogin = (session, reader) => {
    * Nothing below this depends on a name or a password, because the client has
    * neither: holding a token issued for this account is the whole claim.
    */
-  if (config.authEnabled !== false && !verifyToken(login.accountId, login.token)) {
-    warn(`${describe(session)} refused: no valid token for account ${login.accountId}`);
+  const problem = config.authEnabled === false ? null : tokenProblem(login.accountId, login.token);
+  if (problem) {
+    warn(`${describe(session)} refused account ${login.accountId} — ${problem}`);
     session.close?.("invalid validation token", { flush: true });
     return;
   }

@@ -16,7 +16,19 @@
  * It needs the signing secret and nothing else — no database, no account.
  */
 import { config } from "../src/config.js";
+import { ensureTokenSecret } from "../src/preflight.js";
 import { issueToken, verifyToken, TOKEN_TTL_SECONDS } from "../src/auth.js";
+
+/**
+ * The same secret the server signs with, found the same way.
+ *
+ * This runs as its own process, so `config.tokenSecret` is whatever the
+ * environment said and nothing more — the file the server wrote on its first
+ * run is not read unless somebody reads it. Without this the tool reported
+ * having no secret while one sat next to the account data, which is exactly
+ * when an operator reaches for it.
+ */
+ensureTokenSecret();
 
 const flag = (name) => {
   const at = process.argv.indexOf(`--${name}`);
