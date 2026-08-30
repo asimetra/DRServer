@@ -117,15 +117,40 @@ export const ensureTokenSecret = () => {
   config.tokenSecret = generateSecret();
   fs.writeFileSync(file, `${config.tokenSecret}\n`, { mode: 0o600 });
   info(`auth: wrote a new signing secret to ${file}`);
+  freshSecret = true;
   return config.tokenSecret;
 };
 
-/** Says plainly whether this server checks who is calling. */
+/** Whether this run is the one that made the secret. */
+let freshSecret = false;
+
+/**
+ * Says plainly whether this server checks who is calling, and on the run that
+ * created the secret, says what to do about it.
+ *
+ * Nobody can connect to a server whose secret was made a moment ago: every
+ * client is presenting a token signed by nothing, and the failure it shows is
+ * an error popup rather than an explanation. This is the one step between
+ * `npm start` and playing, so it is worth more than a clause.
+ */
 export const reportAuth = () => {
   if (config.authEnabled === false) {
     warn("auth is OFF — any client may claim any account id on this server");
     return false;
   }
-  info("auth on; issue a player's first token with: node tools/token.js <accountId>");
+
+  if (!freshSecret) {
+    info("auth on; a player's first token comes from: node tools/token.js <accountId>");
+    return true;
+  }
+
+  info("auth on, and this server has just made its signing secret.");
+  info("  No client can connect until you give it one of this server's tokens:");
+  info("");
+  info("      node tools/token.js 1000000001");
+  info("");
+  info("  That prints an AccountId and an API_ValidationToken to paste into the");
+  info("  client's configuration. Do the same, with a different number, for");
+  info("  everybody else who plays here. See docs/client-setup.md.");
   return true;
 };

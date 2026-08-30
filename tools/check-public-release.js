@@ -38,6 +38,14 @@ const forbiddenText = [
   { pattern: new RegExp(["Dungeon", "Rampage"].join("-"), "gi"), label: "legacy repository name" },
   { pattern: new RegExp(["DR", "Haxe"].join(""), "g"), label: "private client-worktree name" },
   { pattern: new RegExp(["", "home", "simetra", ""].join("/"), "g"), label: "developer-local absolute path" },
+  /**
+   * A validation token, by the shape only a real one has: an expiry and a
+   * whole 64-character signature. The documented example keeps its signature
+   * cut short so that an example stays an example. A bare run of hex is
+   * deliberately not matched — lockfiles and fixtures are full of them, and a
+   * check that cries wolf is a check somebody turns off.
+   */
+  { pattern: /(?<!\d)\d{9,}:[0-9a-f]{64}(?![0-9a-f])/g, label: "validation token" },
 ];
 
 const files = [];
