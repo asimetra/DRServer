@@ -240,3 +240,85 @@ test("chests are not what stops a chest being opened", async () => {
   assert.equal(account.account_chests.length, 2, "the opened one is gone");
   assert.equal(account.account_items.length, 1, "and its weapon took the freed slot");
 });
+
+/**
+ * The offer branch.
+ *
+ * `ChestDropRates` spends columns `id_0` and `id_1` on "generate a weapon";
+ * anything else is a real offer, and for treasure chests those offers are the
+ * ladder's own rungs — a common chest can pay an uncommon key, an uncommon
+ * chest a rare one, a rare chest a legendary one. Legendary chests are the one
+ * rarity with no offer at all, which is what gives the reading away: there is
+ * no rung above them.
+ *
+ * The distributions are authored in key order, so a `random` near the top of
+ * the range lands on the tail deterministically.
+ */
+const COMMON_CHEST = 60001;
+const RARE_CHEST = 60003;
+
+const withChest = (chestId) => ({
+  account_chests: [{ id: 9, account_id: 1000000005, chest_id: chestId }],
+});
+
+test("a chest that rolls an offer hands the offer over", async () => {
+  const account = accountWith(BERSERKER, withChest(COMMON_CHEST));
+
+  const reward = await open(account, { random: () => 0.97 });
+
+  assert.equal(reward.OfferId, 51205, "the offer is named, for the reveal popup");
+  assert.equal(reward.WeaponId, null, "and no weapon was generated");
+  assert.equal(account.account_items.length, 0);
+});
+
+/**
+ * A common chest is opened with a basic key and pays an uncommon one, so the
+ * whole transaction is a rung up rather than a windfall.
+ */
+test("the offer's contents land on the account", async () => {
+  const account = accountWith(BERSERKER, withChest(COMMON_CHEST));
+
+  await open(account, { random: () => 0.97 });
+
+  assert.equal(account.uncommon_keys, 100, "the key the offer grants");
+  assert.equal(account.basic_keys, 98, "the key the chest cost");
+  assert.deepEqual(account.account_chests, [], "and the chest is spent");
+});
+
+test("gem offers pay premium currency", async () => {
+  const account = accountWith(BERSERKER, withChest(RARE_CHEST));
+
+  const reward = await open(account, { random: () => 0.999 });
+
+  assert.equal(reward.OfferId, 51253);
+  assert.equal(account.premium_currency, 100);
+});
+
+/**
+ * The refusal has to leave both halves alone. Spending the key and then failing
+ * to grant would be worse than the refusal this replaced.
+ */
+test("an offer cannot be won without the key the chest costs", async () => {
+  const account = accountWith(BERSERKER, { ...withChest(COMMON_CHEST), basic_keys: 0 });
+
+  await assert.rejects(
+    () => open(account, { random: () => 0.97 }),
+    (error) => error.code === NOTHING_AWARDED
+  );
+  assert.equal(account.uncommon_keys, 99, "nothing was granted");
+  assert.equal(account.account_chests.length, 1, "and the chest is still there");
+});
+
+/**
+ * The branch that used to refuse everything: a weapon roll must still be a
+ * weapon roll.
+ */
+test("a weapon roll is untouched by the offer path", async () => {
+  const account = accountWith(BERSERKER, withChest(COMMON_CHEST));
+
+  const reward = await open(account, { random: () => 0.01 });
+
+  assert.ok(reward.WeaponId, "still a weapon");
+  assert.equal(reward.OfferId, null);
+  assert.equal(account.account_items.length, 1);
+});

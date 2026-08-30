@@ -1,4 +1,5 @@
 import { loadGameMaster } from "./gamemaster.js";
+import { purchaseOffer } from "./store.js";
 import { storageLimit, unequippedWeapons } from "./inventory-space.js";
 import { warn } from "./log.js";
 
@@ -245,11 +246,49 @@ export const openChest = async ({ account, chestInstanceId, heroInstanceId, next
   if (!hero) throw new ChestError(NOTHING_AWARDED, `no hero for avatar ${heroInstanceId}`);
 
   const picked = pickWeighted(distribution, random);
+  const keyColumn = KEY_COLUMN_BY_RARITY[gmChest.Rarity];
 
-  // Offer rewards (keys, consumables) are not modelled yet; refusing is the
-  // same answer the live server gives when it cannot hand something over.
+  /**
+   * Not a weapon but an offer, which is the chest ladder pulling the player up
+   * a rung: a common chest can pay an uncommon key, an uncommon chest a rare
+   * one, a rare chest a legendary one. That reading is what explains the shape
+   * of the table — legendary chests are the one rarity with no offer at all,
+   * because there is no rung above them. Two of the three also carry gems.
+   *
+   * This used to refuse. Nothing was destroyed by that — the chest stayed and
+   * the key went unspent — but the reward the table promised was quietly
+   * withheld on roughly one open in twenty, and on the report screen it looked
+   * worse than that: the client clears its own slot before sending, so the
+   * chest appeared to vanish and then came back on the next refetch.
+   *
+   * Handed over by the same code that sells it. `purchaseOffer` already
+   * separates the grant from the price for exactly this — a daily box is a
+   * purchase minus the payment — so a key won from a chest cannot come out
+   * different from one bought in the shop.
+   */
   if (!WEAPON_SENTINELS.has(picked)) {
-    throw new ChestError(NOTHING_AWARDED, `Open chest did not award anything for offer:${picked}`);
+    const offerId = Number(picked);
+    if (keyColumn && (account[keyColumn] ?? 0) < 1) {
+      throw new ChestError(NOTHING_AWARDED, `no ${keyColumn.replace("_keys", "")} key`);
+    }
+
+    try {
+      await purchaseOffer({ account, offerId, nextId, free: true });
+    } catch (problem) {
+      // A refusal from the shop is still a refusal here, and must leave the
+      // chest and the key alone rather than half-spending them.
+      throw new ChestError(NOTHING_AWARDED, `offer ${offerId} could not be granted: ${problem.message}`);
+    }
+
+    account.account_chests = (account.account_chests ?? []).filter(
+      (entry) => entry.id !== chestInstanceId
+    );
+    if (keyColumn) account[keyColumn] = (account[keyColumn] ?? 0) - 1;
+
+    // No weapon, so no NewWeaponDetails: the client draws this one from the
+    // offer's own Bundle* columns, which is why TransactionResponse carries an
+    // offer id beside the weapon id.
+    return { OfferId: offerId, WeaponId: null, NewWeaponDetails: null };
   }
 
   const rarity = gm.raw.Rarity.find((entry) => entry.Type === gmChest.Rarity);
@@ -269,7 +308,6 @@ export const openChest = async ({ account, chestInstanceId, heroInstanceId, next
     throw new ChestError(NOTHING_AWARDED, "weapon storage is full");
   }
 
-  const keyColumn = KEY_COLUMN_BY_RARITY[gmChest.Rarity];
   if (keyColumn && (account[keyColumn] ?? 0) < 1) {
     throw new ChestError(NOTHING_AWARDED, `no ${keyColumn.replace("_keys", "")} key`);
   }
