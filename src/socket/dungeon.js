@@ -904,6 +904,93 @@ const buildNpcs = async (context, placements) => {
   return built;
 };
 
+/** Doober ids 30100..30103 are the four chests — see awardTreasureChest. */
+const FIRST_TREASURE_DOOBER = 30100;
+const LAST_TREASURE_DOOBER = 30103;
+
+const isTreasureDoober = (id) =>
+  Number(id) >= FIRST_TREASURE_DOOBER && Number(id) <= LAST_TREASURE_DOOBER;
+
+/**
+ * How much of a reward slot is a chest rather than an item box.
+ *
+ * Read off `RaritySpawn`: 54 of its 55 rows put 0.5 across the five chest
+ * columns against a declared `TOTALS` of 1, with `SMALL_ITEM_BOX` and
+ * `ROYAL_ITEM_BOX` taking the rest. Only CASTLE_TIER1 is a flat 1.
+ */
+const CHEST_SHARE_OF_A_REWARD_SLOT = 0.5;
+
+/**
+ * What a tile's reward placement actually becomes.
+ *
+ * The tiles mark far more reward spots than a run is meant to pay out — an
+ * ordinary Arena floor carries three `TREASURE` and sixteen `RANDOM_REWARD`
+ * against a node that authorises two chests. Handing a chest to every one of
+ * them would multiply the reward economy by ten.
+ *
+ * Two authored numbers decide it, and neither was being read:
+ *
+ *   MapPage.MinTreasure/MaxTreasure   how many chests this node pays, in total
+ *   CategoryProb.REWARD_NODE          what a reward spot turns into
+ *
+ * The second is a distribution summing to exactly 1: TREASURE 0.5, GOLD 0.25,
+ * FOOD 0.18, MANA 0.07. Note that the same table gives TREASURE a flat 0 for
+ * ENEMY, PROP, PET and HERO — killing things never produces a chest, which the
+ * captures agree with: of 95 treasures observed, 90 arrived within two seconds
+ * of the floor generate and the rest showed no relationship to any death.
+ * Chests are placed with the floor, not dropped by it.
+ *
+ * The allowance belongs to the run, not to the floor. Of 93 official runs on
+ * treasure-bearing nodes — 60 of one floor and 33 of two — not one paid out
+ * more than its node's MaxTreasure of two, and a second floor bought nothing
+ * extra. An earlier reading of this said otherwise and was a measurement
+ * artifact: runs were being split on the map node changing, so repeated runs of
+ * the same node merged into one and appeared to hand out six.
+ *
+ * How many of the allowance actually arrive is a coin toss each:
+ *
+ *      0 chests   24%        binomial(2, 0.5) says 25%
+ *      1 chest    51%                             50%
+ *      2 chests   26%                             25%
+ *
+ * And the half is authored rather than fitted — `RaritySpawn` declares `TOTALS`
+ * 1 while its five chest columns sum to 0.5, the rest going to
+ * `SMALL_ITEM_BOX` and `ROYAL_ITEM_BOX`. So the row is not merely "which
+ * rarity": it is also the odds of a chest at all, and the reason a run can
+ * finish with nothing to show for its reward slots.
+ */
+const treasuresOwedFor = (session, node) => {
+  const random = session.random ?? Math.random;
+  let owed = 0;
+  for (let slot = 0; slot < Math.max(0, Number(node?.MaxTreasure ?? 0)); slot++) {
+    if (random() < CHEST_SHARE_OF_A_REWARD_SLOT) owed += 1;
+  }
+  return owed;
+};
+
+const rewardForPlacement = async (session, placement, node) => {
+  const random = session.random ?? Math.random;
+  session.treasuresOwed ??= treasuresOwedFor(session, node);
+
+  if (session.treasuresOwed > 0) {
+    const rewardId = Number(node?.BossRewardTreasureId ?? 0);
+    const chest =
+      (rewardId && (await dooberById(rewardId))) ||
+      (await treasureForCategory((await coliseumTier(node?.TierRank))?.Treasure));
+    if (chest) {
+      session.treasuresOwed -= 1;
+      return chest;
+    }
+  }
+
+  /**
+   * Everything the node does not owe a chest for still pays something. A spot
+   * that rolled gold, or a treasure spot past the cap, becomes ordinary loot
+   * rather than disappearing — the floor keeps its pickup either way.
+   */
+  return dooberForConstant("GOLD_MEDIUM", random);
+};
+
 const buildCollectables = async (context, placements) => {
   const { session, floorDoid } = context;
   let built = 0;
@@ -929,10 +1016,7 @@ const buildCollectables = async (context, placements) => {
        * placement skipped — the reward simply never appeared on the floor.
        */
       const node = await mapNode(session.mapNodeId);
-      const rewardId = Number(node?.BossRewardTreasureId ?? 0);
-      const reward =
-        (rewardId && (await dooberById(rewardId))) ||
-        (await treasureForCategory((await coliseumTier(node?.TierRank))?.Treasure));
+      const reward = await rewardForPlacement(session, placement, node);
       if (!reward) {
         warn(`dungeon: unresolved collectable "${placement.constant}"`);
         continue;
@@ -950,6 +1034,8 @@ const buildCollectables = async (context, placements) => {
       crowd: doober.Crowd ?? 0,
       hpPercentage: doober.HP_PERCENTAGE ?? 0,
       mpPercentage: doober.MP_PERCENTAGE ?? 0,
+      // Marks this as a chest to be earned, the way spawnBossReward does.
+      ...(isTreasureDoober(doober.Id) ? { treasure: doober.Id } : {}),
     });
 
     session.send(
@@ -2693,6 +2779,8 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "dungeonRewards",
     "dungeonContribution",
     "dungeonTreasures",
+    // The run's remaining chest allowance, rolled once from the node.
+    "treasuresOwed",
     "completionAwarded",
     "receivedTrophy",
     "heroConsumables",

@@ -201,3 +201,32 @@ test("an ordinary dungeon pays no trophy, however new it is", async () => {
   assert.equal(paid.basicKeys, 1, "the keys are a different question");
   assert.equal(target.dungeonAccount.trophies ?? 0, 0);
 });
+
+/**
+ * A chest on the floor has to say it is one.
+ *
+ * `awardTreasureChest` is keyed off the tracked doober's `treasure` field, and
+ * the boss-reward path has always set it. The tiles' own reward placements did
+ * not, so a player walked over a chest, watched it disappear, and finished the
+ * run with nothing — which is how this was reported from play.
+ */
+test("a treasure placed by the tiles is marked as one, so collecting it pays", async () => {
+  const { trackDoober } = await import("../src/socket/pickups.js");
+  const { awardTreasureChest } = await import("../src/socket/rewards.js");
+
+  const session = {
+    id: 91,
+    doobers: new Map(),
+    dungeonAccount: { id: 5, account_chests: [] },
+    dungeonAvatar: { id: 1 },
+    queueAccountSave() {},
+  };
+
+  // What buildCollectables now tracks for a placed chest.
+  trackDoober(session, 900, { x: 0, y: 0, constant: "TREASURE_WOODEN", treasure: 30100 });
+  const tracked = session.doobers.get(900);
+
+  assert.equal(tracked.treasure, 30100, "the pickup knows it is a chest");
+  assert.equal(await awardTreasureChest(session, tracked.treasure), 60001);
+  assert.equal(session.dungeonAccount.account_chests.length, 1, "and it reaches the account");
+});
