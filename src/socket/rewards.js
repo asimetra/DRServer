@@ -284,15 +284,24 @@ export const awardTreasureChest = async (session, dooberType) => {
   const chestId = FIRST_CHEST + (Number(dooberType) - FIRST_TREASURE_DOOBER);
   if (!account || chestId < FIRST_CHEST || chestId > FIRST_CHEST + 3) return null;
 
+  const id = await nextObjectId(account);
   account.account_chests ??= [];
   account.account_chests.push({
-    id: await nextObjectId(account),
+    id,
     account_id: account.id,
     chest_id: chestId,
   });
 
+  /**
+   * The instance id travels with the report entry, because the summary screen
+   * asks for its chests by *slot*: keep, abandon and open all send an index
+   * into chest_type_1..4 rather than anything identifying. Carrying the id here
+   * is what turns that index back into one exact chest — matching on chest_id
+   * would work until a player held two of the same rarity, and then it would
+   * abandon whichever one it found first.
+   */
   session.dungeonTreasures ??= [];
-  session.dungeonTreasures.push({ dooberType: Number(dooberType), chestId });
+  session.dungeonTreasures.push({ dooberType: Number(dooberType), chestId, id });
 
   queueAccountSave(session);
   info(`[${session.id}] treasure ${dooberType} collected — chest ${chestId} earned`);

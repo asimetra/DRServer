@@ -28,6 +28,14 @@ import {
 } from "./buster.js";
 import { isPlausiblePosition } from "./coordinates.js";
 import { FLID_PLAYER_CHAT, FLID_PLAYER_TYPING, handleChat, handleTyping } from "./chat.js";
+import {
+  FLID_DROP_CHEST,
+  FLID_OPEN_CHEST,
+  FLID_TAKE_CHEST,
+  handleDropChest,
+  handleOpenChest,
+  handleTakeChest,
+} from "./summary-chests.js";
 import { registerBuiltinCommands } from "./command-set.js";
 import { RULE, flushViolations, noteTraffic, noteViolation } from "./security-events.js";
 import {
@@ -485,6 +493,13 @@ const handleFieldUpdate = (member, reader) => {
   }
   if (doid === session.playerDoid && fieldId === FLID_PLAYER_TYPING) {
     return handleTyping(session, reader);
+  }
+
+  // The report's chest buttons, addressed to the summary the server generated.
+  if (doid === session.summaryDoid) {
+    if (fieldId === FLID_TAKE_CHEST) return handleTakeChest(session, reader);
+    if (fieldId === FLID_DROP_CHEST) return handleDropChest(session, reader);
+    if (fieldId === FLID_OPEN_CHEST) return handleOpenChest(session, reader);
   }
 
   /**
