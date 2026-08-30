@@ -1,5 +1,6 @@
 import net from "node:net";
 import { config, invalidModes } from "../config.js";
+import { verifyToken } from "../auth.js";
 import { error, info, truncate, unimplemented, warn } from "../log.js";
 import { CLID, DC_HASH, OP, opcodeName } from "./opcodes.js";
 import { MalformedPacketError, PacketReader, PacketWriter, drainFrames } from "./packet.js";
@@ -102,6 +103,18 @@ const handleLogin = (session, reader) => {
     `${describe(session)} login version=${login.version} account=${login.accountId} ` +
       `networkId=${login.networkId} nodeRules=${login.nodeRules}`
   );
+
+  /**
+   * The same pair the HTTP side checks, arriving the other way — the login
+   * packet's first field is the token and its fifth is the account it claims.
+   * Nothing below this depends on a name or a password, because the client has
+   * neither: holding a token issued for this account is the whole claim.
+   */
+  if (config.authEnabled !== false && !verifyToken(login.accountId, login.token)) {
+    warn(`${describe(session)} refused: no valid token for account ${login.accountId}`);
+    session.close?.("invalid validation token", { flush: true });
+    return;
+  }
 
   if (login.dcHash !== DC_HASH) {
     warn(

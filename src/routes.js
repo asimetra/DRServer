@@ -1,14 +1,42 @@
 import { config, publicBaseUrl } from "./config.js";
 import { loadAccount } from "./accounts.js";
 import { dispatch } from "./rpc.js";
-import { info } from "./log.js";
+import { info, warn } from "./log.js";
 import { serveContent } from "./content.js";
+import { verifyToken } from "./auth.js";
 
 const json = (body, status = 200) => ({
   status,
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
+
+/**
+ * Who this caller is, proved — or the refusal to send back.
+ *
+ * `JSONRPCService` sets `X-Account-Id` and `X-Validation-Token` once and sends
+ * them on every POST, so this is the one place that has to look. It could not
+ * be done from `params`: the token sits second on most calls, third on a chest
+ * open, sixth on a gift and first on a skin change.
+ *
+ * Returns null to mean "carry on", which keeps the callers to one line.
+ */
+export const callerOf = (req) => {
+  if (config.authEnabled === false) return null;
+  const accountId = Number.parseInt(req.headers?.["x-account-id"] ?? "", 10);
+  return Number.isFinite(accountId) && accountId !== 0 ? accountId : null;
+};
+
+export const authorise = (req) => {
+  if (config.authEnabled === false) return null;
+
+  const accountId = callerOf(req);
+  const token = req.headers?.["x-validation-token"];
+  if (accountId !== null && verifyToken(accountId, token)) return null;
+
+  warn(`api: refused a request claiming account ${req.headers?.["x-account-id"] ?? "?"}`);
+  return json({ error: "invalid account or validation token" }, 401);
+};
 
 /**
  * GET /game-status/service-discovery
@@ -34,6 +62,9 @@ const gameStatus = () => json({ players: 1 });
  * error popup and halts login.
  */
 const accountDetails = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
   const accountId = Number.parseInt(req.headers["x-account-id"] ?? "", 10);
   if (!Number.isFinite(accountId) || accountId === 0) {
     return json({ error: "missing or invalid X-Account-Id" }, 400);
@@ -47,9 +78,12 @@ const accountDetails = async (req) => {
  * POST /rpc/<service>/<method> — JSON-RPC 2.0 envelope in and out.
  */
 const rpcCall = async (req, [service, method]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
   const id = req.json?.id ?? null;
   try {
-    const result = await dispatch(service, method, req.json?.params);
+    const result = await dispatch(service, method, req.json?.params, callerOf(req));
     return json({ jsonrpc: "2.0", id, result });
   } catch (err) {
     return json({

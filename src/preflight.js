@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 
 import { config } from "./config.js";
 import { info, warn } from "./log.js";
+import { generateSecret } from "./auth.js";
 
 const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestFile = path.join(serverRoot, "game-data", "manifest.json");
@@ -88,5 +89,43 @@ export const reportContentOverride = () => {
 
   info(`serving ${files} content files at ${config.contentBaseUrl}`);
   info('  clients need download_root "" and a matching gameMasterPath');
+  return true;
+};
+
+/**
+ * The signing secret, made once and kept.
+ *
+ * An operator should not have to invent a key before the server will start, and
+ * a key that changes on restart would sign every player out — which is exactly
+ * what the previous in-memory token table did, unnoticed, because nothing ever
+ * checked a token. So it is written beside the account data on first run and
+ * read back afterwards. `ODS_TOKEN_SECRET` overrides it and is the right answer
+ * for more than one machine.
+ */
+export const ensureTokenSecret = () => {
+  if (config.tokenSecret) return config.tokenSecret;
+
+  const file = path.join(config.dataDir, "token-secret");
+  try {
+    config.tokenSecret = fs.readFileSync(file, "utf8").trim();
+    if (config.tokenSecret) return config.tokenSecret;
+  } catch {
+    // First run, or it was removed; either way one is made below.
+  }
+
+  fs.mkdirSync(config.dataDir, { recursive: true });
+  config.tokenSecret = generateSecret();
+  fs.writeFileSync(file, `${config.tokenSecret}\n`, { mode: 0o600 });
+  info(`auth: wrote a new signing secret to ${file}`);
+  return config.tokenSecret;
+};
+
+/** Says plainly whether this server checks who is calling. */
+export const reportAuth = () => {
+  if (config.authEnabled === false) {
+    warn("auth is OFF — any client may claim any account id on this server");
+    return false;
+  }
+  info("auth on; issue a player's first token with: node tools/token.js <accountId>");
   return true;
 };

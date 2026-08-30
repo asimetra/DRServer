@@ -1,4 +1,5 @@
-import { register, mintToken } from "./rpc.js";
+import { register } from "./rpc.js";
+import { issueToken } from "./auth.js";
 import {
   loadAccount,
   saveAccount,
@@ -40,8 +41,15 @@ import { info, warn } from "./log.js";
  * these endpoints answer with positional arrays rather than objects.
  */
 
+/**
+ * The client asks for a fresh token during play, presenting the one it holds.
+ * That presentation is the whole check and it has already happened: every POST
+ * carries the token in `X-Validation-Token` and the route refused the call if
+ * it did not verify. So the only token that comes from outside this server is
+ * the first one a player is ever given — see tools/grant.js.
+ */
 register("account/token", ([accountId]) => {
-  const token = mintToken(accountId);
+  const token = issueToken(accountId, { term: "session" });
   info(`rpc: issued validation token for account ${accountId}`);
   return token;
 });
@@ -96,8 +104,8 @@ const EPOCH_OFFSET = 144000;
  */
 const webServerTimestamp = () => [new Date().toISOString(), EPOCH_DURATION, EPOCH_OFFSET];
 
-register("storeGetWebServerTimestamp/getWebServerTimestamp", webServerTimestamp);
-register("webMagicWord/getWebServerTimestamp", webServerTimestamp);
+register("storeGetWebServerTimestamp/getWebServerTimestamp", webServerTimestamp, { account: null });
+register("webMagicWord/getWebServerTimestamp", webServerTimestamp, { account: null });
 
 const isToday = (isoDate) =>
   Boolean(isoDate) && new Date(isoDate).toUTCString().slice(0, 16) === new Date().toUTCString().slice(0, 16);
@@ -276,7 +284,7 @@ register("avatarrecord/setSkin", async ([, accountId, avatarInstanceId, skinId])
   await saveAccount(account);
   info(`rpc: ${accountId} wears ${skin.Constant} on avatar ${avatar.id}`);
   return accountHeader(account, ["account_avatars"]);
-});
+}, { account: 1 });
 
 /**
  * avatarrecord/updateAvatarSlots — params
@@ -344,7 +352,7 @@ register("avatarrecord/updateAvatarSlots", async ([, accountId, avatarInstanceId
   await saveAccount(account);
   info(`rpc: avatar ${avatar.id} trained to [${wanted}] — ${spent}/${earned} points`);
   return accountHeader(account, ["account_avatars"]);
-});
+}, { account: 1 });
 
 /**
  * account/OpenChest — params are
@@ -463,7 +471,7 @@ register("avatarrecord/setActiveAvatar", async ([, accountId, avatarInstanceId])
     await saveAccount(account);
   }
   return accountHeader(account);
-});
+}, { account: 1 });
 
 /**
  * store/PurchaseOffer — params [accountId, ?, offerId, token, demographics].
@@ -749,7 +757,7 @@ register("leaderboard/getIgnoreFriendData", async ([accountId]) =>
  * request flow here yet, and an invented pending request would show a stranger
  * in the player's social panel.
  */
-register("friendrequests/DRFriendRequestPending", async () => []);
+register("friendrequests/DRFriendRequestPending", async () => [], { account: null });
 
 /**
  * Who the sixth parameter names, which is not always the same kind of thing.
@@ -836,7 +844,7 @@ register("friendrequests/DRFriendRequest", async (params) => {
     name: friend.name,
     friend_code: friendCodeOf(friend),
   };
-});
+}, { account: 4 });
 
 /**
  * params: [accountId, [friendIds], token]
@@ -916,7 +924,7 @@ register("report/ReportPlayer", async ([report]) => {
       `${report?.reportedPlayerId} (${report?.reportedPlayerName}) for [${reasons.join(", ")}]`
   );
   return { received: true };
-});
+}, { account: null });
 
 /** params: [accountId, token] */
 register("store/GetAllGifts", async ([accountId]) =>
@@ -1056,16 +1064,16 @@ register("store/DeclineGift", async ([accountId, requestId]) => {
 });
 
 /** params: [accountId, [friendAccountIds], token] */
-register("championsboard/getAllMapnodeScores", async () => mapNodeScoresFor());
+register("championsboard/getAllMapnodeScores", async () => mapNodeScoresFor(), { account: null });
 
 /** params: [accountId, mapNodeId, token] */
-register("championsboard/getTopTwenty", async () => topTwentyFor());
+register("championsboard/getTopTwenty", async () => topTwentyFor(), { account: null });
 
 /**
  * params: [networkId] — moderation rules. The live server answers with an empty
  * list, so nothing is moderated rather than nothing being said.
  */
-register("modrpc/getmod", () => []);
+register("modrpc/getmod", () => [], { account: null });
 
 /** params: [accountId] — timed store offers; empty in every capture. */
-register("store/GetLimitedOfferStatus", () => []);
+register("store/GetLimitedOfferStatus", () => [], { account: null });

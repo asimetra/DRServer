@@ -1,40 +1,53 @@
-import { randomBytes } from "node:crypto";
 import { config } from "./config.js";
-import { unimplemented } from "./log.js";
+import { unimplemented, warn } from "./log.js";
 
 /**
  * JSON-RPC 2.0 over POST <rpcRoot><service>/<method>.
  * See brain/jsonRPC/JSONRPCService.hx: the client sends
  * {jsonrpc, method, params, id} and reads `result`, treating a non-null
  * `error` as a failure. A null `result` is accepted.
+ *
+ * Tokens are not this module's business: they are signed rather than
+ * remembered, so there is nothing to keep. See auth.js.
  */
-
-/** Tokens we have handed out, so the socket layer can validate them later. */
-const issuedTokens = new Map();
-
-export const mintToken = (accountId) => {
-  const token = `${accountId}:${randomBytes(16).toString("hex")}`;
-  issuedTokens.set(String(accountId), token);
-  return token;
-};
-
-export const isValidToken = (accountId, token) =>
-  issuedTokens.get(String(accountId)) === token;
 
 /** handlers are keyed "service/method" and receive the params array. */
 const handlers = new Map();
 
-export const register = (key, handler) => handlers.set(key, handler);
+/**
+ * `account` is which parameter names the account being acted on, so dispatch
+ * can insist it is the one that proved itself. First is the common case and
+ * therefore the default: getting it wrong on a method that has one refuses
+ * legitimate calls, which is noisy, while forgetting to declare one is the
+ * failure that matters and this way it cannot happen silently.
+ *
+ * Pass `null` for a method that acts on no account at all.
+ */
+export const register = (key, handler, { account = 0 } = {}) =>
+  handlers.set(key, { handler, account });
 
 /**
  * Dispatches a decoded JSON-RPC request. Returns the value for `result`.
  * Throws to produce a JSON-RPC error response.
+ *
+ * `caller` is the account the request proved it holds a token for, or null
+ * where this server is not checking. Proving who you are settles nothing on
+ * its own: the handlers read the account out of `params`, and a caller free to
+ * write another number there could spend somebody else's gold with a token of
+ * their own. So the two have to be the same number.
  */
-export const dispatch = async (service, method, params) => {
+export const dispatch = async (service, method, params, caller = null) => {
   const key = `${service}/${method}`;
-  const handler = handlers.get(key);
+  const entry = handlers.get(key);
 
-  if (handler) return handler(params ?? []);
+  if (entry) {
+    const { handler, account } = entry;
+    if (caller !== null && account !== null && Number(params?.[account]) !== Number(caller)) {
+      warn(`rpc ${key}: account ${caller} tried to act for ${params?.[account]}`);
+      throw new Error("this account may not act for another");
+    }
+    return handler(params ?? []);
+  }
 
   if (config.permissive) {
     unimplemented(`rpc ${key}`, `params=${JSON.stringify(params ?? [])}`);

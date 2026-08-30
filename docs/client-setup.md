@@ -18,7 +18,8 @@ Three keys decide which server it talks to and who it logs in as:
 |---|---|---|
 | `ServiceDiscoveryUrl` | the server's address | Where the client looks for services |
 | `UseSteamLogin` | `false` | Otherwise Steam replaces `AccountId` |
-| `AccountId` | any number, e.g. `1000000005` | Which account you log in as |
+| `AccountId` | the number the server gave you | Which account you log in as |
+| `API_ValidationToken` | the token the server gave you | Proves that account is yours |
 
 `http://127.0.0.1:8080` is used throughout this page because it is the default
 for a server on the same machine. If you are joining somebody else's, use the
@@ -30,9 +31,14 @@ A minimal working file keeps the client's other existing keys and changes these:
 {
   "ServiceDiscoveryUrl": "http://127.0.0.1:8080",
   "UseSteamLogin": false,
-  "AccountId": 1000000005
+  "AccountId": 1000000005,
+  "API_ValidationToken": "1788698313:ab83c85d6bad9…"
 }
 ```
+
+The account number and the token come as a pair from whoever runs the server,
+who produces them with `node tools/token.js <accountId>`. Running your own?
+That is you.
 
 Start the server first (`npm start`), then the client.
 
@@ -69,9 +75,9 @@ is silently ignored. Setting it to `false` is a switch the client already has;
 it skips the login and leaves the rest of the Steamworks integration running.
 
 **`AccountId` does not have to exist first.** The server creates an account for
-any id it has not seen before, with a fresh hero and an empty inventory. Two
-different numbers are two different players, which is how you test anything that
-needs more than one.
+any id it is given a valid token for, with a fresh hero and an empty inventory.
+Two different numbers are two different players, which is how you test anything
+that needs more than one — issue a token for each.
 
 ## Letting the server supply game data
 
@@ -143,11 +149,15 @@ on your server. Leave it out of the configuration you hand to other people.
 
 ## Accounts and admin
 
-There is no password. Whoever sets an `AccountId` is that account, and the
-server creates one for any number it has not seen. Among people you know that
-is the whole point — a friend picks a number and has a character. On a server
-anyone can reach it means anyone who guesses a number can be that player, so
-keep it on a LAN or a VPN until you have added authentication yourself.
+There is no password, because the client has nowhere to type one. The token in
+your configuration is the credential instead: the server signed it for your
+account number and for no other, so the pair only works together and only for
+you. Treat the file the way you would treat a key — anyone you send it to can
+play as you.
+
+A token that stops working has usually expired, and a new one from the server's
+operator replaces it. If they replaced the server's signing secret, everybody
+needs a new one.
 
 To give yourself the first admin rank, name your account id when starting the
 server:

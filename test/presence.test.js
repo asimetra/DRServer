@@ -2,6 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 
+import { config } from "../src/config.js";
+import { issueToken } from "../src/auth.js";
+
+// Logging in here is a real login: the packet carries a token this server
+// signed. Set on the config rather than the environment because static
+// imports are evaluated before any of this file's own statements run.
+config.tokenSecret ||= "presence-test-secret";
+
 import { onConnection } from "../src/socket/index.js";
 import {
   clearPresence,
@@ -37,7 +45,7 @@ const settle = async () => {
 
 const login = (accountId) =>
   new PacketWriter(OP.CLIENT_LOGIN_DUNGEONBUSTER)
-    .utf("token")
+    .utf(issueToken(accountId))
     .utf("1.0.0")
     .u32(0)
     .u32(4)

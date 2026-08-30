@@ -252,6 +252,24 @@ export const loadServerConfig = (environment = process.env) => {
     startFloor: Math.max(1, asInt(setting(environment, "START_FLOOR"), defaults.startFloor ?? 1)),
 
     /**
+     * The key every validation token is signed with — see auth.js.
+     *
+     * Whoever holds this can issue a token for any account, so it is the one
+     * secret this server has. Left unset, startup writes a random one beside
+     * the account data rather than making an operator invent one.
+     */
+    tokenSecret: setting(environment, "TOKEN_SECRET") ?? defaults.tokenSecret ?? "",
+
+    /**
+     * Whether tokens are checked. Off accepts whatever a client claims to be,
+     * which is only reasonable where nobody else can reach the machine.
+     */
+    authEnabled:
+      setting(environment, "AUTH") === undefined
+        ? defaults.authEnabled !== false
+        : setting(environment, "AUTH") !== "0",
+
+    /**
      * Where to record this server's own traffic, in the client's own format.
      * Unset records nothing; the recordings hold account tokens and are not
      * something to write by default.

@@ -20,6 +20,9 @@ import { EventEmitter } from "node:events";
  */
 process.env.DR_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "dr-one-session-"));
 
+// Logging in is a real login: the packet carries a token this server signed.
+process.env.ODS_TOKEN_SECRET ??= "one-session-test-secret";
+const { issueToken } = await import("../src/auth.js");
 const { onConnection } = await import("../src/socket/index.js");
 const { clearPresence, isOnline, sessionHolding } = await import("../src/socket/presence.js");
 const { dungeonMatches } = await import("../src/socket/matches.js");
@@ -57,7 +60,7 @@ const settle = async () => {
 
 const login = (accountId) =>
   new PacketWriter(OP.CLIENT_LOGIN_DUNGEONBUSTER)
-    .utf("token")
+    .utf(issueToken(accountId))
     .utf("1.0.0")
     .u32(0)
     .u32(4)

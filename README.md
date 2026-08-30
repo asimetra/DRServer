@@ -68,11 +68,36 @@ Both ports have to be open, not just the HTTP one. Anything derived from the
 public host follows it automatically, including the content-override URL, so
 there is usually nothing else to set.
 
-**There is no authentication.** An account is whatever number a client claims,
-and the server creates one for any number it has not seen. That is fine among
-people you know and unsafe on the open internet, where anyone who guesses a
-number becomes that player. Until you add authentication yourself, keep this on
-a LAN, a VPN, or behind something that decides who may connect.
+## Letting a player in
+
+The client has no login screen. It reads `AccountId` and `API_ValidationToken`
+from its own configuration and presents that pair on every request, so handing
+somebody those two values *is* the act of signing them up:
+
+```bash
+node tools/token.js 1000000005
+```
+
+That prints the two lines to paste into their client configuration. Tokens are
+signed with a secret written to `data/token-secret` on first run — keep it,
+because replacing it signs everybody out — or set `ODS_TOKEN_SECRET` yourself
+if you run more than one machine. Anything holding that secret can issue
+tokens, so a web page or a bot can take this tool's place later without the
+server changing.
+
+A token is signed rather than remembered, checked on both the HTTP service and
+the game socket, and one issued for an account opens no other. The client asks
+for a fresh one during play, so the only token you have to hand out is a
+player's first.
+
+`ODS_AUTH=0` turns the check off and accepts whatever a client claims, which is
+a reasonable choice for a machine nobody else can reach. A server running that
+way says so on startup.
+
+**Traffic is not encrypted.** Signed tokens stop anyone claiming an account
+they were not given, but the token itself crosses the network in the clear. On
+a LAN or a VPN that is fine; facing the open internet, put TLS in front of the
+HTTP port.
 
 ## Configuration
 
@@ -89,6 +114,8 @@ remain supported as legacy aliases while the migration is completed.
 | `ODS_DATA_DIR` | `data/` | Local account storage |
 | `ODS_STORAGE` | `file` | `file` or `postgres` |
 | `ODS_ADMIN_ACCOUNTS` | empty | Bootstrap administrator account ids |
+| `ODS_AUTH` | enabled | Set `0` to accept whatever a client claims |
+| `ODS_TOKEN_SECRET` | written on first run | Key every validation token is signed with |
 | `ODS_DUNGEON` | enabled | Set `0` to refuse dungeon entry cleanly |
 
 See [config/README.md](config/README.md) for the complete configuration model.
