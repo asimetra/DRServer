@@ -123,9 +123,28 @@ CREATE TABLE IF NOT EXISTS account_attributes (
 CREATE INDEX IF NOT EXISTS account_attributes_account ON account_attributes(account_id);
 CREATE UNIQUE INDEX IF NOT EXISTS account_attributes_unique ON account_attributes(account_id, name);
 
--- account_chests and account_boosters are part of the payload but were empty in
--- every capture, so their row shape is unknown. They are left unmodelled rather
--- than invented; the API serves empty arrays until a capture shows otherwise.
+-- Chests a player holds unopened. The shape is not inferred from captures: this
+-- server writes these rows itself, in awardTreasureChest and tools/grant.js, and
+-- account/OpenChest and DropChest read them back.
+--
+-- They were left unmodelled once, on the grounds that every capture showed the
+-- list empty. That was a symptom rather than evidence — a bug dropped the chest
+-- flag between the pickup and the account, so no chest ever reached one. The
+-- captures themselves are mostly on treasure-bearing nodes.
+--
+-- No is_new column: the client computes ChestInfo.isNew by diffing against the
+-- list it last held, so nothing on the server has one to store.
+CREATE TABLE IF NOT EXISTS account_chests (
+    id         BIGINT  PRIMARY KEY,
+    account_id BIGINT  NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    chest_id   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS account_chests_account ON account_chests(account_id);
+
+-- account_boosters is still unmodelled, and for the original reason: nothing in
+-- this server writes one, so there is no shape to store yet. The API serves an
+-- empty array until something does.
 
 -- Ids in the captures are server-assigned and unique per table. A shared
 -- sequence keeps generated ids from colliding with any imported data.

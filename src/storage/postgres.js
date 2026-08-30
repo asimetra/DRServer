@@ -38,8 +38,15 @@ export const close = async () => {
   pool = null;
 };
 
-/** Tables whose rows hang off an account, keyed by the payload field name. */
-const CHILD_TABLES = {
+/**
+ * Tables whose rows hang off an account, keyed by the payload field name.
+ *
+ * Exported so a test can hold it against db/schema.sql. A list that is in the
+ * payload and missing from here is not an error anything reports — it simply
+ * never reaches storage and comes back empty, which is how every chest a player
+ * owned was lost on this backend.
+ */
+export const CHILD_TABLES = {
   account_avatars: [
     "id", "account_id", "avatar_id", "skin_type", "experience",
     "completed_mapnode_mask", "statupgrade1", "statupgrade2", "statupgrade3",
@@ -52,6 +59,7 @@ const CHILD_TABLES = {
     "legendarymodifier", "created",
   ],
   account_stackables: ["id", "account_id", "stack_id", "count", "is_new"],
+  account_chests: ["id", "account_id", "chest_id"],
   account_pets: ["id", "account_id", "npc_id", "equipped_hero", "is_new"],
   account_skins: ["id", "account_id", "skin_type"],
   account_attributes: ["id", "account_id", "name", "value"],
@@ -102,9 +110,9 @@ export const loadAccount = async (id) => {
     account[field] = child.rows.map(fromRow);
   }
 
-  // Present in the payload but never observed with contents, so nothing is
-  // stored for them (see db/schema.sql).
-  account.account_chests = [];
+  // Still unmodelled: nothing in this server writes a booster row, so there is
+  // no shape to store (see db/schema.sql). Chests used to be lumped in with
+  // this and were silently dropped on every load — they have their own table.
   account.account_boosters = [];
 
   return account;
