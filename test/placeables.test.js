@@ -9,6 +9,7 @@ import {
   clearDungeonPlaceables,
   schedulePlaceables,
   spawnPlaceable,
+  timelineDelayMs,
 } from "../src/socket/placeables.js";
 
 /** The poison pot's own action, as authored on TM_COOKING_COOLDOWN_POISON. */
@@ -50,6 +51,12 @@ const opcodeOf = (packet) => packet.readUInt16LE(2);
 const bodyOf = (packet) => new PacketReader(packet.subarray(4));
 const framesOf = (session) =>
   session.sent.map((packet) => ({ opcode: opcodeOf(packet), reader: bodyOf(packet) }));
+
+test("server-owned timeline actions follow choreography play speed", () => {
+  assert.equal(Math.round(timelineDelayMs(6, 1)), 250);
+  assert.equal(Math.round(timelineDelayMs(6, 2)), 125);
+  assert.equal(Math.round(timelineDelayMs(6, 0.5)), 500);
+});
 
 test("both spellings of the spawn-npc action are read, and disabled ones are not", async () => {
   const poison = await spawnNpcActions("TM_COOKING_COOLDOWN_POISON");
@@ -340,11 +347,17 @@ test("a crack performs as it lands, and runs along the ground", async () => {
     origin: { x: 1000, y: 1000 },
     heading: 0,
   });
-  // Announced in the same breath as the landing, so this needs no wait at all.
+  // The official starts the death choreography on the next simulation turn,
+  // 84-91ms after generate, rather than in the same packet burst.
+  const immediate = session.sent.filter(
+    (packet) => packet.length >= 10 && packet.readUInt16LE(8) === 143
+  ).length;
+  assert.equal(immediate, 0);
+  await new Promise((resolve) => setTimeout(resolve, 120));
   const choreographies = session.sent.filter(
     (packet) => packet.length >= 10 && packet.readUInt16LE(8) === 143
   ).length;
-  assert.ok(choreographies >= 1, "it announces itself as it lands, not as it goes");
+  assert.ok(choreographies >= 1, "it begins on the next server turn, not at expiry");
 
   // The damage is the part that waits: eight colliders on frames 3 to 17, each
   // striking on its own, so the last is 708ms behind the first.

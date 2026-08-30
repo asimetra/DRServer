@@ -6,6 +6,7 @@ import {
   FLID_PROPOSE_ATTACK_CHOREOGRAPHY,
   handleProposeAttackChoreography,
   remoteAttackChoreography,
+  remoteStopChoreography,
 } from "../src/socket/buster.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
@@ -21,6 +22,15 @@ const attackProposal = (attackType, weaponSlot = 0) =>
     .f32(1)
     .u16(0)
     .body();
+
+test("remote stop choreography uses the hero's empty field 179", () => {
+  const frame = remoteStopChoreography(500);
+  const reader = new PacketReader(frame.subarray(2));
+  assert.equal(reader.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
+  assert.equal(reader.u32(), 500);
+  assert.equal(reader.u16(), 179);
+  assert.equal(reader.eof(), true);
+});
 
 test("Dungeon Buster consumes Crowd points and generates its self buff", async () => {
   const sent = [];

@@ -25,12 +25,20 @@ import { isAllyReviveAttack, noteAllyReviveAttempt } from "./revive.js";
 
 export const FLID_PROPOSE_ATTACK_CHOREOGRAPHY = 172;
 export const FLID_RECEIVE_ATTACK_CHOREOGRAPHY = 159;
+export const FLID_STOP_CHOREOGRAPHY = 179;
 
 export const remoteAttackChoreography = (heroDoid, payload) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
     .u32(heroDoid)
     .u16(FLID_RECEIVE_ATTACK_CHOREOGRAPHY)
     .raw(payload)
+    .frame();
+
+/** Stops a remote hero's current timeline; the field deliberately has no body. */
+export const remoteStopChoreography = (heroDoid) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(heroDoid)
+    .u16(FLID_STOP_CHOREOGRAPHY)
     .frame();
 
 const STAT_ATTACK_TYPES = new Set(["MELEE", "SHOOTING", "MAGIC"]);
@@ -326,7 +334,7 @@ const spendStackable = (session, stackId, slot, remaining) => {
  * timelines place a bomb, and the bomb's DeathAttack is the bang. Throwing one
  * did nothing at all while this path returned before the placeable scheduler.
  */
-const useConsumable = async (session, attack, slot) => {
+const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
   const equipped = session.heroConsumables?.[slot];
   if (!equipped?.type || !(equipped.count > 0)) {
     warn(`[${session.id}] rejected ${attack.Constant}: powerup slot ${slot} is empty`);
@@ -353,7 +361,7 @@ const useConsumable = async (session, attack, slot) => {
   const shared = await buffFriendlyTarget(session, attack);
   // A thrown bomb is a placeable like any other; the slot it came from indexes
   // the powerups, so the weapon slot is not this one's to give.
-  await schedulePlaceables(session, attack);
+  await schedulePlaceables(session, attack, 0, { playSpeed });
   info(
     `[${session.id}] used ${stackable.Constant} from slot ${slot}, ${equipped.count} left` +
       (healed ? `; healed ${healed}` : "") +
@@ -376,6 +384,9 @@ export const handleProposeAttackChoreography = async (
   const isConsumableWeapon = reader.u8();
   const attackType = reader.u32();
   const targetActorDoid = reader.u32();
+  reader.u8(); // choreography.loop
+  const playSpeed = reader.f32();
+  reader.f32(); // choreography.scalingMaxProjectiles
   const attack = await attackById(attackType);
   if (!attack) {
     warn(`buster: unknown proposed attack ${attackType}`);
@@ -410,7 +421,7 @@ export const handleProposeAttackChoreography = async (
       noteViolation(session, RULE.unownedAttack, `powerup slot ${weaponSlot} is not one`);
       return true;
     }
-    return useConsumable(session, attack, weaponSlot);
+    return useConsumable(session, attack, weaponSlot, { playSpeed });
   }
 
   /**
@@ -515,7 +526,7 @@ export const handleProposeAttackChoreography = async (
    * attacks — the poison pot, the placed traps, the bombs — have only the
    * second. Reading only `spawndoober` is what left all of those inert.
    */
-  await schedulePlaceables(session, attack, weaponSlot);
+  await schedulePlaceables(session, attack, weaponSlot, { playSpeed });
   onAccepted?.();
   return true;
 };

@@ -29,6 +29,20 @@ import {
 import { hasLineOfSight, isPositionBlocked, nearestClearPosition } from "./navigation.js";
 import { inFrontOf, worldColliders } from "./heading.js";
 
+/** One server simulation turn around creation, measured from official traffic. */
+const PLACEABLE_ACTIVATION_DELAY_MS = 80;
+/** Lets the final rendered frame survive the timer that notices completion. */
+const PLACEABLE_RETIRE_GRACE_MS = 50;
+
+/** The client advances an authored frame clock at choreography.playSpeed. */
+export const timelineDelayMs = (frame, playSpeed = 1) => {
+  // 7,150 captured owner choreographies span 0.4875..24. The wider clamp keeps
+  // malformed values from creating a timer for hours or collapsing every
+  // server-owned action into the same tick without rejecting honest builds.
+  const speed = Math.max(0.1, Math.min(32, Number(playSpeed) || 1));
+  return (Math.max(0, Number(frame) || 0) / FRAMES_PER_SECOND / speed) * 1000;
+};
+
 /**
  * Placeables — the actors an attack leaves standing on the floor.
  *
@@ -247,6 +261,7 @@ const expirePlaceable = async (session, doid) => {
   const live = session.placeables?.get(doid);
   if (!live) return;
   clearInterval(live.ticker);
+  clearTimeout(live.activation);
   clearTimeout(live.expiry);
   session.placeables.delete(doid);
 
@@ -254,7 +269,9 @@ const expirePlaceable = async (session, doid) => {
   // Hit points reaching zero is not death on its own: ActorGameObject
   // .determineState only runs enterDeadState for the string, so a placeable
   // that skipped it would stand there as a corpse until the floor ended.
-  session.send(hitPointsUpdate(doid, CLID.DistributedNPCGameObject, 0));
+  if (!live.deathStarted) {
+    session.send(hitPointsUpdate(doid, CLID.DistributedNPCGameObject, 0));
+  }
   // Unless it already performed on arrival, which is what a fissure does.
   if (live.livingAttack) {
     await strike(session, doid, live, live.deathAttack, { always: true });
@@ -439,7 +456,11 @@ export const spawnPlaceable = async (session, { action, origin, heading, weaponP
     await timelineLengthMs(livingAttack?.AttackTimeline),
     await timelineLengthMs(deathAttack?.AttackTimeline)
   );
-  const lifetimeMs = Math.max(authoredMs, animationMs);
+  const deathOnly = Boolean(deathAttack && !livingAttack);
+  const lifecycleMs = deathOnly
+    ? PLACEABLE_ACTIVATION_DELAY_MS + animationMs + PLACEABLE_RETIRE_GRACE_MS
+    : animationMs;
+  const lifetimeMs = Math.max(authoredMs, lifecycleMs);
   const beatMs = Math.max(100, Number(npc.AttackTimer ?? 1) * 1000);
 
   const live = {
@@ -457,6 +478,8 @@ export const spawnPlaceable = async (session, { action, origin, heading, weaponP
     position,
     floorDoid: session.floorDoid,
     ticker: null,
+    activation: null,
+    deathStarted: false,
     expiry: null,
   };
   session.placeables ??= new Map();
@@ -468,13 +491,14 @@ export const spawnPlaceable = async (session, { action, origin, heading, weaponP
      * whether anyone is there. An empty patch of floor leaves a trap standing
      * and armed; a trap thrown into somebody goes off.
      *
-     * Checked synchronously. A delay lived here for a while on the reasoning
-     * that the client needs to have drawn the thing before it is told to
-     * animate it, but what actually made a bomb kill the room before its own
-     * explosion was the damage ignoring its collider's authored frame — see
-     * the beat scheduling in `strike`. With that honoured the pause earned
-     * nothing, and play confirmed it: nothing changed between 80ms and 10ms
-     * because neither is what the eye was seeing.
+     * Checked synchronously, and this branch alone. Nothing is announced when
+     * one of these lands — a cloud is silent until something walks into it —
+     * so there is no ordering here for a pause to fix. The death-only branch
+     * below does wait, for a reason that does not apply to this one.
+     *
+     * What made a bomb kill the room before its own explosion was neither: the
+     * damage was ignoring its collider's authored frame. See the beat
+     * scheduling in `strike`.
      */
     await tickSafely(session, doid);
     if (lifetimeMs > beatMs && session.placeables.has(doid)) {
@@ -484,24 +508,53 @@ export const spawnPlaceable = async (session, { action, origin, heading, weaponP
   }
 
   /**
-   * A fissure performs the moment it lands, and so does a bomb.
+   * A fissure and a bomb begin dying on the next server simulation turn.
    *
-   * Both carry their damage on `DeathAttack` and neither has a living attack,
-   * so this is where they announce themselves rather than on the way out.
-   * Announcing a crack as the object is removed sends the choreography and the
-   * disable in the same breath: the client draws the first pose and never the
-   * run, which was exactly the report — it appears for an instant, then
-   * nothing.
+   * Both carry their damage on `DeathAttack` and neither has a living attack.
+   * Official traffic leaves a gap between the generate and the HP=0 that
+   * follows it, then leaves the actor standing until the choreography has
+   * finished. Across 68 captures, the fifteen placed by a player — fourteen
+   * fissures and a demolition bomb — measure:
    *
-   * What separates a crack from a bomb is not when they perform but when they
-   * connect: the fissure's colliders run from frame 3, the bomb's sits on frame
-   * 38, and `strike` waits for each. Announcing both at once is what the
-   * captures show — measured from the generate, a choreography arrives at
-   * +91ms for the axe fissure and +83ms for the slow one, which is the round
-   * trip and not a pause anybody authored.
+   *   generate -> hitPoints=0        min 34   p50 84   max 108
+   *   hitPoints=0 -> choreography    min  0   p50  0   max   1
+   *
+   * The second line is the control, and it is why the first is not lag. These
+   * are client-side receive times off a loaded official server, so the obvious
+   * objection is that the gap is transport jitter. It is not: the same
+   * transport, in the same sessions at the same moments, delivers HP=0 and its
+   * choreography 0ms apart fifteen times out of fifteen. A network that can do
+   * that is not the thing spending 84ms earlier in the same breath.
+   *
+   * Exploding barrels are excluded deliberately. They are scenery that carries
+   * the same death-only shape and sits on the floor until somebody hits it, so
+   * their generate-to-death spans seconds and folding them in puts the median
+   * at 2500ms — a number about level design rather than about ordering.
+   *
+   * Sending everything in one burst is what made the crack flash for an instant
+   * instead of running along the ground. That part is an observation from play
+   * rather than from the captures.
+   *
+   * What separates a crack from a bomb is when they connect: the fissure's
+   * colliders run from frame 3, the bomb's sits on frame 38, and `strike` waits
+   * for each on the clock that starts with this delayed choreography.
    */
-  if (deathAttack && !livingAttack) {
-    await strike(session, doid, live, deathAttack, { always: true });
+  if (deathOnly) {
+    live.activation = setTimeout(() => {
+      live.activation = null;
+      if (!session.dungeonActive || session.floorDoid !== live.floorDoid) return;
+      if (session.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
+      live.deathStarted = true;
+      const actor = session.actors?.get(doid);
+      if (actor) actor.hitPoints = 0;
+      session.send(hitPointsUpdate(doid, CLID.DistributedNPCGameObject, 0));
+      runSafely(
+        strike(session, doid, live, deathAttack, { always: true }),
+        session,
+        `${live.constant} activation`
+      );
+    }, PLACEABLE_ACTIVATION_DELAY_MS);
+    live.activation.unref?.();
   }
 
   live.expiry = setTimeout(() => expireSafely(session, doid), lifetimeMs);
@@ -746,7 +799,12 @@ export const handleProposeCreateNPC = async (session, reader) => {
 };
 
 /** An attack places what its own timeline says it places, on the frame it says. */
-export const schedulePlaceables = async (session, attack, weaponSlot = 0) => {
+export const schedulePlaceables = async (
+  session,
+  attack,
+  weaponSlot = 0,
+  { playSpeed = 1 } = {}
+) => {
   const weaponPower = session.heroWeapons?.[weaponSlot]?.power;
   const actions = await spawnNpcActions(attack?.AttackTimeline);
   if (!actions.length || !session.floorDoid || !session.heroPosition) return false;
@@ -764,7 +822,7 @@ export const schedulePlaceables = async (session, attack, weaponSlot = 0) => {
           warn(`[${session.id}] placeable spawn failed: ${error.message}`)
         );
       },
-      (Number(action.frame ?? 0) / FRAMES_PER_SECOND) * 1000
+      timelineDelayMs(action.frame, playSpeed)
     );
     timer.unref?.();
     session.placeableSpawnTimers ??= new Set();
@@ -779,6 +837,7 @@ export const clearDungeonPlaceables = (session) => {
   session.placeableSpawnTimers?.clear();
   for (const live of session.placeables?.values() ?? []) {
     clearInterval(live.ticker);
+    clearTimeout(live.activation);
     for (const beat of live.beats ?? []) clearTimeout(beat);
     live.beats = [];
     clearTimeout(live.expiry);

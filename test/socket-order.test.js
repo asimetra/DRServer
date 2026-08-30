@@ -132,6 +132,34 @@ test("an accepted owner choreography is relayed once to the remote hero on field
   world.destroy();
 });
 
+test("releasing a charged attack stops its holding choreography on remote clients", async () => {
+  const ownerSocket = fakeSocket();
+  const peerSocket = fakeSocket();
+  const owner = onConnection(ownerSocket);
+  const peer = onConnection(peerSocket);
+  owner.accountId = 105;
+  peer.accountId = 106;
+  owner.heroDoid = 505;
+  peer.heroDoid = 506;
+  owner.objects.set(owner.heroDoid, CLID.HeroGameObject);
+  const world = createMatchWorld({ id: 11, members: new Set([owner, peer]) }, owner);
+  world.contextFor(peer);
+  world.objects.set(owner.heroDoid, CLID.HeroGameObject);
+  world.objects.set(peer.heroDoid, CLID.HeroGameObject);
+
+  ownerSocket.emit("data", fieldUpdate(owner.heroDoid, 179, Buffer.alloc(0)));
+  await settle();
+
+  const remoteStops = peerSocket.written.filter(
+    (frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+      frame.readUInt32LE(4) === owner.heroDoid && frame.readUInt16LE(8) === 179
+  );
+  assert.equal(remoteStops.length, 1);
+  assert.equal(remoteStops[0].length, 10, "field 179 carries no payload");
+  assert.equal(ownerSocket.written.length, 0, "the owner already stopped its local timeline");
+  world.destroy();
+});
+
 test("gameplay packets cannot activate a member whose late-join snapshot is pending", async () => {
   const hostSocket = fakeSocket();
   const pendingSocket = fakeSocket();

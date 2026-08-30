@@ -20,8 +20,10 @@ import {
 } from "./revive.js";
 import {
   FLID_PROPOSE_ATTACK_CHOREOGRAPHY,
+  FLID_STOP_CHOREOGRAPHY,
   handleProposeAttackChoreography,
   remoteAttackChoreography,
+  remoteStopChoreography,
 } from "./buster.js";
 import { isPlausiblePosition } from "./coordinates.js";
 import { FLID_PLAYER_CHAT, FLID_PLAYER_TYPING, handleChat, handleTyping } from "./chat.js";
@@ -448,6 +450,19 @@ const handleFieldUpdate = (member, reader) => {
         );
       },
     });
+  }
+
+  if (doid === session.heroDoid && fieldId === FLID_STOP_CHOREOGRAPHY) {
+    // Charge controllers stop their holding timeline locally on button-up.
+    // Remote clients cannot observe that local call; the original server
+    // forwards this empty field so they stop before playing the release attack.
+    reader.rest();
+    if (session.world) {
+      session.broadcast(remoteStopChoreography(session.heroDoid), {
+        except: session.member,
+      });
+    }
+    return true;
   }
 
   // Chat is written on the speaker's own player object, which is also the only
