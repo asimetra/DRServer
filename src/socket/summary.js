@@ -116,6 +116,7 @@ export const runRecordFor = (session, success) => {
   return {
     account_id: account.id,
     name: account.name ?? null,
+    trophies: account.trophies ?? 0,
     avatar_id: avatar.id,
     hero_id: avatar.avatar_id ?? 0,
     map_node_id: session.mapNodeId ?? 0,

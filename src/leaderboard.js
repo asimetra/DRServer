@@ -124,6 +124,14 @@ const valueFor = (metric, run) => {
  * another in a table — the file store folds these in memory, Postgres folds the
  * same list in SQL.
  */
+/**
+ * The trophy count rides along with a standing.
+ *
+ * Denormalised on purpose, the way the name already is: a board is then one
+ * read rather than a read and a fan-out of account loads. It is the count as it
+ * stood when the record was set, which is also the more honest number to show
+ * beside a record.
+ */
 export const boardEntriesFor = (run) =>
   Object.entries(BOARDS)
     .filter(([, board]) => !board.successOnly || run.success)
@@ -157,11 +165,17 @@ const foldRun = (bests, run) => {
         value: (standing ?? 0) + value,
         at: run.finished_at,
         name: run.name,
+        trophies: run.trophies ?? 0,
       };
       continue;
     }
     if (beats(metric, value, standing)) {
-      row[run.account_id] = { value, at: run.finished_at, name: run.name };
+      row[run.account_id] = {
+        value,
+        at: run.finished_at,
+        name: run.name,
+        trophies: run.trophies ?? 0,
+      };
     }
   }
   return bests;
@@ -223,6 +237,7 @@ export const boardFor = async (metric, { node, hero, party, limit = 20 } = {}) =
     .map(([accountId, entry]) => ({
       account_id: Number(accountId),
       name: entry.name ?? null,
+      trophies: entry.trophies ?? 0,
       value: entry.value,
       at: entry.at,
     }))

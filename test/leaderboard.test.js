@@ -34,6 +34,7 @@ const run = (over = {}) => ({
   damage: 500,
   gold: 100,
   xp: 250,
+  trophies: 12,
   rankable: true,
   ...over,
 });
@@ -168,4 +169,31 @@ test("every run is written to the history", async () => {
   const mine = lines.find((entry) => entry.account_id === 501);
   assert.equal(mine.kills, 42, "the columns no board reads are still recorded");
   assert.equal(mine.map_node_id, map_node_id);
+});
+
+/**
+ * The trophy count travels with a standing.
+ *
+ * Denormalised the way the name already is, so drawing a board is one read
+ * rather than a read and an account load per row — and the count as it stood
+ * when the record was set is the more honest number to show beside it.
+ */
+test("a standing carries the trophies its holder had", async () => {
+  const map_node_id = aNode();
+  await recordRuns([
+    run({ account_id: 61, map_node_id, duration_ms: 70_000, trophies: 38 }),
+    run({ account_id: 62, map_node_id, duration_ms: 80_000, trophies: 4 }),
+  ]);
+
+  const board = await boardFor("speedrun", { node: map_node_id, hero: 101, party: 1 });
+  assert.deepEqual(board.map((e) => [e.account_id, e.trophies]), [[61, 38], [62, 4]]);
+});
+
+test("a run recorded without trophies reads as none rather than missing", async () => {
+  const map_node_id = aNode();
+  const { trophies, ...withoutTrophies } = run({ account_id: 63, map_node_id });
+  await recordRuns([withoutTrophies]);
+
+  const [entry] = await boardFor("speedrun", { node: map_node_id, hero: 101, party: 1 });
+  assert.equal(entry.trophies, 0);
 });

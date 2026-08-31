@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS dungeon_runs (
     id          BIGSERIAL PRIMARY KEY,
     account_id  BIGINT      NOT NULL,
     name        TEXT,
+    trophies    INTEGER     NOT NULL DEFAULT 0,
     avatar_id   BIGINT,
     hero_id     INTEGER     NOT NULL,
     map_node_id INTEGER     NOT NULL,
@@ -199,6 +200,7 @@ CREATE TABLE IF NOT EXISTS dungeon_bests (
     board_key   TEXT        NOT NULL,
     account_id  BIGINT      NOT NULL,
     name        TEXT,
+    trophies    INTEGER     NOT NULL DEFAULT 0,
     value       BIGINT      NOT NULL,
     achieved_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (board_key, account_id)
