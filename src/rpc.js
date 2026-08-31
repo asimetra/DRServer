@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { withAccountLock } from "./accounts.js";
 import { unimplemented, warn } from "./log.js";
 
 /**
@@ -22,9 +23,13 @@ const handlers = new Map();
  * failure that matters and this way it cannot happen silently.
  *
  * Pass `null` for a method that acts on no account at all.
+ *
+ * `locks` is whether dispatch holds that account for the length of the call.
+ * On by default, and off only for a handler that takes its own — `GiftOffer`
+ * holds two, and taking one here as well would have it wait for itself.
  */
-export const register = (key, handler, { account = 0 } = {}) =>
-  handlers.set(key, { handler, account });
+export const register = (key, handler, { account = 0, locks = true } = {}) =>
+  handlers.set(key, { handler, account, locks });
 
 /**
  * Dispatches a decoded JSON-RPC request. Returns the value for `result`.
@@ -41,10 +46,34 @@ export const dispatch = async (service, method, params, caller = null) => {
   const entry = handlers.get(key);
 
   if (entry) {
-    const { handler, account } = entry;
+    const { handler, account, locks } = entry;
     if (caller !== null && account !== null && Number(params?.[account]) !== Number(caller)) {
       warn(`rpc ${key}: account ${caller} tried to act for ${params?.[account]}`);
       throw new Error("this account may not act for another");
+    }
+
+    /**
+     * And one at a time per account, held here rather than in each handler.
+     *
+     * Every mutating method is the same four steps — load, await, change, save
+     * the whole account back — so two that overlap read the same state and the
+     * second write drops the first. Measured on a pair of purchases fired
+     * together: 1000 coins spent and one key delivered where the client had
+     * been told both had gone through. Not a way to get anything for free, the
+     * arithmetic stays consistent, but a transaction the player was promised
+     * quietly disappears.
+     *
+     * `GiftOffer` already carried the only fix of this kind, and its comment
+     * describes exactly this failure. Twenty other handlers have the same
+     * shape, which is why the lock belongs at the one place they all pass
+     * through instead of at each of them.
+     *
+     * Reads are held too. A read that lands mid-write sees a half-changed
+     * account, and nothing here is hot enough for the serialisation to matter.
+     */
+    const held = Number(params?.[account]);
+    if (account !== null && locks && Number.isFinite(held)) {
+      return withAccountLock(held, () => handler(params ?? []));
     }
     return handler(params ?? []);
   }

@@ -10,7 +10,7 @@
   "socketCloseGraceMs": 2000,
   "maxSocketConnections": 2000,
   "maxSocketConnectionsPerIp": 64,
-  "permissive": true,
+  "permissive": false,
   "dataDir": "../data",
   "authEnabled": true,
   "internalHost": "127.0.0.1",

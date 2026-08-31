@@ -50,8 +50,10 @@ import { warn } from "../log.js";
  * walking out, and the slot still shows the item at "x0".
  *
  * Chained onto whatever save is already in flight so the two cannot land out of
- * order — `saveAccountsToFiles` serialises on entry, so a save that started
- * earlier holds an older snapshot and must not rename over a newer one.
+ * order. `saveAccount` now orders the writes themselves, one per account, so
+ * this is no longer the only thing standing between two of them; it stays
+ * because the settle has to run *after* the reward save it is reconciling
+ * against, which is an ordering of the work rather than of the writes.
  *
  * Both save seams are kept, the way the other callers keep them. A session
  * carrying its own `queueAccountSave` has said how it wants to be saved, and
