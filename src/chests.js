@@ -67,7 +67,7 @@ const KEY_COLUMN_BY_RARITY = {
  * Level from experience: the Leveling table carries one XP threshold column per
  * hero, so the same experience means different levels for different classes.
  */
-const levelForExperience = (gm, heroConstant, experience) => {
+export const levelForExperience = (gm, heroConstant, experience) => {
   let level = 1;
   for (const row of gm.raw.Leveling) {
     const threshold = row[heroConstant];

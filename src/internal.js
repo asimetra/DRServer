@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
-import { BOARDS, boardFor, runsSince } from "./leaderboard.js";
+import { BOARDS, boardFor, runsSince, standingsFor, titleFor } from "./leaderboard.js";
+import { levelForExperience } from "./chests.js";
+import { loadGameMaster } from "./gamemaster.js";
 import { presenceSummary } from "./socket/presence.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
@@ -163,6 +165,61 @@ const readAccount = async (req, [capture]) => {
 };
 
 /**
+ * GET /internal/v1/accounts/:id/summary — the player, as a page would draw them.
+ *
+ * The whole account payload is available next door and is the wrong thing for a
+ * character panel: it is long, most of it is inventory, and it says nothing
+ * about the two facts a player actually looks for — what they are called and
+ * how far along they are.
+ *
+ * Assembled here rather than in the front end because every part of it is a
+ * rule this server owns. The title ladder is the trophy count's, the level is
+ * the Leveling table's and differs per hero, and the standings are the boards'.
+ * Working any of that out a second time on the website would be a second
+ * opinion to keep in step.
+ */
+const readSummary = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  const account = await loadAccount(id);
+  const gm = await loadGameMaster();
+  const avatar = (account.account_avatars ?? []).find((row) => row.id === account.active_avatar)
+    ?? (account.account_avatars ?? [])[0]
+    ?? null;
+  const hero = avatar ? gm.heroById.get(avatar.avatar_id) : null;
+  const standings = await standingsFor(id);
+
+  return json({
+    account_id: account.id,
+    name: account.name ?? null,
+    trophies: account.trophies ?? 0,
+    /* Twelve, because a trophy is the first clear of a boss node and there are
+       twelve of those — so the panel can draw a bar without inventing a max. */
+    trophies_of: 12,
+    title: titleFor(account.trophies),
+    heroes: (account.account_avatars ?? []).length,
+    hero: hero
+      ? {
+          id: hero.Id,
+          name: hero.Name ?? hero.Constant,
+          /* The icon the client names for this skin, so a page can find the
+             picture without a mapping table of its own. */
+          icon: gm.raw.Skins?.find((skin) => skin.Id === avatar.skin_type)?.IconName ?? null,
+          level: levelForExperience(gm, hero.Constant, avatar.experience ?? 0),
+          experience: avatar.experience ?? 0,
+        }
+      : null,
+    clears: standings.clears ?? 0,
+    experience_total: standings.experience ?? 0,
+  });
+};
+
+/**
  * POST /internal/v1/trades — both sides have agreed; move the goods.
  *
  * The front end runs the negotiation and owns every part of it that is a
@@ -263,6 +320,7 @@ export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/leaderboards/:metric", handler: readBoard },
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },
+  { method: "GET", pattern: "/internal/v1/accounts/:id/summary", handler: readSummary },
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/token", handler: revokeTokens },
   { method: "POST", pattern: "/internal/v1/trades", handler: settleTradeRoute },

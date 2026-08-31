@@ -269,6 +269,29 @@ export const runsSince = async (since) => {
 };
 
 /**
+ * One player's own standing on the boards that are about them.
+ *
+ * Only the whole-account boards: "your clears" and "your experience" are single
+ * keys, while a speedrun standing is per node, hero and party size and there is
+ * no one answer to "your speedrun". A character panel wants the first two.
+ */
+export const standingsFor = async (accountId) => {
+  const wanted = Object.entries(BOARDS).filter(([, board]) => board.scope === "player");
+  const standings = {};
+
+  for (const [metric] of wanted) {
+    if (usingDatabase()) {
+      const rows = await (await db()).boardRows(metric, { ascending: false, limit: 500 });
+      standings[metric] = rows.find((row) => row.account_id === Number(accountId))?.value ?? 0;
+      continue;
+    }
+    const row = (await readJson(BESTS_FILE, {}))[metric] ?? {};
+    standings[metric] = row[accountId]?.value ?? 0;
+  }
+  return standings;
+};
+
+/**
  * One board, ordered and cut.
  *
  * `limit` is capped rather than trusted: this is read by a web front end over
