@@ -198,7 +198,11 @@ const rollLegendaryModifier = (gm, rarity, random) => {
   return pool[Math.floor(random() * pool.length)]?.Id ?? 0;
 };
 
-const generateWeapon = ({ gm, hero, rarity, level, accountId, id, random }) => {
+/**
+ * One rolled weapon, as a chest would have produced it — exported so a tool
+ * can stock a bag without pretending to open something that is not there.
+ */
+export const generateWeapon = ({ gm, hero, rarity, level, accountId, id, random }) => {
   const pool = eligibleWeapons(gm, hero);
   if (!pool.length) return null;
 

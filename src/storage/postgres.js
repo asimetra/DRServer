@@ -108,6 +108,21 @@ const insert = async (client, table, columns, row) => {
   );
 };
 
+/** The same, for a row that has to keep its identity across a rewrite. */
+const upsert = async (client, table, columns, row) => {
+  const values = columns.map((column) => row[column] ?? null);
+  const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
+  const assignments = columns
+    .filter((column) => column !== "id")
+    .map((column) => `${column} = EXCLUDED.${column}`)
+    .join(", ");
+  await client.query(
+    `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders})
+     ON CONFLICT (id) DO UPDATE SET ${assignments}`,
+    values
+  );
+};
+
 export const loadAccount = async (id) => {
   const db = connect();
   const { rows } = await db.query("SELECT * FROM accounts WHERE id = $1", [id]);
@@ -136,9 +151,31 @@ export const loadAccount = async (id) => {
  * wholesale: the caller hands over a complete account, and diffing rows to save
  * a few writes would be a lot of machinery for an object this size.
  */
-const writeAccount = async (client, account) => {
-  await client.query("DELETE FROM accounts WHERE id = $1", [account.id]);
-  await insert(client, "accounts", ACCOUNT_COLUMNS, account);
+export const writeAccount = async (client, account) => {
+  /**
+   * Updated in place, never removed and remade.
+   *
+   * This began as the file backend's shape — rewrite the whole document — and
+   * inside this server the two read alike, because the children cascade away
+   * and are written again in the same breath.
+   *
+   * Outside it they do not. The website's `web.users.account_id` references
+   * this row with ON DELETE SET NULL, so every save detached a player's login
+   * from their character. One finished dungeon was enough, and what the site
+   * then said was "confirm your email address first" to somebody who had
+   * confirmed it days before.
+   */
+  await upsert(client, "accounts", ACCOUNT_COLUMNS, account);
+
+  /**
+   * The children are cleared, which the account row cannot be: they are lists
+   * and a save has to be able to shorten one — a weapon that was sold would
+   * otherwise come back on the next write. Nothing outside this server points
+   * at them, so removing them costs nothing.
+   */
+  for (const field of Object.keys(CHILD_TABLES)) {
+    await client.query(`DELETE FROM ${field} WHERE account_id = $1`, [account.id]);
+  }
 
   // Avatars first: items and pets reference them.
   for (const [field, columns] of Object.entries(CHILD_TABLES)) {

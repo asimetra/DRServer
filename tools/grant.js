@@ -10,6 +10,7 @@
  *   node tools/grant.js --level 30 --hero 106  # just the Ghost Samurai
  *   node tools/grant.js --powerups            # 99 of every powerup
  *   node tools/grant.js --powerups 5          # 5 of every powerup
+ *   node tools/grant.js --weapons 8           # 8 rolled weapons, unequipped, to trade
  *   node tools/grant.js --placeables          # one of every weapon that places something
  *   node tools/grant.js --equip HERO_MONSTER_AXE   # and hold one of them
  *   node tools/grant.js --bombs               # 10 health and 10 party revive bombs
@@ -22,6 +23,7 @@
  */
 import { loadAccount, saveAccount, nextObjectId } from "../src/accounts.js";
 import { loadGameMaster } from "../src/gamemaster.js";
+import { generateWeapon } from "../src/chests.js";
 import { experienceForLevel, statPointsEarned, maxLevel } from "../src/progression.js";
 import { config } from "../src/config.js";
 
@@ -55,6 +57,7 @@ const main = async () => {
     process.argv.includes("--bombs") ||
     process.argv.includes("--maps") ||
     process.argv.includes("--placeables") ||
+    argument("weapons") !== undefined ||
     Boolean(argument("equip"));
   const chestRequest = argument("chests", askedForSomethingElse ? "" : DEFAULT);
 
@@ -233,6 +236,47 @@ const main = async () => {
    * Granted unequipped, so they show up in the inventory to be tried against
    * whichever hero they belong to.
    */
+  /**
+   * Spare weapons to trade with.
+   *
+   * Rolled the way a chest rolls them — a rarity from the same weighted table,
+   * a power and a level for it, and the modifiers that rarity allows — so what
+   * lands in the bag is the shape a real award has rather than a flat row that
+   * would make any screen showing modifiers look like it works.
+   *
+   * Unequipped, because the market only offers what nobody is holding.
+   */
+  const weaponRequest = argument("weapons");
+  if (weaponRequest !== undefined) {
+    const wanted = Math.max(1, Number(weaponRequest) || 5);
+    const heroes = (account.account_avatars ?? [])
+      .map((avatar) => gm.heroById.get(avatar.avatar_id))
+      .filter(Boolean);
+    if (!heroes.length) {
+      console.error(`account ${account.id} has no hero, and a weapon is rolled against one`);
+    } else {
+      account.account_items ??= [];
+      const rarities = gm.raw.Rarity.filter((row) => (row.ChestWeight ?? 0) > 0);
+      for (let made = 0; made < wanted; made++) {
+        const hero = heroes[Math.floor(Math.random() * heroes.length)];
+        const rarity = rarities.length
+          ? rarities[Math.floor(Math.random() * rarities.length)]
+          : gm.raw.Rarity[1];
+        const item = generateWeapon({
+          gm,
+          hero,
+          rarity,
+          level: 1 + Math.floor(Math.random() * 60),
+          accountId: account.id,
+          id: await nextObjectId(account),
+          random: Math.random,
+        });
+        if (item) account.account_items.push(item);
+      }
+      console.log(`rolled ${wanted} weapon(s) into account ${account.id}`);
+    }
+  }
+
   if (process.argv.includes("--placeables")) {
     const timelines = new Map(gm.raw.Attack.map((attack) => [attack.Constant, attack]));
     const placesSomething = (constant) => {
