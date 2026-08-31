@@ -240,3 +240,37 @@ test("a treasure placed by the tiles is marked as one, so collecting it pays", a
     "and the run is owed it, which is what the report screen offers"
   );
 });
+
+/**
+ * Why the floor builder must not ask `dooberForConstant` about a reward spot.
+ *
+ * That helper falls back to reading an unmatched constant as a *DooberType* and
+ * picking one of that type at random — how FOOD and FOOD_BUFF resolve. All six
+ * chests and boxes share DooberType TREASURE, and no doober is *named*
+ * TREASURE, so a tile spot called TREASURE fell straight into that fallback and
+ * rolled a uniform one-in-six, map node ignored.
+ *
+ * Reported from play as a legendary chest on a floor that cannot pay one. The
+ * recording agrees: node 50004 spawned a DRAGON_CHEST and node 50003 two
+ * ROYAL_ITEM_BOX, while the RANDOM_REWARD spots on the same floors — a name
+ * nothing shares — correctly paid the uncommon their tier allows. Only node
+ * 50083 authorises a legendary anywhere in the game.
+ */
+test("TREASURE resolves to a random chest, which is what makes it a trap", async () => {
+  const { dooberForConstant } = await import("../src/gamemaster.js");
+
+  const legendary = await dooberForConstant("TREASURE", () => 0.55);
+  assert.equal(legendary.Constant, "DRAGON_CHEST", "the roll reaches the legendary");
+
+  const box = await dooberForConstant("TREASURE", () => 0.99);
+  assert.equal(box.Constant, "ROYAL_ITEM_BOX");
+});
+
+test("so both reward placeholders are answered by the map node instead", async () => {
+  const { isRewardPlaceholder } = await import("../src/socket/dungeon.js");
+
+  assert.equal(isRewardPlaceholder("TREASURE"), true);
+  assert.equal(isRewardPlaceholder("RANDOM_REWARD"), true);
+  // Anything that names a real row still resolves the ordinary way.
+  assert.equal(isRewardPlaceholder("GOLD_MEDIUM"), false);
+});

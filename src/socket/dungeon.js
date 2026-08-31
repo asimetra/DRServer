@@ -969,6 +969,17 @@ const treasuresOwedFor = (session, node) => {
   return owed;
 };
 
+/**
+ * What a tile writes when it means "a reward goes here" without saying which.
+ *
+ * Both are the map node's to answer. Neither names a doober row, but only one
+ * of them fails to name a DooberType as well — see `buildCollectables`.
+ */
+const REWARD_PLACEHOLDERS = new Set(["TREASURE", "RANDOM_REWARD"]);
+
+/** Exported so a test can hold the list against what the trap actually is. */
+export const isRewardPlaceholder = (constant) => REWARD_PLACEHOLDERS.has(constant);
+
 const rewardForPlacement = async (session, placement, node) => {
   const random = session.random ?? Math.random;
   session.treasuresOwed ??= treasuresOwedFor(session, node);
@@ -998,10 +1009,30 @@ const buildCollectables = async (context, placements) => {
 
   for (const placement of placements) {
     if (!context.isActive()) break;
-    let doober = await dooberForConstant(
-      placement.constant,
-      session.random ?? Math.random
-    );
+    /**
+     * The placeholders are asked about first, and that is not tidiness.
+     *
+     * `dooberForConstant` falls back to reading an unmatched constant as a
+     * *DooberType* and picking one of that type at random, which is how FOOD
+     * and FOOD_BUFF resolve. `TREASURE` is also a DooberType — the one all six
+     * chests and boxes share — so a tile spot named TREASURE never reached the
+     * branch below. It resolved to a uniform one-in-six instead, bypassing the
+     * map node entirely.
+     *
+     * Reported from play as a legendary chest on a floor that cannot pay one,
+     * and the recording says exactly that: node 50004 spawned a DRAGON_CHEST,
+     * and 50003 spawned two ROYAL_ITEM_BOX and a SMALL_ITEM_BOX, while their
+     * RANDOM_REWARD spots — which land in the branch below because nothing
+     * shares that name — correctly paid the uncommon chest their tier allows.
+     * Only node 50083 authorises a legendary anywhere in the game.
+     *
+     * It also broke the count. Each of these spots paid out unconditionally, so
+     * an ordinary floor handed over its three TREASURE placements on top of
+     * whatever the node actually owed.
+     */
+    let doober = REWARD_PLACEHOLDERS.has(placement.constant)
+      ? null
+      : await dooberForConstant(placement.constant, session.random ?? Math.random);
     if (!context.isActive()) break;
     if (!doober) {
       /**
