@@ -118,8 +118,8 @@ const match = (pattern, pathname) => {
   return captures;
 };
 
-const findRoute = (method, pathname) => {
-  for (const route of routes) {
+const findRoute = (routeTable, method, pathname) => {
+  for (const route of routeTable) {
     if (route.method !== method) continue;
     const captures = match(route.pattern, pathname);
     if (captures) return { route, captures };
@@ -132,7 +132,7 @@ const refuse = (res, status, message) => {
   res.end(JSON.stringify({ error: message }));
 };
 
-const handle = async (req, res) => {
+const handle = async (req, res, { routeTable, rateLimited }) => {
   const url = new URL(req.url, "http://localhost");
 
   /**
@@ -141,7 +141,7 @@ const handle = async (req, res) => {
    * for anybody who asked, including for paths that do not exist.
    */
   const address = req.socket?.remoteAddress ?? "unknown";
-  if (!withinRate(address)) {
+  if (rateLimited && !withinRate(address)) {
     warn(`rate limit: ${address} on ${req.method} ${url.pathname}`);
     req.destroy();
     return;
@@ -162,7 +162,7 @@ const handle = async (req, res) => {
 
   info(`${req.method} ${url.pathname}${body ? ` body=${truncate(body)}` : ""}`);
 
-  const found = findRoute(req.method, url.pathname);
+  const found = findRoute(routeTable, req.method, url.pathname);
   if (!found) {
     unimplemented(`${req.method} ${url.pathname}`, body ? `body=${truncate(body)}` : "");
     res.writeHead(404, { "Content-Type": "application/json" });
@@ -185,9 +185,22 @@ const handle = async (req, res) => {
   info(`  -> ${result.status} ${truncate(result.body)}`);
 };
 
-export const start = () => {
+/**
+ * One HTTP listener over one route table.
+ *
+ * Taken apart from `start` so the internal API can be a second listener on a
+ * port of its own rather than a prefix on this one. Everything either of them
+ * wants — the body limit, the JSON parse, the failure that must not take the
+ * process down — is here and is not worth having twice.
+ *
+ * `rateLimited` is the one thing they disagree about. The player-facing limit
+ * is calibrated per address against what a game client does, and a web front
+ * end is a single address making every call there is; measuring it against a
+ * budget meant for one player would refuse it under ordinary load.
+ */
+export const listen = ({ routeTable, host, port, rateLimited = true, onReady }) => {
   const server = http.createServer((req, res) => {
-    handle(req, res).catch((err) => {
+    handle(req, res, { routeTable, rateLimited }).catch((err) => {
       error(`unhandled failure on ${req.method} ${req.url}: ${err.stack ?? err}`);
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json" });
@@ -196,11 +209,18 @@ export const start = () => {
     });
   });
 
-  server.listen(config.port, config.host, () => {
-    info(`web services listening on http://${config.host}:${config.port}`);
-    info(`advertising webServicesUrl http://${config.publicHost}:${config.port}`);
-    info(`advertising game socket ${config.publicHost}:${config.gameSocketPort}`);
-  });
-
+  server.listen(port, host, onReady);
   return server;
 };
+
+export const start = () =>
+  listen({
+    routeTable: routes,
+    host: config.host,
+    port: config.port,
+    onReady: () => {
+      info(`web services listening on http://${config.host}:${config.port}`);
+      info(`advertising webServicesUrl http://${config.publicHost}:${config.port}`);
+      info(`advertising game socket ${config.publicHost}:${config.gameSocketPort}`);
+    },
+  });

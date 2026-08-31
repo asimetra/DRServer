@@ -494,6 +494,56 @@ const initializeFileObjectId = async () => {
   fileObjectId = Math.max(fileObjectId, highest);
 };
 
+/**
+ * Where ids for accounts this server invents begin.
+ *
+ * Above the client's persistent-object range and in the neighbourhood the
+ * captures show real accounts occupying, so an id minted here looks like one
+ * the client has always dealt with. Accounts an operator imports or names by
+ * hand are free to sit anywhere below it.
+ */
+export const ACCOUNT_ID_FLOOR = 1_000_000_000;
+
+let allocationChain = Promise.resolve();
+
+/**
+ * An account nobody asked for by id — which is what registering is.
+ *
+ * Every other path into this module opens an account whose id the caller
+ * already knows, because that is how the client works: `DBFacade` reads an
+ * `AccountId` out of its configuration and presents it. A sign-up form has no
+ * such number to present, so one has to be chosen, and choosing it is the only
+ * thing here that two callers can get wrong at once — read the taken ids
+ * together and they pick the same free one. Allocation is therefore taken one
+ * at a time, on a chain of its own rather than on an account lock, since the
+ * account being locked is the one that does not exist yet.
+ */
+export const createNewAccount = async ({ name } = {}) => {
+  const mine = allocationChain.then(async () => {
+    const taken = await listAccountIds();
+    const highest = taken.reduce(
+      (top, id) => (Number.isSafeInteger(id) && id > top ? id : top),
+      ACCOUNT_ID_FLOOR
+    );
+    const id = highest + 1;
+    if (id > 0xffff_ffff) {
+      throw new RangeError("account id space exhausted");
+    }
+
+    const account = createAccount(id);
+    if (name !== undefined) account.name = String(name);
+    await saveAccount(account);
+    info(`accounts: registered new account ${id}`);
+    return account;
+  });
+  // The next allocation waits either way; a failure must not wedge the chain.
+  allocationChain = mine.then(
+    () => {},
+    () => {}
+  );
+  return mine;
+};
+
 export const nextObjectId = async (account = null) => {
   if (usingDatabase()) {
     const id = await (await db()).nextId();

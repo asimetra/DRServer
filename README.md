@@ -114,6 +114,36 @@ For compatibility, a deliberately trusted LAN can opt into a remote cleartext
 bind with `ODS_ALLOW_INSECURE_REMOTE=1`. Without that acknowledgement startup
 refuses any non-loopback bind.
 
+## The internal API
+
+A web front end — a sign-up page, a trade screen, a lobby browser — needs this
+server to act on accounts: to register one, to issue the validation token a
+player pastes into their client, to invalidate every token it has issued. It
+does not get to write the account tables itself. One process holds the accounts
+that are in play and serialises the writers, and both of those are local to it,
+so a second process writing the same rows would undo a change made while
+somebody was in a dungeon. This is the door instead.
+
+It is off until a secret is set, and it listens on a port of its own:
+
+```bash
+ODS_INTERNAL_TOKEN=$(openssl rand -hex 32) npm start
+```
+
+Loopback by default, deliberately. `ODS_HOST=0.0.0.0` above is how players are
+let in, and an internal API sharing that listener would be published by the
+same act. Callers present the secret as `X-Internal-Token`.
+
+| Route | Does |
+|---|---|
+| `POST /internal/v1/accounts` | Registers an account, answering with its id and a token |
+| `GET /internal/v1/accounts/:id` | The account as the client would receive it |
+| `POST /internal/v1/accounts/:id/token` | Issues a replacement token |
+| `DELETE /internal/v1/accounts/:id/token` | Invalidates every token issued for that account |
+
+Holding the secret is holding every account, so it belongs on the same machine
+or on a private network, never on the public interface.
+
 ## Configuration
 
 `ODS_*` is the public-facing environment prefix. Existing `DR_*` deployments
@@ -137,6 +167,8 @@ remain supported as legacy aliases while the migration is completed.
 | `ODS_ADMIN_ACCOUNTS` | empty | Bootstrap administrator account ids |
 | `ODS_AUTH` | enabled | Set `0` to accept whatever a client claims |
 | `ODS_TOKEN_SECRET` | written on first run | Key every validation token is signed with |
+| `ODS_INTERNAL_TOKEN` | empty | Shared secret for the internal API; empty leaves it off |
+| `ODS_INTERNAL_HOST` / `ODS_INTERNAL_PORT` | `127.0.0.1` / `8081` | Internal API bind address |
 | `ODS_DUNGEON` | enabled | Set `0` to refuse dungeon entry cleanly |
 
 See [config/README.md](config/README.md) for the complete configuration model.

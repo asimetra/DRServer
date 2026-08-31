@@ -1,6 +1,7 @@
 import "./rpc-handlers.js";
 import { start as startWebServices } from "./http.js";
 import { start as startGameSocket } from "./socket/index.js";
+import { start as startInternalApi } from "./internal.js";
 import { config } from "./config.js";
 import {
   checkCompatibilityData,
@@ -23,4 +24,5 @@ reportAuth();
 ensureSafeTransport();
 
 startWebServices();
+startInternalApi();
 startGameSocket();

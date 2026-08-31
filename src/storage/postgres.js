@@ -168,6 +168,19 @@ export const saveAccount = async (account) => {
   return account;
 };
 
+/**
+ * Every account id this server holds.
+ *
+ * The file backend answers this by listing its directory and this backend had
+ * no answer at all, so `listAccountIds` returned an empty population here: the
+ * friends and leaderboard endpoints saw nobody, and allocating an id for a new
+ * account would have handed out one already taken.
+ */
+export const listAccountIds = async () => {
+  const { rows } = await connect().query("SELECT id FROM accounts ORDER BY id");
+  return rows.map((row) => Number(row.id));
+};
+
 let accountObjectSequenceReady = null;
 
 const ensureAccountObjectSequence = () => {

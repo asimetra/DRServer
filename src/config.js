@@ -298,6 +298,25 @@ export const loadServerConfig = (environment = process.env) => {
     tokenSecret: setting(environment, "TOKEN_SECRET") ?? defaults.tokenSecret ?? "",
 
     /**
+     * The internal API: where a web front end asks this server to act on
+     * accounts, and the credential it presents.
+     *
+     * Its own listener rather than a path on the player-facing one, because
+     * the two want different exposure and the player-facing one is documented
+     * as being bound to `0.0.0.0` the moment anybody else is let in. Sharing a
+     * port would mean following that instruction also publishes the endpoint
+     * that mints tokens. Bound to loopback by default so the mistake takes a
+     * deliberate act rather than an omission.
+     *
+     * Off unless a token is configured. A default secret would be no secret,
+     * and an internal API that is open until somebody remembers to close it is
+     * the wrong way round.
+     */
+    internalHost: setting(environment, "INTERNAL_HOST") ?? defaults.internalHost ?? "127.0.0.1",
+    internalPort: asInt(setting(environment, "INTERNAL_PORT"), defaults.internalPort ?? 8081),
+    internalToken: setting(environment, "INTERNAL_TOKEN") ?? defaults.internalToken ?? "",
+
+    /**
      * Whether tokens are checked. Off accepts whatever a client claims to be,
      * which is only reasonable where nobody else can reach the machine.
      */
