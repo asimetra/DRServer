@@ -315,19 +315,45 @@ const marketRefusal = (problem) => {
 };
 
 /**
- * Puts the weapon's name on a listing.
+ * Says what a listing *is*, rather than which numbers it is.
  *
- * The same reasoning as the hero on a board row: the listing stores the id an
- * account row carries, and what that id is called is the GameMaster's answer,
- * already loaded here. Resolving it on the way out is a Map lookup, and it
- * keeps one copy of what a weapon is called rather than shipping a four-megabyte
- * table to every browser that opens the market.
+ * The same reasoning as the hero on a board row: the listing stores the ids an
+ * account row carries, and what those ids are called is the GameMaster's
+ * answer, already loaded here. Resolving them on the way out is a few Map
+ * lookups, and it keeps one copy of what a weapon and a modifier are called
+ * rather than shipping a four-megabyte table to every browser that opens the
+ * market — which the website could not hold in any case, having no game data
+ * and being meant to have none.
+ *
+ * An id that resolves to nothing is dropped rather than passed on as a blank.
+ * It means the player's copy of the data and this one disagree, and an empty
+ * line on a market page explains none of that to anybody.
  */
-const withWeapons = (listings, gm) =>
-  listings.map((listing) => {
+export const describeListings = (listings, gm) => {
+  const describe = (row) =>
+    row ? { id: row.Id, name: row.Name, description: row.Description } : null;
+
+  return listings.map((listing) => {
     const weapon = gm.weaponById.get(Number(listing.item_id));
-    return { ...listing, name: weapon?.Name ?? null, mastertype: weapon?.Mastertype ?? null };
+    const legendary = Number(listing.legendarymodifier) || 0;
+    return {
+      ...listing,
+      name: weapon?.Name ?? null,
+      mastertype: weapon?.Mastertype ?? null,
+      modifiers: [listing.modifier1, listing.modifier2]
+        .map((id) => describe(gm.modifiersById.get(Number(id) || 0)))
+        .filter(Boolean),
+      /**
+       * Kept apart from the other two because the game keeps it apart: the top
+       * rarity draws a third from a table of its own, and it is the line a
+       * legendary weapon is bought for.
+       */
+      legendary: describe(
+        legendary ? gm.raw.LegendaryModifiers.find((row) => row.Id === legendary) : null
+      ),
+    };
   });
+};
 
 /** GET /internal/v1/market — everything up for sale, newest first. */
 const readMarket = async (req) => {
@@ -336,7 +362,7 @@ const readMarket = async (req) => {
 
   const limit = req.query?.get("limit") ?? 50;
   return json({
-    listings: withWeapons(await browse({ limit }), await loadGameMaster()),
+    listings: describeListings(await browse({ limit }), await loadGameMaster()),
   });
 };
 
@@ -353,8 +379,8 @@ const readStall = async (req, [capture]) => {
   const gm = await loadGameMaster();
   return json({
     ...stall,
-    listed: withWeapons(stall.listed, gm),
-    sold: withWeapons(stall.sold, gm),
+    listed: describeListings(stall.listed, gm),
+    sold: describeListings(stall.sold, gm),
   });
 };
 
