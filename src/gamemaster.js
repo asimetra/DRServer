@@ -61,6 +61,9 @@ const load = async () => {
   const coliseumTierByConstant = new Map(
     (parsed.ColiseumTiers ?? []).map((tier) => [tier.Constant, tier])
   );
+  const raritySpawnByConstant = new Map(
+    (parsed.RaritySpawn ?? []).map((row) => [row.Constant, row])
+  );
   const propByConstant = new Map((parsed.Prop ?? []).map((prop) => [prop.Constant, prop]));
   const stackableById = new Map((parsed.Stackables ?? []).map((row) => [row.Id, row]));
   const timelineFile = path.join(config.resourcesDir, "Combat", "AttackTimeline.json");
@@ -100,6 +103,7 @@ const load = async () => {
     dooberDropsByNpcConstant,
     mapNodeById,
     coliseumTierByConstant,
+    raritySpawnByConstant,
     customMapByConstant,
     propByConstant,
     stackableById,
@@ -478,6 +482,38 @@ export const stackableById = async (id) => {
 export const coliseumTier = async (constant) => {
   const loaded = await load();
   return loaded.coliseumTierByConstant?.get(constant) ?? null;
+};
+
+/**
+ * What a reward spot on a floor of this tier pays out.
+ *
+ * `RaritySpawn` carries one row per tier rank, spreading `TOTALS` 1 across five
+ * chest rarities and the two item boxes. It is the authored answer to both
+ * questions a reward spot asks — which rarity, and whether a chest arrives at
+ * all — and reading only the first is what left the boxes undropped.
+ *
+ * `LEGENDARY_CHEST` and `UBER_CHEST` are zero on all 55 rows, which is why no
+ * capture has ever shown a dragon chest off a tier roll. The one legendary in
+ * the game comes from a single node's `BossRewardTreasureId`.
+ */
+export const treasureForTier = async (tierRank, random = Math.random) => {
+  if (!tierRank) return null;
+  const { raritySpawnByConstant } = await load();
+  const row = raritySpawnByConstant?.get(tierRank);
+  if (!row) return null;
+
+  const weights = Object.entries(row).filter(
+    ([column, weight]) => column.endsWith("_CHEST") || column.endsWith("_BOX")
+  ).filter(([, weight]) => typeof weight === "number" && weight > 0);
+  if (!weights.length) return null;
+
+  const total = weights.reduce((sum, [, weight]) => sum + weight, 0);
+  let roll = Math.min(1 - Number.EPSILON, Math.max(0, random())) * total;
+  for (const [category, weight] of weights) {
+    roll -= weight;
+    if (roll <= 0) return treasureForCategory(category);
+  }
+  return treasureForCategory(weights.at(-1)[0]);
 };
 
 /**

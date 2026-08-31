@@ -26,8 +26,7 @@ import {
 import {
   npcForConstant,
   propForConstant,
-  treasureForCategory,
-  coliseumTier,
+  treasureForTier,
   dooberForConstant,
   resolveSpawnConstant,
   heroById,
@@ -913,61 +912,23 @@ const isTreasureDoober = (id) =>
   Number(id) >= FIRST_TREASURE_DOOBER && Number(id) <= LAST_TREASURE_DOOBER;
 
 /**
- * How much of a reward slot is a chest rather than an item box.
+ * How many reward spots on a floor actually pay a treasure.
  *
- * Read off `RaritySpawn`: 54 of its 55 rows put 0.5 across the five chest
- * columns against a declared `TOTALS` of 1, with `SMALL_ITEM_BOX` and
- * `ROYAL_ITEM_BOX` taking the rest. Only CASTLE_TIER1 is a flat 1.
+ * The tiles mark far more than a run is meant to hand over — an ordinary Arena
+ * floor carries three `TREASURE` and sixteen `RANDOM_REWARD` against a node
+ * that authorises two. Paying every one of them would multiply the reward
+ * economy by ten.
+ *
+ * `MapPage.MaxTreasure` is the allowance, and it belongs to the run rather than
+ * the floor: of 93 official runs on treasure-bearing nodes — 60 of one floor
+ * and 33 of two — not one exceeded it, and a second floor bought nothing extra.
+ *
+ * Chests are placed with the floor rather than dropped by it. `CategoryProb`
+ * gives TREASURE a flat 0 for ENEMY, PROP, PET and HERO, and the captures
+ * agree: of 95 treasures observed, 90 arrived within two seconds of the floor
+ * generate and the rest bore no relation to any death.
  */
-const CHEST_SHARE_OF_A_REWARD_SLOT = 0.5;
-
-/**
- * What a tile's reward placement actually becomes.
- *
- * The tiles mark far more reward spots than a run is meant to pay out — an
- * ordinary Arena floor carries three `TREASURE` and sixteen `RANDOM_REWARD`
- * against a node that authorises two chests. Handing a chest to every one of
- * them would multiply the reward economy by ten.
- *
- * Two authored numbers decide it, and neither was being read:
- *
- *   MapPage.MinTreasure/MaxTreasure   how many chests this node pays, in total
- *   CategoryProb.REWARD_NODE          what a reward spot turns into
- *
- * The second is a distribution summing to exactly 1: TREASURE 0.5, GOLD 0.25,
- * FOOD 0.18, MANA 0.07. Note that the same table gives TREASURE a flat 0 for
- * ENEMY, PROP, PET and HERO — killing things never produces a chest, which the
- * captures agree with: of 95 treasures observed, 90 arrived within two seconds
- * of the floor generate and the rest showed no relationship to any death.
- * Chests are placed with the floor, not dropped by it.
- *
- * The allowance belongs to the run, not to the floor. Of 93 official runs on
- * treasure-bearing nodes — 60 of one floor and 33 of two — not one paid out
- * more than its node's MaxTreasure of two, and a second floor bought nothing
- * extra. An earlier reading of this said otherwise and was a measurement
- * artifact: runs were being split on the map node changing, so repeated runs of
- * the same node merged into one and appeared to hand out six.
- *
- * How many of the allowance actually arrive is a coin toss each:
- *
- *      0 chests   24%        binomial(2, 0.5) says 25%
- *      1 chest    51%                             50%
- *      2 chests   26%                             25%
- *
- * And the half is authored rather than fitted — `RaritySpawn` declares `TOTALS`
- * 1 while its five chest columns sum to 0.5, the rest going to
- * `SMALL_ITEM_BOX` and `ROYAL_ITEM_BOX`. So the row is not merely "which
- * rarity": it is also the odds of a chest at all, and the reason a run can
- * finish with nothing to show for its reward slots.
- */
-const treasuresOwedFor = (session, node) => {
-  const random = session.random ?? Math.random;
-  let owed = 0;
-  for (let slot = 0; slot < Math.max(0, Number(node?.MaxTreasure ?? 0)); slot++) {
-    if (random() < CHEST_SHARE_OF_A_REWARD_SLOT) owed += 1;
-  }
-  return owed;
-};
+const treasuresOwedFor = (node) => Math.max(0, Number(node?.MaxTreasure ?? 0));
 
 /**
  * What a tile writes when it means "a reward goes here" without saying which.
@@ -980,18 +941,44 @@ const REWARD_PLACEHOLDERS = new Set(["TREASURE", "RANDOM_REWARD"]);
 /** Exported so a test can hold the list against what the trap actually is. */
 export const isRewardPlaceholder = (constant) => REWARD_PLACEHOLDERS.has(constant);
 
+/**
+ * And what each of those spots becomes.
+ *
+ * `RaritySpawn` carries one row per tier rank spreading `TOTALS` 1 across five
+ * chest rarities and the two item boxes, which answers both halves at once:
+ * which rarity, and whether a chest arrives instead of a box. Reading only the
+ * chest half is what left the boxes — the powerup drops — never spawning at
+ * all, while 46 SMALL_ITEM_BOX and 26 ROYAL_ITEM_BOX appear across the official
+ * recordings, more than any single chest.
+ *
+ * It also explains the shape of the run. ARENA_B is COMMON 0.5 / SMALL_ITEM_BOX
+ * 0.5 against MaxTreasure 2, so chests per run come out binomial(2, 0.5) —
+ * which is what 93 official runs measured:
+ *
+ *      0 chests   24%        binomial(2, 0.5) says 25%
+ *      1 chest    51%                             50%
+ *      2 chests   26%                             25%
+ *
+ * That half used to sit here as a constant. It is not a constant: ICE_CAVES_D
+ * spreads 0.1/0.25/0.25 across three rarities and 0.4 across the two boxes.
+ *
+ * `LEGENDARY_CHEST` is zero on all 55 rows, so a tier roll can never pay one —
+ * and no dragon chest appears in 70 official recordings. The only legendary in
+ * the game is node 50083's `BossRewardTreasureId`, which is why that is asked
+ * first.
+ */
 const rewardForPlacement = async (session, placement, node) => {
   const random = session.random ?? Math.random;
-  session.treasuresOwed ??= treasuresOwedFor(session, node);
+  session.treasuresOwed ??= treasuresOwedFor(node);
 
   if (session.treasuresOwed > 0) {
     const rewardId = Number(node?.BossRewardTreasureId ?? 0);
-    const chest =
+    const treasure =
       (rewardId && (await dooberById(rewardId))) ||
-      (await treasureForCategory((await coliseumTier(node?.TierRank))?.Treasure));
-    if (chest) {
+      (await treasureForTier(node?.TierRank, random));
+    if (treasure) {
       session.treasuresOwed -= 1;
-      return chest;
+      return treasure;
     }
   }
 

@@ -274,3 +274,51 @@ test("so both reward placeholders are answered by the map node instead", async (
   // Anything that names a real row still resolves the ordinary way.
   assert.equal(isRewardPlaceholder("GOLD_MEDIUM"), false);
 });
+
+/**
+ * What a reward spot pays, which is not only "which chest".
+ *
+ * `RaritySpawn` carries one row per tier rank spreading TOTALS 1 across five
+ * chest rarities and the two item boxes. The boxes are the powerup drops, and
+ * reading only the chest half of the row left them never spawning — while the
+ * official recordings carry 46 SMALL_ITEM_BOX and 26 ROYAL_ITEM_BOX, more than
+ * any single chest type.
+ */
+test("a reward spot can pay an item box, not just a chest", async () => {
+  const { treasureForTier } = await import("../src/gamemaster.js");
+
+  // ARENA_B is COMMON_CHEST 0.5 / SMALL_ITEM_BOX 0.5, in that column order.
+  assert.equal((await treasureForTier("ARENA_B", () => 0.2)).Constant, "WOODEN_CHEST");
+  assert.equal((await treasureForTier("ARENA_B", () => 0.8)).Constant, "SMALL_ITEM_BOX");
+});
+
+test("a tier with more rarities spreads across all of them", async () => {
+  const { treasureForTier } = await import("../src/gamemaster.js");
+
+  // ICE_CAVES_D: 0.1 / 0.25 / 0.25 chest, 0.25 / 0.15 box.
+  assert.equal((await treasureForTier("ICE_CAVES_D", () => 0.05)).Constant, "WOODEN_CHEST");
+  assert.equal((await treasureForTier("ICE_CAVES_D", () => 0.5)).Constant, "GOLD_CHEST");
+  assert.equal((await treasureForTier("ICE_CAVES_D", () => 0.95)).Constant, "ROYAL_ITEM_BOX");
+});
+
+/**
+ * No tier pays a legendary — the column is zero on all 55 rows, and no dragon
+ * chest appears in 70 official recordings. The one in the game comes from a
+ * single node's BossRewardTreasureId.
+ */
+test("no tier roll can ever pay a legendary", async () => {
+  const { treasureForTier } = await import("../src/gamemaster.js");
+  const { loadGameMaster } = await import("../src/gamemaster.js");
+  const gm = await loadGameMaster();
+
+  for (const row of gm.raw.RaritySpawn) {
+    for (const roll of [0, 0.17, 0.34, 0.51, 0.68, 0.85, 0.999]) {
+      const paid = await treasureForTier(row.Constant, () => roll);
+      assert.notEqual(
+        paid?.Constant,
+        "DRAGON_CHEST",
+        `${row.Constant} paid a legendary at roll ${roll}`
+      );
+    }
+  }
+});
