@@ -194,6 +194,23 @@ export const listAccountIds = async () => {
   return rows.map((row) => Number(row.id));
 };
 
+/**
+ * Who holds a name, if anybody.
+ *
+ * Takes the already-folded key and folds the column the same way, which is the
+ * expression `accounts_name_unique` is built on — so this is an index lookup
+ * rather than a scan, and it agrees with the constraint that would refuse the
+ * insert. If the two ever disagree, the constraint wins and the caller sees a
+ * violation instead of a sentence.
+ */
+export const accountIdWithName = async (key) => {
+  const { rows } = await connect().query(
+    "SELECT id FROM accounts WHERE lower(translate(name, 'ıİI', 'iii')) = $1 LIMIT 1",
+    [key]
+  );
+  return rows.length ? Number(rows[0].id) : null;
+};
+
 let accountObjectSequenceReady = null;
 
 const ensureAccountObjectSequence = () => {

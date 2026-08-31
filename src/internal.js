@@ -6,6 +6,7 @@ import { loadGameMaster } from "./gamemaster.js";
 import { presenceSummary } from "./socket/presence.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
+import { NameRefused, checkName, nameTaken, tidyName } from "./account-names.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
 import { TradeRefused, settleTrade } from "./trade.js";
 import {
@@ -91,11 +92,22 @@ const registerAccount = async (req) => {
   if (refusal) return refusal;
 
   const name = req.json?.name;
-  if (name !== undefined && (typeof name !== "string" || !name.trim())) {
-    return json({ error: "name must be a non-empty string when given" }, 400);
+  if (name !== undefined && typeof name !== "string") {
+    return json({ error: "name must be a string when given" }, 400);
   }
 
-  const account = await createNewAccount({ name: name?.trim() });
+  let account;
+  try {
+    account = await createNewAccount({ name });
+  } catch (problem) {
+    /* A name that is the wrong shape or already somebody's is the caller's to
+       fix and the sign-up form's to explain, so it carries a reason the way the
+       market's refusals do rather than arriving as a 500. */
+    if (!(problem instanceof NameRefused)) throw problem;
+    warn(`internal: refused a name — ${problem.reason}: ${problem.message}`);
+    return json({ error: problem.message, reason: problem.reason }, 409);
+  }
+
   const token = issueToken(account.id);
   info(`internal: registered account ${account.id}`);
   return json(
@@ -107,6 +119,31 @@ const registerAccount = async (req) => {
     },
     201
   );
+};
+
+/**
+ * GET /internal/v1/names/:name — is it free?
+ *
+ * So a sign-up form can say "that one is taken" while somebody is still typing,
+ * rather than at the end of a round trip through their email. It is advice and
+ * not a reservation: the answer that decides is the one `createNewAccount`
+ * gives inside the allocation chain, and between this call and that one
+ * somebody else may have taken it.
+ */
+const checkNameFree = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  let name;
+  try {
+    name = checkName(capture);
+  } catch (problem) {
+    if (!(problem instanceof NameRefused)) throw problem;
+    return json({ name: tidyName(capture), free: false, reason: problem.reason, error: problem.message });
+  }
+
+  const taken = await nameTaken(name, { listAccountIds, loadAccount });
+  return json({ name, free: !taken, ...(taken ? { reason: "name_taken" } : {}) });
 };
 
 /**
@@ -484,6 +521,7 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/market", handler: createListing },
   { method: "POST", pattern: "/internal/v1/market/:id/buy", handler: takeListing },
   { method: "POST", pattern: "/internal/v1/market/:id/cancel", handler: withdrawListing },
+  { method: "GET", pattern: "/internal/v1/names/:name", handler: checkNameFree },
   { method: "GET", pattern: "/internal/v1/accounts/:id/stall", handler: readStall },
   { method: "POST", pattern: "/internal/v1/accounts/:id/stall/claim", handler: collectProceeds },
 ];

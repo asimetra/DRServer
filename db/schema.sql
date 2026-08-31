@@ -38,6 +38,21 @@ CREATE TABLE IF NOT EXISTS accounts (
     created                TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- A name belongs to one player.
+--
+-- It is the only thing other players see of somebody, so two people sharing one
+-- would mean a name identifies nobody and every screen falls back to printing
+-- the account id — which is the number the client authenticates with and has no
+-- business being on a leaderboard.
+--
+-- Folded the way `nameKey` in src/account-names.js folds it, so the index and
+-- the code agree on what "the same name" means: case-insensitive, and the four
+-- I forms together. The translate runs *before* lower for the same reason it
+-- does there — lowercasing a dotted capital I first produces an i with a
+-- combining dot, which no later fold matches.
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_name_unique
+    ON accounts (lower(translate(name, 'ıİI', 'iii')));
+
 -- One row per hero the player owns. `avatar_id` is the GameMaster hero type
 -- (101..106); `id` is the instance the rest of the schema points at.
 CREATE TABLE IF NOT EXISTS account_avatars (

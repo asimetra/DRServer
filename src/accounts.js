@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
 import { heldAccount } from "./account-registry.js";
+import { NameRefused, checkName, nameTaken } from "./account-names.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
@@ -592,7 +593,22 @@ export const createNewAccount = async ({ name } = {}) => {
     }
 
     const account = createAccount(id);
-    if (name !== undefined) account.name = String(name);
+    /*
+     * Checked and claimed inside the allocation chain, which is what makes it
+     * one decision rather than two racing ones: two registrations arriving at
+     * the same moment with the same name are serialised here, so the second
+     * sees the first's account and is refused.
+     *
+     * A name that is not given keeps the template's, which carries the id and
+     * so cannot collide — that path is the tools and the tests, not a player.
+     */
+    if (name !== undefined) {
+      const wanted = checkName(name);
+      if (await nameTaken(wanted, { listAccountIds, loadAccount })) {
+        throw new NameRefused("name_taken", `${wanted} is already taken`);
+      }
+      account.name = wanted;
+    }
     await saveAccount(account);
     info(`accounts: registered new account ${id}`);
     return account;
