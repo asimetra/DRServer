@@ -107,8 +107,15 @@ test("a refusal says which of the three it was", () => {
     /signature|another account/i,
     "a good token for somebody else fails on its signature"
   );
+  /**
+   * Flipped to a character it is not, rather than to a fixed one: a signature
+   * already starting with "0" made the "corrupted" token identical to the good
+   * one, so this passed a valid token and expected a refusal. Hex, so one run
+   * in sixteen — which is what it did, about six percent of the time.
+   */
+  const flipped = signature[0] === "0" ? "1" : "0";
   assert.match(
-    tokenProblem(1000, `${expiry}:${signature.replace(/^./, "0")}`, { secret: SECRET }),
+    tokenProblem(1000, `${expiry}:${flipped}${signature.slice(1)}`, { secret: SECRET }),
     /signature/i
   );
 });

@@ -90,3 +90,46 @@ test("a handler registered without saying where its account is defaults to the f
   assert.deepEqual(await dispatch("test", "echo", [ME], ME), { accountId: ME });
   await assert.rejects(() => dispatch("test", "echo", [SOMEBODY_ELSE], ME), /account/i);
 });
+
+/**
+ * Every method the client actually calls now has an answer, which is what lets
+ * the permissive fallback go.
+ *
+ * Across the official recordings the client calls 29 distinct RPC methods. This
+ * server registers 28 of them and serves `accountdetails` through the REST
+ * layer; `GetFacebookId` was the last gap, and it is answered with the blank
+ * the client is already built for — `PlayerGameObject` only raises its event
+ * when the string comes back non-empty.
+ *
+ * With that filled, an unrecognised method is a real error rather than an empty
+ * array, which is what a server reachable by anyone should say.
+ */
+test("the last unanswered method the client calls now has an answer", async () => {
+  const { dispatch } = await import("../src/rpc.js");
+  await import("../src/rpc-handlers.js");
+
+  // [remotePlayerId, accountId, token] — the account is the second one.
+  const answer = await dispatch("account", "GetFacebookId", [999, 1000, "t"], 1000);
+  assert.equal(answer, "", "no Facebook integration, and the client expects to be told so");
+});
+
+test("asking about somebody else's Facebook id is still refused", async () => {
+  const { dispatch } = await import("../src/rpc.js");
+  await import("../src/rpc-handlers.js");
+
+  await assert.rejects(
+    () => dispatch("account", "GetFacebookId", [999, 1001, "t"], 1000),
+    /may not act for another/
+  );
+});
+
+test("an unknown method is refused rather than answered", async () => {
+  const { dispatch } = await import("../src/rpc.js");
+  const { config } = await import("../src/config.js");
+
+  assert.equal(config.permissive, false, "the enumeration default is off");
+  await assert.rejects(
+    () => dispatch("account", "NoSuchMethod", [1000], 1000),
+    /No handler/
+  );
+});

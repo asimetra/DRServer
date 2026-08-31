@@ -55,6 +55,23 @@ register("account/token", ([accountId]) => {
 });
 
 /**
+ * account/GetFacebookId — params [remotePlayerId, accountId, token].
+ *
+ * The last method the client calls that this server had no answer for, which
+ * is why it is here: with it registered, nothing legitimate depends on the
+ * permissive fallback any more and unknown methods can be refused outright.
+ *
+ * There is no Facebook integration and there will not be one, so the honest
+ * answer is that this player has no Facebook id. The client is built for it —
+ * `PlayerGameObject` only raises FACEBOOK_ID_RECEIVED_EVENT when the string
+ * comes back non-empty, and otherwise just stores the blank.
+ *
+ * The account id is the *second* parameter here; the first names the player
+ * being asked about, who is someone else by definition.
+ */
+register("account/GetFacebookId", async () => "", { account: 1 });
+
+/**
  * Persists OptionsPanel and editable-HUD preferences.
  *
  * DBAccountInfo updates its in-memory map first and then sends

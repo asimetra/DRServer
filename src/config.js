@@ -192,9 +192,16 @@ export const loadServerConfig = (environment = process.env) => {
         : ""),
 
     /**
-     * When true, unknown JSON-RPC methods answer with an empty result instead of an
-     * error. Keeps the client moving so we can enumerate what it actually needs;
-     * every such call is logged as UNIMPLEMENTED.
+     * When true, unknown JSON-RPC methods answer with an empty result instead
+     * of an error. It exists to enumerate what the client needs, and that job
+     * is done: of the 29 distinct methods the official recordings show the
+     * client calling, this server now answers all of them — 28 through the RPC
+     * registry and `accountdetails` through the REST layer.
+     *
+     * So it is off by default. A server reachable by anyone should refuse input
+     * it does not recognise rather than answer it, and an unimplemented method
+     * discovered later is better as a loud error than as a silent empty array.
+     * `ODS_STRICT=0` turns it back on for protocol work.
      */
     permissive:
       setting(environment, "STRICT") === undefined

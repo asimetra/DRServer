@@ -347,13 +347,34 @@ export const loadAccount = async (id) => {
   return readAccount(id);
 };
 
+/**
+ * A first login, written down because it happened rather than by accident.
+ *
+ * There is no registration on this server: an operator signs a token for an id
+ * and the account materialises the first time somebody arrives holding it. So
+ * this is the moment a player comes into existence, and it has to reach
+ * storage on its own terms.
+ *
+ * It used to survive only as a side effect. `repairLoadedAccount` saves when a
+ * repair changed something, and for a brand-new account exactly one of the five
+ * fires — `repairAccountAttributes`, because the template's preference rows
+ * carry no ids yet. Give those rows ids in the template, which is precisely the
+ * tidy-up somebody would make, and every repair returns false: the account is
+ * served, never written, and rebuilt identically on the next request. The
+ * player would keep nothing and nothing would report it.
+ */
+const createAndPersist = async (id) => {
+  info(`accounts: creating new account ${id}`);
+  const account = await repairLoadedAccount(createAccount(id));
+  await saveAccount(account);
+  return account;
+};
+
 const readAccount = async (id) => {
   if (usingDatabase()) {
     const existing = await (await db()).loadAccount(id);
     if (existing) return repairLoadedAccount(existing);
-
-    info(`accounts: creating new account ${id}`);
-    return repairLoadedAccount(createAccount(id));
+    return createAndPersist(id);
   }
 
   const file = filePathFor(id);
@@ -363,11 +384,8 @@ const readAccount = async (id) => {
   } catch (err) {
     if (err.code !== "ENOENT") {
       warn(`accounts: could not read ${file}: ${err.message} — recreating`);
-    } else {
-      info(`accounts: creating new account ${id}`);
     }
-    const account = createAccount(id);
-    return repairLoadedAccount(account);
+    return createAndPersist(id);
   }
 };
 
