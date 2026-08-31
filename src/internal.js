@@ -8,6 +8,15 @@ import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
 import { TradeRefused, settleTrade } from "./trade.js";
+import {
+  MarketRefused,
+  browse,
+  buyListing,
+  cancelListing,
+  claimProceeds,
+  listForSale,
+  stallFor,
+} from "./market.js";
 import { info, warn } from "./log.js";
 
 /**
@@ -248,6 +257,103 @@ const settleTradeRoute = async (req) => {
 };
 
 /**
+ * The market.
+ *
+ * Every one of these is game state — a weapon leaving a bag, gold leaving an
+ * account — so all of it is here rather than on the website. What the website
+ * owns is the browsing and the asking; what a listing *is* belongs to the
+ * server that owns the accounts, for the same reason the trade settle does.
+ *
+ * The refusals carry a `reason` as well as a sentence, because a market screen
+ * does different things with "somebody bought it first" (take it off the page)
+ * and "your bag is full" (say which, and let them fix it).
+ */
+const marketRefusal = (problem) => {
+  if (!(problem instanceof MarketRefused)) throw problem;
+  warn(`internal: refused a market action — ${problem.reason}: ${problem.message}`);
+  /* Gone is not a failure of the request, it is the answer to it: somebody was
+     quicker. The screen removes the row rather than showing an error. */
+  const status = problem.reason === "gone" ? 410 : 409;
+  return json({ error: problem.message, reason: problem.reason }, status);
+};
+
+/** GET /internal/v1/market — everything up for sale, newest first. */
+const readMarket = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const limit = req.query?.get("limit") ?? 50;
+  return json({ listings: await browse({ limit }) });
+};
+
+/** GET /internal/v1/accounts/:id/stall — one seller's own: what is up, what is owed. */
+const readStall = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  return json(await stallFor(id));
+};
+
+/** POST /internal/v1/market — put a weapon up. */
+const createListing = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  try {
+    return json(await listForSale(req.json ?? {}), 201);
+  } catch (problem) {
+    return marketRefusal(problem);
+  }
+};
+
+/** POST /internal/v1/market/:id/buy — take one. */
+const takeListing = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  try {
+    return json(await buyListing({ listingId: capture, buyerId: req.json?.buyerId }));
+  } catch (problem) {
+    return marketRefusal(problem);
+  }
+};
+
+/*
+ * POST /internal/v1/market/:id/cancel — take one back down.
+ *
+ * A POST rather than a DELETE on the listing, because withdrawing needs to say
+ * who is asking and a DELETE carrying a body is a thing many clients will not
+ * send. It also reads as what it is: the seller is not deleting a record, they
+ * are taking their weapon back.
+ */
+const withdrawListing = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  try {
+    return json(await cancelListing({ listingId: capture, sellerId: req.json?.sellerId }));
+  } catch (problem) {
+    return marketRefusal(problem);
+  }
+};
+
+/** POST /internal/v1/accounts/:id/stall/claim — collect what has sold. */
+const collectProceeds = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  try {
+    return json(await claimProceeds({ sellerId: capture }));
+  } catch (problem) {
+    return marketRefusal(problem);
+  }
+};
+
+/**
  * GET /internal/v1/leaderboards/:metric — a board, ordered and cut.
  *
  * Read-only and derived: nothing here touches an account, so it is outside the
@@ -349,6 +455,14 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/token", handler: revokeTokens },
   { method: "POST", pattern: "/internal/v1/trades", handler: settleTradeRoute },
+  /* A listing is addressed under /market; a seller's own stall is a fact about
+     their account, so it hangs off /accounts/:id like the summary does. */
+  { method: "GET", pattern: "/internal/v1/market", handler: readMarket },
+  { method: "POST", pattern: "/internal/v1/market", handler: createListing },
+  { method: "POST", pattern: "/internal/v1/market/:id/buy", handler: takeListing },
+  { method: "POST", pattern: "/internal/v1/market/:id/cancel", handler: withdrawListing },
+  { method: "GET", pattern: "/internal/v1/accounts/:id/stall", handler: readStall },
+  { method: "POST", pattern: "/internal/v1/accounts/:id/stall/claim", handler: collectProceeds },
 ];
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);

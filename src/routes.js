@@ -80,7 +80,14 @@ const accountDetails = async (req) => {
   }
   const account = await loadAccount(accountId);
   info(`api: served account details for ${accountId}`);
-  return json(account);
+  /*
+   * The market is this server's, not the client's. `market_listings` is a child
+   * of the account so that listing a weapon is one atomic write, but the client
+   * was never told such a thing exists and this response is parsed by code this
+   * server does not change — so it is left out rather than sent and hoped over.
+   */
+  const { market_listings, ...forTheClient } = account;
+  return json(forTheClient);
 };
 
 /**

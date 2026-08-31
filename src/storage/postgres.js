@@ -63,6 +63,19 @@ export const CHILD_TABLES = {
   account_pets: ["id", "account_id", "npc_id", "equipped_hero", "is_new"],
   account_skins: ["id", "account_id", "skin_type"],
   account_attributes: ["id", "account_id", "name", "value"],
+  /*
+   * Weapons that are up for sale, held here rather than in `account_items`.
+   *
+   * A child of the account on purpose: that is what makes listing a weapon one
+   * write instead of an account write and a market write with a crash-shaped
+   * gap in between. The row's id is the weapon's own, so the buyer receives the
+   * instance that was put up rather than a copy of it.
+   */
+  market_listings: [
+    "id", "account_id", "item_id", "price", "listed_at", "sold_to", "sold_at",
+    "power", "requiredlevel", "rarity", "modifier1", "modifier2",
+    "legendarymodifier", "created",
+  ],
 };
 
 const ACCOUNT_COLUMNS = [

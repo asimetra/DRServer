@@ -123,6 +123,43 @@ CREATE TABLE IF NOT EXISTS account_attributes (
 CREATE INDEX IF NOT EXISTS account_attributes_account ON account_attributes(account_id);
 CREATE UNIQUE INDEX IF NOT EXISTS account_attributes_unique ON account_attributes(account_id, name);
 
+-- Weapons a player has put up for sale.
+--
+-- A child of the account, and that is the point of it. A listed weapon cannot
+-- stay in account_items — that list is what the client is sent as the bag, so it
+-- would still be shown, equipped and sold to the shop — but moving it to a table
+-- of its own would make listing an account write plus a market write, with a
+-- crash-shaped gap between them where a weapon is in both places or in neither.
+-- Held here, listing one is a single account save, which is already atomic.
+--
+-- `id` is the weapon's own object id rather than a new number: an id is the
+-- identity of that instance, so the buyer receives the weapon that was put up
+-- rather than a copy of it, and one weapon cannot be listed twice.
+--
+-- A sold row stays on the seller until it is claimed. That is where the proceeds
+-- wait; gold appearing in the bag unannounced would be gold the client is
+-- showing without having been told why.
+CREATE TABLE IF NOT EXISTS market_listings (
+    id                BIGINT PRIMARY KEY,
+    account_id        BIGINT      NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    item_id           INTEGER     NOT NULL,
+    price             BIGINT      NOT NULL,
+    listed_at         TIMESTAMPTZ NOT NULL,
+    sold_to           BIGINT,
+    sold_at           TIMESTAMPTZ,
+    power             INTEGER,
+    requiredlevel     INTEGER,
+    rarity            INTEGER,
+    modifier1         INTEGER,
+    modifier2         INTEGER,
+    legendarymodifier INTEGER,
+    created           TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS market_listings_account ON market_listings(account_id);
+-- What the market page reads: everything still up, newest first.
+CREATE INDEX IF NOT EXISTS market_listings_open ON market_listings(listed_at DESC) WHERE sold_to IS NULL;
+
 -- Chests a player holds unopened. The shape is not inferred from captures: this
 -- server writes these rows itself, in awardTreasureChest and tools/grant.js, and
 -- account/OpenChest and DropChest read them back.
