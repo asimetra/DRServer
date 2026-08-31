@@ -365,6 +365,30 @@ export const describeListings = (listings, gm) => {
       ...listing,
       name: weapon?.Name ?? null,
       mastertype: weapon?.Mastertype ?? null,
+      /**
+       * What the weapon is before anything was rolled onto it.
+       *
+       * A name and a power are the least interesting half. The row also says
+       * how fast it swings, what its tap combo is called and does, and what
+       * the charged attack costs — which is what somebody deciding whether to
+       * spend gold is actually reading, and none of it can be worked out from
+       * an id on the other side.
+       */
+      weapon: weapon
+        ? {
+            classType: weapon.ClassType ?? null,
+            speed: weapon.SpeedDisplay ?? null,
+            tap: {
+              title: weapon.TapTitle ?? null,
+              description: weapon.TapDescription ?? null,
+            },
+            hold: {
+              title: weapon.HoldTitle ?? null,
+              description: weapon.HoldDescription ?? null,
+              manaCost: Number(weapon.HoldManaCost) || 0,
+            },
+          }
+        : null,
       modifiers: [listing.modifier1, listing.modifier2]
         .map((id) => describe(gm.modifiersById.get(Number(id) || 0)))
         .filter(Boolean),

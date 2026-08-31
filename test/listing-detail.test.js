@@ -27,6 +27,37 @@ test("a listing carries its weapon's name and type", async () => {
   assert.equal(listing.price, 10, "and keeps what it already had");
 });
 
+/**
+ * What the weapon itself is, before anything was rolled onto it.
+ *
+ * A listing showed a name and a power and stopped, which is the least
+ * interesting half: the row carries how fast it swings, what its tap combo is
+ * called and does, and what its charged attack costs in mana. Somebody
+ * deciding whether to spend gold is reading those, and none of them can be
+ * worked out from an id on the other side.
+ */
+test("a listing carries the weapon's own stat block", async () => {
+  const gm = await loadGameMaster();
+  const axe = gm.raw.WeaponItem.find((row) => row.Constant === "HERO_HAND_AXE");
+
+  const [listing] = describeListings([{ item_id: axe.Id }], gm);
+
+  assert.equal(listing.weapon.classType, axe.ClassType);
+  assert.equal(listing.weapon.speed, axe.SpeedDisplay);
+  assert.equal(listing.weapon.tap.title, axe.TapTitle);
+  assert.equal(listing.weapon.tap.description, axe.TapDescription);
+  assert.equal(listing.weapon.hold.title, axe.HoldTitle);
+  assert.equal(listing.weapon.hold.manaCost, axe.HoldManaCost);
+});
+
+test("a weapon nothing is known about carries no block rather than an empty one", async () => {
+  const gm = await loadGameMaster();
+  const [listing] = describeListings([{ item_id: 999999 }], gm);
+
+  assert.equal(listing.name, null);
+  assert.equal(listing.weapon, null);
+});
+
 test("and its modifiers by name, with what they do", async () => {
   const gm = await loadGameMaster();
   const first = gm.raw.Modifiers[0];
