@@ -138,3 +138,43 @@ test("settling twice is refused rather than repeated", async () => {
 
   assert.equal(saved.length, 1);
 });
+
+/**
+ * The two halves of a run, and they do not survive the same way.
+ *
+ * Reported from play and confirmed against the captures: gold picked up off the
+ * floor is banked as it is picked up, so quitting mid-run keeps it. A treasure
+ * is only a claim on a chest until the report screen, so quitting mid-run
+ * loses it — every increase in `account_chests` across the official recordings
+ * follows a TakeChest or an OpenChest.
+ *
+ * That asymmetry is the point rather than an accident: finishing a run is what
+ * the chest is for.
+ */
+test("a mid-run quit keeps the gold and loses the chests", async () => {
+  const { applyProgressReward, awardTreasureChest } = await import("../src/socket/rewards.js");
+
+  let disk = null;
+  const { session, account } = (() => {
+    const { session } = sessionWith({
+      persistDungeonAccount: async (value) => {
+        disk = structuredClone(value);
+      },
+    });
+    session.dungeonAccount.basic_currency = 500;
+    session.dungeonAccount.account_chests = [];
+    return { session, account: session.dungeonAccount };
+  })();
+
+  applyProgressReward(session, { gold: 120 });
+  await awardTreasureChest(session, 30100);
+
+  // No report: the player walked out, or the socket died.
+  await leaveDungeon(session);
+  await settled(session);
+
+  assert.equal(account.basic_currency, 620, "the gold went in as it was collected");
+  assert.equal(disk.basic_currency, 620, "and it reached storage");
+  assert.deepEqual(disk.account_chests, [], "the chest never became one");
+  assert.equal(session.dungeonTreasures, undefined, "and the claim went with the run");
+});
