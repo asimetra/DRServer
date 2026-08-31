@@ -122,3 +122,40 @@ test("an account reads back as the payload the client would receive", async () =
   assert.ok(Array.isArray(account.account_avatars));
   assert.ok(Array.isArray(account.account_items));
 });
+
+/**
+ * What a seller may put up, and what it is called.
+ *
+ * Both are this server's answers and neither can be worked out on the other
+ * side: "equipped" is an `avatar_id` on the row, which is a detail of these
+ * tables, and turning 11001 into a name needs the GameMaster — which the
+ * website has no copy of and is not meant to.
+ */
+test("the inventory offers only what nobody is holding, named", async () => {
+  const { saveAccount, loadAccount } = await import("../src/accounts.js");
+  const registered = await (await call("POST", "/internal/v1/accounts", { body: {} })).json();
+
+  const account = await loadAccount(registered.accountId);
+  account.account_items = [
+    { id: 90001, account_id: account.id, item_id: 11001, power: 5, rarity: 1, avatar_id: null },
+    { id: 90002, account_id: account.id, item_id: 11001, power: 5, rarity: 1, avatar_id: 7 },
+  ];
+  await saveAccount(account);
+
+  const bag = await (
+    await call("GET", `/internal/v1/accounts/${registered.accountId}/inventory`)
+  ).json();
+
+  assert.deepEqual(
+    bag.items.map((item) => item.id),
+    [90001],
+    "a weapon somebody is holding is not for sale"
+  );
+  assert.ok(bag.items[0].name, "and what is offered says what it is");
+  assert.deepEqual(bag.items[0].modifiers, [], "with room for the lines it would carry");
+});
+
+test("an inventory for an account that does not exist is refused", async () => {
+  const response = await call("GET", "/internal/v1/accounts/4000000001/inventory");
+  assert.equal(response.status, 404);
+});

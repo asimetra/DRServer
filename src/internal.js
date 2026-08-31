@@ -211,6 +211,31 @@ const readAccount = async (req, [capture]) => {
 };
 
 /**
+ * GET /internal/v1/accounts/:id/inventory — what this account could put up.
+ *
+ * The whole account is available next door and answers this badly: the caller
+ * would have to know that a weapon with an `avatar_id` is being held and cannot
+ * be sold, and it would still be left holding item ids it has no way to name.
+ * Both are this server's answers, so it gives them.
+ */
+const readInventory = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  const account = await loadAccount(id);
+  const spare = (account.account_items ?? []).filter((item) => !Number(item.avatar_id ?? 0));
+  return json({
+    accountId: account.id,
+    gold: Number(account.basic_currency ?? 0),
+    items: describeListings(spare, await loadGameMaster()),
+  });
+};
+
+/**
  * GET /internal/v1/accounts/:id/summary — the player, as a page would draw them.
  *
  * The whole account payload is available next door and is the wrong thing for a
@@ -538,6 +563,7 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id/summary", handler: readSummary },
+  { method: "GET", pattern: "/internal/v1/accounts/:id/inventory", handler: readInventory },
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/token", handler: revokeTokens },
   { method: "POST", pattern: "/internal/v1/trades", handler: settleTradeRoute },
