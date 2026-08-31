@@ -144,12 +144,17 @@ test("a replay pays gold and experience but no trophy or keys", async () => {
 });
 
 /**
- * A treasure picked up off the floor is a chest earned, and the summary screen
- * shows both sides of it. A captured run reported a GOLD_CHEST collected as
- * 30102 with its reward as 60003 — the doober id and the chest id for the same
- * thing, the two tables running in step.
+ * A treasure picked up off the floor is a *claim* on a chest, and the summary
+ * screen shows both sides of it. A captured run reported a GOLD_CHEST collected
+ * as 30102 with its reward as 60003 — the doober id and the chest id for the
+ * same thing, the two tables running in step.
+ *
+ * The account is deliberately untouched here: the chest arrives when the player
+ * keeps it on the report. Measured — across the official captures every
+ * increase in `account_chests` follows a TakeChest or an OpenChest, and a run
+ * that collected four treasures and kept one moved the account by one.
  */
-test("collecting a treasure earns the chest it stands for", async () => {
+test("collecting a treasure records the chest it stands for", async () => {
   const { awardTreasureChest } = await import("../src/socket/rewards.js");
   const target = session();
   target.dungeonAccount.id = 1000000005;
@@ -158,12 +163,13 @@ test("collecting a treasure earns the chest it stands for", async () => {
   assert.equal(await awardTreasureChest(target, 30100), 60001, "and wooden is common");
 
   assert.deepEqual(
-    target.dungeonAccount.account_chests.map((chest) => chest.chest_id),
+    target.dungeonTreasures.map((treasure) => treasure.chestId),
     [60003, 60001]
   );
   assert.deepEqual(
-    target.dungeonTreasures.map((treasure) => treasure.chestId),
-    [60003, 60001]
+    target.dungeonAccount.account_chests ?? [],
+    [],
+    "and nothing reaches the account until the report screen"
   );
 });
 
@@ -228,5 +234,9 @@ test("a treasure placed by the tiles is marked as one, so collecting it pays", a
 
   assert.equal(tracked.treasure, 30100, "the pickup knows it is a chest");
   assert.equal(await awardTreasureChest(session, tracked.treasure), 60001);
-  assert.equal(session.dungeonAccount.account_chests.length, 1, "and it reaches the account");
+  assert.equal(
+    session.dungeonTreasures.length,
+    1,
+    "and the run is owed it, which is what the report screen offers"
+  );
 });

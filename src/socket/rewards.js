@@ -275,35 +275,37 @@ const FIRST_TREASURE_DOOBER = 30100;
 const FIRST_CHEST = 60001;
 
 /**
- * Grants the chest a collected treasure is worth, and remembers it for the
- * summary screen — which reports both what was picked up (chest_type) and what
- * it turned into (loot_type).
+ * Notes the chest a collected treasure is worth — and deliberately does not
+ * hand it over.
+ *
+ * A treasure picked up off the floor is not yet a chest on the account. It
+ * becomes one when the player keeps it on the report screen, and until then it
+ * lives only here, as the run's own record of what it is owed.
+ *
+ * Measured rather than assumed, because this was implemented the other way
+ * round first. Across the official captures every one of seven increases in
+ * `account_chests` follows a TakeChest or an OpenChest, and none happens on any
+ * other event: one run collected four treasures, kept one and dropped three,
+ * and the account went 6 → 7 — never to 10 and back. The report screen being
+ * drawn does not do it either; the account still read 6 while it was up.
+ *
+ * So the three DropChests changed nothing, which is the tell: there was nothing
+ * to remove. And walking out before the report keeps no chests at all, which is
+ * what makes finishing the run worth something.
+ *
+ * Gold is the opposite and stays that way — it is banked as it is picked up,
+ * and quitting mid-run does not give it back.
  */
 export const awardTreasureChest = async (session, dooberType) => {
   const account = session.dungeonAccount;
   const chestId = FIRST_CHEST + (Number(dooberType) - FIRST_TREASURE_DOOBER);
   if (!account || chestId < FIRST_CHEST || chestId > FIRST_CHEST + 3) return null;
 
-  const id = await nextObjectId(account);
-  account.account_chests ??= [];
-  account.account_chests.push({
-    id,
-    account_id: account.id,
-    chest_id: chestId,
-  });
-
-  /**
-   * The instance id travels with the report entry, because the summary screen
-   * asks for its chests by *slot*: keep, abandon and open all send an index
-   * into chest_type_1..4 rather than anything identifying. Carrying the id here
-   * is what turns that index back into one exact chest — matching on chest_id
-   * would work until a player held two of the same rarity, and then it would
-   * abandon whichever one it found first.
-   */
   session.dungeonTreasures ??= [];
-  session.dungeonTreasures.push({ dooberType: Number(dooberType), chestId, id });
+  session.dungeonTreasures.push({ dooberType: Number(dooberType), chestId });
 
-  queueAccountSave(session);
-  info(`[${session.id}] treasure ${dooberType} collected — chest ${chestId} earned`);
+  // Nothing to save: the account has not changed, and will not until the
+  // player keeps this on the report.
+  info(`[${session.id}] treasure ${dooberType} collected — chest ${chestId} owed`);
   return chestId;
 };

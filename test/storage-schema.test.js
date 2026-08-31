@@ -55,8 +55,8 @@ test("every column the storage layer names exists on its table", () => {
  * three fields, and `account/OpenChest` and `DropChest` read them back.
  */
 test("chests have somewhere to live", () => {
-  assert.deepEqual(CHILD_TABLES.account_chests, ["id", "account_id", "chest_id"]);
-  assert.deepEqual(columnsOf("account_chests"), ["id", "account_id", "chest_id"]);
+  assert.deepEqual(CHILD_TABLES.account_chests, ["id", "account_id", "chest_id", "is_new"]);
+  assert.deepEqual(columnsOf("account_chests"), ["id", "account_id", "chest_id", "is_new"]);
 });
 
 /**

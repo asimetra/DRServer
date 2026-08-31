@@ -26,11 +26,20 @@ import { membersOf } from "./match-world.js";
  * `keepChestFromInventory` puts up a TAKING_ITEM popup and waits for 285, so a
  * player who pressed it sat under that popup until they killed the client.
  *
- * **Keep does not grant anything.** The chest reached the account when it was
- * picked up off the floor, in `awardTreasureChest`, so by the time this screen
- * is drawn the run is already banked. Keep confirms and Abandon takes it back.
- * A player who closes the report without pressing either keeps what they
- * collected, which is the side to err on.
+ * **Keep is the grant.** A treasure picked up off the floor is only a claim
+ * until this screen; the chest reaches the account when the player keeps it,
+ * and Abandon removes nothing because nothing was ever added.
+ *
+ * That is measured, and it replaced the opposite assumption. Across the
+ * official captures all seven increases in `account_chests` follow a TakeChest
+ * or an OpenChest and nothing else — one run collected four treasures, kept one
+ * and dropped three, and the account went 6 → 7 rather than to 10 and back. The
+ * report being drawn does not do it either: the account still read 6 while it
+ * was on screen.
+ *
+ * So walking out before the report keeps no chests, which is what makes
+ * finishing a run worth something. Gold is the opposite and stays that way —
+ * banked as it is picked up, and a mid-run quit does not give it back.
  */
 
 export const FLID_OPEN_CHEST = 282;
@@ -112,9 +121,24 @@ const treasureAt = (session, slot) => {
   return treasure;
 };
 
-/** The chest row a report slot names, or null once it is no longer held. */
-const chestFor = (account, treasure) =>
-  (account.account_chests ?? []).find((entry) => entry.id === treasure.id) ?? null;
+/**
+ * Puts the chest on the account, which is what Keep and Open actually do.
+ *
+ * `is_new` is sent by the official — every chest row in a captured payload
+ * carries it, and every one of them is 1. It was left out of this server's
+ * schema once, on the reasoning that the client diffs against the list it last
+ * held; the captures say otherwise.
+ */
+const grantChest = async (account, treasure) => {
+  const chest = {
+    id: await nextObjectId(account),
+    account_id: account.id,
+    chest_id: treasure.chestId,
+    is_new: 1,
+  };
+  account.account_chests = [...(account.account_chests ?? []), chest];
+  return chest;
+};
 
 /**
  * Persist, then answer — in that order, and not as a matter of tidiness.
@@ -153,15 +177,13 @@ export const handleTakeChest = async (session, reader) => {
     warn(`[${session.id}] keep names no unspent treasure in slot ${request.slot}`);
     return respond(session, false);
   }
-  if (!chestFor(request.account, treasure)) {
-    warn(`[${session.id}] keep names chest ${treasure.id}, no longer on the account`);
-    return respond(session, false);
-  }
 
   treasure.settled = "kept";
-  info(`[${session.id}] kept chest ${treasure.chestId} from report slot ${request.slot}`);
-  // Nothing changed on the account, but the client refetches on this answer
-  // regardless, so it must not read a half-written run.
+  const chest = await grantChest(request.account, treasure);
+  info(
+    `[${session.id}] kept chest ${treasure.chestId} from report slot ${request.slot} ` +
+      `— instance ${chest.id}`
+  );
   return settle(session, true);
 };
 
@@ -184,22 +206,15 @@ export const handleDropChest = async (session, reader) => {
     return false;
   }
 
-  const chest = chestFor(request.account, treasure);
-  if (!chest) {
-    warn(`[${session.id}] abandon names chest ${treasure.id}, no longer on the account`);
-    return false;
-  }
-
+  /**
+   * Nothing is removed, because nothing was ever added: the treasure is only a
+   * claim on a chest until it is kept. That is what the captures show — three
+   * abandons in one run left the account exactly where it was.
+   *
+   * So this only spends the slot, and no save is needed for the same reason.
+   */
   treasure.settled = "dropped";
-  request.account.account_chests = request.account.account_chests.filter(
-    (entry) => entry.id !== chest.id
-  );
   info(`[${session.id}] abandoned chest ${treasure.chestId} from report slot ${request.slot}`);
-  // Caught rather than thrown: nothing is waiting on this one, so a failed
-  // write is worth a line naming the chest and nothing more.
-  await queueAccountSave(session).catch((problem) =>
-    warn(`[${session.id}] abandoned chest ${treasure.chestId} but could not save: ${problem.message}`)
-  );
   return true;
 };
 
@@ -225,10 +240,19 @@ export const handleOpenChest = async (session, reader) => {
     return respond(session, false);
   }
 
+  /**
+   * Kept first, then opened. `openChest` works on a chest the account holds —
+   * the same one the inventory screen opens — so the treasure has to become
+   * real before it can be spent. A refusal below puts it back, leaving the
+   * player exactly where they started rather than out a chest they never got
+   * to open.
+   */
+  const chest = await grantChest(request.account, treasure);
+
   try {
     const reward = await openChest({
       account: request.account,
-      chestInstanceId: treasure.id,
+      chestInstanceId: chest.id,
       heroInstanceId: session.dungeonAvatar?.id,
       nextId: () => nextObjectId(request.account),
     });
@@ -242,8 +266,15 @@ export const handleOpenChest = async (session, reader) => {
       weaponId: Number(reward.WeaponId ?? 0),
     });
   } catch (problem) {
-    // A refusal is the live server's own answer for "rolled something but could
-    // not hand it over", and the chest stays put for the player to keep instead.
+    /**
+     * Taken back off again. The grant above was only so `openChest` had
+     * something to work on; a refusal must not leave the player holding a chest
+     * the report screen has already cleared from its slot, which they would
+     * then never see again.
+     */
+    request.account.account_chests = (request.account.account_chests ?? []).filter(
+      (entry) => entry.id !== chest.id
+    );
     const why = problem instanceof ChestError ? problem.message : `unexpected: ${problem.message}`;
     warn(`[${session.id}] could not open chest ${treasure.chestId}: ${why}`);
     return respond(session, false);

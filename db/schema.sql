@@ -132,12 +132,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS account_attributes_unique ON account_attribute
 -- flag between the pickup and the account, so no chest ever reached one. The
 -- captures themselves are mostly on treasure-bearing nodes.
 --
--- No is_new column: the client computes ChestInfo.isNew by diffing against the
--- list it last held, so nothing on the server has one to store.
+-- is_new was left out once, on the reasoning that the client computes
+-- ChestInfo.isNew by diffing against the list it last held. The captures say
+-- otherwise: every chest row the official sends carries it, and every one of
+-- them is 1.
 CREATE TABLE IF NOT EXISTS account_chests (
-    id         BIGINT  PRIMARY KEY,
-    account_id BIGINT  NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    chest_id   INTEGER NOT NULL
+    id         BIGINT   PRIMARY KEY,
+    account_id BIGINT   NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    chest_id   INTEGER  NOT NULL,
+    is_new     SMALLINT NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS account_chests_account ON account_chests(account_id);

@@ -59,7 +59,7 @@ export const CHILD_TABLES = {
     "legendarymodifier", "created",
   ],
   account_stackables: ["id", "account_id", "stack_id", "count", "is_new"],
-  account_chests: ["id", "account_id", "chest_id"],
+  account_chests: ["id", "account_id", "chest_id", "is_new"],
   account_pets: ["id", "account_id", "npc_id", "equipped_hero", "is_new"],
   account_skins: ["id", "account_id", "skin_type"],
   account_attributes: ["id", "account_id", "name", "value"],

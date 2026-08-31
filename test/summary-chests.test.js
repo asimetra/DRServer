@@ -57,9 +57,8 @@ const sessionWith = ({ chests, treasures, ...overrides } = {}) => {
     legendary_keys: 99,
     account_items: [],
     account_avatars: [{ id: 1, avatar_id: 101, experience: 0 }],
-    account_chests: chests ?? [
-      { id: 900, account_id: ACCOUNT_ID, chest_id: LEGENDARY_CHEST },
-    ],
+    // Empty: a treasure is only a claim until the player keeps it.
+    account_chests: chests ?? [],
   };
 
   return {
@@ -68,7 +67,7 @@ const sessionWith = ({ chests, treasures, ...overrides } = {}) => {
     dungeonAccount: account,
     dungeonAvatar: account.account_avatars[0],
     dungeonTreasures: treasures ?? [
-      { dooberType: GOLD_TREASURE, chestId: LEGENDARY_CHEST, id: 900 },
+      { dooberType: GOLD_TREASURE, chestId: LEGENDARY_CHEST },
     ],
     send: (frame) => sent.push(frame),
     objects: new Map(),
@@ -97,12 +96,20 @@ test("keep is answered, and answered the way the captures were", async () => {
   });
 });
 
-test("keep leaves the chest where it already was", async () => {
+/**
+ * Keep is the grant, not a confirmation. Measured: across the official captures
+ * every increase in `account_chests` follows a TakeChest or an OpenChest, and a
+ * run that collected four treasures and kept one moved the account by exactly
+ * one.
+ */
+test("keep puts the chest on the account", async () => {
   const session = sessionWith();
   await handleTakeChest(session, request(0));
 
-  // It was banked at pickup; keep only confirms.
-  assert.deepEqual(session.dungeonAccount.account_chests.map((c) => c.id), [900]);
+  const chests = session.dungeonAccount.account_chests;
+  assert.equal(chests.length, 1, "the account had none before");
+  assert.equal(chests[0].chest_id, LEGENDARY_CHEST);
+  assert.equal(chests[0].is_new, 1, "which is what every captured chest row carries");
 });
 
 /**
@@ -118,12 +125,16 @@ test("the account is saved before the answer goes out", async () => {
   assert.equal(session.saves[0].after, 0, "nothing had been sent when the save ran");
 });
 
-test("abandon takes the chest off the account", async () => {
+/**
+ * And abandon removes nothing, because nothing was added. Three abandons in one
+ * captured run left the account exactly where it was.
+ */
+test("abandon leaves the account alone", async () => {
   const session = sessionWith();
   await handleDropChest(session, request(0));
 
   assert.deepEqual(session.dungeonAccount.account_chests, []);
-  assert.equal(session.saves.length, 1, "and the removal is persisted");
+  assert.equal(session.saves.length, 0, "and there is nothing to save");
 });
 
 /**
@@ -140,21 +151,17 @@ test("abandon is not answered", async () => {
 
 test("a slot can only be spent once", async () => {
   const session = sessionWith({
-    chests: [
-      { id: 900, account_id: ACCOUNT_ID, chest_id: LEGENDARY_CHEST },
-      { id: 901, account_id: ACCOUNT_ID, chest_id: LEGENDARY_CHEST },
-    ],
     treasures: [
-      { dooberType: GOLD_TREASURE, chestId: LEGENDARY_CHEST, id: 900 },
-      { dooberType: GOLD_TREASURE, chestId: LEGENDARY_CHEST, id: 901 },
+      { dooberType: GOLD_TREASURE, chestId: LEGENDARY_CHEST },
+      { dooberType: GOLD_TREASURE, chestId: LEGENDARY_CHEST },
     ],
   });
 
-  await handleDropChest(session, request(0));
-  await handleDropChest(session, request(0));
+  await handleTakeChest(session, request(0));
+  await handleTakeChest(session, request(0));
 
-  // The repeat must not reach past the slot it names into the other chest.
-  assert.deepEqual(session.dungeonAccount.account_chests.map((c) => c.id), [901]);
+  // The repeat must not pay out a second time for one slot.
+  assert.equal(session.dungeonAccount.account_chests.length, 1);
 });
 
 test("keeping a slot stops it being abandoned afterwards", async () => {
@@ -162,14 +169,14 @@ test("keeping a slot stops it being abandoned afterwards", async () => {
   await handleTakeChest(session, request(0));
   await handleDropChest(session, request(0));
 
-  assert.deepEqual(session.dungeonAccount.account_chests.map((c) => c.id), [900]);
+  assert.equal(session.dungeonAccount.account_chests.length, 1, "the kept chest stays");
 });
 
 test("a request naming another account is refused", async () => {
   const session = sessionWith();
-  await handleDropChest(session, request(0, ACCOUNT_ID + 1));
+  await handleTakeChest(session, request(0, ACCOUNT_ID + 1));
 
-  assert.deepEqual(session.dungeonAccount.account_chests.map((c) => c.id), [900]);
+  assert.deepEqual(session.dungeonAccount.account_chests, [], "nothing was granted");
 });
 
 test("slots past the report's four are refused", async () => {
@@ -231,10 +238,15 @@ test("open refuses rather than hangs when it cannot award", async () => {
   await handleOpenChest(session, request(0));
 
   assert.equal(readResponse(session.sent[0]).succeeded, 0);
+  /**
+   * Open grants the chest first so `openChest` has something to work on, so a
+   * refusal has to take it back off — otherwise the player would be left
+   * holding a chest the report has already cleared from its slot.
+   */
   assert.deepEqual(
-    session.dungeonAccount.account_chests.map((c) => c.id),
-    [900],
-    "and the chest stays for the player to keep instead"
+    session.dungeonAccount.account_chests,
+    [],
+    "and the failed open leaves the account exactly where it started"
   );
 });
 
