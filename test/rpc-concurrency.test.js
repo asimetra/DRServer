@@ -102,3 +102,39 @@ test("a weapon sold twice at once is not paid for twice", async () => {
     `${accepted} sales accepted for one weapon, paying ${paid}`
   );
 });
+
+/**
+ * And underneath both, one write at a time per account.
+ *
+ * `saveAccountToFile` snapshots when it runs and renames when the disk is
+ * ready, so two writes that overlap are two snapshots racing to be last — and
+ * the earlier one can win, discarding everything between them. The comment in
+ * settle-account.js names this exact failure; what it could not cover is a
+ * socket write racing a JSON-RPC one, because those are different chains and
+ * a dungeon cannot hold a transaction lock for the length of a run.
+ *
+ * Forced 300 times before the write chain: 20 losses, 6.7%.
+ */
+test("a write cannot be overtaken by an older snapshot of the same account", async () => {
+  let lost = 0;
+
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const id = nextId++;
+    forgetHeldAccounts();
+    const account = await loadAccount(id);
+    account.basic_currency = 1000;
+    await saveAccount(account);
+
+    // Two writers with a change between them: whichever lands last must not be
+    // the one that read 1000.
+    const first = saveAccount(account);
+    account.basic_currency = 2000;
+    const second = saveAccount(account);
+    await Promise.all([first, second]);
+
+    forgetHeldAccounts();
+    if ((await loadAccount(id)).basic_currency !== 2000) lost += 1;
+  }
+
+  assert.equal(lost, 0, `${lost} of 60 writes were overtaken`);
+});
