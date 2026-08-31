@@ -1,10 +1,11 @@
 import { config } from "../config.js";
 import { dungeonMatches } from "./matches.js";
-import { info } from "../log.js";
+import { info, warn } from "../log.js";
 import { CLID } from "./opcodes.js";
 import { dungeonSummaryGenerate, objectDisable } from "./objects.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { settleDungeonAccount } from "./settle-account.js";
+import { rankable, recordRuns } from "../leaderboard.js";
 
 /**
  * Takes the hero off the floor, once.
@@ -90,6 +91,47 @@ const teamXpBonus = (node, account) => {
   const heroes = (account?.account_avatars ?? []).length;
   const crew = Math.max(0, heroes - 2);
   return Math.max(0, Math.min(bonus, Math.floor((bonus * crew) / 16)));
+};
+
+/**
+ * What a finished run leaves for the boards.
+ *
+ * Everything but the clock was already being counted for the report screen —
+ * `dungeonContribution` accumulates kills and damage on every hit,
+ * `dungeonRewards` the gold and experience — so the cost of a run record is one
+ * timestamp taken at entry and one row written here.
+ *
+ * The party size is part of it because a four-player clear is not the same race
+ * as a solo one, and the hero because the spread between heroes is wider than
+ * the spread between players.
+ */
+export const runRecordFor = (session, success) => {
+  const account = session.dungeonAccount;
+  const avatar = session.dungeonAvatar;
+  if (!account || !avatar) return null;
+
+  const startedAt = session.dungeonStart?.at ?? null;
+  const finishedAt = Date.now();
+
+  return {
+    account_id: account.id,
+    name: account.name ?? null,
+    avatar_id: avatar.id,
+    hero_id: avatar.avatar_id ?? 0,
+    map_node_id: session.mapNodeId ?? 0,
+    party_size: [...membersOf(session)].length,
+    started_at: startedAt ? new Date(startedAt).toISOString() : null,
+    finished_at: new Date(finishedAt).toISOString(),
+    duration_ms: startedAt ? finishedAt - startedAt : null,
+    success: Boolean(success),
+    floors: session.floorCount ?? 1,
+    kills: session.dungeonContribution?.kills ?? 0,
+    damage: session.dungeonContribution?.damage ?? 0,
+    gold: session.dungeonRewards?.gold ?? 0,
+    xp: session.dungeonRewards?.xp ?? 0,
+    // Written to the history either way; only kept off the boards.
+    rankable: rankable(session.mapPage?.NodeType) && startedAt !== null,
+  };
 };
 
 /** Up to four treasures fit on the report; anything past that is not shown. */
@@ -273,6 +315,19 @@ export const sendDungeonSummary = (session, success) => {
       reports: projectDungeonReports(session, member, success),
     }));
   }
+  /**
+   * And the run itself goes to the boards, which is a different store and a
+   * different failure.
+   *
+   * Deliberately not awaited and deliberately not on the account's write path:
+   * a leaderboard is not worth failing a run over, and the account save below
+   * is already ordered against every other writer. If this throws, the line in
+   * the log is the whole consequence.
+   */
+  recordRuns(members.map((member) =>
+    runRecordFor(member.world?.contextFor(member) ?? member, success)
+  )).catch((problem) => warn(`[${session.id}] run not recorded: ${problem.message}`));
+
   /**
    * The run is written down here, and this is the last time the server writes
    * a whole account from the session's own copy.

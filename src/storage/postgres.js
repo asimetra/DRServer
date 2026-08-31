@@ -206,3 +206,73 @@ export const ping = async () => {
   await connect().query("SELECT 1");
   info(`storage: connected to ${config.databaseUrl.replace(/:[^:@]*@/, ":***@")}`);
 };
+
+/**
+ * Finished runs, and the boards folded out of them.
+ *
+ * One transaction: the history row and the standing it changes belong together,
+ * and a board that disagrees with the run behind it is worse than a missing
+ * one. Neither table references `accounts`, so this never contends with the
+ * account write path.
+ */
+const BOARD_FOLD = {
+  speedrun: "LEAST(dungeon_bests.value, EXCLUDED.value)",
+  experience: "dungeon_bests.value + EXCLUDED.value",
+  clears: "dungeon_bests.value + EXCLUDED.value",
+};
+
+export const recordRuns = async (runs, boards) => {
+  const client = await connect().connect();
+  try {
+    await client.query("BEGIN");
+    for (const run of runs) {
+      await client.query(
+        `INSERT INTO dungeon_runs
+           (account_id, name, avatar_id, hero_id, map_node_id, party_size,
+            started_at, finished_at, duration_ms, success, floors, kills, damage, gold, xp)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [
+          run.account_id, run.name, run.avatar_id, run.hero_id, run.map_node_id,
+          run.party_size, run.started_at, run.finished_at, run.duration_ms,
+          run.success, run.floors, run.kills, run.damage, run.gold, run.xp,
+        ]
+      );
+
+      for (const { key, metric, value } of boards(run)) {
+        await client.query(
+          `INSERT INTO dungeon_bests (board_key, account_id, name, value, achieved_at)
+           VALUES ($1,$2,$3,$4,$5)
+           ON CONFLICT (board_key, account_id) DO UPDATE
+             SET value = ${BOARD_FOLD[metric]},
+                 name = EXCLUDED.name,
+                 achieved_at = CASE
+                   WHEN ${BOARD_FOLD[metric]} <> dungeon_bests.value
+                   THEN EXCLUDED.achieved_at ELSE dungeon_bests.achieved_at END`,
+          [key, run.account_id, run.name, value, run.finished_at]
+        );
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+/** One board, already ordered by the caller's direction. */
+export const boardRows = async (key, { ascending = true, limit = 20 } = {}) => {
+  const { rows } = await connect().query(
+    `SELECT account_id, name, value, achieved_at
+       FROM dungeon_bests WHERE board_key = $1
+      ORDER BY value ${ascending ? "ASC" : "DESC"} LIMIT $2`,
+    [key, limit]
+  );
+  return rows.map((row) => ({
+    account_id: Number(row.account_id),
+    name: row.name,
+    value: Number(row.value),
+    at: row.achieved_at instanceof Date ? row.achieved_at.toISOString() : row.achieved_at,
+  }));
+};

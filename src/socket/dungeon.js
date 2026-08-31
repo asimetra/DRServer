@@ -2006,6 +2006,9 @@ export const prepareDungeonMember = async (
   session.dungeonStart = {
     basicCurrency: account.basic_currency ?? 0,
     experience: avatar.experience ?? 0,
+    // When the run began, which is the only thing a speedrun board needs that
+    // the summary does not already carry.
+    at: Date.now(),
   };
   session.dungeonRewards = { gold: 0, gems: 0, xp: 0 };
   session.dungeonContribution = { kills: 0, damage: 0 };
@@ -2203,6 +2206,7 @@ export const enterDungeon = async (
   session.dungeonStart = {
     basicCurrency: account.basic_currency ?? 0,
     experience: avatar?.experience ?? 0,
+    at: Date.now(),
   };
   // Production uses the account id as the owner player doid. The summary UI
   // resolves DungeonReport.id through GameObjectManager and reads currency

@@ -155,3 +155,53 @@ CREATE INDEX IF NOT EXISTS account_chests_account ON account_chests(account_id);
 -- Avatar instance ids become hero distributed-object ids, so account rows must
 -- be allocated outside that range.
 CREATE SEQUENCE IF NOT EXISTS account_object_id START 1200000000;
+
+-- Finished runs, and the boards read off them.
+--
+-- Append-only: a row is written when the report screen is generated and never
+-- updated. Measured at 1.7 minutes a run, so a hundred players at an hour a day
+-- is about 3,500 rows and 170 MB a year — the history is cheap to keep and can
+-- be trimmed or rolled up later without the boards noticing, because nothing
+-- queries it to draw one.
+--
+-- No foreign key to accounts. A run is a record of something that happened, and
+-- deleting an account should not rewrite history; it also keeps this table off
+-- the account write path entirely.
+CREATE TABLE IF NOT EXISTS dungeon_runs (
+    id          BIGSERIAL PRIMARY KEY,
+    account_id  BIGINT      NOT NULL,
+    name        TEXT,
+    avatar_id   BIGINT,
+    hero_id     INTEGER     NOT NULL,
+    map_node_id INTEGER     NOT NULL,
+    party_size  SMALLINT    NOT NULL DEFAULT 1,
+    started_at  TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ NOT NULL,
+    duration_ms INTEGER,
+    success     BOOLEAN     NOT NULL,
+    floors      SMALLINT    NOT NULL DEFAULT 1,
+    kills       INTEGER     NOT NULL DEFAULT 0,
+    damage      BIGINT      NOT NULL DEFAULT 0,
+    gold        BIGINT      NOT NULL DEFAULT 0,
+    xp          BIGINT      NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS dungeon_runs_account ON dungeon_runs(account_id, finished_at DESC);
+CREATE INDEX IF NOT EXISTS dungeon_runs_node ON dungeon_runs(map_node_id, finished_at DESC);
+
+-- One row per thing being ranked, replaced when beaten.
+--
+-- Bounded by players times boards rather than by play, which is what makes a
+-- board a small indexed read instead of an aggregate over the history above.
+-- `board_key` carries the whole scope — the metric, and for speedrun the node,
+-- hero and party size — so a board is one equality and an ORDER BY.
+CREATE TABLE IF NOT EXISTS dungeon_bests (
+    board_key   TEXT        NOT NULL,
+    account_id  BIGINT      NOT NULL,
+    name        TEXT,
+    value       BIGINT      NOT NULL,
+    achieved_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (board_key, account_id)
+);
+
+CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);

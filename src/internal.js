@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
+import { BOARDS, boardFor } from "./leaderboard.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
@@ -188,7 +189,49 @@ const settleTradeRoute = async (req) => {
   }
 };
 
+/**
+ * GET /internal/v1/leaderboards/:metric — a board, ordered and cut.
+ *
+ * Read-only and derived: nothing here touches an account, so it is outside the
+ * registry and the write chains entirely. The front end draws boards from this
+ * rather than from the tables, which keeps the schema free to change.
+ *
+ * `speedrun` is scoped to a dungeon and needs node, hero and party size —
+ * ranking heroes against each other, or a solo clear against a four-player one,
+ * would be a board about the roster rather than the players. The other two are
+ * whole-account and take no scope.
+ */
+const readBoard = async (req, [metric]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const board = BOARDS[metric];
+  if (!board) {
+    return json({ error: `no such board`, boards: Object.keys(BOARDS) }, 404);
+  }
+
+  const query = req.query;
+  const scope = {
+    node: Number(query?.get("node")),
+    hero: Number(query?.get("hero")),
+    party: Number(query?.get("party") ?? 1),
+    limit: query?.get("limit") ?? 20,
+  };
+
+  if (board.scope === "node" && !(scope.node > 0 && scope.hero > 0)) {
+    return json({ error: "this board needs node and hero" }, 400);
+  }
+
+  return json({
+    metric,
+    better: board.better,
+    scope: board.scope === "node" ? scope : null,
+    entries: await boardFor(metric, scope),
+  });
+};
+
 export const internalRoutes = [
+  { method: "GET", pattern: "/internal/v1/leaderboards/:metric", handler: readBoard },
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },
