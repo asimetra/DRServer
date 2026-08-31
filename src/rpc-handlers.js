@@ -1009,6 +1009,13 @@ register("store/GiftOffer", async ([accountId, offerId, , , toIds]) => {
   }
 
   return withAccountLock(senderId, async () => excludeIdsFor(await loadAccount(senderId)).sort());
+}, {
+  /**
+   * This one holds its own, and both sides of the gift. Letting dispatch take
+   * the sender's as well would leave it waiting for a lock it is already
+   * inside.
+   */
+  locks: false,
 });
 
 /**
