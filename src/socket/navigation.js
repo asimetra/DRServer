@@ -755,10 +755,12 @@ export const nearestClearPosition = (
   navigation,
   origin,
   radius = 0,
-  { reach = 240, reachableFrom = null, towards = null } = {}
+  { reach = 240, reachableFrom = null, towards = null, accept = () => true } = {}
 ) => {
   if (!navigation || !origin) return null;
-  if (!isPositionBlocked(navigation, origin, radius)) return origin;
+  const isClear = (candidate) =>
+    !isPositionBlocked(navigation, candidate, radius) && accept(candidate);
+  if (isClear(origin)) return origin;
 
   const step = Math.max(16, Math.round(radius / 2));
   /**
@@ -802,8 +804,8 @@ export const nearestClearPosition = (
     for (let distance = step; distance <= reach; distance += step) {
       for (const [dx, dy] of directions) {
         const candidate = { x: origin.x + dx * distance, y: origin.y + dy * distance };
-        if (isPositionBlocked(navigation, candidate, radius)) continue;
-        if (accept(candidate)) return candidate;
+        if (!isClear(candidate)) continue;
+        return candidate;
       }
     }
     return null;

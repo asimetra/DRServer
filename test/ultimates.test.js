@@ -2,9 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { handleProposeAttackChoreography } from "../src/socket/buster.js";
-import { attackForConstant, loadGameMaster, spawnDooberActions } from "../src/gamemaster.js";
+import {
+  attackForConstant,
+  loadGameMaster,
+  spawnDooberActions,
+  spawnNpcActions,
+} from "../src/gamemaster.js";
 import { CLID } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
+import { clearDungeonPlaceables, spawnPlaceable } from "../src/socket/placeables.js";
+import { createNavigationState, isPositionBlocked } from "../src/socket/navigation.js";
 
 const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -109,6 +116,116 @@ test("the Vampire Hunter's garlic goes around him, not in front of him", async (
   );
   assert.ok(Math.max(...radii) - Math.min(...radii) < 1, "all at one radius");
   assert.ok(radii[0] > 100, `and out from the caster, not on him (${radii[0].toFixed(0)})`);
+  clearDungeonPlaceables(session);
+});
+
+test("Garlic Nuke bombs honour their authored arming delays", async () => {
+  const attack = await attackForConstant("DBUSTER_GARLIC_NUKE");
+  const session = world("DBUSTER_GARLIC_NUKE");
+  session.objects.set(700, CLID.DistributedNPCGameObject);
+  session.actors.set(700, {
+    hitPoints: 10000,
+    maxHitPoints: 10000,
+    constant: "KNIGHT_TUTORIAL",
+    isEnemy: true,
+    collisionRadius: 20,
+    position: { x: 1120, y: 1000 },
+  });
+
+  await cast(session, attack);
+  assert.equal(
+    [...(session.activeBuffs?.values() ?? [])].some(
+      (active) => active.affectedActor === session.heroDoid && active.buff.Constant === "ENSNARED"
+    ),
+    false,
+    "the player-owned trap attack does not apply its hostile target debuff to its caster"
+  );
+  // Spawn is frame 20 (833ms); the earliest delayattack is another 1.25s.
+  await settle(1100);
+
+  assert.equal(session.actors.get(700).hitPoints, 10000, "landing alone does not detonate one");
+  const earlyExplosions = session.sent.filter((frame) => {
+    const body = frame.subarray(2);
+    return body.length >= 14 && body.readUInt16LE(0) === 124 &&
+      body.readUInt16LE(6) === 143 && body.readUInt32LE(10) === 910605;
+  });
+  assert.equal(earlyExplosions.length, 0, "no Garlic Nuke choreography precedes delayattack");
+  clearDungeonPlaceables(session);
+});
+
+test("a blocked Garlic Nuke ring fits distinct bombs onto clear ground", async () => {
+  const attack = await attackForConstant("DBUSTER_GARLIC_NUKE");
+  const actions = await spawnNpcActions(attack.AttackTimeline);
+  const session = world("DBUSTER_GARLIC_NUKE");
+  session.navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 2000, maxY: 2000 },
+    staticColliders: [
+      { type: "circle", x: 1060, y: 1104, radius: 18 },
+      { type: "circle", x: 1060, y: 896, radius: 18 },
+    ],
+  });
+  const placementGroup = { positions: [] };
+
+  for (const action of actions) {
+    await spawnPlaceable(session, {
+      action,
+      origin: session.heroPosition,
+      heading: session.heroHeading,
+      weaponPower: 10,
+      placementGroup,
+    });
+  }
+
+  const bombs = [...session.actors.values()].filter(
+    (actor) => actor.constant === "GARLIC_NUKE_PLACEABLE"
+  );
+  assert.equal(bombs.length, 6);
+  for (const bomb of bombs) {
+    assert.equal(
+      isPositionBlocked(session.navigation, bomb.position, bomb.collisionRadius),
+      false,
+      `bomb fitted at ${JSON.stringify(bomb.position)}`
+    );
+  }
+  for (let left = 0; left < bombs.length; left++) {
+    for (let right = left + 1; right < bombs.length; right++) {
+      assert.ok(
+        Math.hypot(
+          bombs[left].position.x - bombs[right].position.x,
+          bombs[left].position.y - bombs[right].position.y
+        ) >= bombs[left].collisionRadius + bombs[right].collisionRadius,
+        "fitted bombs do not stack into the same gap"
+      );
+    }
+  }
+  clearDungeonPlaceables(session);
+});
+
+test("Berserker's own ultimate impact does not add the party Berserk buff", async () => {
+  const { applyTargetBuff } = await import("../src/socket/combat.js");
+  const { clearDungeonBuffs } = await import("../src/socket/buffs.js");
+  const attack = await attackForConstant("DBUSTER_BERSERK");
+  const session = world("DBUSTER_BERSERK");
+
+  await cast(session, attack);
+  assert.deepEqual(
+    [...session.activeBuffs.values()].map((active) => active.buff.Constant),
+    ["BERSERK_DB"],
+    "the caster starts with the authored self buff"
+  );
+
+  await applyTargetBuff(session, {
+    attack,
+    victimDoid: session.heroDoid,
+    attackerDoid: session.heroDoid,
+    damage: 0,
+  });
+  assert.deepEqual(
+    [...session.activeBuffs.values()].map((active) => active.buff.Constant),
+    ["BERSERK_DB"],
+    "the impact's party buff excludes the caster covered by SelfBuff"
+  );
+  clearDungeonBuffs(session);
 });
 
 /** Three clones, in front and to either side. */

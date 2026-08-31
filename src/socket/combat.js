@@ -1232,6 +1232,16 @@ const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) =
  */
 export const applyTargetBuff = async (session, { attack, victimDoid, attackerDoid, damage }) => {
   if (!attack?.TargetBuff1) return;
+  // A friendly attack with a distinct SelfBuff has already covered its caster.
+  // DBUSTER_BERSERK gives BERSERK_DB to the Berserker and BERSERK to allies;
+  // the caster's impact result must not turn that into two simultaneous buffs.
+  if (
+    attack.Team === "FRIENDLY" &&
+    attack.SelfBuff &&
+    Number(victimDoid) === Number(attackerDoid)
+  ) {
+    return;
+  }
   const already = [...(session.activeBuffs?.values() ?? [])].some(
     (active) =>
       active.affectedActor === victimDoid && active.buff?.Constant === attack.TargetBuff1

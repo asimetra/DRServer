@@ -351,22 +351,34 @@ const timelineLengthMs = async (name) => {
 };
 
 /** Builds one placeable and starts its clock. */
-export const spawnPlaceable = async (session, { action, origin, heading, weaponPower }) => {
+export const spawnPlaceable = async (
+  session,
+  { action, origin, heading, weaponPower, placementGroup }
+) => {
   const npc = await npcForConstant(action.spawnname);
   if (!npc) {
     warn(`placeables: ${action.spawnname} names no GameMaster NPC`);
     return null;
   }
 
+  const collisionRadius = Math.max(12, (npc.CollisionSize ?? 35) * (npc.Scale ?? 1));
+  const clearsGroup = (candidate) =>
+    (placementGroup?.positions ?? []).every(
+      (reserved) =>
+        Math.hypot(candidate.x - reserved.x, candidate.y - reserved.y) >=
+        collisionRadius + reserved.radius
+    );
   let position = placeablePosition(origin, heading, action);
-  if (isPositionBlocked(session.navigation, position)) {
+  if (isPositionBlocked(session.navigation, position, collisionRadius) || !clearsGroup(position)) {
     position =
-      nearestClearPosition(session.navigation, position, 0, {
+      nearestClearPosition(session.navigation, position, collisionRadius, {
         reach: 300,
         reachableFrom: origin,
         towards: origin,
-      }) ?? origin;
+        accept: clearsGroup,
+      }) ?? position;
   }
+  placementGroup?.positions.push({ ...position, radius: collisionRadius });
 
   const { living: livingAttack, death: deathAttack } = await attacksOf(npc);
   const weapon = npc.Weapon1 && (await weaponForConstant(npc.Weapon1));
@@ -385,7 +397,7 @@ export const spawnPlaceable = async (session, { action, origin, heading, weaponP
     constant: npc.Constant,
     isEnemy: false,
     position: { x: position.x, y: position.y },
-    collisionRadius: Math.max(12, (npc.CollisionSize ?? 35) * (npc.Scale ?? 1)),
+    collisionRadius,
     heading,
     ai: null,
   });
@@ -487,23 +499,42 @@ export const spawnPlaceable = async (session, { action, origin, heading, weaponP
 
   if (livingAttack) {
     /**
-     * Everything checks the moment it lands, and what happens then depends on
-     * whether anyone is there. An empty patch of floor leaves a trap standing
-     * and armed; a trap thrown into somebody goes off.
+     * A thrown trap with no delay checks the moment it lands. Timeline-owned
+     * placeables may instead author `delayattack`, which is their arming time:
+     * the Vampire Hunter's six nukes use 1.25 through 2.5 seconds. Ignoring it
+     * made all six scan and explode together as soon as frame 20 spawned them.
+     * An empty first scan leaves the trap standing and checking every
+     * AttackTimer until something enters it.
      *
-     * Checked synchronously, and this branch alone. Nothing is announced when
+     * The no-delay branch is checked synchronously. Nothing is announced when
      * one of these lands — a cloud is silent until something walks into it —
-     * so there is no ordering here for a pause to fix. The death-only branch
-     * below does wait, for a reason that does not apply to this one.
+     * so there is no ordering pause beyond the one the action explicitly asks
+     * for. The death-only branch below waits for a different reason.
      *
      * What made a bomb kill the room before its own explosion was neither: the
      * damage was ignoring its collider's authored frame. See the beat
      * scheduling in `strike`.
      */
-    await tickSafely(session, doid);
-    if (lifetimeMs > beatMs && session.placeables.has(doid)) {
-      live.ticker = setInterval(() => tickSafely(session, doid), beatMs);
-      live.ticker.unref?.();
+    const firstAttackDelayMs = Math.max(0, Number(action.delayattack ?? 0) * 1000);
+    const beginAttacking = async () => {
+      live.activation = null;
+      if (!session.dungeonActive || session.floorDoid !== live.floorDoid) return;
+      await tickSafely(session, doid);
+      if (
+        !live.spent &&
+        lifetimeMs > firstAttackDelayMs + beatMs &&
+        session.placeables.has(doid)
+      ) {
+        live.ticker = setInterval(() => tickSafely(session, doid), beatMs);
+        live.ticker.unref?.();
+      }
+    };
+
+    if (firstAttackDelayMs > 0) {
+      live.activation = setTimeout(beginAttacking, firstAttackDelayMs);
+      live.activation.unref?.();
+    } else {
+      await beginAttacking();
     }
   }
 
@@ -812,13 +843,14 @@ export const schedulePlaceables = async (
   const floorDoid = session.floorDoid;
   const origin = { ...session.heroPosition };
   const heading = session.heroHeading;
+  const placementGroup = { positions: [] };
 
   for (const action of actions) {
     const timer = setTimeout(
       () => {
         session.placeableSpawnTimers?.delete(timer);
         if (!session.dungeonActive || session.floorDoid !== floorDoid) return;
-        spawnPlaceable(session, { action, origin, heading, weaponPower }).catch((error) =>
+        spawnPlaceable(session, { action, origin, heading, weaponPower, placementGroup }).catch((error) =>
           warn(`[${session.id}] placeable spawn failed: ${error.message}`)
         );
       },

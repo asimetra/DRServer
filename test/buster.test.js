@@ -175,6 +175,29 @@ test("a charged skill is rejected when authoritative Mana is insufficient", asyn
   assert.deepEqual(sent, []);
 });
 
+test("Quake Axe releases are not throttled by the NPC-only recharge value", async () => {
+  const session = {
+    id: 351,
+    heroDoid: 500,
+    heroManaPoints: 100,
+    heroWeapons: [{ type: 11003, modifier1: 0, modifier2: 0 }],
+    send: () => {},
+  };
+  let accepted = 0;
+  const release = () =>
+    handleProposeAttackChoreography(
+      session,
+      new PacketReader(attackProposal(900108)), // FISSURE: 30 Mana, AI_RechargeT 25
+      { onAccepted: () => (accepted += 1) }
+    );
+
+  await release();
+  await release();
+
+  assert.equal(accepted, 2, "both client-authorised release choreographies are relayed");
+  assert.equal(session.heroManaPoints, 40, "each accepted release still pays its Mana cost");
+});
+
 test("only an accepted attack exposes its choreography for remote field 159", async () => {
   const accepted = [];
   const payload = attackProposal(900106);

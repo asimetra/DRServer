@@ -1,5 +1,6 @@
 import {
   attackById,
+  buffForConstant,
   invulnerableForMs,
   loadGameMaster,
   stackableById,
@@ -96,6 +97,12 @@ const spawnSelfBuff = async (session, attack) => {
 const buffFriendlyTarget = async (session, attack) => {
   if (attack.Team !== "FRIENDLY" || !attack.TargetBuff1) return null;
   if (!session.floorDoid || !session.heroDoid) return null;
+  const targetBuff = await buffForConstant(attack.TargetBuff1);
+  // Attack.Team describes who owns the cast, not whether TargetBuff1 helps.
+  // Garlic Nuke is FRIENDLY because it places player-owned traps, while its
+  // ENSNARED target buff is HOSTILE. Treating the attack team as the buff team
+  // applied MOVEMENT=0 and poison VFX to the Vampire Hunter for ten seconds.
+  if (targetBuff?.Team !== "FRIENDLY") return null;
 
   const granted = [];
 
@@ -529,7 +536,7 @@ export const handleProposeAttackChoreography = async (
         session.heroDoid,
         session.dungeonBusterPoints
       )
-      );
+    );
     info(
       `[${session.id}] used ${attack.Constant}; ` +
         `${session.dungeonBusterPoints} Crowd points remain`
