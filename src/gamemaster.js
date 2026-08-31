@@ -90,11 +90,16 @@ const load = async () => {
   const weaponsByConstant = new Map(
     parsed.WeaponItem.map((weapon) => [weapon.Constant, weapon])
   );
+  /* By id as well, because that is the number an owned weapon carries: chests
+     write `item_id: weapon.Id`, so anything reading a weapon back off an
+     account — a market listing, a bag — has the id and wants the name. */
+  const weaponById = new Map(parsed.WeaponItem.map((weapon) => [weapon.Id, weapon]));
 
   gameMaster = {
     raw: parsed,
     npcByConstant,
     heroById,
+    weaponById,
     dooberByConstant,
     dooberById,
     doobers: parsed.Doobers,

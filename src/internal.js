@@ -277,13 +277,30 @@ const marketRefusal = (problem) => {
   return json({ error: problem.message, reason: problem.reason }, status);
 };
 
+/**
+ * Puts the weapon's name on a listing.
+ *
+ * The same reasoning as the hero on a board row: the listing stores the id an
+ * account row carries, and what that id is called is the GameMaster's answer,
+ * already loaded here. Resolving it on the way out is a Map lookup, and it
+ * keeps one copy of what a weapon is called rather than shipping a four-megabyte
+ * table to every browser that opens the market.
+ */
+const withWeapons = (listings, gm) =>
+  listings.map((listing) => {
+    const weapon = gm.weaponById.get(Number(listing.item_id));
+    return { ...listing, name: weapon?.Name ?? null, mastertype: weapon?.Mastertype ?? null };
+  });
+
 /** GET /internal/v1/market — everything up for sale, newest first. */
 const readMarket = async (req) => {
   const refusal = authorise(req);
   if (refusal) return refusal;
 
   const limit = req.query?.get("limit") ?? 50;
-  return json({ listings: await browse({ limit }) });
+  return json({
+    listings: withWeapons(await browse({ limit }), await loadGameMaster()),
+  });
 };
 
 /** GET /internal/v1/accounts/:id/stall — one seller's own: what is up, what is owed. */
@@ -295,7 +312,13 @@ const readStall = async (req, [capture]) => {
   if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
   if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
 
-  return json(await stallFor(id));
+  const stall = await stallFor(id);
+  const gm = await loadGameMaster();
+  return json({
+    ...stall,
+    listed: withWeapons(stall.listed, gm),
+    sold: withWeapons(stall.sold, gm),
+  });
 };
 
 /** POST /internal/v1/market — put a weapon up. */
