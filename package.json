@@ -9,7 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node --env-file-if-exists=.env src/index.js",
     "test": "node tools/run-tests.js",
     "check:public": "node tools/check-public-release.js",
     "check:data": "node tools/sync-game-data.js --check",

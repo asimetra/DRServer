@@ -11,6 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
 
 const forbiddenDirectories = new Set([
+  ".claude",
   ".git",
   ".omx",
   "content",
@@ -141,6 +142,17 @@ try {
       continue;
     }
     if (forbiddenExtensions.has(path.extname(recordedPath).toLowerCase())) {
+      offenders.add(recordedPath);
+      continue;
+    }
+    /**
+     * A deployment's own settings, which is where its secrets collect. The
+     * ignore rules keep one out of a commit; this is what notices when they
+     * were added late, or overridden, or the file was force-added anyway. The
+     * tracked example is exempt because placeholders are the point of it.
+     */
+    const name = path.basename(recordedPath);
+    if ((name === ".env" || name.startsWith(".env.")) && name !== ".env.example") {
       offenders.add(recordedPath);
     }
   }

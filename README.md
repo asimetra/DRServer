@@ -158,6 +158,13 @@ or on a private network, never on the public interface.
 `ODS_*` is the public-facing environment prefix. Existing `DR_*` deployments
 remain supported as legacy aliases while the migration is completed.
 
+Settings can go on the command line or in a `.env` file beside `package.json`,
+which `npm start` reads when it is there and starts without when it is not.
+Copy [.env.example](.env.example) to begin; `.env` is ignored by git, which is
+where a deployment's secrets belong. Typing them out each time is how a value
+that has to match somewhere else — `ODS_INTERNAL_TOKEN` and the website's
+`ODW_GAME_INTERNAL_TOKEN` are the same string — quietly stops matching.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `ODS_HOST` / `ODS_PORT` | `127.0.0.1` / `8080` | Bind address |

@@ -1,5 +1,18 @@
 data/
 node_modules/
+
+# A deployment's own settings, which is where its secrets collect: the signing
+# key when it is not left to `data/token-secret`, the internal API's shared
+# token, a database password. `.env.example` is the tracked one and carries
+# placeholders only.
+.env
+.env.*
+!.env.example
+
+# Editor and agent scratch: whoever is working here, on their own machine, with
+# their own paths in it. Nothing under it describes the server.
+.claude/
+
 .omx/
 *.log
 node_modules
