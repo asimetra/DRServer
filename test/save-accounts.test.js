@@ -96,3 +96,21 @@ test("a save that fails partway leaves the earlier account untouched", async () 
   assert.equal((await readStored(9006)).basic_currency, 6);
   assert.ok(!(await readdir(dataDir)).some((name) => name.endsWith(".tmp")));
 });
+
+/**
+ * Two transfers between the same pair, in opposite orders, at once.
+ *
+ * Each save takes a write chain per account, and taking them in the order the
+ * caller happened to list them is how one ends up holding A and waiting for B
+ * while the other holds B and waits for A. Sorting by id is what makes that
+ * cycle impossible; without it this test hangs rather than fails.
+ */
+test("saves of the same pair in opposite orders do not deadlock", async () => {
+  const first = await loadAccount(9007);
+  const second = await loadAccount(9008);
+
+  await Promise.all([saveAccounts([first, second]), saveAccounts([second, first])]);
+
+  assert.ok((await readStored(9007)).id === 9007);
+  assert.ok((await readStored(9008)).id === 9008);
+});
