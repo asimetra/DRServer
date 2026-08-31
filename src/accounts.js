@@ -609,6 +609,15 @@ export const createNewAccount = async ({ name } = {}) => {
       }
       account.name = wanted;
     }
+    /*
+     * Whole before it is first written, rather than whole the first time it is
+     * read. The template's preference rows carry a name and a value and no id,
+     * and this is the same pass that gives them one on load — running it here
+     * as well is what stops the first save being a row Postgres will not take.
+     * A JSON document accepts it silently, which is why the file backend never
+     * showed this and registering against a database answered 500.
+     */
+    await repairAccountAttributes(account);
     await saveAccount(account);
     info(`accounts: registered new account ${id}`);
     return account;
