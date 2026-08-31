@@ -90,14 +90,29 @@ the game socket, and one issued for an account opens no other. The client asks
 for a fresh one during play, so the only token you have to hand out is a
 player's first.
 
+If one is exposed, invalidate every token for that account and issue a new one:
+
+```bash
+node tools/token.js --revoke 1000000005
+node tools/token.js 1000000005
+```
+
+A running server observes the revocation within five seconds; an existing game
+socket is removed on its next heartbeat.
+
 `ODS_AUTH=0` turns the check off and accepts whatever a client claims, which is
 a reasonable choice for a machine nobody else can reach. A server running that
 way says so on startup.
 
 **Traffic is not encrypted.** Signed tokens stop anyone claiming an account
-they were not given, but the token itself crosses the network in the clear. On
-a LAN or a VPN that is fine; facing the open internet, put TLS in front of the
-HTTP port.
+they were not given, but the same bearer token crosses both HTTP and the raw
+game socket in the clear. TLS in front of only the HTTP port is therefore not
+enough. Bind the server to loopback and expose it through a trusted VPN or
+tunnel that protects both ports.
+
+For compatibility, a deliberately trusted LAN can opt into a remote cleartext
+bind with `ODS_ALLOW_INSECURE_REMOTE=1`. Without that acknowledgement startup
+refuses any non-loopback bind.
 
 ## Configuration
 
@@ -108,8 +123,14 @@ remain supported as legacy aliases while the migration is completed.
 |---|---|---|
 | `ODS_HOST` / `ODS_PORT` | `127.0.0.1` / `8080` | Bind address |
 | `ODS_PUBLIC_HOST` | `127.0.0.1` | Host advertised to the client |
+| `ODS_ALLOW_INSECURE_REMOTE` | disabled | Permit acknowledged cleartext non-loopback binding |
 | `ODS_SERVER_NAME` | `Server` | Name the server answers commands under |
 | `ODS_SOCKET_PORT` | `7198` | Game socket port |
+| `ODS_SOCKET_LOGIN_TIMEOUT_MS` | `15000` | Maximum time to authenticate a new socket |
+| `ODS_SOCKET_IDLE_TIMEOUT_MS` | `120000` | Authenticated socket network-idle limit |
+| `ODS_SOCKET_CLOSE_GRACE_MS` | `2000` | Final-frame flush window before forced close |
+| `ODS_MAX_SOCKET_CONNECTIONS` | `2000` | Global simultaneous game-socket limit |
+| `ODS_MAX_SOCKET_CONNECTIONS_PER_IP` | `64` | Simultaneous game sockets allowed per source IP |
 | `ODS_RESOURCES_DIR` | `local-data/Resources` | User-supplied compatibility data |
 | `ODS_DATA_DIR` | `data/` | Local account storage |
 | `ODS_STORAGE` | `file` | `file` or `postgres` |

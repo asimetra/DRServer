@@ -22,7 +22,8 @@ process.env.DR_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "dr-one-sessio
 
 // Logging in is a real login: the packet carries a token this server signed.
 process.env.ODS_TOKEN_SECRET ??= "one-session-test-secret";
-const { issueToken } = await import("../src/auth.js");
+const { issueToken, revokeAccountTokens } = await import("../src/auth.js");
+const { config } = await import("../src/config.js");
 const { onConnection } = await import("../src/socket/index.js");
 const { clearPresence, isOnline, sessionHolding } = await import("../src/socket/presence.js");
 const { dungeonMatches } = await import("../src/socket/matches.js");
@@ -35,12 +36,20 @@ const fakeSocket = () => {
   socket.remoteAddress = "test";
   socket.written = [];
   socket.ended = false;
+  socket.timeoutMs = null;
+  socket.keepAlive = null;
   socket.write = (frame) => {
     socket.written.push(frame);
     return true;
   };
   socket.pause = () => {};
   socket.resume = () => {};
+  socket.setTimeout = (milliseconds) => {
+    socket.timeoutMs = milliseconds;
+  };
+  socket.setKeepAlive = (enabled, delay) => {
+    socket.keepAlive = { enabled, delay };
+  };
   socket.destroy = () => {
     socket.destroyed = true;
     socket.emit("close");
@@ -58,10 +67,10 @@ const settle = async () => {
   for (let index = 0; index < 40; index++) await new Promise((resolve) => setImmediate(resolve));
 };
 
-const login = (accountId) =>
+const login = (accountId, version = "1.0.0") =>
   new PacketWriter(OP.CLIENT_LOGIN_DUNGEONBUSTER)
     .utf(issueToken(accountId))
-    .utf("1.0.0")
+    .utf(version)
     .u32(0)
     .u32(4)
     .u32(accountId)
@@ -108,6 +117,99 @@ test("a second login on one account puts the first one off it", async (t) => {
   assert.ok(!second.socket.destroyed, "the newcomer keeps the account");
   assert.equal(sessionHolding(1000000005), second.session);
   assert.ok(isOnline(1000000005), "and is still online: one player, one session");
+});
+
+test("a second login on the same socket cannot replace its authenticated identity", async (t) => {
+  clearPresence();
+  t.after(clearPresence);
+
+  const connection = await connect(1000000005);
+  assert.equal(sessionHolding(1000000005), connection.session);
+
+  connection.socket.emit("data", login(1000000006));
+  await settle();
+
+  assert.equal(connection.socket.destroyed, true, "the protocol-violating connection is closed");
+  assert.equal(connection.session.accountId, 1000000005, "its proven identity was never replaced");
+  assert.equal(sessionHolding(1000000005), null, "closing removes the original presence cleanly");
+  assert.equal(sessionHolding(1000000006), null, "the unprocessed identity never enters presence");
+});
+
+test("socket authentication arms keepalive and replaces the login deadline with an idle timeout", async (t) => {
+  clearPresence();
+  t.after(clearPresence);
+
+  const connection = await connect(1000000005);
+
+  assert.deepEqual(connection.socket.keepAlive, { enabled: true, delay: 30_000 });
+  assert.equal(connection.socket.timeoutMs, config.socketIdleTimeoutMs);
+  connection.socket.destroy();
+});
+
+test("a connection that never logs in is closed after the absolute login deadline", async () => {
+  const previous = config.socketLoginTimeoutMs;
+  config.socketLoginTimeoutMs = 5;
+  try {
+    const socket = fakeSocket();
+    const session = onConnection(socket);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(session.closed, true);
+    assert.equal(socket.destroyed, true);
+  } finally {
+    config.socketLoginTimeoutMs = previous;
+  }
+});
+
+test("an oversized login version is refused without entering presence", async (t) => {
+  clearPresence();
+  t.after(clearPresence);
+
+  const socket = fakeSocket();
+  const session = onConnection(socket);
+  socket.emit("data", login(1000000005, "v".repeat(129)));
+  await settle();
+
+  assert.equal(session.closed, true);
+  assert.equal(session.accountId, null);
+  assert.equal(sessionHolding(1000000005), null);
+});
+
+test("revoking an account closes its existing socket on the next heartbeat", async (t) => {
+  clearPresence();
+  t.after(clearPresence);
+
+  const accountId = 1000000007;
+  const connection = await connect(accountId);
+  revokeAccountTokens(accountId);
+  connection.socket.emit(
+    "data",
+    new PacketWriter(OP.CLIENT_HEART_BEAT).utf("revocation-check").frame()
+  );
+  await settle();
+
+  assert.equal(connection.session.closed, true);
+  assert.equal(connection.socket.destroyed, true);
+  assert.equal(sessionHolding(accountId), null);
+});
+
+test("a graceful close is force-destroyed when its peer never finishes", async () => {
+  const previous = config.socketCloseGraceMs;
+  config.socketCloseGraceMs = 5;
+  try {
+    const socket = fakeSocket();
+    socket.end = () => {
+      socket.ended = true;
+    };
+    const session = onConnection(socket);
+    session.close("test graceful close", { flush: true });
+
+    assert.equal(socket.ended, true);
+    assert.equal(socket.destroyed, false, "the final frame first gets a chance to flush");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(socket.destroyed, true, "the close deadline releases the descriptor");
+  } finally {
+    config.socketCloseGraceMs = previous;
+  }
 });
 
 test("a displaced session releases its dungeon before a graceful socket close completes", async (t) => {

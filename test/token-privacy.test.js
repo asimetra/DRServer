@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { truncate } from "../src/log.js";
+import { truncate, unimplemented } from "../src/log.js";
 import { issueToken, tokenProblem, verifyToken } from "../src/auth.js";
 
 const SECRET = "privacy-test-secret";
@@ -65,6 +65,26 @@ test("a token cut in half by the length limit is still not written out", async (
 test("ordinary bodies are logged as they were", () => {
   const body = '{"params":[1000,"COLOUR","green"],"id":1}';
   assert.equal(truncate(body), body);
+});
+
+test("unimplemented request details cannot write a complete bearer token", () => {
+  const token = issueToken(1000, { secret: SECRET });
+  const signature = token.split(":")[1];
+  const originalWrite = process.stdout.write;
+  let output = "";
+
+  process.stdout.write = (chunk) => {
+    output += String(chunk);
+    return true;
+  };
+  try {
+    unimplemented("rpc missing/method", `params=[1000,"${token}"]`);
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  assert.ok(!output.includes(signature), "the credential signature is redacted at the log boundary");
+  assert.match(output, /UNIMPLEMENTED rpc missing\/method/);
 });
 
 /**

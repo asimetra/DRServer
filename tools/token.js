@@ -5,6 +5,7 @@
  *   node tools/token.js 1000000005            # a token for that account
  *   node tools/token.js 1000000005 --days 90  # one that lasts longer
  *   node tools/token.js --check 1000000005 <token>
+ *   node tools/token.js --revoke 1000000005
  *
  * This is the whole of "signing up" for this server. The client has no login
  * screen — `DBFacade` reads `AccountId` and `API_ValidationToken` out of its
@@ -17,7 +18,12 @@
  */
 import { config } from "../src/config.js";
 import { ensureTokenSecret } from "../src/preflight.js";
-import { issueToken, verifyToken, TOKEN_TTL_SECONDS } from "../src/auth.js";
+import {
+  issueToken,
+  revokeAccountTokens,
+  verifyToken,
+  TOKEN_TTL_SECONDS,
+} from "../src/auth.js";
 
 /**
  * The same secret the server signs with, found the same way.
@@ -50,6 +56,19 @@ if (checking) {
   const good = verifyToken(Number(accountId), token);
   console.log(good ? `valid for account ${accountId}` : "not valid");
   process.exit(good ? 0 : 1);
+}
+
+const revoking = process.argv.includes("--revoke");
+if (revoking) {
+  const accountId = Number(positional[0]);
+  if (!Number.isSafeInteger(accountId) || accountId <= 0 || accountId > 0xffff_ffff) {
+    console.error("Usage: node tools/token.js --revoke <accountId>");
+    process.exit(1);
+  }
+  const generation = revokeAccountTokens(accountId);
+  console.log(`Revoked existing tokens for account ${accountId} (generation ${generation}).`);
+  console.log("Run the issue command again to create a replacement token.");
+  process.exit(0);
 }
 
 const accountId = Number(positional[0]);

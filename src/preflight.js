@@ -92,6 +92,28 @@ export const reportContentOverride = () => {
   return true;
 };
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+/**
+ * Both services carry the same bearer credential in cleartext. Refusing a
+ * remote bind by default prevents an operator from publishing only the HTTP
+ * side behind TLS while accidentally leaving the raw game socket exposed.
+ */
+export const ensureSafeTransport = () => {
+  if (LOOPBACK_HOSTS.has(String(config.host).toLowerCase())) return true;
+  if (config.allowInsecureRemote) {
+    warn(
+      `transport: cleartext HTTP and game socket exposed on ${config.host}; ` +
+        "use only inside a trusted VPN or tunnel"
+    );
+    return false;
+  }
+  throw new Error(
+    `refusing cleartext remote bind on ${config.host}; bind to loopback behind a VPN/tunnel, ` +
+      "or set ODS_ALLOW_INSECURE_REMOTE=1 to acknowledge the risk"
+  );
+};
+
 /**
  * The signing secret, made once and kept.
  *
@@ -103,22 +125,44 @@ export const reportContentOverride = () => {
  * for more than one machine.
  */
 export const ensureTokenSecret = () => {
-  if (config.tokenSecret) return config.tokenSecret;
+  if (config.tokenSecret) {
+    warnIfWeakSecret(config.tokenSecret, "configured token secret");
+    return config.tokenSecret;
+  }
 
   const file = path.join(config.dataDir, "token-secret");
+  let existing = "";
   try {
-    config.tokenSecret = fs.readFileSync(file, "utf8").trim();
-    if (config.tokenSecret) return config.tokenSecret;
-  } catch {
-    // First run, or it was removed; either way one is made below.
+    existing = fs.readFileSync(file, "utf8").trim();
+  } catch (problem) {
+    if (problem.code !== "ENOENT") {
+      throw new Error(`cannot read signing secret ${file}: ${problem.message}`);
+    }
+  }
+
+  if (existing) {
+    if (process.platform !== "win32" && (fs.statSync(file).mode & 0o077) !== 0) {
+      fs.chmodSync(file, 0o600);
+      info(`auth: restricted signing-secret permissions to 0600 at ${file}`);
+    }
+    config.tokenSecret = existing;
+    warnIfWeakSecret(existing, file);
+    return config.tokenSecret;
   }
 
   fs.mkdirSync(config.dataDir, { recursive: true });
   config.tokenSecret = generateSecret();
   fs.writeFileSync(file, `${config.tokenSecret}\n`, { mode: 0o600 });
+  if (process.platform !== "win32") fs.chmodSync(file, 0o600);
   info(`auth: wrote a new signing secret to ${file}`);
   freshSecret = true;
   return config.tokenSecret;
+};
+
+const warnIfWeakSecret = (secret, source) => {
+  if (Buffer.byteLength(secret, "utf8") < 32) {
+    warn(`auth: ${source} is shorter than 32 bytes; replace it with a strong random secret`);
+  }
 };
 
 /** Whether this run is the one that made the secret. */

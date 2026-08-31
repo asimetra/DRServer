@@ -1,7 +1,7 @@
 import net from "node:net";
 import { config, invalidModes } from "../config.js";
 import { tokenProblem } from "../auth.js";
-import { error, info, truncate, unimplemented, warn } from "../log.js";
+import { error, info, singleLine, truncate, unimplemented, warn } from "../log.js";
 import { CLID, DC_HASH, OP, opcodeName } from "./opcodes.js";
 import { MalformedPacketError, PacketReader, PacketWriter, drainFrames } from "./packet.js";
 import { closeSessionCapture, recordReceived, recordSent } from "./capture.js";
@@ -69,6 +69,7 @@ const MOVEMENT_CREDIT_PER_MS = 1; // 1000 world units/second, above known buffed
  * treated as account/session proof because future movement grants may widen it.
  */
 const MAX_UNGRANTED_MOVEMENT_STEP = 1000;
+const MAX_LOGIN_VERSION_LENGTH = 128;
 
 /** doids handed out to distributed objects; 0 means "no parent". */
 let nextDoid = 1000;
@@ -82,6 +83,12 @@ const describe = (session) =>
  *   u32 networkId, u32 nodeRules
  */
 const handleLogin = (session, reader) => {
+  if (session.authenticated) {
+    warn(`${describe(session)} refused a second login on the same connection`);
+    session.close?.("duplicate login", { flush: true });
+    return;
+  }
+
   const login = {
     token: reader.utf(),
     version: reader.utf(),
@@ -91,6 +98,12 @@ const handleLogin = (session, reader) => {
     networkId: reader.u32(),
     nodeRules: reader.u32(),
   };
+
+  if (login.version.length > MAX_LOGIN_VERSION_LENGTH) {
+    warn(`[${session.id}] refused an oversized login version (${login.version.length} characters)`);
+    session.close?.("invalid login version", { flush: true });
+    return;
+  }
 
   /**
    * One account, one session — noted here, acted on at the end.
@@ -102,15 +115,6 @@ const handleLogin = (session, reader) => {
    * whichever saves last wins. Presence is keyed by account and cannot hold
    * two answers either, so the friends panel is told whichever arrived last.
    */
-  const displaced = sessionHolding(login.accountId);
-
-  session.accountId = login.accountId;
-
-  info(
-    `${describe(session)} login version=${login.version} account=${login.accountId} ` +
-      `networkId=${login.networkId} nodeRules=${login.nodeRules}`
-  );
-
   /**
    * The same pair the HTTP side checks, arriving the other way — the login
    * packet's first field is the token and its fifth is the account it claims.
@@ -119,10 +123,18 @@ const handleLogin = (session, reader) => {
    */
   const problem = config.authEnabled === false ? null : tokenProblem(login.accountId, login.token);
   if (problem) {
-    warn(`${describe(session)} refused account ${login.accountId} — ${problem}`);
+    warn(`[${session.id}] refused account ${login.accountId} — ${problem}`);
     session.close?.("invalid validation token", { flush: true });
     return;
   }
+
+  const displaced = sessionHolding(login.accountId);
+  session.completeAuthentication(login.accountId, login.token);
+
+  info(
+    `${describe(session)} login version=${singleLine(login.version)} account=${login.accountId} ` +
+      `networkId=${login.networkId} nodeRules=${login.nodeRules}`
+  );
 
   if (login.dcHash !== DC_HASH) {
     warn(
@@ -209,6 +221,14 @@ const tellHimAboutHisFriends = async (session) => {
 /** Echoes the client's timestamp so it can measure round-trip time. */
 const handleHeartbeat = (session, reader) => {
   const timestamp = reader.utf();
+  const problem = config.authEnabled === false
+    ? null
+    : tokenProblem(session.accountId, session.token);
+  if (problem) {
+    warn(`${describe(session)} token no longer valid — ${problem}`);
+    session.close?.("validation token no longer valid", { flush: true });
+    return;
+  }
   session.send(heartbeat(timestamp));
 };
 
@@ -533,6 +553,9 @@ const RESUME_QUEUE_AT = 64;
  */
 const MAX_QUEUED_BYTES = 1 << 20;
 
+let activeSocketCount = 0;
+const activeSocketsByAddress = new Map();
+
 const handlePacket = (session, body) => {
   const reader = new PacketReader(body);
   const opcode = reader.u16();
@@ -559,10 +582,39 @@ const handlePacket = (session, body) => {
 let nextSessionId = 1;
 
 export const onConnection = (socket) => {
+  const remoteAddress = String(socket.remoteAddress ?? "unknown");
+  const addressCount = activeSocketsByAddress.get(remoteAddress) ?? 0;
+  if (
+    activeSocketCount >= config.maxSocketConnections ||
+    addressCount >= config.maxSocketConnectionsPerIp
+  ) {
+    warn(
+      `socket refused from ${remoteAddress}: connection limit ` +
+        `(global ${activeSocketCount}/${config.maxSocketConnections}, ` +
+        `address ${addressCount}/${config.maxSocketConnectionsPerIp})`
+    );
+    socket.destroy();
+    return null;
+  }
+
+  activeSocketCount += 1;
+  activeSocketsByAddress.set(remoteAddress, addressCount + 1);
+  let admissionReleased = false;
+  const releaseAdmission = () => {
+    if (admissionReleased) return;
+    admissionReleased = true;
+    activeSocketCount = Math.max(0, activeSocketCount - 1);
+    const remaining = (activeSocketsByAddress.get(remoteAddress) ?? 1) - 1;
+    if (remaining > 0) activeSocketsByAddress.set(remoteAddress, remaining);
+    else activeSocketsByAddress.delete(remoteAddress);
+  };
+  socket.once("close", releaseAdmission);
+
   const session = {
     id: nextSessionId++,
     socket,
     accountId: null,
+    authenticated: false,
     token: null,
     /**
      * doid -> class id for everything we generated. Relaying a message to an
@@ -621,6 +673,9 @@ export const onConnection = (socket) => {
     },
   };
 
+  let loginDeadline = null;
+  let forceCloseDeadline = null;
+
   /**
    * Ends it, once, and stops the loop wherever it is.
    *
@@ -632,6 +687,8 @@ export const onConnection = (socket) => {
   const closeSession = (why, { flush = false } = {}) => {
     if (session.closed) return;
     session.closed = true;
+    clearTimeout(loginDeadline);
+    loginDeadline = null;
     session.queue.length = 0;
     session.queuedBytes = 0;
     leavePresence(session);
@@ -648,12 +705,31 @@ export const onConnection = (socket) => {
      * and then the FIN, and because these sockets are not half-open the reply
      * FIN destroys this side.
      */
-    if (flush) socket.end();
-    else socket.destroy();
+    if (flush) {
+      socket.end();
+      if (!socket.destroyed) {
+        forceCloseDeadline = setTimeout(() => {
+          forceCloseDeadline = null;
+          if (!socket.destroyed) socket.destroy();
+        }, config.socketCloseGraceMs);
+        forceCloseDeadline.unref?.();
+      }
+    } else {
+      socket.destroy();
+    }
   };
 
   /** So one session can end another — a second login on the same account. */
   session.close = closeSession;
+
+  session.completeAuthentication = (accountId, token) => {
+    session.accountId = accountId;
+    session.token = token;
+    session.authenticated = true;
+    clearTimeout(loginDeadline);
+    loginDeadline = null;
+    socket.setTimeout?.(config.socketIdleTimeoutMs);
+  };
 
   /** Reading runs only when neither reason to stop is active. */
   const updateReadFlow = () => {
@@ -663,6 +739,13 @@ export const onConnection = (socket) => {
 
   info(`${describe(session)} connected from ${socket.remoteAddress}`);
   let buffered = Buffer.alloc(0);
+
+  socket.setKeepAlive?.(true, 30_000);
+  loginDeadline = setTimeout(() => {
+    loginDeadline = null;
+    if (!session.authenticated) closeSession("login timeout");
+  }, config.socketLoginTimeoutMs);
+  loginDeadline.unref?.();
 
   /**
    * One packet at a time, in the order it arrived.
@@ -773,7 +856,13 @@ export const onConnection = (socket) => {
     updateReadFlow();
   });
   socket.on("error", (err) => warn(`${describe(session)} socket error: ${err.message}`));
+  socket.on("timeout", () => closeSession("idle timeout"));
   socket.on("close", () => {
+    clearTimeout(loginDeadline);
+    clearTimeout(forceCloseDeadline);
+    loginDeadline = null;
+    forceCloseDeadline = null;
+    socket.setTimeout?.(0);
     session.closed = true;
     session.queue.length = 0;
     session.queuedBytes = 0;
@@ -798,6 +887,7 @@ export const start = () => {
   // without the shipped commands already occupying the names.
   registerBuiltinCommands();
   const server = net.createServer(onConnection);
+  server.maxConnections = config.maxSocketConnections;
 
   server.listen(config.gameSocketPort, config.host, () => {
     info(`game socket listening on ${config.host}:${config.gameSocketPort}`);

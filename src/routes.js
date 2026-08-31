@@ -21,11 +21,15 @@ const json = (body, status = 200) => ({
  *
  * Returns null to mean "carry on", which keeps the callers to one line.
  */
-export const callerOf = (req) => {
-  if (config.authEnabled === false) return null;
-  const accountId = Number.parseInt(req.headers?.["x-account-id"] ?? "", 10);
-  return Number.isFinite(accountId) && accountId !== 0 ? accountId : null;
+const accountIdOf = (req) => {
+  const raw = req.headers?.["x-account-id"];
+  if (typeof raw !== "string" || !/^[1-9]\d*$/.test(raw)) return null;
+  const accountId = Number(raw);
+  return Number.isSafeInteger(accountId) && accountId <= 0xffff_ffff ? accountId : null;
 };
+
+export const callerOf = (req) =>
+  config.authEnabled === false ? null : accountIdOf(req);
 
 export const authorise = (req) => {
   if (config.authEnabled === false) return null;
@@ -70,8 +74,8 @@ const accountDetails = async (req) => {
   const refusal = authorise(req);
   if (refusal) return refusal;
 
-  const accountId = Number.parseInt(req.headers["x-account-id"] ?? "", 10);
-  if (!Number.isFinite(accountId) || accountId === 0) {
+  const accountId = accountIdOf(req);
+  if (accountId === null) {
     return json({ error: "missing or invalid X-Account-Id" }, 400);
   }
   const account = await loadAccount(accountId);

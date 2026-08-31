@@ -61,8 +61,45 @@ export const loadServerConfig = (environment = process.env) => {
      */
     publicHost: setting(environment, "PUBLIC_HOST") ?? defaults.publicHost,
 
+    /** Explicit acknowledgement required before cleartext ports bind remotely. */
+    allowInsecureRemote:
+      setting(environment, "ALLOW_INSECURE_REMOTE") === undefined
+        ? defaults.allowInsecureRemote === true
+        : setting(environment, "ALLOW_INSECURE_REMOTE") === "1",
+
     /** The DcSocket game server, started alongside the HTTP service. */
     gameSocketPort: asInt(setting(environment, "SOCKET_PORT"), defaults.gameSocketPort),
+
+    /** Absolute time a new connection gets to authenticate. */
+    socketLoginTimeoutMs: Math.max(
+      1000,
+      asInt(setting(environment, "SOCKET_LOGIN_TIMEOUT_MS"), defaults.socketLoginTimeoutMs ?? 15000)
+    ),
+
+    /** Network-idle time allowed after login; client heartbeats refresh it. */
+    socketIdleTimeoutMs: Math.max(
+      10000,
+      asInt(setting(environment, "SOCKET_IDLE_TIMEOUT_MS"), defaults.socketIdleTimeoutMs ?? 120000)
+    ),
+
+    /** Time to flush a final protocol frame before a forced socket destroy. */
+    socketCloseGraceMs: Math.max(
+      100,
+      asInt(setting(environment, "SOCKET_CLOSE_GRACE_MS"), defaults.socketCloseGraceMs ?? 2000)
+    ),
+
+    /** Fixed-cost admission bounds before a socket is allowed to allocate session state. */
+    maxSocketConnections: Math.max(
+      1,
+      asInt(setting(environment, "MAX_SOCKET_CONNECTIONS"), defaults.maxSocketConnections ?? 2000)
+    ),
+    maxSocketConnectionsPerIp: Math.max(
+      1,
+      asInt(
+        setting(environment, "MAX_SOCKET_CONNECTIONS_PER_IP"),
+        defaults.maxSocketConnectionsPerIp ?? 64
+      )
+    ),
     /**
      * Which rules refuse and which only count.
      *

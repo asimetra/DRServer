@@ -327,9 +327,16 @@ test("a full write buffer keeps reading paused until it drains", async () => {
   };
   const session = onConnection(socket);
 
-  // A heartbeat draws a reply, so the write happens and comes back false.
-  socket.emit("data", new PacketWriter(OP.CLIENT_HEART_BEAT).utf("1").frame());
-  await settle();
+  // This test isolates backpressure; authentication has its own socket tests.
+  const previousAuth = config.authEnabled;
+  config.authEnabled = false;
+  try {
+    // A heartbeat draws a reply, so the write happens and comes back false.
+    socket.emit("data", new PacketWriter(OP.CLIENT_HEART_BEAT).utf("1").frame());
+    await settle();
+  } finally {
+    config.authEnabled = previousAuth;
+  }
 
   assert.equal(session.pausedForWrite, true, "the write reason is set");
   assert.equal(session.queue.length, 0, "and the queue is empty, which used to resume");

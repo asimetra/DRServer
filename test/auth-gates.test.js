@@ -53,6 +53,16 @@ test("a missing, empty or invented token is refused", () => {
   }
 });
 
+test("account headers must be exact unsigned 32-bit integers", () => {
+  const token = issueToken(ACCOUNT);
+  for (const accountId of [`${ACCOUNT}junk`, `${ACCOUNT}.0`, ` ${ACCOUNT}`, "0", "4294967296"]) {
+    const refusal = authorise(
+      request({ "x-account-id": accountId, "x-validation-token": token })
+    );
+    assert.equal(refusal?.status, 401, `refused ${JSON.stringify(accountId)}`);
+  }
+});
+
 /**
  * Turning the check off is a real choice for a machine nobody else can reach,
  * and it has to keep working or every configuration written before this

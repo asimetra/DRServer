@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { config } from "../src/config.js";
-import { truncate } from "../src/log.js";
+import { singleLine, truncate } from "../src/log.js";
 
 const limit = config.logBodyLimit;
 
@@ -48,4 +48,8 @@ test("strings are still bounded as before", () => {
 test("a non-string, non-Buffer value still logs something", () => {
   assert.equal(truncate(404), "404");
   assert.equal(truncate(null), "null");
+});
+
+test("singleLine cannot inject another log record", () => {
+  assert.equal(singleLine("development\nWARN forged\r\u001b[31m"), "development?WARN forged??[31m");
 });

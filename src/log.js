@@ -15,7 +15,7 @@ export const error = (message) => write("ERROR", message);
  * Enumerating these while playing is how the remaining surface gets mapped.
  */
 export const unimplemented = (what, detail = "") => {
-  write("TODO ", `UNIMPLEMENTED ${what}${detail ? ` ${detail}` : ""}`);
+  write("TODO ", `UNIMPLEMENTED ${what}${detail ? ` ${truncate(detail)}` : ""}`);
 };
 
 /** Control characters that mean a body is not text and should not be printed. */
@@ -92,3 +92,7 @@ export const truncate = (value) => {
   const text = fingerprint(typeof value === "string" ? value : String(value));
   return text.length > limit ? `${text.slice(0, limit)}… (${text.length} bytes)` : text;
 };
+
+/** Makes attacker-controlled text safe to embed in exactly one log record. */
+export const singleLine = (value) =>
+  truncate(String(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, "?"));

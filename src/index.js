@@ -4,6 +4,7 @@ import { start as startGameSocket } from "./socket/index.js";
 import { config } from "./config.js";
 import {
   checkCompatibilityData,
+  ensureSafeTransport,
   ensureTokenSecret,
   reportAuth,
   reportContentOverride,
@@ -19,6 +20,7 @@ checkCompatibilityData();
 reportContentOverride();
 ensureTokenSecret();
 reportAuth();
+ensureSafeTransport();
 
 startWebServices();
 startGameSocket();

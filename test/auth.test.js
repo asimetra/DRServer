@@ -92,3 +92,13 @@ test("no secret means no verification", () => {
   assert.equal(verifyToken(1000, issueToken(1000, { secret: SECRET }), { secret: "" }), false);
   assert.throws(() => issueToken(1000, { secret: "" }), /secret/i);
 });
+
+test("raising an account generation invalidates its old tokens without changing their shape", () => {
+  const oldToken = issueToken(1000, { secret: SECRET, generation: 0 });
+  const newToken = issueToken(1000, { secret: SECRET, generation: 1 });
+
+  assert.equal(verifyToken(1000, oldToken, { secret: SECRET, generation: 0 }), true);
+  assert.equal(verifyToken(1000, oldToken, { secret: SECRET, generation: 1 }), false);
+  assert.equal(verifyToken(1000, newToken, { secret: SECRET, generation: 1 }), true);
+  assert.match(newToken, /^\d+:[0-9a-f]{64}$/);
+});
