@@ -64,6 +64,30 @@ export const BOARDS = Object.freeze({
 });
 
 /**
+ * What a player is called, from what they have beaten.
+ *
+ * Trophies are the game's own completion measure and a bounded one: a trophy is
+ * the first clear of a boss node, one each, and there are twelve boss nodes.
+ * So the ladder runs 0 to 12 and everybody climbs it at their own pace — which
+ * is what makes a title worth having without needing a weekly reset to keep it
+ * reachable. A ranking title would belong to five people forever.
+ *
+ * The tiers are the rarity ladder again, because that is the vocabulary the
+ * player already reads: twelve of twelve is legendary and there is nowhere
+ * above it, and the first boss is worth being called something.
+ */
+export const TITLES = Object.freeze([
+  { at: 12, name: "Champion", tier: "legendary" },
+  { at: 9,  name: "Slayer",   tier: "rare" },
+  { at: 5,  name: "Hunter",   tier: "uncommon" },
+  { at: 1,  name: "Challenger", tier: "common" },
+]);
+
+/** The highest title a trophy count has earned, or null below the first. */
+export const titleFor = (trophies) =>
+  TITLES.find((title) => Number(trophies ?? 0) >= title.at) ?? null;
+
+/**
  * Infinite Island is not on any board.
  *
  * It has no last floor — `InfiniteDungeons` scales health and damage per floor
@@ -238,6 +262,7 @@ export const boardFor = async (metric, { node, hero, party, limit = 20 } = {}) =
       account_id: Number(accountId),
       name: entry.name ?? null,
       trophies: entry.trophies ?? 0,
+      title: titleFor(entry.trophies),
       value: entry.value,
       at: entry.at,
     }))

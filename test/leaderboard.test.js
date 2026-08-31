@@ -197,3 +197,47 @@ test("a run recorded without trophies reads as none rather than missing", async 
   const [entry] = await boardFor("speedrun", { node: map_node_id, hero: 101, party: 1 });
   assert.equal(entry.trophies, 0);
 });
+
+/**
+ * Titles come from trophies, and trophies are bounded.
+ *
+ * A trophy is the first clear of a boss node, one each, and the game has twelve
+ * boss nodes — so the ladder is 0 to 12 and every player climbs it at their own
+ * pace. That is what lets a title be general rather than weekly: a ranking
+ * title would belong to the same five people forever, while this one is only a
+ * question of how much of the game somebody has beaten.
+ */
+test("a title is earned by beating bosses, and tops out at twelve", async () => {
+  const { TITLES, titleFor } = await import("../src/leaderboard.js");
+
+  assert.equal(titleFor(0), null, "nobody is called anything for turning up");
+  assert.equal(titleFor(1).name, "Challenger", "the first boss is worth a name");
+  assert.equal(titleFor(4).name, "Challenger");
+  assert.equal(titleFor(5).name, "Hunter");
+  assert.equal(titleFor(9).name, "Slayer");
+  assert.equal(titleFor(12).name, "Champion");
+
+  // Twelve is the ceiling because twelve is how many boss nodes exist.
+  assert.equal(TITLES[0].at, 12);
+  assert.equal(titleFor(99).name, "Champion", "there is nowhere above it");
+});
+
+test("the tiers are the rarity ladder", async () => {
+  const { titleFor } = await import("../src/leaderboard.js");
+  assert.deepEqual(
+    [12, 9, 5, 1].map((n) => titleFor(n).tier),
+    ["legendary", "rare", "uncommon", "common"]
+  );
+});
+
+test("a board entry carries the holder's title", async () => {
+  const map_node_id = aNode();
+  await recordRuns([
+    run({ account_id: 71, map_node_id, duration_ms: 60_000, trophies: 12 }),
+    run({ account_id: 72, map_node_id, duration_ms: 70_000, trophies: 6 }),
+    run({ account_id: 73, map_node_id, duration_ms: 80_000, trophies: 0 }),
+  ]);
+
+  const board = await boardFor("speedrun", { node: map_node_id, hero: 101, party: 1 });
+  assert.deepEqual(board.map((e) => e.title?.name ?? null), ["Champion", "Hunter", null]);
+});
