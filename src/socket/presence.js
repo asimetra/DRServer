@@ -34,6 +34,27 @@ const FLID_FRIEND_STATE = 188;
 /** Everyone connected, by account id, and the map node they are on. */
 const online = new Map();
 
+/**
+ * Who is on, for anything outside the socket that wants to know.
+ *
+ * A count and the map nodes, not the account ids: the web front end asks this
+ * to draw "seven adventurers afield", and a list of who exactly is a different
+ * question with a different answer about privacy.
+ */
+export const presenceSummary = () => {
+  // The value in this map is the map node itself, and 0 means town.
+  const nodes = new Map();
+  for (const where of online.values()) {
+    const node = Number(where ?? 0);
+    if (node) nodes.set(node, (nodes.get(node) ?? 0) + 1);
+  }
+  return {
+    online: online.size,
+    inDungeon: [...nodes.values()].reduce((sum, count) => sum + count, 0),
+    byNode: Object.fromEntries(nodes),
+  };
+};
+
 /** No required fields of its own: everything it knows arrives on field 188. */
 export const presenceGenerate = (doid) =>
   generateVisible({ clid: CLID.PresenceManager, doid, fields: Buffer.alloc(0) });

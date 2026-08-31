@@ -233,6 +233,42 @@ export const recordRuns = async (runs) => {
 };
 
 /**
+ * How much has happened, for the front page.
+ *
+ * Counted off the history rather than kept as a running total, because the
+ * history is already being written and a counter that can drift from it is a
+ * second source of truth for no gain. The window is a day, which is the only
+ * span a front page has ever wanted.
+ */
+export const runsSince = async (since) => {
+  if (usingDatabase()) return (await db()).runsSince(since);
+
+  try {
+    const lines = (await fs.readFile(file(RUNS_FILE), "utf8")).split("\n");
+    let count = 0;
+    /*
+     * Every line, rather than walking back from the end until one falls outside
+     * the window. That shortcut wants the file to be ordered by time and it is
+     * not: rows are appended when a run is recorded, and a party finishing a
+     * long run after somebody else finished a short one puts the later
+     * `finished_at` first. Written the quick way it counted zero.
+     */
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        if (JSON.parse(line).finished_at >= since) count += 1;
+      } catch {
+        // A half-written last line is worth skipping rather than throwing.
+      }
+    }
+    return count;
+  } catch (problem) {
+    if (problem.code !== "ENOENT") warn(`leaderboard: could not count runs: ${problem.message}`);
+    return 0;
+  }
+};
+
+/**
  * One board, ordered and cut.
  *
  * `limit` is capped rather than trusted: this is read by a web front end over

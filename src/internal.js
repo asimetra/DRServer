@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
-import { BOARDS, boardFor } from "./leaderboard.js";
+import { BOARDS, boardFor, runsSince } from "./leaderboard.js";
+import { presenceSummary } from "./socket/presence.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
@@ -230,7 +231,35 @@ const readBoard = async (req, [metric]) => {
   });
 };
 
+/**
+ * GET /internal/v1/status — what the front page puts in its margins.
+ *
+ * The numbers a server portal has always carried: who is on, how many are down
+ * a dungeon rather than standing in town, how much has happened today, and how
+ * long this has been up. Cheap enough to answer on every page load — the
+ * presence figures are a map already in memory and the run count is one indexed
+ * query over a day.
+ *
+ * A count rather than a roster. Who exactly is online is a different question
+ * with a different answer about privacy, and the front page does not need it.
+ */
+const readStatus = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const presence = presenceSummary();
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  return json({
+    online: presence.online,
+    in_dungeon: presence.inDungeon,
+    runs_today: await runsSince(dayAgo),
+    uptime_seconds: Math.floor(process.uptime()),
+  });
+};
+
 export const internalRoutes = [
+  { method: "GET", pattern: "/internal/v1/status", handler: readStatus },
   { method: "GET", pattern: "/internal/v1/leaderboards/:metric", handler: readBoard },
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },

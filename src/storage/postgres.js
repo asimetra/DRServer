@@ -278,3 +278,12 @@ export const boardRows = async (key, { ascending = true, limit = 20 } = {}) => {
     at: row.achieved_at instanceof Date ? row.achieved_at.toISOString() : row.achieved_at,
   }));
 };
+
+/** How many runs finished since a moment, for the front page's counter. */
+export const runsSince = async (since) => {
+  const { rows } = await connect().query(
+    "SELECT count(*)::int AS runs FROM dungeon_runs WHERE finished_at >= $1",
+    [since]
+  );
+  return rows[0]?.runs ?? 0;
+};

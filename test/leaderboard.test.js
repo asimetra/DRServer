@@ -7,7 +7,7 @@ import path from "node:path";
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "leaderboard-"));
 process.env.ODS_DATA_DIR = scratch;
 
-const { BOARDS, boardFor, rankable, recordRuns, MAX_BOARD_SIZE } =
+const { BOARDS, boardFor, rankable, recordRuns, runsSince, MAX_BOARD_SIZE } =
   await import("../src/leaderboard.js");
 
 test.after(() => {
@@ -240,4 +240,28 @@ test("a board entry carries the holder's title", async () => {
 
   const board = await boardFor("speedrun", { node: map_node_id, hero: 101, party: 1 });
   assert.deepEqual(board.map((e) => e.title?.name ?? null), ["Champion", "Hunter", null]);
+});
+
+/**
+ * Counting a day's runs, and the shortcut that does not work.
+ *
+ * Walking the file backwards until a row falls outside the window wants it to
+ * be ordered by `finished_at`, and it is not: rows are appended when a run is
+ * recorded, so a long run finishing after a short one puts the later timestamp
+ * first. Written that way the count came back zero with two runs in the window.
+ */
+test("a day's runs are counted however the file is ordered", async () => {
+  const map_node_id = aNode();
+  const now = new Date().toISOString();
+  const longAgo = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+
+  // Deliberately out of order: recent, then old, then recent.
+  await recordRuns([run({ account_id: 81, map_node_id, finished_at: now })]);
+  await recordRuns([run({ account_id: 82, map_node_id, finished_at: longAgo })]);
+  await recordRuns([run({ account_id: 83, map_node_id, finished_at: now })]);
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const counted = await runsSince(since);
+
+  assert.ok(counted >= 2, `two runs are inside the window, counted ${counted}`);
 });
