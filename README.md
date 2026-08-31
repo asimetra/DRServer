@@ -140,6 +140,15 @@ same act. Callers present the secret as `X-Internal-Token`.
 | `GET /internal/v1/accounts/:id` | The account as the client would receive it |
 | `POST /internal/v1/accounts/:id/token` | Issues a replacement token |
 | `DELETE /internal/v1/accounts/:id/token` | Invalidates every token issued for that account |
+| `POST /internal/v1/trades` | Moves weapons and gold between two accounts, all of it or none |
+
+Trading is one call because it has to be one transaction. The front end runs
+the negotiation — who offered what, who has agreed — and none of that is game
+state; this is the moment both sides said yes. The pair is locked in id order
+and written on a single transaction, so the weapon cannot end up on neither
+account or on both. A refusal carries a `reason` (`in_dungeon`, `equipped`,
+`not_owned`, `no_room`, `not_enough_gold`, `bad_offer`) because the trade screen
+has to act differently on each.
 
 Holding the secret is holding every account, so it belongs on the same machine
 or on a private network, never on the public interface.

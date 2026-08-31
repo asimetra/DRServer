@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
+import { TradeRefused, settleTrade } from "./trade.js";
 import { info, warn } from "./log.js";
 
 /**
@@ -159,11 +160,40 @@ const readAccount = async (req, [capture]) => {
   return json(await loadAccount(id));
 };
 
+/**
+ * POST /internal/v1/trades — both sides have agreed; move the goods.
+ *
+ * The front end runs the negotiation and owns every part of it that is a
+ * conversation: who offered what, who has clicked accept, whether either
+ * walked away. None of that is game state. This is the single moment that is,
+ * and it is one call so that it is one transaction.
+ *
+ * A refusal carries `reason` as well as a sentence, because the trade screen
+ * has to do different things with "they are in a dungeon" (wait, and say so)
+ * and "that weapon is equipped" (tell them which, and let them fix it).
+ */
+const settleTradeRoute = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  try {
+    const result = await settleTrade(req.json ?? {});
+    return json(result);
+  } catch (problem) {
+    if (problem instanceof TradeRefused) {
+      warn(`internal: refused a trade — ${problem.reason}: ${problem.message}`);
+      return json({ error: problem.message, reason: problem.reason }, 409);
+    }
+    throw problem;
+  }
+};
+
 export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/token", handler: revokeTokens },
+  { method: "POST", pattern: "/internal/v1/trades", handler: settleTradeRoute },
 ];
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
