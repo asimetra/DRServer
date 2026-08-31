@@ -149,12 +149,18 @@ const valueFor = (metric, run) => {
  * same list in SQL.
  */
 /**
- * The trophy count rides along with a standing.
+ * The trophy count and the hero ride along with a standing.
  *
  * Denormalised on purpose, the way the name already is: a board is then one
- * read rather than a read and a fan-out of account loads. It is the count as it
- * stood when the record was set, which is also the more honest number to show
- * beside a record.
+ * read rather than a read and a fan-out of account loads. Both are as they
+ * stood when the record was set, which is also the more honest thing to show
+ * beside a record — a time was set by the hero who set it, whatever that
+ * player is playing now.
+ *
+ * Only the hero's id is kept. Its name and its picture are the GameMaster's
+ * answer and it is already loaded in this process, so resolving them at read
+ * time is a lookup in a Map rather than a second copy of the name to keep in
+ * step with the tables.
  */
 export const boardEntriesFor = (run) =>
   Object.entries(BOARDS)
@@ -190,6 +196,7 @@ const foldRun = (bests, run) => {
         at: run.finished_at,
         name: run.name,
         trophies: run.trophies ?? 0,
+        hero_id: run.hero_id ?? null,
       };
       continue;
     }
@@ -199,6 +206,7 @@ const foldRun = (bests, run) => {
         at: run.finished_at,
         name: run.name,
         trophies: run.trophies ?? 0,
+        hero_id: run.hero_id ?? null,
       };
     }
   }
@@ -299,6 +307,26 @@ export const standingsFor = async (accountId) => {
  */
 export const MAX_BOARD_SIZE = 100;
 
+/**
+ * What a row looks like leaving here, whichever store it came out of.
+ *
+ * The rank and the title are computed rather than stored: the rank is the
+ * position in this answer, and the title is a rule about the trophy count that
+ * would otherwise have to be written down twice and kept in step. Applying both
+ * in one place is what stops a board meaning one thing in a file and another in
+ * a table.
+ */
+const asEntry = (entry, index) => ({
+  rank: index + 1,
+  account_id: Number(entry.account_id),
+  name: entry.name ?? null,
+  trophies: entry.trophies ?? 0,
+  title: titleFor(entry.trophies),
+  hero_id: entry.hero_id ?? null,
+  value: entry.value,
+  at: entry.at,
+});
+
 export const boardFor = async (metric, { node, hero, party, limit = 20 } = {}) => {
   const board = BOARDS[metric];
   if (!board) return null;
@@ -312,20 +340,13 @@ export const boardFor = async (metric, { node, hero, party, limit = 20 } = {}) =
       ascending: board.better === "lower",
       limit: size,
     });
-    return rows.map((entry, index) => ({ rank: index + 1, ...entry }));
+    return rows.map(asEntry);
   }
 
   const rows = (await readJson(BESTS_FILE, {}))[key] ?? {};
   return Object.entries(rows)
-    .map(([accountId, entry]) => ({
-      account_id: Number(accountId),
-      name: entry.name ?? null,
-      trophies: entry.trophies ?? 0,
-      title: titleFor(entry.trophies),
-      value: entry.value,
-      at: entry.at,
-    }))
+    .map(([accountId, entry]) => ({ account_id: accountId, ...entry }))
     .sort((a, b) => (board.better === "lower" ? a.value - b.value : b.value - a.value))
     .slice(0, size)
-    .map((entry, index) => ({ rank: index + 1, ...entry }));
+    .map(asEntry);
 };

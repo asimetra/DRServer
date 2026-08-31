@@ -196,14 +196,26 @@ CREATE INDEX IF NOT EXISTS dungeon_runs_node ON dungeon_runs(map_node_id, finish
 -- board a small indexed read instead of an aggregate over the history above.
 -- `board_key` carries the whole scope — the metric, and for speedrun the node,
 -- hero and party size — so a board is one equality and an ORDER BY.
+-- `name`, `trophies` and `hero_id` are denormalised on purpose: a board is then
+-- one indexed read rather than that plus an account load per row, and each is
+-- the value as it stood when the record was set, which is the more honest thing
+-- to show beside it. Only the hero's id is kept — its name and picture are the
+-- GameMaster's answer and are resolved in process.
 CREATE TABLE IF NOT EXISTS dungeon_bests (
     board_key   TEXT        NOT NULL,
     account_id  BIGINT      NOT NULL,
     name        TEXT,
     trophies    INTEGER     NOT NULL DEFAULT 0,
+    hero_id     INTEGER,
     value       BIGINT      NOT NULL,
     achieved_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (board_key, account_id)
 );
+
+-- This file is applied on first start only, so a database created before the
+-- column existed would not get it from the CREATE above. Stated separately and
+-- idempotently, the way every other statement here is, so re-running the file
+-- brings an older database up to date instead of failing on it.
+ALTER TABLE IF EXISTS dungeon_bests ADD COLUMN IF NOT EXISTS hero_id INTEGER;
 
 CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);

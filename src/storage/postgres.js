@@ -240,16 +240,17 @@ export const recordRuns = async (runs, boards) => {
 
       for (const { key, metric, value } of boards(run)) {
         await client.query(
-          `INSERT INTO dungeon_bests (board_key, account_id, name, trophies, value, achieved_at)
-           VALUES ($1,$2,$3,$4,$5,$6)
+          `INSERT INTO dungeon_bests (board_key, account_id, name, trophies, hero_id, value, achieved_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
            ON CONFLICT (board_key, account_id) DO UPDATE
              SET value = ${BOARD_FOLD[metric]},
                  name = EXCLUDED.name,
                  trophies = EXCLUDED.trophies,
+                 hero_id = EXCLUDED.hero_id,
                  achieved_at = CASE
                    WHEN ${BOARD_FOLD[metric]} <> dungeon_bests.value
                    THEN EXCLUDED.achieved_at ELSE dungeon_bests.achieved_at END`,
-          [key, run.account_id, run.name, run.trophies ?? 0, value, run.finished_at]
+          [key, run.account_id, run.name, run.trophies ?? 0, run.hero_id ?? null, value, run.finished_at]
         );
       }
     }
@@ -265,7 +266,7 @@ export const recordRuns = async (runs, boards) => {
 /** One board, already ordered by the caller's direction. */
 export const boardRows = async (key, { ascending = true, limit = 20 } = {}) => {
   const { rows } = await connect().query(
-    `SELECT account_id, name, trophies, value, achieved_at
+    `SELECT account_id, name, trophies, hero_id, value, achieved_at
        FROM dungeon_bests WHERE board_key = $1
       ORDER BY value ${ascending ? "ASC" : "DESC"} LIMIT $2`,
     [key, limit]
@@ -274,6 +275,7 @@ export const boardRows = async (key, { ascending = true, limit = 20 } = {}) => {
     account_id: Number(row.account_id),
     name: row.name,
     trophies: Number(row.trophies ?? 0),
+    hero_id: row.hero_id === null ? null : Number(row.hero_id),
     value: Number(row.value),
     at: row.achieved_at instanceof Date ? row.achieved_at.toISOString() : row.achieved_at,
   }));

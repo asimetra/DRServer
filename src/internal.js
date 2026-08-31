@@ -284,9 +284,34 @@ const readBoard = async (req, [metric]) => {
     metric,
     better: board.better,
     scope: board.scope === "node" ? scope : null,
-    entries: await boardFor(metric, scope),
+    entries: withHeroes(await boardFor(metric, scope), await loadGameMaster()),
   });
 };
+
+/**
+ * Puts a name and a picture on the hero id a standing carries.
+ *
+ * The standing stores the id and nothing more, because the name and the icon
+ * are the GameMaster's answer and it is already loaded here — resolving them on
+ * the way out is a Map lookup per row, and it means there is one copy of what a
+ * hero is called rather than one per board row ever written.
+ *
+ * The picture is the hero's own `IconName`, not a skin's. A run does not record
+ * which skin was worn, and the Hero row names the same icon its default skin
+ * does — checked across all six — so there is nothing to join and nothing to
+ * invent. The summary next door reads the skin instead, and should: there the
+ * player picked it.
+ */
+const withHeroes = (entries, gm) =>
+  (entries ?? []).map((entry) => {
+    const hero = entry.hero_id ? gm.heroById.get(entry.hero_id) : null;
+    return {
+      ...entry,
+      hero: hero
+        ? { id: hero.Id, name: hero.Name ?? hero.Constant, icon: hero.IconName ?? null }
+        : null,
+    };
+  });
 
 /**
  * GET /internal/v1/status — what the front page puts in its margins.

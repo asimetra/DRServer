@@ -189,6 +189,49 @@ test("a standing carries the trophies its holder had", async () => {
   assert.deepEqual(board.map((e) => [e.account_id, e.trophies]), [[61, 38], [62, 4]]);
 });
 
+/**
+ * And so does the hero it was set on.
+ *
+ * Same argument as the trophies: a board is one read rather than a read plus an
+ * account load per row, and a time belongs to the hero who set it whatever that
+ * player is running now. Only the id is stored — the name and the picture are
+ * the GameMaster's answer and are put on at the API's edge.
+ */
+test("a standing carries the hero it was set on", async () => {
+  const map_node_id = aNode();
+  await recordRuns([
+    run({ account_id: 64, map_node_id, hero_id: 105, duration_ms: 70_000 }),
+    run({ account_id: 65, map_node_id, hero_id: 105, duration_ms: 80_000 }),
+  ]);
+
+  const board = await boardFor("speedrun", { node: map_node_id, hero: 105, party: 1 });
+  assert.deepEqual(board.map((e) => e.hero_id), [105, 105]);
+});
+
+/**
+ * On a whole-account board the hero is whoever ran last, because that is what a
+ * standing that accumulates can honestly say — there is no single hero behind a
+ * lifetime total.
+ */
+test("an accumulating standing carries the hero of the latest run", async () => {
+  const map_node_id = aNode();
+  await recordRuns([run({ account_id: 66, map_node_id, hero_id: 101, xp: 100 })]);
+  await recordRuns([run({ account_id: 66, map_node_id, hero_id: 106, xp: 100 })]);
+
+  const mine = (await boardFor("experience", {})).find((e) => e.account_id === 66);
+  assert.equal(mine.hero_id, 106);
+  assert.equal(mine.value, 200, "the total still accumulates");
+});
+
+test("a run recorded without a hero reads as none rather than missing", async () => {
+  const map_node_id = aNode();
+  const { hero_id, ...withoutHero } = run({ account_id: 67, map_node_id });
+  await recordRuns([withoutHero]);
+
+  const [entry] = await boardFor("speedrun", { node: map_node_id, hero: undefined, party: 1 });
+  assert.equal(entry.hero_id, null);
+});
+
 test("a run recorded without trophies reads as none rather than missing", async () => {
   const map_node_id = aNode();
   const { trophies, ...withoutTrophies } = run({ account_id: 63, map_node_id });
