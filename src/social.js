@@ -1,5 +1,5 @@
 import { isOnline, dungeonOf } from "./socket/presence.js";
-import { listAccountIds, loadAccount, saveAccount } from "./accounts.js";
+import { listAccountIds, loadAccount, saveAccount, saveAccounts } from "./accounts.js";
 import { warn } from "./log.js";
 
 /**
@@ -158,8 +158,10 @@ export const befriend = async (account, friend) => {
     return true;
   };
   const changed = [add(account, friend.id), add(friend, account.id)];
-  if (changed[0]) await saveAccount(account);
-  if (changed[1]) await saveAccount(friend);
+  // Together, so that a half-made friendship is not a state either panel can
+  // be left showing.
+  const touched = [changed[0] && account, changed[1] && friend].filter(Boolean);
+  if (touched.length) await saveAccounts(touched);
   return changed[0] || changed[1];
 };
 
@@ -178,8 +180,8 @@ export const unfriend = async (account, formerId) => {
   };
   const friend = await loadAccount(Number(formerId)).catch(() => null);
   const changed = [remove(account, formerId), friend && remove(friend, account.id)];
-  if (changed[0]) await saveAccount(account);
-  if (changed[1]) await saveAccount(friend);
+  const touched = [changed[0] && account, changed[1] && friend].filter(Boolean);
+  if (touched.length) await saveAccounts(touched);
   return Boolean(changed[0] || changed[1]);
 };
 

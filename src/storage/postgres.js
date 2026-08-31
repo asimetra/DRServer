@@ -119,34 +119,53 @@ export const loadAccount = async (id) => {
 };
 
 /**
- * Writes the account and its lists as one transaction. Children are replaced
+ * One account and its lists, on a caller's transaction. Children are replaced
  * wholesale: the caller hands over a complete account, and diffing rows to save
  * a few writes would be a lot of machinery for an object this size.
  */
-export const saveAccount = async (account) => {
+const writeAccount = async (client, account) => {
+  await client.query("DELETE FROM accounts WHERE id = $1", [account.id]);
+  await insert(client, "accounts", ACCOUNT_COLUMNS, account);
+
+  // Avatars first: items and pets reference them.
+  for (const [field, columns] of Object.entries(CHILD_TABLES)) {
+    for (const row of account[field] ?? []) {
+      await insert(client, field, columns, { ...row, account_id: account.id });
+    }
+  }
+};
+
+/**
+ * Several accounts as one transaction, so a move between two of them cannot
+ * half-happen.
+ *
+ * Saving each account on its own transaction is only safe while the accounts
+ * are independent, and the interesting writes are the ones that are not: a
+ * gift takes a stackable off one account and puts it on another, and two
+ * commits mean a crash in between leaves the item on neither or on both. The
+ * lock pair callers already take (`withTwoAccountLocks`) stops two writers
+ * interleaving; it does nothing about a writer that stops halfway.
+ */
+export const saveAccounts = async (accounts) => {
   const db = connect();
   const client = await db.connect();
 
   try {
     await client.query("BEGIN");
-    await client.query("DELETE FROM accounts WHERE id = $1", [account.id]);
-    await insert(client, "accounts", ACCOUNT_COLUMNS, account);
-
-    // Avatars first: items and pets reference them.
-    for (const [field, columns] of Object.entries(CHILD_TABLES)) {
-      for (const row of account[field] ?? []) {
-        await insert(client, field, columns, { ...row, account_id: account.id });
-      }
-    }
-
+    for (const account of accounts) await writeAccount(client, account);
     await client.query("COMMIT");
-    return account;
+    return accounts;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
   }
+};
+
+export const saveAccount = async (account) => {
+  await saveAccounts([account]);
+  return account;
 };
 
 let accountObjectSequenceReady = null;

@@ -50,7 +50,7 @@ import { warn } from "../log.js";
  * walking out, and the slot still shows the item at "x0".
  *
  * Chained onto whatever save is already in flight so the two cannot land out of
- * order — `saveAccountToFile` serialises on entry, so a save that started
+ * order — `saveAccountsToFiles` serialises on entry, so a save that started
  * earlier holds an older snapshot and must not rename over a newer one.
  *
  * Both save seams are kept, the way the other callers keep them. A session

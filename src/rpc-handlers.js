@@ -3,6 +3,7 @@ import { issueToken } from "./auth.js";
 import {
   loadAccount,
   saveAccount,
+  saveAccounts,
   nextObjectId,
   listAccountIds,
   withAccountLock,
@@ -980,8 +981,7 @@ register("store/GiftOffer", async ([accountId, offerId, , , toIds]) => {
         const sender = await loadAccount(senderId);
         const recipient = recipientId === senderId ? sender : await loadAccount(recipientId);
         const made = await sendGift({ sender, recipient, offerId });
-        await saveAccount(recipient);
-        if (recipient !== sender) await saveAccount(sender);
+        await saveAccounts([recipient, sender]);
         return made;
       });
       sent++;

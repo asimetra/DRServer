@@ -371,9 +371,53 @@ const readAccount = async (id) => {
   }
 };
 
+/**
+ * Several accounts at once, so that a move between two of them cannot half
+ * happen.
+ *
+ * `withTwoAccountLocks` stops two writers interleaving; it does nothing about
+ * one writer stopping halfway. A gift takes a stackable off the sender and puts
+ * it on the recipient, and saving them one after the other means a crash in
+ * between leaves the item on neither account or on both.
+ *
+ * On Postgres this is one transaction. On files it cannot be — two renames are
+ * two operations and no filesystem call makes them one — so it is the nearest
+ * thing: every file is written to a temporary first and the renames happen
+ * together at the end. A failure before the first rename leaves nothing
+ * changed, and the window where one has landed and the other has not is a pair
+ * of adjacent rename calls rather than a whole serialise and write.
+ */
+export const saveAccounts = async (accounts) => {
+  const unique = [];
+  for (const account of accounts) {
+    const already = unique.find((other) => Number(other.id) === Number(account.id));
+    if (!already) {
+      unique.push(account);
+      continue;
+    }
+    /**
+     * The same account twice is ordinary — a sender and a recipient who turn
+     * out to be one person are the same object, because the registry hands
+     * every holder the object already in play. Two *different* objects for one
+     * id are the divergence that registry exists to prevent, and writing one
+     * while discarding the other is the silent loss this function was added to
+     * stop, so it is refused rather than resolved.
+     */
+    if (already !== account) {
+      throw new Error(`accounts: two different objects offered for account ${account.id}`);
+    }
+  }
+
+  if (usingDatabase()) {
+    await (await db()).saveAccounts(unique);
+    return unique;
+  }
+  return saveAccountsToFiles(unique);
+};
+
 export const saveAccount = async (account) => {
-  if (usingDatabase()) return (await db()).saveAccount(account);
-  return saveAccountToFile(account);
+  await saveAccounts([account]);
+  return account;
 };
 
 /**
@@ -469,17 +513,35 @@ export const nextObjectId = async (account = null) => {
   return fileObjectId;
 };
 
-const saveAccountToFile = async (account) => {
-  const contents = `${JSON.stringify(account, null, 2)}\n`;
+const saveAccountsToFiles = async (accounts) => {
+  /**
+   * Serialised on entry, every one of them, before the first await.
+   *
+   * Callers chain saves so that two cannot rename out of order, and that
+   * ordering only means something if each save holds the snapshot its caller
+   * had rather than whatever the object has become by the time its turn to be
+   * written comes round. See `settleDungeonAccount`, which relies on it.
+   */
+  const staged = accounts.map((account) => {
+    const file = filePathFor(account.id);
+    return {
+      file,
+      temporary: `${file}.${process.pid}.${++temporaryFileId}.tmp`,
+      contents: `${JSON.stringify(account, null, 2)}\n`,
+    };
+  });
+
   await fs.mkdir(config.dataDir, { recursive: true });
-  const file = filePathFor(account.id);
-  const temporary = `${file}.${process.pid}.${++temporaryFileId}.tmp`;
   try {
-    await fs.writeFile(temporary, contents, "utf8");
-    await fs.rename(temporary, file);
+    for (const { temporary, contents } of staged) {
+      await fs.writeFile(temporary, contents, "utf8");
+    }
+    for (const { temporary, file } of staged) {
+      await fs.rename(temporary, file);
+    }
   } catch (error) {
-    await fs.rm(temporary, { force: true });
+    await Promise.all(staged.map(({ temporary }) => fs.rm(temporary, { force: true })));
     throw error;
   }
-  return account;
+  return accounts;
 };

@@ -266,7 +266,7 @@ test("a slot emptied in a dungeon is still empty after the session is torn down"
 /**
  * The settle waits for a save that is already in flight.
  *
- * `saveAccountToFile` serialises the account on entry and renames afterwards,
+ * `saveAccountsToFiles` serialises the account on entry and renames afterwards,
  * so two saves running at once are two snapshots racing to be last. A reward
  * save started before the powerups settled holds the older one; letting it
  * rename second would put the x0 back on disk after it had been cleared.
