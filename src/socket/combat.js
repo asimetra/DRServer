@@ -1430,10 +1430,28 @@ const landNpcSwing = async (session, attackerDoid, ai, attack, shape, victimDoid
       attacker.heading ?? 0,
       shape
     );
-    const caught = hazardVictims(session, reach, { attack, team: attacker.team });
-    // Walked out of the arc while it was being swung, which is the miss the
-    // client has already drawn.
-    if (!caught.some(({ doid }) => doid === victimDoid)) return false;
+    const caught = hazardVictims(session, reach, { attack, team: attacker.team })
+      .filter(({ doid }) => doid !== attackerDoid);
+    if (!caught.length) return false;
+
+    /**
+     * The chosen target decides where the NPC faces, not everything the arc
+     * touches. This distinction is what lets a pet take the occasional melee
+     * hit without owning the monster's aggro: in official pet captures only
+     * 12.7% of measurable pet hits align with the pet, while most align with a
+     * nearby hero. Resolving only `victimDoid` turned collateral into target
+     * selection and forced AI to aggro pets merely so they could ever be hit.
+     */
+    let hits = 0;
+    for (const caughtActor of caught) {
+      if (await dealNpcHit(
+        session,
+        attackerDoid,
+        { attack, attackType: ai.attackType, weaponPower: ai.weaponPower, fallback: ai.damage },
+        caughtActor.doid
+      )) hits += 1;
+    }
+    return hits > 0;
   }
 
   return dealNpcHit(

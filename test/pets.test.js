@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyDamage } from "../src/socket/combat.js";
+import { applyDamage, performNpcAttack } from "../src/socket/combat.js";
 import { tickNpcAi } from "../src/socket/ai.js";
 import {
   cancelPetRespawn,
@@ -136,6 +136,16 @@ test("an equipped pet is generated behind its owner with the official wire field
   assert.ok(session.petRespawnTimer, "a persistent pet schedules its configured respawn");
 });
 
+test("pet health follows the owning hero's level instead of the dungeon tier", async () => {
+  const observed = [];
+  for (const level of [1, 50, 100]) {
+    const { session, context } = await contextWithPet(level);
+    const doid = await spawnEquippedPet(context, session);
+    observed.push(session.actors.get(doid).maxHitPoints);
+  }
+  assert.deepEqual(observed, [110, 600, 1100]);
+});
+
 test("a pet returns to its owner when idle and chooses an enemy instead of its owner", async (t) => {
   const { session, context } = await contextWithPet(75);
   t.after(() => {
@@ -231,6 +241,7 @@ test("an enemy may target a nearer pet without confusing it for the owner hero",
         hitPoints: 100,
         maxHitPoints: 100,
         collisionRadius: 25,
+        isEnemy: true,
         position: { x: 0, y: 0 },
         team: TEAM.ENEMIES,
         ai: {
@@ -257,6 +268,182 @@ test("an enemy may target a nearer pet without confusing it for the owner hero",
   await tickNpcAi(session, 1000, 0.1);
   assert.equal(session.actors.get(petDoid).hitPoints, 99);
   assert.equal(session.actors.get(heroDoid).hitPoints, 200);
+});
+
+test("a nearby hero keeps aggro even when the pet is slightly closer", async () => {
+  const sent = [];
+  const heroDoid = 10;
+  const petDoid = 11;
+  const enemyDoid = 20;
+  const session = {
+    id: 11,
+    heroDoid,
+    heroPosition: { x: 80, y: 0 },
+    objects: new Map([
+      [heroDoid, CLID.HeroGameObject],
+      [petDoid, CLID.DistributedNPCGameObject],
+      [enemyDoid, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      [heroDoid, { hitPoints: 200, maxHitPoints: 200, position: { x: 80, y: 0 } }],
+      [petDoid, {
+        hitPoints: 100,
+        maxHitPoints: 100,
+        collisionRadius: 25,
+        isPet: true,
+        position: { x: 55, y: 0 },
+        team: TEAM.PLAYERS,
+      }],
+      [enemyDoid, {
+        hitPoints: 100,
+        maxHitPoints: 100,
+        collisionRadius: 25,
+        isEnemy: true,
+        position: { x: 0, y: 0 },
+        team: TEAM.ENEMIES,
+        ai: {
+          kind: "enemy",
+          state: "idle",
+          engaged: false,
+          aggroRadius: 500,
+          disengageDistance: 1000,
+          moveSpeed: 0,
+          attackRange: 80,
+          attackTimerMs: 1500,
+          attackRandMs: 0,
+          nextAttackAt: 0,
+          attackType: 920050,
+          damage: 1,
+          attackColliders: [],
+        },
+      }],
+    ]),
+    sent,
+    send: (frame) => sent.push(frame),
+  };
+
+  await tickNpcAi(session, 1000, 0.1);
+  assert.equal(session.actors.get(enemyDoid).ai.targetDoid, heroDoid);
+  assert.equal(session.actors.get(heroDoid).hitPoints, 199);
+  assert.equal(session.actors.get(petDoid).hitPoints, 100);
+});
+
+test("a hero-targeted melee arc may still catch a pet as collateral", async () => {
+  const heroDoid = 10;
+  const petDoid = 11;
+  const enemyDoid = 20;
+  const session = {
+    id: 13,
+    heroDoid,
+    heroPosition: { x: 60, y: 0 },
+    objects: new Map([
+      [heroDoid, CLID.HeroGameObject],
+      [petDoid, CLID.DistributedNPCGameObject],
+      [enemyDoid, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      [heroDoid, {
+        hitPoints: 200,
+        maxHitPoints: 200,
+        collisionRadius: 25,
+        position: { x: 60, y: 0 },
+        team: TEAM.PLAYERS,
+      }],
+      [petDoid, {
+        hitPoints: 100,
+        maxHitPoints: 100,
+        collisionRadius: 25,
+        isPet: true,
+        position: { x: 75, y: 0 },
+        team: TEAM.PLAYERS,
+      }],
+      [enemyDoid, {
+        hitPoints: 100,
+        maxHitPoints: 100,
+        collisionRadius: 25,
+        heading: 0,
+        position: { x: 0, y: 0 },
+        team: TEAM.ENEMIES,
+      }],
+    ]),
+    send: () => {},
+  };
+
+  await performNpcAttack(session, enemyDoid, {
+    attackType: 920050,
+    weaponPower: 1,
+    damage: 1,
+    impactFrame: 0,
+    attackColliders: [
+      { type: "circlecollider", xOffset: 60, yOffset: 0, radius: 50, frame: 0 },
+    ],
+  }, heroDoid);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.ok(session.actors.get(heroDoid).hitPoints < 200);
+  assert.ok(session.actors.get(petDoid).hitPoints < 100);
+  assert.equal(session.actors.get(enemyDoid).hitPoints, 100);
+});
+
+test("only two enemies may deliberately peel from the hero onto one pet", async () => {
+  const heroDoid = 10;
+  const petDoid = 11;
+  const enemyDoids = [20, 21, 22];
+  const objects = new Map([
+    [heroDoid, CLID.HeroGameObject],
+    [petDoid, CLID.DistributedNPCGameObject],
+  ]);
+  const actors = new Map([
+    [heroDoid, { hitPoints: 200, maxHitPoints: 200, position: { x: 250, y: 0 } }],
+    [petDoid, {
+      hitPoints: 100,
+      maxHitPoints: 100,
+      collisionRadius: 25,
+      isPet: true,
+      position: { x: 55, y: 0 },
+      team: TEAM.PLAYERS,
+    }],
+  ]);
+  for (const [index, doid] of enemyDoids.entries()) {
+    objects.set(doid, CLID.DistributedNPCGameObject);
+    actors.set(doid, {
+      hitPoints: 100,
+      maxHitPoints: 100,
+      collisionRadius: 25,
+      isEnemy: true,
+      position: { x: index * 5, y: 0 },
+      team: TEAM.ENEMIES,
+      ai: {
+        kind: "enemy",
+        state: "idle",
+        engaged: false,
+        aggroRadius: 500,
+        disengageDistance: 1000,
+        moveSpeed: 0,
+        attackRange: 80,
+        attackTimerMs: 1500,
+        attackRandMs: 0,
+        nextAttackAt: Number.POSITIVE_INFINITY,
+        attackType: 920050,
+        damage: 1,
+        attackColliders: [],
+      },
+    });
+  }
+  const session = {
+    id: 12,
+    heroDoid,
+    heroPosition: { x: 250, y: 0 },
+    objects,
+    actors,
+    send: () => {},
+  };
+
+  await tickNpcAi(session, 1000, 0.1);
+  assert.deepEqual(
+    enemyDoids.map((doid) => actors.get(doid).ai.targetDoid),
+    [petDoid, petDoid, heroDoid]
+  );
 });
 
 test("the measured initial pet offset is stable", () => {

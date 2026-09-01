@@ -31,6 +31,10 @@ export const npcHeadingUpdate = (doid, heading) =>
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 const ROUTE_REFRESH_MS = 1000;
 const FAILED_PATH_RETRY_MS = 2000;
+/** Only this many enemies may deliberately choose one pet over a live hero. */
+export const MAX_PET_AGGRESSORS = 2;
+/** A pet must be materially ahead of the hero before it is an aggro candidate. */
+const PET_AGGRO_DISTANCE_ADVANTAGE = 100;
 
 const squaredDistanceTo = (from, to) => {
   const x = to.x - from.x;
@@ -199,6 +203,8 @@ const clearNpcTarget = (actor) => {
   ai.pathFailed = false;
   ai.nextPathAt = 0;
   ai.navigationRevision = undefined;
+  ai.targetDoid = null;
+  ai.nextTargetAt = 0;
 };
 
 /** Indexes active NPCs so local separation only considers nearby neighbours. */
@@ -600,8 +606,6 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     if (actor.isPet) pets.push(candidate);
     else if (actor.isEnemy) enemies.push(candidate);
   }
-  const playerTargets = [...heroes, ...pets];
-
   const nearestTo = (position, candidates) =>
     candidates.reduce(
       (nearest, candidate) =>
@@ -612,6 +616,62 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
           : nearest,
       null
     );
+
+  const heroByDoid = new Map(heroes.map((candidate) => [candidate.doid, candidate]));
+  const petByDoid = new Map(pets.map((candidate) => [candidate.doid, candidate]));
+  const petAggressors = new Map();
+  for (const { actor } of enemies) {
+    if (!petByDoid.has(actor.ai?.targetDoid)) continue;
+    petAggressors.set(
+      actor.ai.targetDoid,
+      (petAggressors.get(actor.ai.targetDoid) ?? 0) + 1
+    );
+  }
+
+  const rememberEnemyTarget = (ai, target) => {
+    const previousPet = petByDoid.has(ai.targetDoid) ? ai.targetDoid : null;
+    const nextPet = petByDoid.has(target?.doid) ? target.doid : null;
+    if (previousPet && previousPet !== nextPet) {
+      petAggressors.set(previousPet, Math.max(0, (petAggressors.get(previousPet) ?? 1) - 1));
+    }
+    if (nextPet && previousPet !== nextPet) {
+      petAggressors.set(nextPet, (petAggressors.get(nextPet) ?? 0) + 1);
+    }
+    ai.targetDoid = target?.doid ?? null;
+    ai.nextTargetAt = now + Math.max(
+      250,
+      (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0)
+    );
+    return target;
+  };
+
+  /**
+   * Heroes own aggro; pets only peel a small number of enemies when they are
+   * clearly screening ahead. Official pet floors put just 3.4% of enemy damage
+   * on pets, and heading analysis shows most of even that was collateral from
+   * a swing aimed at the hero. Nearest-body targeting inverted that ratio.
+   */
+  const enemyVictim = (actor, ai) => {
+    const lockedHero = heroByDoid.get(ai.targetDoid);
+    if (lockedHero && now < (ai.nextTargetAt ?? 0)) return lockedHero;
+    const lockedPet = petByDoid.get(ai.targetDoid);
+    if (
+      lockedPet &&
+      now < (ai.nextTargetAt ?? 0) &&
+      (petAggressors.get(lockedPet.doid) ?? 0) <= MAX_PET_AGGRESSORS
+    ) return lockedPet;
+
+    const hero = nearestTo(actor.position, heroes);
+    const pet = nearestTo(actor.position, pets);
+    if (pet && (petAggressors.get(pet.doid) ?? 0) < MAX_PET_AGGRESSORS) {
+      const heroDistance = hero ? distanceTo(actor.position, hero.position) : Infinity;
+      const petDistance = distanceTo(actor.position, pet.position);
+      if (petDistance + PET_AGGRO_DISTANCE_ADVANTAGE < heroDistance) {
+        return rememberEnemyTarget(ai, pet);
+      }
+    }
+    return rememberEnemyTarget(ai, hero);
+  };
 
   for (const [doid, actor] of actors) {
     const ai = actor.ai;
@@ -648,11 +708,13 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         followingOwner = true;
         ai.engaged = false;
         ai.state = "return";
+        ai.targetDoid = owner.doid;
       } else {
         victim = enemy;
+        ai.targetDoid = enemy.doid;
       }
     } else {
-      victim = nearestTo(actor.position, playerTargets);
+      victim = enemyVictim(actor, ai);
     }
     if (!victim) continue;
     const target = victim.position;
@@ -678,8 +740,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         ai.engaged = true;
         ai.state = "chase";
       } else if (distance > ai.disengageDistance) {
-        ai.engaged = false;
-        ai.state = "idle";
+        clearNpcTarget(actor);
         continue;
       }
     }

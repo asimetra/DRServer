@@ -715,6 +715,8 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
               tetherDistance: Math.max(0, Number(npc.TetherDist ?? 0)),
               tetherTimerMs: Math.max(0, Number(npc.TetherTimer ?? 0) * 1000),
               returnDistance: Math.max(0, Number(npc.ReturnDist ?? 0)),
+              targetTimerMs: Math.max(0, Number(npc.ChangeTargetT ?? 2) * 1000),
+              targetRandMs: Math.max(0, Number(npc.ChangeTargetRand ?? 0) * 1000),
               collects: {
                 gold: Boolean(npc.CollectsGold),
                 xp: Boolean(npc.CollectsXp),
