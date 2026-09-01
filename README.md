@@ -156,26 +156,6 @@ or on a private network, never on the public interface. A non-loopback
 cleartext bind is refused unless `ODS_ALLOW_INSECURE_INTERNAL=1` explicitly
 acknowledges a trusted private network.
 
-## Icons from your own copy
-
-The market draws a weapon's own icon when there is one. This repository ships
-none: `tools/export-icons.js` reads them out of a copy of the game you already
-have, and the pictures stay on your machine.
-
-```
-node tools/export-icons.js --path <the game's Resources directory>
-```
-
-Either build works — the Steam SWF one and the Haxe one carry these files byte
-for byte identical. It needs [ffdec](https://github.com/jindrapetrik/jpexs-decompiler),
-which the script finds on PATH or as the `com.jpexs.decompiler.flash` flatpak,
-and it writes 226 player-weapon icons into `content/`, which is git-ignored and
-refused by `npm run check:public`. The seven it reports missing are enemy
-weapons from a file the Steam build does not carry; nothing a player can hold.
-
-Without them the market draws its own frame and the weapon's type instead:
-duller, not broken.
-
 ## Configuration
 
 `ODS_*` is the public-facing environment prefix. Existing `DR_*` deployments

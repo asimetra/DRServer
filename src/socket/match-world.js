@@ -556,6 +556,8 @@ export const createMatchWorld = (match, seedSession) => {
       this.powerupCooldownUntil?.clear?.();
 
       for (const member of activeMembersOf(this.match)) {
+        if (member.petRespawnTimer) clearTimeout(member.petRespawnTimer);
+        member.petRespawnTimer = null;
         member.stopManaRegen?.();
         member.stopManaRegen = null;
       }

@@ -1,0 +1,259 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { applyDamage } from "../src/socket/combat.js";
+import { tickNpcAi } from "../src/socket/ai.js";
+import {
+  cancelPetRespawn,
+  spawnEquippedPet,
+} from "../src/socket/dungeon.js";
+import { loadGameMaster } from "../src/gamemaster.js";
+import { loadNavigationLibrary } from "../src/socket/navigation.js";
+import { CLID, OP, TEAM } from "../src/socket/opcodes.js";
+import { PacketReader } from "../src/socket/packet.js";
+import {
+  equippedPetSpawn,
+  petSpawnPosition,
+  scaledNpcWeaponPower,
+} from "../src/pets.js";
+import { experienceForLevel } from "../src/progression.js";
+import { readFrame, readNpc } from "./helpers/floor.js";
+
+const contextWithPet = async (level = 75) => {
+  await loadNavigationLibrary();
+  const gm = await loadGameMaster();
+  const hero = gm.heroById.get(102);
+  const avatar = {
+    id: 7001,
+    avatar_id: hero.Id,
+    experience: experienceForLevel(gm, hero, level),
+  };
+  const account = {
+    id: 9001,
+    account_pets: [
+      { id: 81, npc_id: 3301, equipped_hero: avatar.id, is_new: 0 },
+    ],
+  };
+  const petSpawn = equippedPetSpawn(gm, account, avatar, hero);
+  const sent = [];
+  let nextDoid = 8000;
+  const session = {
+    id: 9,
+    accountId: account.id,
+    dungeonActive: true,
+    dungeonEpoch: 1,
+    floorDoid: 1002,
+    heroDoid: avatar.id,
+    heroPosition: { x: 1000, y: 1000 },
+    petSpawn,
+    objects: new Map([
+      [1002, CLID.DistributedDungeonFloor],
+      [avatar.id, CLID.HeroGameObject],
+    ]),
+    actors: new Map([
+      [
+        avatar.id,
+        {
+          hitPoints: 500,
+          maxHitPoints: 500,
+          collisionRadius: 26,
+          position: { x: 1000, y: 1000 },
+          team: TEAM.PLAYERS,
+        },
+      ],
+    ]),
+    sent,
+    send: (frame) => sent.push(frame),
+    allocateDoid(clid) {
+      const doid = nextDoid++;
+      this.objects.set(doid, clid);
+      return doid;
+    },
+  };
+  const context = {
+    session,
+    floorDoid: session.floorDoid,
+    heroDoid: session.heroDoid,
+    mapNodeId: 50002,
+    gm,
+    isActive: () => session.dungeonActive,
+  };
+  return { gm, hero, avatar, account, session, context, petSpawn };
+};
+
+test("an equipped inventory pet inherits its hero's level and only valid pet rows spawn", async () => {
+  const { gm, hero, avatar, account } = await contextWithPet(75);
+  const spawn = equippedPetSpawn(gm, account, avatar, hero);
+  assert.deepEqual(
+    { constant: spawn.constant, level: spawn.level, owner: spawn.ownerHeroDoid },
+    { constant: "WOLF_PET", level: 75, owner: avatar.id }
+  );
+
+  const weapon = gm.weaponsByConstant.get("EN_PET_WOLF_WEAPON");
+  assert.equal(scaledNpcWeaponPower(weapon, 74), 164);
+  assert.equal(scaledNpcWeaponPower(weapon, 75), 167);
+  assert.equal(scaledNpcWeaponPower(weapon, 100), 255);
+
+  const corrupt = { ...account, account_pets: [{ id: 82, npc_id: 3306, equipped_hero: avatar.id }] };
+  assert.equal(
+    equippedPetSpawn(gm, corrupt, avatar, hero),
+    null,
+    "temporary PET summons cannot be smuggled in through account inventory"
+  );
+});
+
+test("an equipped pet is generated behind its owner with the official wire fields", async (t) => {
+  const { session, context, avatar } = await contextWithPet(75);
+  t.after(() => cancelPetRespawn(session));
+
+  const doid = await spawnEquippedPet(context, session);
+  assert.equal(session.petDoid, doid);
+  const frame = session.sent.map(readFrame).find(
+    (entry) => entry.kind === "generate" && entry.doid === doid
+  );
+  assert.ok(frame);
+  const pet = readNpc(frame.body);
+  assert.equal(frame.parent, session.floorDoid);
+  assert.equal(pet.type, 3301);
+  assert.equal(pet.level, 75);
+  assert.deepEqual([pet.x, pet.y], [1000, 889]);
+  assert.equal(pet.hitPoints, 850);
+  assert.equal(pet.weapons[0].power, 167);
+  assert.equal(pet.team, TEAM.PLAYERS);
+  assert.equal(pet.layer, 20);
+  assert.equal(pet.masterId, avatar.id);
+  assert.equal(session.actors.get(doid).isPet, true);
+  assert.equal(session.actors.get(doid).ai.kind, "pet");
+
+  applyDamage(session, doid, pet.hitPoints);
+  assert.equal(session.actors.has(doid), false);
+  assert.equal(session.petDoid, null);
+  assert.ok(session.petRespawnTimer, "a persistent pet schedules its configured respawn");
+});
+
+test("a pet returns to its owner when idle and chooses an enemy instead of its owner", async (t) => {
+  const { session, context } = await contextWithPet(75);
+  t.after(() => {
+    cancelPetRespawn(session);
+    for (const stop of session.hazardBeats?.values?.() ?? []) stop();
+  });
+  const petDoid = await spawnEquippedPet(context, session);
+  const pet = session.actors.get(petDoid);
+
+  await tickNpcAi(session, 1000, 0.1);
+  assert.equal(Math.round(pet.position.y), 900);
+  assert.equal(pet.ai.state, "return");
+
+  const enemyDoid = 9100;
+  session.objects.set(enemyDoid, CLID.DistributedNPCGameObject);
+  session.actors.set(enemyDoid, {
+    hitPoints: 500,
+    maxHitPoints: 500,
+    collisionRadius: 25,
+    constant: "BRUTE",
+    isEnemy: true,
+    position: { x: 1000, y: 840 },
+    team: TEAM.ENEMIES,
+  });
+  session.sent.length = 0;
+  await tickNpcAi(session, 3000, 0.1);
+
+  assert.equal(pet.ai.state, "attack");
+  const choreography = session.sent.find(
+    (frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+      frame.readUInt32LE(4) === petDoid && frame.readUInt16LE(8) === 143
+  );
+  assert.ok(choreography, "the pet announces an attack");
+  const reader = new PacketReader(choreography.subarray(2));
+  reader.u16();
+  reader.u32();
+  reader.u16();
+  reader.u8();
+  reader.u8();
+  reader.u32();
+  assert.equal(reader.u32(), enemyDoid, "the choreography targets the enemy");
+});
+
+test("a dead pet returns as a new object and plays its teleport-in timeline", async (t) => {
+  const { gm, session, context } = await contextWithPet(75);
+  const wolf = gm.npcByConstant.get("WOLF_PET");
+  const originalDelay = wolf.RespawnT;
+  wolf.RespawnT = 0.01;
+  t.after(() => {
+    wolf.RespawnT = originalDelay;
+    cancelPetRespawn(session);
+  });
+
+  const first = await spawnEquippedPet(context, session);
+  applyDamage(session, first, session.actors.get(first).hitPoints);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.ok(session.petDoid);
+  assert.notEqual(session.petDoid, first);
+  assert.equal(session.actors.get(session.petDoid).hitPoints, 850);
+  const teleport = session.sent.find(
+    (frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+      frame.readUInt32LE(4) === session.petDoid && frame.readUInt16LE(8) === 145
+  );
+  assert.ok(teleport, "the replacement pet is introduced with TELEPORT_IN");
+});
+
+test("an enemy may target a nearer pet without confusing it for the owner hero", async () => {
+  const sent = [];
+  const heroDoid = 10;
+  const petDoid = 11;
+  const enemyDoid = 20;
+  const session = {
+    id: 10,
+    heroDoid,
+    heroPosition: { x: 1000, y: 0 },
+    objects: new Map([
+      [heroDoid, CLID.HeroGameObject],
+      [petDoid, CLID.DistributedNPCGameObject],
+      [enemyDoid, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      [heroDoid, { hitPoints: 200, maxHitPoints: 200, position: { x: 1000, y: 0 } }],
+      [petDoid, {
+        hitPoints: 100,
+        maxHitPoints: 100,
+        collisionRadius: 25,
+        isPet: true,
+        position: { x: 55, y: 0 },
+        team: TEAM.PLAYERS,
+      }],
+      [enemyDoid, {
+        hitPoints: 100,
+        maxHitPoints: 100,
+        collisionRadius: 25,
+        position: { x: 0, y: 0 },
+        team: TEAM.ENEMIES,
+        ai: {
+          kind: "enemy",
+          state: "idle",
+          engaged: false,
+          aggroRadius: 500,
+          disengageDistance: 1000,
+          moveSpeed: 0,
+          attackRange: 80,
+          attackTimerMs: 1500,
+          attackRandMs: 0,
+          nextAttackAt: 0,
+          attackType: 920050,
+          damage: 1,
+          attackColliders: [],
+        },
+      }],
+    ]),
+    sent,
+    send: (frame) => sent.push(frame),
+  };
+
+  await tickNpcAi(session, 1000, 0.1);
+  assert.equal(session.actors.get(petDoid).hitPoints, 99);
+  assert.equal(session.actors.get(heroDoid).hitPoints, 200);
+});
+
+test("the measured initial pet offset is stable", () => {
+  assert.deepEqual(petSpawnPosition({ x: 40, y: 90 }), { x: 40, y: -21 });
+});

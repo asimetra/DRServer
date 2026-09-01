@@ -19,7 +19,7 @@ export const scaledNpcWeaponPower = (weapon, level) => {
  * Invalid/corrupt inventory rows are ignored rather than becoming arbitrary
  * NPC spawns in a dungeon.
  */
-export const equippedPetSpawn = (gm, account, avatar, hero, heroWeapons = []) => {
+export const equippedPetSpawn = (gm, account, avatar, hero) => {
   if (!gm || !account || !avatar || !hero) return null;
   const owned = (account.account_pets ?? []).find(
     (pet) => Number(pet.equipped_hero) === Number(avatar.id)
@@ -36,7 +36,6 @@ export const equippedPetSpawn = (gm, account, avatar, hero, heroWeapons = []) =>
     constant: npc.Constant,
     level: Math.max(1, heroLevel(gm, hero, Number(avatar.experience ?? 0))),
     ownerHeroDoid: Number(avatar.id),
-    heroWeapons,
   };
 };
 

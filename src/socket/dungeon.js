@@ -50,10 +50,16 @@ import {
   wireSlotPoints,
   statTotals,
 } from "../hero-stats.js";
+import { npcStats } from "../combat-damage.js";
 import {
   infiniteDepthBonus,
   npcMaxHitPoints,
 } from "../npc-stats.js";
+import {
+  equippedPetSpawn,
+  petSpawnPosition,
+  scaledNpcWeaponPower,
+} from "../pets.js";
 import { stockFloor } from "./population.js";
 import { preloadFor } from "./precache.js";
 import { loadAccount } from "../accounts.js";
@@ -61,7 +67,8 @@ import {
   CLIENT_PERSISTENT_OBJECT_ID_MAX,
   isClientLocalObjectId,
 } from "../account-object-ids.js";
-import { CLID, TEAM } from "./opcodes.js";
+import { CLID, OP, TEAM } from "./opcodes.js";
+import { PacketWriter } from "./packet.js";
 import { trackDoober } from "./pickups.js";
 import {
   clearHazardBeats,
@@ -330,7 +337,11 @@ const TEAM_BY_CHAR_TYPE = {
 
 const NPC_ATTACK_SLOTS = ["Attack1", "Attack2", "Attack3", "Attack4", "Attack5", "Attack6"];
 
-export const npcAttackChoices = async (npc, nativeWeapon) => {
+export const npcAttackChoices = async (
+  npc,
+  nativeWeapon,
+  weaponPower = nativeWeapon?.Power ?? 1
+) => {
   /**
    * Everything it can swing, not just the first three.
    *
@@ -354,10 +365,10 @@ export const npcAttackChoices = async (npc, nativeWeapon) => {
       minRange: Math.max(0, Number(attack.MinRange ?? 0)),
       rechargeMs: Math.max(0, Number(attack.AI_RechargeT ?? 0) * 1000),
       readyAt: 0,
-      weaponPower: nativeWeapon?.Power ?? 1,
+      weaponPower,
       damage: Math.max(
         1,
-        Math.round((nativeWeapon?.Power ?? 1) * Math.abs(attack.DamageMod ?? -1))
+        Math.round(weaponPower * Math.abs(attack.DamageMod ?? -1))
       ),
       attackColliders: shape,
       projectile: projectileRow || null,
@@ -423,6 +434,11 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
    */
   const team = TEAM_BY_CHAR_TYPE[npc.CharType] ?? TEAM.ENEMIES;
   const nativeWeapon = npc.Weapon1 && (await weaponForConstant(npc.Weapon1));
+  const npcLevel = Math.max(1, Number(options.level ?? session.npcLevel ?? 1));
+  const nativeWeaponPower = Math.max(
+    1,
+    Number(options.weaponPower ?? nativeWeapon?.Power ?? 1)
+  );
   const nativeAttack = npc.Attack1 && (await attackForConstant(npc.Attack1));
   // Read once per spawn rather than per swing; a monster's reach does not change.
   const nativeAttackShape = nativeAttack
@@ -445,15 +461,18 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
    * This helper now reads Attack1..6, which keeps `FISSURE` on the rival
    * berserkers and the later dragon / boss specials in the rotation.
    */
-  const attackSet = await npcAttackChoices(npc, nativeWeapon);
+  const attackSet = await npcAttackChoices(npc, nativeWeapon, nativeWeaponPower);
   if (!context.isActive()) return emptyResult;
-  const rewardData = (npc.HP ?? 100) > 0 ? await deathRewardDataForNpc(npc) : null;
+  const rewardData =
+    !options.suppressRewards && (npc.HP ?? 100) > 0
+      ? await deathRewardDataForNpc(npc)
+      : null;
   if (!context.isActive()) return emptyResult;
   const weapons = nativeWeapon
     ? [
         {
           type: nativeWeapon.Id,
-          power: nativeWeapon.Power ?? 1,
+          power: nativeWeaponPower,
           requiredlevel: 1,
           rarity: 1,
         },
@@ -462,7 +481,6 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
 
 
   const npcDoid = session.allocateDoid(CLID.DistributedNPCGameObject);
-  const npcLevel = session.npcLevel ?? 1;
   /**
    * Only a launcher, and only when its own shot cannot leave. Everything else
    * is generated exactly where its tile put it.
@@ -486,7 +504,13 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
    */
   const partySize = Math.max(
     1,
-    [...membersOf(session)].filter((member) => member?.heroDoid != null).length
+    Math.min(
+      5,
+      Number(
+        options.partySize ??
+          [...membersOf(session)].filter((member) => member?.heroDoid != null).length
+      )
+    )
   );
   // Official party floors scale everything on them — barrels and cages and
   // secret walls along with the monsters. Cached for every supported party size
@@ -568,6 +592,10 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       partyHitPoints,
       partySize,
       constant: resolved,
+      level: npcLevel,
+      // Only a persistent pet needs its levelled vector stored: ordinary NPCs
+      // keep the existing lazy lookup, avoiding a 15-entry Map per prop.
+      stats: options.petOwnerDoid ? npcStats(gm, npc, npcLevel) : undefined,
       /**
        * Which side it is on, kept so a trap can be stopped from hitting it.
        *
@@ -582,6 +610,8 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       // Only real enemies gate floor completion; smashing every barrel is not
       // what finishes a dungeon.
       isEnemy: npc.CharType === "ENEMY",
+      isPet: npc.CharType === "PET" && Boolean(options.petOwnerDoid),
+      masterId: Number(options.masterId ?? 0),
       /**
        * How long this one is still worth drawing after it dies.
        *
@@ -654,7 +684,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
        */
       onDamage: (doid) => {
         if (!context.isActive()) return;
-        reportNpcDamage(session, position.id);
+        if (!options.suppressTriggerReporting) reportNpcDamage(session, position.id);
       },
       onDeath: (doid) => {
         if (context.isActive() && rewardData) {
@@ -671,15 +701,20 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
         // An NPC_LIFE_TRIGGER may be watching this exact placement — the boss
         // tile's is, and it is what starts the reward chest and the floor's
         // completion chain.
-        reportNpcDeath(session, position.id);
+        if (!options.suppressTriggerReporting) reportNpcDeath(session, position.id);
         options.onDeath?.(doid);
       },
       position: { x: at.x, y: at.y },
       collisionRadius,
       heading: spawnHeading,
       ai:
-        npc.CharType === "ENEMY" && npc.IsMover && nativeAttack
+        (npc.CharType === "ENEMY" || options.petOwnerDoid) && npc.IsMover && nativeAttack
           ? {
+              kind: options.petOwnerDoid ? "pet" : "enemy",
+              ownerDoid: Number(options.petOwnerDoid ?? 0),
+              tetherDistance: Math.max(0, Number(npc.TetherDist ?? 0)),
+              tetherTimerMs: Math.max(0, Number(npc.TetherTimer ?? 0) * 1000),
+              returnDistance: Math.max(0, Number(npc.ReturnDist ?? 0)),
               state: "idle",
               /**
                * A monster let out of a cage is already coming for you. Waiting
@@ -757,10 +792,10 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
               nextAttackAt: 0,
               attackType: nativeAttack.Id,
               // The attacker's own weapon, so damage is not read off the hero's.
-              weaponPower: nativeWeapon?.Power ?? 1,
+              weaponPower: nativeWeaponPower,
               damage: Math.max(
                 1,
-                Math.round((nativeWeapon?.Power ?? 1) * Math.abs(nativeAttack.DamageMod ?? -1))
+                Math.round(nativeWeaponPower * Math.abs(nativeAttack.DamageMod ?? -1))
               ),
               /**
                * The shape the swing actually covers and the frame it covers it
@@ -807,7 +842,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
        * them, which the client feeds to `checkIfMasterIsUser` and then gates
        * behind `CharType == "PET"` — harmless, but it is not what a monster is.
        */
-      masterId: npc.CharType === "PET" ? heroDoid : 0,
+      masterId: npc.CharType === "PET" ? Number(options.masterId ?? heroDoid) : 0,
       level: npcLevel,
       position: at,
       heading: spawnHeading,
@@ -823,6 +858,91 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
     })
   );
   return options.returnDoid ? npcDoid : 1;
+};
+
+const petTimelineAction = (doid, timeline) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(doid)
+    .u16(145) // DistributedNPCGameObject.ReceiveTimelineAction
+    .utf(timeline)
+    .frame();
+
+export const cancelPetRespawn = (member) => {
+  if (!member?.petRespawnTimer) return false;
+  clearTimeout(member.petRespawnTimer);
+  member.petRespawnTimer = null;
+  return true;
+};
+
+/** Generates one member's equipped inventory pet into the active shared floor. */
+export const spawnEquippedPet = async (context, member = context?.session?.member ?? context?.session, {
+  respawn = false,
+} = {}) => {
+  const owner = member?.member ?? member;
+  const spawn = owner?.petSpawn;
+  if (!spawn || !context?.session || !context.isActive?.()) return null;
+
+  cancelPetRespawn(owner);
+  const gm = context.gm ?? (await loadGameMaster());
+  const npc = await npcForConstant(spawn.constant);
+  if (!npc || npc.CharType !== "PET" || !npc.UsePetUI || !context.isActive()) return null;
+
+  const ownerActor = context.session.actors?.get(owner.heroDoid);
+  const ownerPosition = owner.heroPosition ?? ownerActor?.position;
+  if (!ownerPosition) return null;
+
+  const desired = petSpawnPosition(ownerPosition);
+  const radius = Math.max(12, Number(npc.CollisionSize ?? 25) * Number(npc.Scale ?? 1));
+  const at = nearestClearPosition(context.session.navigation, desired, radius, {
+    reach: 220,
+    towards: ownerPosition,
+  }) ?? desired;
+  const weapon = npc.Weapon1 ? await weaponForConstant(npc.Weapon1) : null;
+  const floorAtSpawn = context.floorDoid;
+
+  const doid = await spawnNpc(
+    { ...context, gm, heroDoid: owner.heroDoid },
+    spawn.constant,
+    at,
+    npc.Scale,
+    {
+      returnDoid: true,
+      level: spawn.level,
+      weaponPower: scaledNpcWeaponPower(weapon, spawn.level),
+      masterId: owner.heroDoid,
+      petOwnerDoid: owner.heroDoid,
+      partySize: context.partySize,
+      suppressRewards: true,
+      suppressTriggerReporting: true,
+      onDeath: () => {
+        if (owner.petDoid === doid) owner.petDoid = null;
+        cancelPetRespawn(owner);
+        const delay = Math.max(0, Number(npc.RespawnT ?? 0) * 1000);
+        if (!delay) return;
+        owner.petRespawnTimer = setTimeout(() => {
+          owner.petRespawnTimer = null;
+          if (
+            !context.isActive() ||
+            context.session.floorDoid !== floorAtSpawn ||
+            context.session.actors?.get(owner.heroDoid)?.dead
+          ) return;
+          spawnEquippedPet(
+            { ...context, floorDoid: context.session.floorDoid, gm },
+            owner,
+            { respawn: true }
+          ).catch((error) => warn(`[${context.session.id}] pet respawn failed: ${error.message}`));
+        }, delay);
+        owner.petRespawnTimer.unref?.();
+      },
+    }
+  );
+  if (!doid) return null;
+
+  owner.petDoid = doid;
+  if (respawn) {
+    context.session.send(petTimelineAction(doid, npc.TeleportInTimeline || "TELEPORT_IN"));
+  }
+  return doid;
 };
 
 /**
@@ -2052,6 +2172,7 @@ export const prepareDungeonMember = async (
   const consumables = consumablesForAvatar(avatar);
   session.heroWeapons = weapons;
   session.heroConsumables = consumables;
+  session.petSpawn = equippedPetSpawn(gm, account, avatar, hero);
   const hitPoints = hero ? maxHitPoints(gm, hero, avatar) : 100;
   const manaPoints = hero ? maxManaPoints(gm, hero, avatar) : 100;
   const effectiveHitPoints = hero
@@ -2248,6 +2369,7 @@ export const enterDungeon = async (
   const gm = await loadGameMaster();
   const weapons = weaponsForAvatar(account, avatar);
   session.heroWeapons = weapons;
+  session.petSpawn = equippedPetSpawn(gm, account, avatar, hero);
   /**
    * The two powerup slots, held on the session as well as sent, because using
    * one has to be counted somewhere the client cannot reach.
@@ -2393,6 +2515,20 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
     isActive,
   };
   const summary = [];
+
+  let petsBuilt = 0;
+  for (const member of party) {
+    const petDoid = await spawnEquippedPet(
+      {
+        ...context,
+        session: contextForMember(member),
+        heroDoid: member.heroDoid,
+      },
+      member
+    );
+    if (petDoid) petsBuilt += 1;
+  }
+  if (petsBuilt) summary.push(`pet ${petsBuilt}/${party.length}`);
 
   for (const [kind, build] of Object.entries(BUILDERS)) {
     if (!isActive()) return false;
@@ -2576,6 +2712,8 @@ const advanceFloorUnlocked = async (session) => {
   session.stopAi = null;
   const party = dungeonMembers(session);
   for (const member of party) {
+    cancelPetRespawn(member);
+    member.petDoid = null;
     member.stopManaRegen?.();
     member.stopManaRegen = null;
     clearSecurityState(contextForMember(member));
@@ -2686,6 +2824,7 @@ const disablePriority = (clid) => {
  */
 export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   const settled = settleDungeonAccount(session);
+  cancelPetRespawn(session);
 
   // Back in town, which the client reads as online and not in a dungeon.
   setPresenceLocation(session, 0);
@@ -2774,6 +2913,9 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "heroConsumables",
     "heroStats",
     "heroSpawn",
+    "petSpawn",
+    "petDoid",
+    "petRespawnTimer",
     "dungeonBusterAttack",
     "dungeonBusterPoints",
     "maxDungeonBusterPoints",

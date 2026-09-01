@@ -591,19 +591,64 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   }
   const heroDoids = new Set(heroes.map(({ doid }) => doid));
   const spatialIndex = buildNpcSpatialIndex(actors, deltaSeconds, heroDoids);
-
+  const pets = [];
+  const enemies = [];
   for (const [doid, actor] of actors) {
-    const ai = actor.ai;
-    if (!ai || actor.dead || !actor.position) continue;
-    const victim = heroes.reduce(
+    if (actor.dead || !(actor.hitPoints > 0) || !actor.position) continue;
+    const candidate = { doid, actor, position: actor.position, member: null };
+    if (actor.isPet) pets.push(candidate);
+    else if (actor.isEnemy) enemies.push(candidate);
+  }
+  const playerTargets = [...heroes, ...pets];
+
+  const nearestTo = (position, candidates) =>
+    candidates.reduce(
       (nearest, candidate) =>
         !nearest ||
-        squaredDistanceTo(actor.position, candidate.position) <
-          squaredDistanceTo(actor.position, nearest.position)
+        squaredDistanceTo(position, candidate.position) <
+          squaredDistanceTo(position, nearest.position)
           ? candidate
           : nearest,
       null
     );
+
+  for (const [doid, actor] of actors) {
+    const ai = actor.ai;
+    if (!ai || actor.dead || !actor.position) continue;
+    let followingOwner = false;
+    let victim;
+    if (ai.kind === "pet") {
+      const owner = heroes.find(({ doid: heroDoid }) => heroDoid === ai.ownerDoid);
+      if (!owner) {
+        clearNpcTarget(actor);
+        continue;
+      }
+      const enemy = nearestTo(actor.position, enemies);
+      const ownerDistance = distanceTo(actor.position, owner.position);
+      const enemyDistance = enemy ? distanceTo(actor.position, enemy.position) : Infinity;
+      if (ai.tetherDistance > 0 && ownerDistance > ai.tetherDistance) {
+        ai.outsideTetherAt ??= now;
+      } else {
+        ai.outsideTetherAt = null;
+      }
+      const mustReturn =
+        ai.outsideTetherAt != null && now - ai.outsideTetherAt >= (ai.tetherTimerMs ?? 0);
+      if (mustReturn || !enemy || (!ai.engaged && enemyDistance > ai.aggroRadius)) {
+        if (ownerDistance <= Math.max(heroContact(actor, owner.actor), ai.returnDistance ?? 0)) {
+          clearNpcTarget(actor);
+          continue;
+        }
+        victim = owner;
+        followingOwner = true;
+        ai.engaged = false;
+        ai.state = "return";
+      } else {
+        victim = enemy;
+      }
+    } else {
+      victim = nearestTo(actor.position, playerTargets);
+    }
+    if (!victim) continue;
     const target = victim.position;
     if (ai.wave && now >= ai.wave.group.expiresAt) ai.wave = null;
     if (
@@ -621,14 +666,16 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     ) continue;
 
     let distance = distanceTo(actor.position, target);
-    if (!ai.engaged) {
-      if (distance > ai.aggroRadius) continue;
-      ai.engaged = true;
-      ai.state = "chase";
-    } else if (distance > ai.disengageDistance) {
-      ai.engaged = false;
-      ai.state = "idle";
-      continue;
+    if (!followingOwner) {
+      if (!ai.engaged) {
+        if (distance > ai.aggroRadius) continue;
+        ai.engaged = true;
+        ai.state = "chase";
+      } else if (distance > ai.disengageDistance) {
+        ai.engaged = false;
+        ai.state = "idle";
+        continue;
+      }
     }
 
     /**
@@ -686,7 +733,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * range is only ever asked one question, which is whether the thing may
      * swing from where it now stands. That question is still below.
      */
-    const standoff = heroStandoff(actor, victim.actor);
+    const standoff = followingOwner
+      ? Math.max(heroContact(actor, victim.actor), ai.returnDistance ?? 0)
+      : heroStandoff(actor, victim.actor);
     let chaseX = 0;
     let chaseY = 0;
     /**
@@ -739,6 +788,11 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         session.send(npcPositionUpdate(doid, actor.position));
       }
       distance = distanceTo(actor.position, target);
+    }
+
+    if (followingOwner) {
+      ai.state = "return";
+      continue;
     }
 
     const clearAttack = hasLineOfSight(
@@ -796,8 +850,10 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     ai.nextAttackAt = now + attackIntervalMs(ai);
     // Awaited so the hit lands before the tick moves on: damage is the
     // server's own bookkeeping and must not race the next frame.
-    const victimSession = victim.member.world?.contextFor(victim.member) ?? victim.member;
-    await performNpcAttack(victimSession, doid, { ...ai, ...chosen });
+    const victimSession = victim.member
+      ? victim.member.world?.contextFor(victim.member) ?? victim.member
+      : session;
+    await performNpcAttack(victimSession, doid, { ...ai, ...chosen }, victim.doid);
   }
 };
 
