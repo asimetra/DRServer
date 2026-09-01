@@ -130,6 +130,13 @@ export const runRecordFor = (session, success) => {
     damage: session.dungeonContribution?.damage ?? 0,
     gold: session.dungeonRewards?.gold ?? 0,
     xp: session.dungeonRewards?.xp ?? 0,
+    /**
+     * What the hero holds after the run — the same figure the report shows and
+     * the levels come from. `experience` was paid out across the run by the
+     * time the summary is drawn (rewards.js banks it as it lands), so this is
+     * the number the hero experience board ranks.
+     */
+    hero_xp: avatar.experience ?? 0,
     // Written to the history either way; only kept off the boards.
     rankable: rankable(session.mapPage?.NodeType) && startedAt !== null,
   };

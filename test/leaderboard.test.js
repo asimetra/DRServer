@@ -95,16 +95,30 @@ test("a hero and a party size rank on their own board", async () => {
   assert.deepEqual(solo.map((e) => e.account_id), [1], "the other two are elsewhere");
 });
 
-test("experience and clears accumulate rather than replace", async () => {
+test("clears accumulate rather than replace", async () => {
   const map_node_id = aNode();
-  await recordRuns([run({ account_id: 40, map_node_id, xp: 300 })]);
-  await recordRuns([run({ account_id: 40, map_node_id, xp: 200 })]);
+  await recordRuns([run({ account_id: 40, map_node_id })]);
+  await recordRuns([run({ account_id: 40, map_node_id })]);
 
-  const experience = (await boardFor("experience", {})).find((e) => e.account_id === 40);
   const clears = (await boardFor("clears", {})).find((e) => e.account_id === 40);
-
-  assert.equal(experience.value, 500, "two runs, both counted");
   assert.equal(clears.value, 2);
+});
+
+/**
+ * The experience board ranks what a hero holds, not what runs have paid out.
+ * A run's own xp is history; `hero_xp` is the figure the training screen reads.
+ * It is a best, so it replaces when beaten and stands when it is not — and a
+ * run by a less-practised hero moves nothing.
+ */
+test("the experience standing is the most a hero holds, replaced only when beaten", async () => {
+  const map_node_id = aNode();
+  await recordRuns([run({ account_id: 40, map_node_id, hero_id: 101, xp: 300, hero_xp: 12_400 })]);
+  await recordRuns([run({ account_id: 40, map_node_id, hero_id: 101, xp: 200, hero_xp: 12_600 })]);
+  await recordRuns([run({ account_id: 40, map_node_id, hero_id: 106, xp: 500, hero_xp: 90 })]);
+
+  const experience = (await boardFor("hero_experience", {})).find((e) => e.account_id === 40);
+  assert.equal(experience.value, 12_600, "a worse run does not replace a better one");
+  assert.equal(experience.hero_id, 101, "the hero that set it is the hero on the standing");
 });
 
 /**
@@ -149,7 +163,27 @@ test("the board size is capped", async () => {
 
 test("an unknown board is not a board", async () => {
   assert.equal(await boardFor("mostGold", {}), null);
-  assert.deepEqual(Object.keys(BOARDS), ["speedrun", "experience", "clears"]);
+  assert.equal(await boardFor("experience", {}), null, "the old name ranks nothing any more");
+  assert.deepEqual(Object.keys(BOARDS), ["speedrun", "hero_experience", "clears"]);
+});
+
+/**
+ * The old board's standings meant something else — what runs paid out, summed —
+ * and no rule turns that into the figure the board ranks now. They are swept
+ * rather than shown, and everything else in the file survives the sweep.
+ */
+test("the old experience board's standings are swept at startup", async () => {
+  const bestsFile = path.join(scratch, "dungeon-bests.json");
+  const bests = JSON.parse(fs.readFileSync(bestsFile, "utf8"));
+  bests.experience = { 5: { value: 999_999, name: "Ghost of the old board" } };
+  fs.writeFileSync(bestsFile, JSON.stringify(bests));
+
+  const { purgeLegacyExperienceBoard } = await import("../src/leaderboard.js");
+  await purgeLegacyExperienceBoard();
+
+  const swept = JSON.parse(fs.readFileSync(bestsFile, "utf8"));
+  assert.ok(!("experience" in swept), "the accumulated total is gone");
+  assert.ok("speedrun" in swept, "and the boards that still mean what they meant do not");
 });
 
 /**
@@ -209,18 +243,18 @@ test("a standing carries the hero it was set on", async () => {
 });
 
 /**
- * On a whole-account board the hero is whoever ran last, because that is what a
- * standing that accumulates can honestly say — there is no single hero behind a
- * lifetime total.
+ * A best is somebody's, on a hero. Unlike a lifetime total there is a single
+ * hero behind the figure — whoever set it — so the standing carries them, and
+ * keeps carrying them while the record stands.
  */
-test("an accumulating standing carries the hero of the latest run", async () => {
+test("the experience standing keeps the hero that set it", async () => {
   const map_node_id = aNode();
-  await recordRuns([run({ account_id: 66, map_node_id, hero_id: 101, xp: 100 })]);
-  await recordRuns([run({ account_id: 66, map_node_id, hero_id: 106, xp: 100 })]);
+  await recordRuns([run({ account_id: 66, map_node_id, hero_id: 101, xp: 100, hero_xp: 5_000 })]);
+  await recordRuns([run({ account_id: 66, map_node_id, hero_id: 106, xp: 500, hero_xp: 90 })]);
 
-  const mine = (await boardFor("experience", {})).find((e) => e.account_id === 66);
-  assert.equal(mine.hero_id, 106);
-  assert.equal(mine.value, 200, "the total still accumulates");
+  const mine = (await boardFor("hero_experience", {})).find((e) => e.account_id === 66);
+  assert.equal(mine.hero_id, 101, "the record still belongs to the hero that set it");
+  assert.equal(mine.value, 5_000);
 });
 
 test("a run recorded without a hero reads as none rather than missing", async () => {

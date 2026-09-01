@@ -3,6 +3,7 @@ import { start as startWebServices } from "./http.js";
 import { start as startGameSocket } from "./socket/index.js";
 import { start as startInternalApi } from "./internal.js";
 import { config } from "./config.js";
+import { purgeLegacyExperienceBoard } from "./leaderboard.js";
 import {
   checkCompatibilityData,
   ensureSafeTransport,
@@ -23,6 +24,12 @@ reportContentOverride();
 ensureTokenSecret();
 reportAuth();
 await checkDatabaseSchema();
+/**
+ * Before anything records a run: the experience board changed what it ranks,
+ * and the standings kept under its old meaning go. Deleting the dead key is
+ * safe on every boot — the old name is never written again.
+ */
+await purgeLegacyExperienceBoard();
 ensureSafeTransport();
 
 startWebServices();

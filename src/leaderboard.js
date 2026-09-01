@@ -57,8 +57,17 @@ export const BOARDS = Object.freeze({
    * Successful runs only: a walk-out is not a fast clear.
    */
   speedrun: { better: "lower", scope: "node", successOnly: true },
-  /** Experience earned, all heroes together. Levels stop at 100; this does not. */
-  experience: { better: "higher", scope: "player", successOnly: false },
+  /**
+   * The most experience a single hero holds.
+   *
+   * Not what runs have paid out over a lifetime — that is a record of runs,
+   * and the website's front page used to keep it under this name. What a
+   * player means by "most experience" is the figure the training screen reads:
+   * what the hero itself has banked, the same number the levels come from,
+   * capped where the hero's ladder caps. Replaced when beaten, like a best,
+   * because it is one.
+   */
+  hero_experience: { better: "higher", scope: "player", successOnly: false },
   /** Dungeons finished, ever. The plainest measure of having been here a while. */
   clears: { better: "higher", scope: "player", successOnly: true },
 });
@@ -137,7 +146,7 @@ const keyFor = (metric, run) =>
 
 const valueFor = (metric, run) => {
   if (metric === "speedrun") return run.duration_ms;
-  if (metric === "experience") return run.xp;
+  if (metric === "hero_experience") return run.hero_xp ?? 0;
   return 1;
 };
 
@@ -179,8 +188,10 @@ const beats = (metric, value, standing) => {
 /**
  * Folds one run into the bests.
  *
- * `higher` boards that count rather than measure — clears — accumulate instead
- * of replacing, which is what makes "how many" a board at all.
+ * The one board that counts rather than measures — clears — accumulates
+ * instead of replacing, which is what makes "how many" a board at all. Every
+ * other standing, the hero experience among them, is a best: it moves only
+ * when beaten.
  */
 const foldRun = (bests, run) => {
   for (const [metric, board] of Object.entries(BOARDS)) {
@@ -190,7 +201,7 @@ const foldRun = (bests, run) => {
     const value = valueFor(metric, run);
     const standing = row[run.account_id]?.value;
 
-    if (metric === "clears" || metric === "experience") {
+    if (metric === "clears") {
       row[run.account_id] = {
         value: (standing ?? 0) + value,
         at: run.finished_at,
@@ -211,6 +222,28 @@ const foldRun = (bests, run) => {
     }
   }
   return bests;
+};
+
+/**
+ * The board the `hero_experience` board replaced, under its old name.
+ *
+ * `experience` used to accumulate what runs paid out — a lifetime record of
+ * runs, which is not what the board ranks any more and cannot be converted
+ * into it. Startup deletes it once; the key is never written again, so the
+ * delete is safe to meet on every boot after the first.
+ */
+const LEGACY_EXPERIENCE_KEY = "experience";
+
+export const purgeLegacyExperienceBoard = async () => {
+  if (usingDatabase()) {
+    await (await db()).purgeBoard(LEGACY_EXPERIENCE_KEY);
+    return;
+  }
+  const bests = await readJson(BESTS_FILE, null);
+  if (bests && LEGACY_EXPERIENCE_KEY in bests) {
+    delete bests[LEGACY_EXPERIENCE_KEY];
+    await writeJson(BESTS_FILE, bests);
+  }
 };
 
 /**

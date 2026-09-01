@@ -284,8 +284,13 @@ export const ping = async () => {
  */
 const BOARD_FOLD = {
   speedrun: "LEAST(dungeon_bests.value, EXCLUDED.value)",
-  experience: "dungeon_bests.value + EXCLUDED.value",
+  hero_experience: "GREATEST(dungeon_bests.value, EXCLUDED.value)",
   clears: "dungeon_bests.value + EXCLUDED.value",
+};
+
+/** Every standing under one board key, gone — startup's answer to a board whose meaning changed. */
+export const purgeBoard = async (key) => {
+  await connect().query("DELETE FROM dungeon_bests WHERE board_key = $1", [key]);
 };
 
 export const recordRuns = async (runs, boards) => {

@@ -290,7 +290,16 @@ const readProfile = async (req, [capture]) => {
     trophies_of: 12,
     title: titleFor(account.trophies),
     clears: standings.clears ?? 0,
-    experience_total: standings.experience ?? 0,
+    /**
+     * Every point the heroes hold, which is every point they were ever paid:
+     * experience is only ever added, and the ladder cap is where each hero's
+     * share of it stops. Read off the avatars rather than a board, because it
+     * is a fact about the account and the account is already loaded.
+     */
+    experience_total: (account.account_avatars ?? []).reduce(
+      (total, avatar) => total + Number(avatar.experience ?? 0),
+      0
+    ),
     heroes,
     /*
      * Readable about anybody, which is the point. A market where everybody's
@@ -395,7 +404,11 @@ const readSummary = async (req, [capture]) => {
         }
       : null,
     clears: standings.clears ?? 0,
-    experience_total: standings.experience ?? 0,
+    /* Same answer as the profile's, and by the same reasoning. */
+    experience_total: (account.account_avatars ?? []).reduce(
+      (total, avatar) => total + Number(avatar.experience ?? 0),
+      0
+    ),
   });
 };
 
