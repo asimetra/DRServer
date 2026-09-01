@@ -201,3 +201,42 @@ test("market browsing exposes useful item facts and applies filters before pagin
   const tooCheap = await call("GET", "/internal/v1/market?maxPrice=100").then((r) => r.json());
   assert.equal(tooCheap.total, 0);
 });
+
+/**
+ * Every market route, answered.
+ *
+ * Written because the sales endpoint shipped broken while the whole suite was
+ * green: it referenced a helper that a later refactor had removed, and nothing
+ * called the route to find out. The module under it was tested and the wiring
+ * was not, which is the gap this closes — a handler that throws on its first
+ * line still passes every test of the thing it calls.
+ */
+test("every market route answers rather than throwing", async () => {
+  const { accountId } = await (await call("POST", "/internal/v1/accounts", { body: { name: "Stallholder" } })).json();
+
+  for (const route of [
+    "/internal/v1/market",
+    `/internal/v1/accounts/${accountId}/stall`,
+    `/internal/v1/accounts/${accountId}/sales`,
+    `/internal/v1/accounts/${accountId}/summary`,
+  ]) {
+    const response = await call("GET", route);
+    assert.equal(response.status, 200, `${route} answered ${response.status}`);
+    // A 500 here is JSON too, so the body is checked rather than the status alone.
+    const body = await response.json();
+    assert.ok(!body.error, `${route} answered with ${body.error}`);
+  }
+});
+
+test("a sales history is empty rather than missing for somebody who has not traded", async () => {
+  const { accountId } = await (await call("POST", "/internal/v1/accounts", { body: { name: "Quiet One" } })).json();
+  const body = await (await call("GET", `/internal/v1/accounts/${accountId}/sales`)).json();
+
+  assert.equal(body.account_id, accountId);
+  assert.deepEqual(body.sales, []);
+});
+
+test("a sales history is refused for an account that does not exist", async () => {
+  assert.equal((await call("GET", "/internal/v1/accounts/4000000000/sales")).status, 404);
+  assert.equal((await call("GET", "/internal/v1/accounts/nope/sales")).status, 400);
+});

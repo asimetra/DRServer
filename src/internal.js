@@ -18,6 +18,7 @@ import {
   listForSale,
   stallFor,
 } from "./market.js";
+import { salesFor } from "./market-history.js";
 import { weaponSaleValue } from "./store.js";
 import { info, warn } from "./log.js";
 
@@ -529,6 +530,34 @@ const readMarket = async (req) => {
   });
 };
 
+/**
+ * GET /internal/v1/accounts/:id/sales — what this account has bought and sold.
+ *
+ * Readable about anybody, deliberately. A market where the record of what
+ * everybody has done is private is a market where moving gold to an alt is
+ * invisible; open, the pattern that gives it away — the same pair, the same junk
+ * weapon, the same enormous price — is something any player can notice. It is
+ * the cheapest enforcement there is, and it needs no rule.
+ *
+ * Neither side's account id is in the answer beyond what the boards already
+ * carry: names identify people here, the way they do everywhere else.
+ */
+const readSales = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  const sales = await salesFor(id, { limit: req.query?.get("limit") ?? 50 });
+  const gm = await loadGameMaster();
+  return json({
+    account_id: id,
+    sales: describeListings(sales, gm),
+  });
+};
+
 /** GET /internal/v1/accounts/:id/stall — one seller's own: what is up, what is owed. */
 const readStall = async (req, [capture]) => {
   const refusal = authorise(req);
@@ -713,6 +742,7 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/market/:id/cancel", handler: withdrawListing },
   { method: "GET", pattern: "/internal/v1/names/:name", handler: checkNameFree },
   { method: "GET", pattern: "/internal/v1/accounts/:id/stall", handler: readStall },
+  { method: "GET", pattern: "/internal/v1/accounts/:id/sales", handler: readSales },
   { method: "POST", pattern: "/internal/v1/accounts/:id/stall/claim", handler: collectProceeds },
 ];
 

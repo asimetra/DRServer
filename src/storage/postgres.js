@@ -348,6 +348,41 @@ export const boardRows = async (key, { ascending = true, limit = 20 } = {}) => {
   }));
 };
 
+/**
+ * One completed sale. Append-only: nothing updates or deletes these, which is
+ * what makes the history worth trusting when it is read as evidence.
+ */
+export const recordSale = async (sale) => {
+  await connect().query(
+    `INSERT INTO market_sales
+       (listing_id, at, seller_id, seller_name, buyer_id, buyer_name,
+        item_id, rarity, power, requiredlevel, price, tax, proceeds, listed_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    [
+      sale.listing_id, sale.at, sale.seller_id, sale.seller_name, sale.buyer_id,
+      sale.buyer_name, sale.item_id, sale.rarity, sale.power, sale.requiredlevel,
+      sale.price, sale.tax, sale.proceeds, sale.listed_at,
+    ]
+  );
+};
+
+/** Both sides of one account's market history, newest first. */
+export const salesFor = async (accountId, limit) => {
+  const { rows } = await connect().query(
+    `SELECT listing_id, at, seller_id, seller_name, buyer_id, buyer_name,
+            item_id, rarity, power, requiredlevel, price, tax, proceeds, listed_at
+       FROM market_sales
+      WHERE seller_id = $1 OR buyer_id = $1
+      ORDER BY at DESC LIMIT $2`,
+    [accountId, limit]
+  );
+  return rows.map((row) => ({
+    ...row,
+    at: row.at instanceof Date ? row.at.toISOString() : row.at,
+    listed_at: row.listed_at instanceof Date ? row.listed_at.toISOString() : row.listed_at,
+  }));
+};
+
 /** How many runs finished since a moment, for the front page's counter. */
 export const runsSince = async (since) => {
   const { rows } = await connect().query(

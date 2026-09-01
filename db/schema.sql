@@ -176,6 +176,41 @@ CREATE TABLE IF NOT EXISTS market_listings (
 );
 
 CREATE INDEX IF NOT EXISTS market_listings_account ON market_listings(account_id);
+
+-- What the market has done, kept for good.
+--
+-- The listings above cannot be the history: one lives on the seller's account
+-- so that putting a weapon up is a single atomic write, and the price of that
+-- is that every account save rewrites all of them — a list that grew for the
+-- life of the server would make saving an account slower every week. So they
+-- stay bounded and completed sales come here instead, off the account write
+-- path entirely, the same way dungeon_runs sits off it.
+--
+-- Both sides are stored by id and by the name each held at the time: the id is
+-- what makes two rows the same person, the name is what makes a row readable a
+-- year later. The weapon is described rather than referenced, because the item
+-- has moved on and pointing at it would be pointing at something that changes.
+CREATE TABLE IF NOT EXISTS market_sales (
+    id            BIGSERIAL   PRIMARY KEY,
+    listing_id    BIGINT      NOT NULL,
+    at            TIMESTAMPTZ NOT NULL,
+    seller_id     BIGINT      NOT NULL,
+    seller_name   TEXT,
+    buyer_id      BIGINT      NOT NULL,
+    buyer_name    TEXT,
+    item_id       INTEGER     NOT NULL,
+    rarity        SMALLINT,
+    power         INTEGER,
+    requiredlevel INTEGER,
+    price         BIGINT      NOT NULL,
+    tax           BIGINT      NOT NULL DEFAULT 0,
+    proceeds      BIGINT      NOT NULL,
+    listed_at     TIMESTAMPTZ
+);
+
+-- A profile asks for one person's history, both sides of it, newest first.
+CREATE INDEX IF NOT EXISTS market_sales_seller ON market_sales(seller_id, at DESC);
+CREATE INDEX IF NOT EXISTS market_sales_buyer ON market_sales(buyer_id, at DESC);
 -- What the market page reads: everything still up, newest first.
 CREATE INDEX IF NOT EXISTS market_listings_open ON market_listings(listed_at DESC) WHERE sold_to IS NULL;
 

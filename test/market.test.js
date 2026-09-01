@@ -443,3 +443,78 @@ test("a barred account neither lists nor buys", async () => {
     (error) => error.reason === "barred"
   );
 });
+
+/* --------------------------------------------------------- sales history - */
+
+/**
+ * A listing is deleted at the claim, so without a history a completed sale
+ * leaves nothing behind — and a sale is the one thing here that moves value
+ * between two people.
+ */
+test("a completed sale is written down, and survives the claim", async () => {
+  const { salesFor } = await import("../src/market-history.js");
+  const seller = await anAccount({ gold: 0, items: [weapon(7700, { rarity: 2, power: 21 })] });
+  const buyer = await anAccount({ gold: 5000 });
+
+  await listForSale({ sellerId: seller.id, itemId: 7700, price: 900 });
+  await buyListing({ listingId: 7700, buyerId: buyer.id });
+  await claimProceeds({ sellerId: seller.id });
+
+  // The listing is gone from the account, which is the whole point of the file.
+  assert.deepEqual((await loadAccount(seller.id)).market_listings, []);
+
+  const [sale] = await salesFor(seller.id);
+  assert.equal(sale.listing_id, 7700);
+  assert.equal(sale.seller_id, seller.id);
+  assert.equal(sale.buyer_id, buyer.id);
+  assert.equal(sale.price, 900);
+  assert.equal(sale.tax + sale.proceeds, 900, "the split is recorded, and adds back");
+  assert.equal(sale.rarity, 2, "and what was sold, not a pointer to it");
+  assert.equal(sale.power, 21);
+});
+
+/**
+ * Both sides. The question a profile is opened to ask is what somebody has been
+ * doing in the market, and half an answer invites the wrong conclusion.
+ */
+test("a history is both what somebody sold and what they bought", async () => {
+  const { salesFor } = await import("../src/market-history.js");
+  const one = await anAccount({ gold: 5000, items: [weapon(7710)] });
+  const two = await anAccount({ gold: 5000, items: [weapon(7711)] });
+
+  await listForSale({ sellerId: one.id, itemId: 7710, price: 100 });
+  await buyListing({ listingId: 7710, buyerId: two.id });
+  await listForSale({ sellerId: two.id, itemId: 7711, price: 200 });
+  await buyListing({ listingId: 7711, buyerId: one.id });
+
+  const mine = await salesFor(one.id);
+  assert.equal(mine.length, 2, "one sale each way");
+  assert.deepEqual(
+    mine.map((sale) => (sale.seller_id === one.id ? "sold" : "bought")).sort(),
+    ["bought", "sold"]
+  );
+});
+
+/**
+ * The name each side held at the time, so a row is readable a year later after
+ * somebody has been renamed or has stopped playing.
+ */
+test("a sale remembers what both were called", async () => {
+  const { salesFor } = await import("../src/market-history.js");
+  const seller = await anAccount({ items: [weapon(7720)] });
+  const buyer = await anAccount({ gold: 5000 });
+
+  await listForSale({ sellerId: seller.id, itemId: 7720, price: 150 });
+  await buyListing({ listingId: 7720, buyerId: buyer.id });
+
+  const [sale] = await salesFor(seller.id);
+  assert.equal(sale.seller_name, seller.name);
+  assert.equal(sale.buyer_name, buyer.name);
+});
+
+/** Somebody who has done nothing has an empty history, not a failure. */
+test("an account with no market history reads as none", async () => {
+  const { salesFor } = await import("../src/market-history.js");
+  const quiet = await anAccount({});
+  assert.deepEqual(await salesFor(quiet.id), []);
+});

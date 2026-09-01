@@ -10,6 +10,7 @@ import { heldAccount } from "./account-registry.js";
 import { occupiedSlots, storageLimit } from "./inventory-space.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { ceilingFor, isBarred, shareOf, slotsFor } from "./market-rules.js";
+import { recordSale, saleRecord } from "./market-history.js";
 import { info } from "./log.js";
 
 /**
@@ -311,6 +312,26 @@ export const buyListing = async ({ listingId, buyerId } = {}) => {
 
     await saveAccounts([sellerAccount, buyerAccount]);
     invalidateBrowse();
+
+    /*
+     * The permanent record, written after the money has moved and never before
+     * it. A listing is deleted at the claim, so without this a completed sale
+     * leaves nothing behind — and a sale is the one thing here that moves value
+     * between two people, which is exactly what a history is for.
+     *
+     * Not awaited into the result: it cannot fail the sale, because the sale is
+     * already durable and undoing it because the paperwork failed would be the
+     * worse outcome. `recordSale` logs its own failures.
+     */
+    await recordSale(
+      saleRecord({
+        listing,
+        sellerId: seller,
+        sellerName: sellerAccount.name,
+        buyerId: buyer,
+        buyerName: buyerAccount.name,
+      })
+    );
 
     /* Written down because this is the one thing here that moves value between
        two people, and "it was not me" is the complaint an operator cannot
