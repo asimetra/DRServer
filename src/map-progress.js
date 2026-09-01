@@ -18,10 +18,9 @@ export const setMapNodeBit = (mask, bitIndex) => {
  * The bits the boss nodes own, and the trophy count a mask carries.
  *
  * A trophy is the first clear of a boss node, one each, and the map has twelve
- * of them — so the honest total is read straight off the mask rather than kept
- * as a column that a legacy import can leave short of it. The account's own
- * mask is the union of its heroes' (rewards.js writes both, the account's
- * never behind), so the account mask alone is the whole answer.
+ * of them. The honest total is the union of every hero's own clears — one
+ * hero's mask, another hero's mask, all of them laid over each other — read
+ * off the bits rather than kept as a column a legacy import can leave short.
  */
 export const bossNodeBits = (gm) =>
   new Set(
@@ -30,6 +29,19 @@ export const bossNodeBits = (gm) =>
       .map((node) => Number(node.BitIndex))
   );
 
+/** Every mask laid over the others: a bit stands if any hero earned it. */
+export const unionMapNodeMasks = (...masks) => {
+  const bytes = [];
+  for (const mask of masks) {
+    Array.from(mask ?? "", (character) => character.charCodeAt(0) & 0xff).forEach(
+      (byte, index) => {
+        bytes[index] = (bytes[index] ?? 0) | byte;
+      }
+    );
+  }
+  return bytes.map((byte) => String.fromCharCode(byte)).join("");
+};
+
 export const trophiesFor = (mask, gm) => {
   let total = 0;
   for (const bit of bossNodeBits(gm)) {
@@ -37,3 +49,13 @@ export const trophiesFor = (mask, gm) => {
   }
   return total;
 };
+
+/** The trophies of an account: every hero's clears, unioned. */
+export const accountTrophies = (account, gm) =>
+  trophiesFor(
+    unionMapNodeMasks(
+      account.completed_mapnode_mask,
+      ...(account.account_avatars ?? []).map((avatar) => avatar.completed_mapnode_mask)
+    ),
+    gm
+  );

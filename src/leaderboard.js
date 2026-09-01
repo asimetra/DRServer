@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
 import { info, warn } from "./log.js";
-import { trophiesFor } from "./map-progress.js";
+import { accountTrophies } from "./map-progress.js";
 
 /**
  * What a finished run leaves behind, and the boards read off it.
@@ -306,7 +306,7 @@ export const seedStandings = async () => {
       null
     );
     const experience = Number(best?.experience ?? 0);
-    const trophies = trophiesFor(account.completed_mapnode_mask, gm);
+    const trophies = accountTrophies(account, gm);
     if (experience) {
       await offer("hero_experience", id, {
         value: experience,

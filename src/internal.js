@@ -287,7 +287,6 @@ const readProfile = async (req, [capture]) => {
   return json({
     name: account.name ?? null,
     trophies: account.trophies ?? 0,
-    trophies_of: 12,
     title: titleFor(account.trophies),
     clears: standings.clears ?? 0,
     /**
@@ -387,9 +386,6 @@ const readSummary = async (req, [capture]) => {
     account_id: account.id,
     name: account.name ?? null,
     trophies: account.trophies ?? 0,
-    /* Twelve, because a trophy is the first clear of a boss node and there are
-       twelve of those — so the panel can draw a bar without inventing a max. */
-    trophies_of: 12,
     title: titleFor(account.trophies),
     heroes: (account.account_avatars ?? []).length,
     hero: hero

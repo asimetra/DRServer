@@ -7,7 +7,7 @@ import { loadGameMaster } from "./gamemaster.js";
 import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
 import { repairSpentPowerups } from "./powerup-slots.js";
-import { trophiesFor } from "./map-progress.js";
+import { accountTrophies } from "./map-progress.js";
 import { info, warn } from "./log.js";
 import {
   ACCOUNT_OBJECT_ID_FLOOR,
@@ -243,14 +243,14 @@ export const repairAccountAttributes = async (account) => {
 
 /**
  * The trophy column is a running total that a legacy import can leave short:
- * the account above was carried over with eight where its mask holds twelve
- * boss clears. The mask is the truth — every boss it has a bit for was beaten,
- * by some hero, once — so the count is read off it, and a column already
- * correct changes nothing.
+ * the account above was carried over with eight where its heroes' masks hold
+ * twelve boss clears between them. The union of every hero's mask is the
+ * truth — a bit any hero set was beaten once — so the count is read off it,
+ * and a column already correct changes nothing.
  */
 export const repairTrophyCount = async (account) => {
   const gm = await loadGameMaster();
-  const total = trophiesFor(account.completed_mapnode_mask, gm);
+  const total = accountTrophies(account, gm);
   if (Number(account.trophies ?? 0) === total) return false;
   account.trophies = total;
   return true;
