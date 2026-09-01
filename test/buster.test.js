@@ -11,10 +11,10 @@ import {
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
 
-const attackProposal = (attackType, weaponSlot = 0) =>
+const attackProposal = (attackType, weaponSlot = 0, isConsumable = 0) =>
   new PacketWriter()
     .u8(weaponSlot)
-    .u8(0)
+    .u8(isConsumable)
     .u32(attackType)
     .u32(0)
     .u8(0)
@@ -1325,4 +1325,77 @@ test("a potion that does not refill leaves the meter alone", async () => {
   );
 
   assert.equal(session.dungeonBusterPoints, 2, "still where it was");
+});
+
+/**
+ * Mana consumables, which are authored as a negative cost.
+ *
+ * Every one of them says so: Mana Shot is `ManaCost: -15`, the potion and the
+ * keg are -999, which is the table's way of writing "all of it". The cost was
+ * clamped at zero on the way in, so all three read as free and did nothing —
+ * no Mana spent, and none given. The bar never moved.
+ */
+const manaSession = (sent, manaPoints, stackable) => ({
+  id: 77,
+  heroDoid: 500,
+  floorDoid: 400,
+  dungeonZone: 10,
+  heroManaPoints: manaPoints,
+  maxHeroManaPoints: 200,
+  heroWeapons: [{ type: 11001 }],
+  // A consumable is used out of a powerup slot, not a weapon slot.
+  heroConsumables: [{ type: stackable, count: 3 }],
+  objects: new Map([
+    [400, CLID.DistributedDungeonFloor],
+    [500, CLID.HeroGameObject],
+  ]),
+  allocateDoid(clid) {
+    this.objects.set(600, clid);
+    return 600;
+  },
+  send: (frame) => sent.push(frame),
+});
+
+test("a Mana Shot gives back the fifteen the table says", async () => {
+  const sent = [];
+  const session = manaSession(sent, 40, 70017);
+
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(attackProposal(910516, 0, 1)),
+    FLID_PROPOSE_ATTACK_CHOREOGRAPHY
+  );
+
+  assert.equal(session.heroManaPoints, 55, "forty and fifteen");
+});
+
+/** -999 is the table asking for the whole bar, not for nine hundred points. */
+test("a Mana Potion fills the bar rather than overfilling it", async () => {
+  const sent = [];
+  const session = manaSession(sent, 12, 70002);
+
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(attackProposal(910502, 0, 1)),
+    FLID_PROPOSE_ATTACK_CHOREOGRAPHY
+  );
+
+  assert.equal(session.heroManaPoints, 200, "capped at the hero's maximum");
+});
+
+/**
+ * And it is drinkable on empty, which is the only time it matters. The
+ * affordability check refuses a cost nobody can pay; a gift is not a cost.
+ */
+test("a mana consumable is not refused for want of mana", async () => {
+  const sent = [];
+  const session = manaSession(sent, 0, 70017);
+
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(attackProposal(910516, 0, 1)),
+    FLID_PROPOSE_ATTACK_CHOREOGRAPHY
+  );
+
+  assert.equal(session.heroManaPoints, 15);
 });
