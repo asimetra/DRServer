@@ -1419,9 +1419,9 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
   return true;
 };
 
-const landNpcSwing = async (session, attackerDoid, ai, attack, shape) => {
+const landNpcSwing = async (session, attackerDoid, ai, attack, shape, victimDoid) => {
   const attacker = session.actors?.get(attackerDoid);
-  const victim = session.actors?.get(session.heroDoid);
+  const victim = session.actors?.get(victimDoid);
   if (!attacker || attacker.dead || !victim || victim.dead) return false;
 
   if (shape?.length) {
@@ -1433,14 +1433,14 @@ const landNpcSwing = async (session, attackerDoid, ai, attack, shape) => {
     const caught = hazardVictims(session, reach, { attack, team: attacker.team });
     // Walked out of the arc while it was being swung, which is the miss the
     // client has already drawn.
-    if (!caught.some(({ doid }) => doid === session.heroDoid)) return false;
+    if (!caught.some(({ doid }) => doid === victimDoid)) return false;
   }
 
   return dealNpcHit(
     session,
     attackerDoid,
     { attack, attackType: ai.attackType, weaponPower: ai.weaponPower, fallback: ai.damage },
-    session.heroDoid
+    victimDoid
   );
 };
 
@@ -1555,8 +1555,13 @@ const launchNpcProjectile = (session, attackerDoid, ai, attack, launch = {}) => 
  * a separate piece of work; making them miss in the meantime would be worse
  * than the bug.
  */
-export const performNpcAttack = async (session, attackerDoid, ai) => {
-  const victim = session.actors?.get(session.heroDoid);
+export const performNpcAttack = async (
+  session,
+  attackerDoid,
+  ai,
+  victimDoid = session.heroDoid
+) => {
+  const victim = session.actors?.get(victimDoid);
   if (!victim || victim.dead || !ai?.attackType) return false;
   const attack = await attackById(ai.attackType);
 
@@ -1569,7 +1574,7 @@ export const performNpcAttack = async (session, attackerDoid, ai) => {
     npcAttackChoreography({
       doid: attackerDoid,
       attackType: ai.attackType,
-      targetActorDoid: session.heroDoid,
+      targetActorDoid: victimDoid,
     })
   );
 
@@ -1585,7 +1590,9 @@ export const performNpcAttack = async (session, attackerDoid, ai) => {
   // A swing with no collider and nothing to throw resolves where it stands;
   // two enemy attacks in the game are like that and both are measured in
   // dungeon.js.
-  if (!shots.length && !shape.length) return landNpcSwing(session, attackerDoid, ai, attack, shape);
+  if (!shots.length && !shape.length) {
+    return landNpcSwing(session, attackerDoid, ai, attack, shape, victimDoid);
+  }
 
   const timers = [];
   const later = (delay, run) => {
@@ -1608,7 +1615,9 @@ export const performNpcAttack = async (session, attackerDoid, ai) => {
       );
     }
   } else {
-    later(frameMs(ai.impactFrame), () => landNpcSwing(session, attackerDoid, ai, attack, shape));
+    later(frameMs(ai.impactFrame), () =>
+      landNpcSwing(session, attackerDoid, ai, attack, shape, victimDoid)
+    );
   }
 
   // Keyed by the attacker, so its next attack replaces this one and a floor
