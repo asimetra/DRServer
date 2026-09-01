@@ -6,7 +6,7 @@ import { loadGameMaster } from "./gamemaster.js";
 import { presenceSummary } from "./socket/presence.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
-import { NameRefused, checkName, nameKey, nameTaken, tidyName } from "./account-names.js";
+import { NameRefused, accountIdNamed, checkName, nameKey, nameTaken, tidyName } from "./account-names.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
 import { TradeRefused, settleTrade } from "./trade.js";
 import {
@@ -19,6 +19,7 @@ import {
   stallFor,
 } from "./market.js";
 import { salesFor } from "./market-history.js";
+import { STAT_NAMES, maxHitPoints, maxManaPoints, statTotals } from "./hero-stats.js";
 import { weaponSaleValue } from "./store.js";
 import { info, warn } from "./log.js";
 
@@ -194,6 +195,74 @@ const revokeTokens = async (req, [capture]) => {
   const generation = revokeAccountTokens(id);
   info(`internal: revoked every token for account ${id}`);
   return json({ accountId: id, generation });
+};
+
+/**
+ * GET /internal/v1/players/:name — somebody's profile, as another player sees it.
+ *
+ * Addressed by name rather than by account id, because the id is the number the
+ * client authenticates with and this is the one page built to be linked to and
+ * passed around. Names are unique, so the name is enough.
+ *
+ * What is here is what a player would ask about another: what they are called,
+ * what they have beaten, which heroes they have taken how far, and what they
+ * have done in the market. What is deliberately *not* here is their bag, their
+ * gold, their email or their account id — none of it is anybody else's business,
+ * and a profile that leaked the id would undo the reason this is by name.
+ */
+const readProfile = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const id = await accountIdNamed(decodeURIComponent(capture ?? ""), { listAccountIds, loadAccount });
+  if (id === null) return json({ error: "no such player" }, 404);
+
+  const account = await loadAccount(id);
+  const gm = await loadGameMaster();
+  const standings = await standingsFor(id);
+  const sales = await salesFor(id, { limit: 20 });
+
+  /*
+   * Every hero, not the active one. The active hero is what the character rail
+   * in the margin shows; a profile is the roster, because "how far has this
+   * person actually got" is a question about all of them.
+   */
+  const heroes = (account.account_avatars ?? [])
+    .map((avatar) => {
+      const hero = gm.heroById.get(avatar.avatar_id);
+      if (!hero) return null;
+      const totals = statTotals(gm, hero, avatar);
+      return {
+        id: hero.Id,
+        name: hero.Name ?? hero.Constant,
+        icon: gm.raw.Skins?.find((skin) => skin.Id === avatar.skin_type)?.IconName ?? hero.IconName ?? null,
+        level: levelForExperience(gm, hero.Constant, avatar.experience ?? 0),
+        experience: Number(avatar.experience ?? 0),
+        health: maxHitPoints(gm, hero, avatar),
+        mana: maxManaPoints(gm, hero, avatar),
+        /* The stats as the game computes them, which is the point of answering
+           here rather than letting a website work them out again and disagree. */
+        stats: Object.fromEntries(STAT_NAMES.map((stat) => [stat, totals[stat] ?? 0])),
+        active: avatar.id === account.active_avatar,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.level - a.level || b.experience - a.experience);
+
+  return json({
+    name: account.name ?? null,
+    trophies: account.trophies ?? 0,
+    trophies_of: 12,
+    title: titleFor(account.trophies),
+    clears: standings.clears ?? 0,
+    experience_total: standings.experience ?? 0,
+    heroes,
+    /*
+     * Readable about anybody, which is the point. A market where everybody's
+     * record is private is one where moving gold to an alt is invisible.
+     */
+    sales: describeListings(sales, gm),
+  });
 };
 
 /**
@@ -741,6 +810,7 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/market/:id/buy", handler: takeListing },
   { method: "POST", pattern: "/internal/v1/market/:id/cancel", handler: withdrawListing },
   { method: "GET", pattern: "/internal/v1/names/:name", handler: checkNameFree },
+  { method: "GET", pattern: "/internal/v1/players/:name", handler: readProfile },
   { method: "GET", pattern: "/internal/v1/accounts/:id/stall", handler: readStall },
   { method: "GET", pattern: "/internal/v1/accounts/:id/sales", handler: readSales },
   { method: "POST", pattern: "/internal/v1/accounts/:id/stall/claim", handler: collectProceeds },

@@ -240,3 +240,57 @@ test("a sales history is refused for an account that does not exist", async () =
   assert.equal((await call("GET", "/internal/v1/accounts/4000000000/sales")).status, 404);
   assert.equal((await call("GET", "/internal/v1/accounts/nope/sales")).status, 400);
 });
+
+/* --------------------------------------------------------------- profile - */
+
+/**
+ * Addressed by name, because the account id is the number the client
+ * authenticates with and a profile is the one page built to be linked to.
+ */
+test("a profile is found by name, in any case", async () => {
+  await call("POST", "/internal/v1/accounts", { body: { name: "Ayşegül" } });
+
+  for (const spelling of ["Ayşegül", "ayşegül", "AYŞEGÜL"]) {
+    const response = await call("GET", `/internal/v1/players/${encodeURIComponent(spelling)}`);
+    assert.equal(response.status, 200, spelling);
+    assert.equal((await response.json()).name, "Ayşegül");
+  }
+
+  assert.equal((await call("GET", "/internal/v1/players/NobodyHere")).status, 404);
+});
+
+/**
+ * What a player may know about another, and what they may not. The second half
+ * is the half worth testing: a profile that leaked the account id would undo
+ * the reason it is addressed by name.
+ */
+test("a profile answers about the player and nothing about their account", async () => {
+  await call("POST", "/internal/v1/accounts", { body: { name: "Ivory" } });
+  const profile = await (await call("GET", "/internal/v1/players/Ivory")).json();
+
+  for (const field of ["name", "trophies", "title", "clears", "heroes", "sales"]) {
+    assert.ok(field in profile, `a profile says ${field}`);
+  }
+  for (const field of ["account_id", "id", "basic_currency", "premium_currency", "account_items", "email"]) {
+    assert.ok(!(field in profile), `a profile does not say ${field}`);
+  }
+  assert.ok(!JSON.stringify(profile).includes("basic_currency"), "and not anywhere inside it");
+});
+
+/**
+ * The roster, not the active hero. "How far has this person got" is a question
+ * about all of them, and the stats are the game's own answer rather than a
+ * website's second opinion.
+ */
+test("a profile carries every hero, with the stats the game computes", async () => {
+  await call("POST", "/internal/v1/accounts", { body: { name: "Pell" } });
+  const { heroes } = await (await call("GET", "/internal/v1/players/Pell")).json();
+
+  assert.ok(heroes.length >= 1, "a new account starts with one");
+  const [hero] = heroes;
+  assert.equal(typeof hero.name, "string");
+  assert.ok(hero.level >= 1);
+  assert.ok(hero.health > 0, "health is computed, not left null");
+  assert.ok(Object.keys(hero.stats).length > 5, "and the stat vector is filled in");
+  assert.equal(typeof hero.active, "boolean");
+});

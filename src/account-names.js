@@ -90,17 +90,20 @@ export const checkName = (value) => {
  * what makes the check and the write that follows it one decision rather than
  * two racing ones.
  */
-export const nameTaken = async (name, { listAccountIds, loadAccount }) => {
+export const accountIdNamed = async (name, { listAccountIds, loadAccount }) => {
   const wanted = nameKey(name);
+  if (!wanted) return null;
 
   if (config.storage === "postgres") {
     const db = await import("./storage/postgres.js");
-    return (await db.accountIdWithName(wanted)) !== null;
+    return db.accountIdWithName(wanted);
   }
 
   for (const id of await listAccountIds()) {
     const account = await loadAccount(id);
-    if (nameKey(account?.name) === wanted) return true;
+    if (nameKey(account?.name) === wanted) return id;
   }
-  return false;
+  return null;
 };
+
+export const nameTaken = async (name, stores) => (await accountIdNamed(name, stores)) !== null;
