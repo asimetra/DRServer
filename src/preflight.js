@@ -198,3 +198,58 @@ export const reportAuth = () => {
   info("  everybody else who plays here. See docs/client-setup.md.");
   return true;
 };
+
+/**
+ * Whether the database is the one this server was written against.
+ *
+ * Reported here rather than discovered by the first query that reaches a new
+ * column. That is how it went twice — "column is_new does not exist", then
+ * "column tax does not exist" — and each names a column while saying nothing
+ * about a schema, a migration, or what to run. The second arrived as a broken
+ * market page.
+ *
+ * `docker-compose.yml` mounts db/schema.sql as an init script, and Postgres
+ * runs those once, when the volume is made. A database started before a column
+ * was added keeps its old shape however often it restarts, so this is not an
+ * unusual state to be in — it is the ordinary consequence of pulling.
+ *
+ * It warns rather than refusing to start: a server whose market is short a
+ * column still serves dungeons, and stopping the whole thing would be a worse
+ * answer than saying which table to fix.
+ */
+export const checkDatabaseSchema = async () => {
+  if (config.storage !== "postgres") return true;
+
+  const [{ schemaExpects, driftBetween, columnsInDatabase }, { default: pg }] = await Promise.all([
+    import("./storage/schema-check.js"),
+    import("pg"),
+  ]);
+
+  const client = new pg.Client({ connectionString: config.databaseUrl });
+  try {
+    await client.connect();
+    const expected = schemaExpects(
+      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "db", "schema.sql"), "utf8")
+    );
+    const drift = driftBetween(expected, await columnsInDatabase(client));
+
+    if (!drift.length) {
+      info(`database schema is current (${Object.keys(expected).length} tables)`);
+      return true;
+    }
+
+    warn("the database is older than this server:");
+    for (const { table, missing } of drift) {
+      warn(missing === null ? `  ${table}: no such table` : `  ${table}: no ${missing.join(", ")}`);
+    }
+    warn("  db/schema.sql adds all of these and removes nothing. Apply it with:");
+    warn("    $(command -v podman || command -v docker) exec -i ods-postgres \\");
+    warn("      psql -U ods -d open_dungeon < db/schema.sql");
+    return false;
+  } catch (problem) {
+    warn(`could not read the database schema: ${problem.message}`);
+    return false;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+};

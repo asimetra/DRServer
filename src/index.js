@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import {
   checkCompatibilityData,
   ensureSafeTransport,
+  checkDatabaseSchema,
   ensureTokenSecret,
   reportAuth,
   reportContentOverride,
@@ -21,6 +22,7 @@ checkCompatibilityData();
 reportContentOverride();
 ensureTokenSecret();
 reportAuth();
+await checkDatabaseSchema();
 ensureSafeTransport();
 
 startWebServices();
