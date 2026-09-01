@@ -23,6 +23,7 @@ import { beginFloorFailing, checkFloorCleared } from "./floorstate.js";
 import { objectDisable } from "./objects.js";
 import { grantMana, queueAccountSave } from "./rewards.js";
 import { collisionPointOf, hasLineOfSight, isPositionBlocked } from "./navigation.js";
+import { heroMembersOf } from "./match-world.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { RULE, noteViolation } from "./security-events.js";
@@ -1871,6 +1872,101 @@ const applyHealing = (session, doid, healing, announce) => {
   return actor.hitPoints > before;
 };
 
+/**
+ * The `when` byte on a heal the server originated.
+ *
+ * Every one of the 25 healing results in the recordings carries 255, where an
+ * ordinary hit carries the timeline frame it landed on — 0 or 4. Nothing was
+ * proposed for these, so there is no frame to name, and 255 is what the
+ * official writes in its place.
+ */
+const SERVER_ORIGINATED = 255;
+
+/**
+ * A healing wave, fanned out by the server off the cast.
+ *
+ * This is the part that took two attempts to find. A heal is not proposed: of
+ * 7214 attack choreographies in the recordings exactly two name a healing
+ * attack, and neither is followed by a single ProposeCombatResults — yet 25
+ * healing results come back down the wire. The client asks to cast and the
+ * server decides the rest, which is why fixing `handleProposeCombatResults`
+ * changed nothing a player could feel.
+ *
+ * One cast, read off `socket-20260816-145437`:
+ *
+ *     14:55:56.874  out  choreography      HEALING_PULSE_COOLDOWN, slot 2
+ *     14:55:57.048  in   hit points        304 -> 420
+ *     14:55:57.049  in   combat result     +282, when 255
+ *
+ * Three things are settled by those two lines. Hit points go out *before* the
+ * result, as they do for damage. The result carries the whole computed heal
+ * and not the part that fit — 304 + 282 is 586 against a 420 bar, and the
+ * client still draws 282. And the number is positive, which is the only way
+ * `spawnHealFloater` can read it.
+ *
+ * Who it reaches is the attack's own business: `AffectsSelf` and
+ * `AffectsOthers`, both set on every Healing Wave. A four-hero cast in
+ * `socket-20260822-015753` lands 146 on the caster and on each of the three
+ * others. Range is not consulted, which follows `buffFriendlyTarget` — the
+ * same fan-out for the same family of attacks — rather than inventing a
+ * distance rule from a single recording.
+ */
+export const healFriendlyTargets = async (session, attack, weaponSlot) => {
+  if (!isHealing(attack) || !session.heroDoid) return null;
+
+  const casterDoid = session.heroDoid;
+  const weaponPower = Number(session.heroWeapons?.[weaponSlot]?.power) || 1;
+
+  const targets = [];
+  if (attack.AffectsSelf) targets.push(casterDoid);
+  if (attack.AffectsOthers) {
+    for (const doid of heroMembersOf(session).keys()) {
+      if (doid !== casterDoid) targets.push(doid);
+    }
+  }
+  if (!targets.length) return null;
+
+  const healed = [];
+  for (const doid of targets) {
+    const fieldId = RECEIVE_FIELD_BY_CLID[session.objects?.get(doid)];
+    if (!fieldId) continue;
+
+    const healing = await computeHealing(
+      session,
+      { attacker: casterDoid, attackee: doid, generation: 0 },
+      attack,
+      weaponPower
+    );
+    if (healing <= 0) continue;
+
+    const result = receiveCombatResult(
+      doid,
+      fieldId,
+      encodeCombatResults({
+        doid: casterDoid,
+        attackType: attack.Id,
+        weaponSlot,
+        combatResults: [
+          {
+            attacker: casterDoid,
+            attackee: doid,
+            damage: healing,
+            attackType: attack.Id,
+            weaponSlot,
+            when: SERVER_ORIGINATED,
+          },
+        ],
+      })
+    );
+    if (applyHealing(session, doid, healing, () => session.send(result))) {
+      healed.push(`${doid} +${healing}`);
+    }
+  }
+
+  if (healed.length) info(`[${session.id}] ${attack.Constant}: ${healed.join(", ")}`);
+  return healed.length ? healed : null;
+};
+
 /** Rewrites the signed wire damage field of a CombatResult on a copy. */
 const withDamage = (bytes, wireDamage) => {
   const copy = Buffer.from(bytes);
@@ -2386,43 +2482,6 @@ export const handleProposeCombatResults = async (session, reader) => {
      */
     const swung = proposal.isConsumable ? null : session.heroWeapons?.[proposal.weaponSlot];
     const weaponPower = Number(swung?.power) || 1;
-
-    /**
-     * A wave of healing takes the other branch entirely.
-     *
-     * This handler had one: price the hit, negate it for the wire, subtract it.
-     * `computeDamage` answered zero for anything friendly — "healing is not
-     * modelled yet" — so a Heal Scroll spent forty mana, played its animation,
-     * and published a result of zero to everyone it reached. Which is what a
-     * scroll that does nothing looks like from inside the game.
-     */
-    if (!proposal.blocked && isHealing(attack)) {
-      const healing = await computeHealing(session, proposal, attack, weaponPower);
-      const restored = receiveCombatResult(
-        proposal.attackee,
-        fieldId,
-        // Positive, which is the only way the client reads it as a heal:
-        // `spawnHealFloater` prints this field straight out.
-        withDamage(proposal.bytes, healing)
-      );
-      const healed = applyHealing(session, proposal.attackee, healing, () =>
-        session.send(restored)
-      );
-      await applyTargetBuff(session, {
-        attack,
-        victimDoid: proposal.attackee,
-        attackerDoid: proposal.attacker,
-        damage: 0,
-      });
-      const target = session.actors?.get(proposal.attackee);
-      summary.push(
-        healed
-          ? `${target?.constant ?? proposal.attackee} +${healing} -> ` +
-            `${target.hitPoints}/${target.maxHitPoints}hp`
-          : `${proposal.attackee} +0`
-      );
-      continue;
-    }
 
     const damage = proposal.blocked
       ? 0

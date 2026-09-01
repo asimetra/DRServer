@@ -19,7 +19,7 @@ import { isPowerupAttack, schedulePowerup } from "./powerups.js";
 import { notePlacementPermit } from "./placeables.js";
 import { isOffCooldown, noteCooldown } from "./cooldowns.js";
 import { RULE, noteViolation } from "./security-events.js";
-import { noteCast } from "./combat.js";
+import { noteCast, healFriendlyTargets } from "./combat.js";
 import { schedulePlaceables } from "./placeables.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
@@ -608,6 +608,12 @@ export const handleProposeAttackChoreography = async (
    */
   await spawnSelfBuff(session, attack);
   await buffFriendlyTarget(session, attack);
+  /**
+   * And what a Healing Wave gives back, which is the server's to work out: the
+   * client proposes the cast and never proposes a result for it. See
+   * `healFriendlyTargets`.
+   */
+  await healFriendlyTargets(session, attack, weaponSlot);
   await schedulePowerup(session, attack);
   /**
    * Alongside the pots rather than inside them: what an attack cooks and what
