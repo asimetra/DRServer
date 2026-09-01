@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadGameMaster } from "../src/gamemaster.js";
-import { describeListings } from "../src/internal.js";
+import { describeListings, filterMarketListings } from "../src/internal.js";
 
 /**
  * A listing leaves here saying what it is, not which numbers it is.
@@ -20,11 +20,14 @@ test("a listing carries its weapon's name and type", async () => {
   const gm = await loadGameMaster();
   const weapon = gm.raw.WeaponItem.find((row) => row.Mastertype);
 
-  const [listing] = describeListings([{ item_id: weapon.Id, price: 10 }], gm);
+  const [listing] = describeListings([{ item_id: weapon.Id, price: 10, rarity: 1 }], gm);
 
   assert.equal(listing.name, weapon.Name);
   assert.equal(listing.mastertype, weapon.Mastertype);
   assert.equal(listing.price, 10, "and keeps what it already had");
+  assert.ok(listing.rarity_name, "the numeric rarity is named for filters and accessibility");
+  assert.ok(listing.vendor_value >= 0, "the shop baseline is available beside the asking price");
+  assert.ok(listing.usable_by.length > 0, "a buyer can tell which heroes may equip it");
 });
 
 /**
@@ -117,4 +120,55 @@ test("a modifier that resolves to nothing is left out", async () => {
   const [listing] = describeListings([{ item_id: 15001, modifier1: 999999 }], gm);
 
   assert.deepEqual(listing.modifiers, []);
+});
+
+test("market search covers names, sellers, attacks, modifiers and compatible heroes", () => {
+  const rows = [
+    {
+      id: 1,
+      name: "Quake Axe",
+      seller_name: "Sable",
+      mastertype: "AXE_TYPE",
+      rarity: 3,
+      rarity_name: "rare",
+      price: 800,
+      power: 40,
+      requiredlevel: 8,
+      listed_at: "2026-09-01T02:00:00Z",
+      weapon: { classType: "MELEE", hold: { title: "Fissure", description: "Crack the ground" } },
+      modifiers: [{ name: "Chargey", description: "Charge faster" }],
+      legendary: null,
+      usable_by: [{ id: 101, name: "Berserker" }],
+    },
+    {
+      id: 2,
+      name: "Hunter Crossbow",
+      seller_name: "Mira",
+      mastertype: "CROSSBOW_TYPE",
+      rarity: 2,
+      rarity_name: "uncommon",
+      price: 300,
+      power: 25,
+      requiredlevel: 3,
+      listed_at: "2026-09-01T03:00:00Z",
+      weapon: { classType: "SHOOTING", tap: { title: "Bolt", description: "Quick shot" } },
+      modifiers: [],
+      legendary: null,
+      usable_by: [{ id: 105, name: "Vampire Hunter" }],
+    },
+  ];
+
+  for (const q of ["quake", "sable", "fissure", "chargey", "berserker"]) {
+    assert.deepEqual(filterMarketListings(rows, { q }).map((row) => row.id), [1], q);
+  }
+  assert.deepEqual(filterMarketListings(rows, { type: "CROSSBOW_TYPE" }).map((row) => row.id), [2]);
+  assert.deepEqual(filterMarketListings(rows, { rarity: 3 }).map((row) => row.id), [1]);
+  assert.deepEqual(filterMarketListings(rows, { hero: 105 }).map((row) => row.id), [2]);
+  assert.deepEqual(filterMarketListings(rows, { maxPrice: 500 }).map((row) => row.id), [2]);
+  assert.deepEqual(filterMarketListings(rows, { sort: "price_asc" }).map((row) => row.id), [2, 1]);
+  assert.deepEqual(
+    filterMarketListings([{ ...rows[0], seller_name: "IŞIK" }], { q: "ışık" }).map((row) => row.id),
+    [1],
+    "seller-name search uses the same Turkish-I folding as account names"
+  );
 });

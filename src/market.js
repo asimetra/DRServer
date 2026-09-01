@@ -8,6 +8,8 @@ import {
 } from "./accounts.js";
 import { heldAccount } from "./account-registry.js";
 import { occupiedSlots, storageLimit } from "./inventory-space.js";
+import { loadGameMaster } from "./gamemaster.js";
+import { ceilingFor, isBarred, shareOf, slotsFor } from "./market-rules.js";
 import { info } from "./log.js";
 
 /**
@@ -97,6 +99,12 @@ const openListings = (account) =>
 
 const soldListings = (account) =>
   listingsOf(account).filter((listing) => Boolean(listing.sold_to));
+
+const BROWSE_CACHE_MS = 2000;
+let browseCache = null;
+const invalidateBrowse = () => {
+  browseCache = null;
+};
 
 /**
  * What a listing carries of the weapon.
@@ -192,6 +200,8 @@ export const listForSale = async ({ sellerId, itemId, price } = {}) => {
     refuseIfPlaying(seller);
 
     const account = await loadAccount(seller);
+    if (isBarred(account)) throw refuse("barred", `account ${seller} may not use the market`);
+
     const item = (account.account_items ?? []).find((row) => Number(row.id) === wanted);
     if (!item) throw refuse("not_owned", `account ${seller} does not hold item ${wanted}`);
 
@@ -203,9 +213,26 @@ export const listForSale = async ({ sellerId, itemId, price } = {}) => {
       throw refuse("equipped", `item ${wanted} is equipped — unequip it first`);
     }
 
+    /* Slots scale with the roster, because the account that exists to receive
+       gold is a fresh one with a single hero. Counted inside the lock, so two
+       listings racing cannot both find the last slot free. */
+    const slots = slotsFor(account);
+    if (openListings(account).length >= slots) {
+      throw refuse("no_slots", `account ${seller} already has ${slots} listings up`);
+    }
+
+    /* A ceiling of what the shop would pay, times a generous multiple. It is
+       loose where honest trade happens and tight where laundering does — see
+       market-rules.js for the measurements behind the number. */
+    const ceiling = ceilingFor(await loadGameMaster(), item);
+    if (asking > ceiling) {
+      throw refuse("over_ceiling", `${asking} is above the ${ceiling} ceiling for this weapon`);
+    }
+
     account.account_items.splice(account.account_items.indexOf(item), 1);
     listingsOf(account).push(asListing(item, asking));
     await saveAccount(account);
+    invalidateBrowse();
 
     info(`market: ${seller} listed item ${wanted} at ${asking} gold`);
     return asView(listingsOf(account).find((row) => Number(row.id) === wanted), seller, account.name);
@@ -253,6 +280,7 @@ export const buyListing = async ({ listingId, buyerId } = {}) => {
 
     const sellerAccount = await loadAccount(seller);
     const buyerAccount = await loadAccount(buyer);
+    if (isBarred(buyerAccount)) throw refuse("barred", `account ${buyer} may not use the market`);
 
     /* Looked up again inside the lock, which is the look that decides: two
        buyers reaching for the same listing both got past the check above, and
@@ -274,8 +302,15 @@ export const buyListing = async ({ listingId, buyerId } = {}) => {
        be gold the client is showing without having been told why. */
     listing.sold_to = buyer;
     listing.sold_at = new Date().toISOString();
+    /* The tax is settled here rather than at the claim, so what is owed is
+       fixed at the moment of the sale. A rate changed later must not quietly
+       reprice gold somebody has already earned. */
+    const { tax, proceeds } = shareOf(price);
+    listing.tax = tax;
+    listing.proceeds = proceeds;
 
     await saveAccounts([sellerAccount, buyerAccount]);
+    invalidateBrowse();
 
     /* Written down because this is the one thing here that moves value between
        two people, and "it was not me" is the complaint an operator cannot
@@ -318,6 +353,7 @@ export const cancelListing = async ({ listingId, sellerId } = {}) => {
     account.market_listings = listingsOf(account).filter((row) => row !== listing);
     account.account_items.push(asItem(listing, seller));
     await saveAccount(account);
+    invalidateBrowse();
 
     info(`market: ${seller} withdrew item ${wanted}`);
     return { listing: wanted, item_id: listing.item_id };
@@ -343,7 +379,9 @@ export const claimProceeds = async ({ sellerId } = {}) => {
     const sold = soldListings(account);
     if (!sold.length) return { claimed: 0, gold: Number(account.basic_currency ?? 0), listings: [] };
 
-    const total = sold.reduce((sum, listing) => sum + Number(listing.price), 0);
+    /* `?? price` is for listings sold before the tax existed: they were owed
+       the whole price and still are. */
+    const total = sold.reduce((sum, listing) => sum + Number(listing.proceeds ?? listing.price), 0);
     account.basic_currency = Number(account.basic_currency ?? 0) + total;
     account.market_listings = listingsOf(account).filter((row) => !row.sold_to);
     await saveAccount(account);
@@ -356,6 +394,8 @@ export const claimProceeds = async ({ sellerId } = {}) => {
         id: Number(listing.id),
         item_id: listing.item_id,
         price: Number(listing.price),
+        tax: Number(listing.tax ?? 0),
+        proceeds: Number(listing.proceeds ?? listing.price),
         sold_to: listing.sold_to,
         sold_at: listing.sold_at,
       })),
@@ -363,9 +403,11 @@ export const claimProceeds = async ({ sellerId } = {}) => {
   });
 };
 
-/** Everything that is up, newest first. */
-export const browse = async ({ limit = 50 } = {}) => {
-  const size = Math.max(1, Math.min(200, Number(limit) || 50));
+/** Everything that is up, newest first, before a caller chooses a page. */
+export const browseAll = async () => {
+  if (browseCache && Date.now() - browseCache.at < BROWSE_CACHE_MS) {
+    return browseCache.rows;
+  }
   const found = [];
 
   for (const id of await listAccountIds()) {
@@ -375,9 +417,15 @@ export const browse = async ({ limit = 50 } = {}) => {
     }
   }
 
-  return found
-    .sort((a, b) => String(b.listed_at).localeCompare(String(a.listed_at)))
-    .slice(0, size);
+  const rows = found.sort((a, b) => String(b.listed_at).localeCompare(String(a.listed_at)));
+  browseCache = { at: Date.now(), rows };
+  return rows;
+};
+
+/** Backward-compatible bounded view for callers that only need the newest rows. */
+export const browse = async ({ limit = 50 } = {}) => {
+  const size = Math.max(1, Math.min(200, Number(limit) || 50));
+  return (await browseAll()).slice(0, size);
 };
 
 /** One seller's own: what is still up, and what is waiting to be collected. */
@@ -392,8 +440,13 @@ export const stallFor = async (sellerId) => {
       id: Number(listing.id),
       item_id: listing.item_id,
       price: Number(listing.price),
+      tax: Number(listing.tax ?? 0),
+      proceeds: Number(listing.proceeds ?? listing.price),
       sold_at: listing.sold_at,
     })),
-    owed: soldListings(account).reduce((sum, listing) => sum + Number(listing.price), 0),
+    owed: soldListings(account).reduce(
+      (sum, listing) => sum + Number(listing.proceeds ?? listing.price),
+      0
+    ),
   };
 };

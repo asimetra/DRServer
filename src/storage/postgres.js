@@ -72,7 +72,7 @@ export const CHILD_TABLES = {
    * instance that was put up rather than a copy of it.
    */
   market_listings: [
-    "id", "account_id", "item_id", "price", "listed_at", "sold_to", "sold_at",
+    "id", "account_id", "item_id", "price", "listed_at", "sold_to", "sold_at", "tax", "proceeds",
     "power", "requiredlevel", "rarity", "modifier1", "modifier2",
     "legendarymodifier", "created",
   ],
@@ -83,7 +83,7 @@ const ACCOUNT_COLUMNS = [
   "completed_mapnode_mask", "basic_currency", "premium_currency", "basic_keys",
   "uncommon_keys", "rare_keys", "legendary_keys", "highest_avatar",
   "buckets_weapon", "buckets_other", "active_avatar", "admin_flags",
-  "account_flags", "completed_dungeons", "matchmaker_group", "concurrent_days",
+  "account_flags", "market_barred", "completed_dungeons", "matchmaker_group", "concurrent_days",
   "last_reward_date", "last_login", "created",
 ];
 

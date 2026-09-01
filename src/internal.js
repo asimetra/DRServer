@@ -6,18 +6,19 @@ import { loadGameMaster } from "./gamemaster.js";
 import { presenceSummary } from "./socket/presence.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
-import { NameRefused, checkName, nameTaken, tidyName } from "./account-names.js";
+import { NameRefused, checkName, nameKey, nameTaken, tidyName } from "./account-names.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
 import { TradeRefused, settleTrade } from "./trade.js";
 import {
   MarketRefused,
-  browse,
+  browseAll,
   buyListing,
   cancelListing,
   claimProceeds,
   listForSale,
   stallFor,
 } from "./market.js";
+import { weaponSaleValue } from "./store.js";
 import { info, warn } from "./log.js";
 
 /**
@@ -368,6 +369,15 @@ export const describeListings = (listings, gm) => {
       ...listing,
       name: weapon?.Name ?? null,
       mastertype: weapon?.Mastertype ?? null,
+      rarity_name:
+        gm.raw.Rarity?.find((rarity) => rarity.Id === Number(listing.rarity))?.Type?.toLowerCase()
+        ?? null,
+      vendor_value: weaponSaleValue(gm, listing),
+      usable_by: weapon?.Mastertype
+        ? gm.raw.Hero
+            .filter((hero) => Boolean(hero[weapon.Mastertype]))
+            .map((hero) => ({ id: hero.Id, name: hero.Name ?? hero.Constant }))
+        : [],
       /**
        * What the weapon is before anything was rolled onto it.
        *
@@ -379,6 +389,7 @@ export const describeListings = (listings, gm) => {
        */
       weapon: weapon
         ? {
+            constant: weapon.Constant ?? null,
             classType: weapon.ClassType ?? null,
             speed: weapon.SpeedDisplay ?? null,
             tap: {
@@ -407,14 +418,114 @@ export const describeListings = (listings, gm) => {
   });
 };
 
-/** GET /internal/v1/market — everything up for sale, newest first. */
+const MARKET_SORTS = new Set(["newest", "price_asc", "price_desc", "power_desc", "level_asc"]);
+
+const marketText = (listing) =>
+  nameKey([
+    listing.name,
+    listing.seller_name,
+    listing.mastertype,
+    listing.rarity_name,
+    listing.weapon?.classType,
+    listing.weapon?.tap?.title,
+    listing.weapon?.tap?.description,
+    listing.weapon?.hold?.title,
+    listing.weapon?.hold?.description,
+    ...(listing.modifiers ?? []).flatMap((modifier) => [modifier.name, modifier.description]),
+    listing.legendary?.name,
+    listing.legendary?.description,
+    ...(listing.usable_by ?? []).map((hero) => hero.name),
+  ].filter(Boolean).join(" "));
+
+const countBy = (rows, valueOf) => {
+  const counts = new Map();
+  for (const row of rows) {
+    const value = valueOf(row);
+    if (value !== null && value !== undefined && value !== "") {
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+  }
+  return [...counts].map(([value, count]) => ({ value, count }));
+};
+
+export const filterMarketListings = (all, options = {}) => {
+  const q = nameKey(String(options.q ?? "").trim().slice(0, 64));
+  const type = String(options.type ?? "").trim();
+  const rarity = Number(options.rarity) || 0;
+  const hero = Number(options.hero) || 0;
+  const maxPrice = Number(options.maxPrice) || 0;
+  const sort = MARKET_SORTS.has(options.sort) ? options.sort : "newest";
+
+  const rows = all.filter((listing) => {
+    if (q && !marketText(listing).includes(q)) return false;
+    if (type && listing.mastertype !== type) return false;
+    if (rarity && Number(listing.rarity) !== rarity) return false;
+    if (hero && !(listing.usable_by ?? []).some((candidate) => Number(candidate.id) === hero)) {
+      return false;
+    }
+    if (maxPrice && Number(listing.price) > maxPrice) return false;
+    return true;
+  });
+
+  const number = (value) => Number(value) || 0;
+  rows.sort((left, right) => {
+    if (sort === "price_asc") return number(left.price) - number(right.price);
+    if (sort === "price_desc") return number(right.price) - number(left.price);
+    if (sort === "power_desc") return number(right.power) - number(left.power);
+    if (sort === "level_asc") return number(left.requiredlevel) - number(right.requiredlevel);
+    return String(right.listed_at).localeCompare(String(left.listed_at));
+  });
+  return rows;
+};
+
+let describedMarketSource = null;
+let describedMarketRows = null;
+const describedMarket = async (gm) => {
+  const source = await browseAll();
+  if (source !== describedMarketSource) {
+    describedMarketSource = source;
+    describedMarketRows = describeListings(source, gm);
+  }
+  return describedMarketRows;
+};
+
+/** GET /internal/v1/market — searchable, filterable and paged. */
 const readMarket = async (req) => {
   const refusal = authorise(req);
   if (refusal) return refusal;
 
-  const limit = req.query?.get("limit") ?? 50;
+  const gm = await loadGameMaster();
+  const all = await describedMarket(gm);
+  const options = {
+    q: req.query?.get("q") ?? "",
+    type: req.query?.get("type") ?? "",
+    rarity: req.query?.get("rarity") ?? 0,
+    hero: req.query?.get("hero") ?? 0,
+    maxPrice: req.query?.get("maxPrice") ?? 0,
+    sort: req.query?.get("sort") ?? "newest",
+  };
+  const filtered = filterMarketListings(all, options);
+  const limit = Math.max(1, Math.min(100, Number(req.query?.get("limit")) || 12));
+  const offset = Math.max(0, Math.min(1_000_000, Number(req.query?.get("offset")) || 0));
+  const types = countBy(all, (listing) => listing.mastertype)
+    .map((entry) => ({ ...entry, name: String(entry.value).replace(/_TYPE$/, "").replace(/_/g, " ").toLowerCase() }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const rarities = countBy(all, (listing) => Number(listing.rarity) || null)
+    .map((entry) => ({ ...entry, name: all.find((row) => Number(row.rarity) === entry.value)?.rarity_name }))
+    .sort((left, right) => left.value - right.value);
+  const heroes = gm.raw.Hero.map((heroRow) => ({
+    value: heroRow.Id,
+    name: heroRow.Name ?? heroRow.Constant,
+    count: all.filter((listing) => listing.usable_by.some((hero) => hero.id === heroRow.Id)).length,
+  })).filter((entry) => entry.count > 0);
+
   return json({
-    listings: describeListings(await browse({ limit }), await loadGameMaster()),
+    listings: filtered.slice(offset, offset + limit),
+    total: filtered.length,
+    offset,
+    limit,
+    has_more: offset + limit < filtered.length,
+    facets: { types, rarities, heroes },
   });
 };
 

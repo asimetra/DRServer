@@ -141,6 +141,7 @@ same act. Callers present the secret as `X-Internal-Token`.
 | `POST /internal/v1/accounts/:id/token` | Issues a replacement token |
 | `DELETE /internal/v1/accounts/:id/token` | Invalidates every token issued for that account |
 | `POST /internal/v1/trades` | Moves weapons and gold between two accounts, all of it or none |
+| `GET /internal/v1/market` | Searchable/paged listings with item details and filter facets |
 
 Trading is one call because it has to be one transaction. The front end runs
 the negotiation — who offered what, who has agreed — and none of that is game

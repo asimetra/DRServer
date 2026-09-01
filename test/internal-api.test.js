@@ -160,3 +160,44 @@ test("an inventory for an account that does not exist is refused", async () => {
   const response = await call("GET", "/internal/v1/accounts/4000000001/inventory");
   assert.equal(response.status, 404);
 });
+
+test("market browsing exposes useful item facts and applies filters before paging", async () => {
+  const { saveAccount, loadAccount } = await import("../src/accounts.js");
+  const registered = await (await call("POST", "/internal/v1/accounts", { body: {} })).json();
+  const account = await loadAccount(registered.accountId);
+  account.account_items = [{
+    id: 1_900_000_001,
+    account_id: account.id,
+    item_id: 11003, // Quake/Monster Axe, whose hold attack is Fissure
+    power: 42,
+    rarity: 3,
+    requiredlevel: 8,
+    modifier1: 0,
+    modifier2: 0,
+    legendarymodifier: 0,
+    avatar_id: null,
+  }];
+  await saveAccount(account);
+
+  const listed = await call("POST", "/internal/v1/market", {
+    body: { sellerId: account.id, itemId: 1_900_000_001, price: 750 },
+  });
+  assert.equal(listed.status, 201);
+
+  const response = await call(
+    "GET",
+    "/internal/v1/market?q=fissure&type=AXE_TYPE&rarity=3&hero=101&maxPrice=800&sort=price_asc&limit=1&offset=0"
+  );
+  assert.equal(response.status, 200);
+  const market = await response.json();
+  assert.equal(market.total, 1);
+  assert.equal(market.listings.length, 1);
+  assert.equal(market.listings[0].id, 1_900_000_001);
+  assert.equal(market.listings[0].rarity_name, "rare");
+  assert.ok(market.listings[0].vendor_value > 0);
+  assert.ok(market.listings[0].usable_by.some((hero) => hero.id === 101));
+  assert.equal(market.has_more, false);
+
+  const tooCheap = await call("GET", "/internal/v1/market?maxPrice=100").then((r) => r.json());
+  assert.equal(tooCheap.total, 0);
+});

@@ -111,13 +111,19 @@ test("the proceeds are claimed, once", async () => {
   await buyListing({ listingId: 7003, buyerId: buyer.id });
   await buyListing({ listingId: 7004, buyerId: buyer.id });
 
+  /* Asked of `shareOf` rather than written out, so this says "both sales, after
+     the tax" and not "420" — a rate the operator changes must not need a test
+     rewritten to agree with it. */
+  const { shareOf } = await import("../src/market-rules.js");
+  const owed = shareOf(300).proceeds + shareOf(120).proceeds;
+
   const claim = await claimProceeds({ sellerId: seller.id });
-  assert.equal(claim.claimed, 420, "both sales at once");
-  assert.equal(claim.gold, 470);
+  assert.equal(claim.claimed, owed, "both sales at once");
+  assert.equal(claim.gold, 50 + owed);
 
   const again = await claimProceeds({ sellerId: seller.id });
   assert.equal(again.claimed, 0, "there is nothing left to collect");
-  assert.equal((await loadAccount(seller.id)).basic_currency, 470);
+  assert.equal((await loadAccount(seller.id)).basic_currency, 50 + owed);
 });
 
 test("a withdrawn listing comes back to the bag", async () => {
@@ -306,8 +312,134 @@ test("the market shows what is up, and a stall shows what is owed", async () => 
   assert.deepEqual(mine.map((listing) => listing.id), [7018], "a sold one is not still on sale");
   assert.equal(mine[0].seller_name, seller.name);
 
+  const { shareOf } = await import("../src/market-rules.js");
   const stall = await stallFor(seller.id);
   assert.deepEqual(stall.listed.map((listing) => listing.id), [7018]);
   assert.deepEqual(stall.sold.map((listing) => listing.id), [7017]);
-  assert.equal(stall.owed, 400);
+  assert.equal(stall.owed, shareOf(400).proceeds, "what is owed is after the tax");
+});
+
+test("browse cache is invalidated by list and sale mutations", async () => {
+  const seller = await anAccount({ items: [weapon(7020), weapon(7021)] });
+  const buyer = await anAccount({ gold: 5000 });
+
+  await listForSale({ sellerId: seller.id, itemId: 7020, price: 100 });
+  assert.ok((await browse({ limit: 200 })).some((listing) => listing.id === 7020));
+
+  await listForSale({ sellerId: seller.id, itemId: 7021, price: 200 });
+  const afterList = await browse({ limit: 200 });
+  assert.ok(afterList.some((listing) => listing.id === 7021), "a new listing bypasses the old snapshot");
+
+  await buyListing({ listingId: 7020, buyerId: buyer.id });
+  const afterBuy = await browse({ limit: 200 });
+  assert.ok(!afterBuy.some((listing) => listing.id === 7020), "a sold listing leaves immediately");
+});
+
+/* ---------------------------------------------------------- market rules - */
+
+/**
+ * Slots scale with the roster, because the account that exists to receive gold
+ * is a fresh one with a single starting hero.
+ */
+test("listings are capped, and the cap follows the roster", async () => {
+  const { SLOTS_PER_HERO } = await import("../src/market-rules.js");
+  const seller = await anAccount({
+    items: Array.from({ length: SLOTS_PER_HERO + 1 }, (_, index) => weapon(7300 + index)),
+  });
+  const account = await loadAccount(seller.id);
+  account.account_avatars = [{ id: 1, avatar_id: 101 }];
+  await saveAccount(account);
+
+  for (let index = 0; index < SLOTS_PER_HERO; index++) {
+    await listForSale({ sellerId: seller.id, itemId: 7300 + index, price: 100 });
+  }
+  await assert.rejects(
+    () => listForSale({ sellerId: seller.id, itemId: 7300 + SLOTS_PER_HERO, price: 100 }),
+    (error) => error.reason === "no_slots"
+  );
+
+  // A second hero buys another five.
+  const grown = await loadAccount(seller.id);
+  grown.account_avatars.push({ id: 2, avatar_id: 102 });
+  await saveAccount(grown);
+  const listed = await listForSale({ sellerId: seller.id, itemId: 7300 + SLOTS_PER_HERO, price: 100 });
+  assert.equal(listed.id, 7300 + SLOTS_PER_HERO);
+});
+
+/**
+ * The ceiling is what the shop would pay times a generous multiple. It is loose
+ * where honest trade happens and tight where laundering does, because the shop
+ * value is a rarity ladder — see market-rules.js.
+ */
+test("a price above the ceiling is refused, and an honest one is not", async () => {
+  const seller = await anAccount({ items: [weapon(7400, { rarity: 1, requiredlevel: 1 })] });
+
+  await assert.rejects(
+    () => listForSale({ sellerId: seller.id, itemId: 7400, price: 1_000_000 }),
+    (error) => error.reason === "over_ceiling",
+    "a common weapon is not a way to hand over a million"
+  );
+
+  const listed = await listForSale({ sellerId: seller.id, itemId: 7400, price: 5000 });
+  assert.equal(listed.price, 5000);
+});
+
+test("the ceiling rises with rarity, so an elite weapon is not blocked", async () => {
+  const { ceilingFor } = await import("../src/market-rules.js");
+  const { loadGameMaster } = await import("../src/gamemaster.js");
+  const gm = await loadGameMaster();
+
+  const ceilings = [1, 2, 3, 4].map((rarity) =>
+    ceilingFor(gm, { rarity, requiredlevel: 100, modifier1: 0, modifier2: 0 })
+  );
+  for (let index = 1; index < ceilings.length; index++) {
+    assert.ok(ceilings[index] > ceilings[index - 1] * 3, `rarity ${index + 1} is far above ${index}`);
+  }
+  assert.ok(ceilings[3] > 1_000_000, "a legendary may be asked more than anybody here holds");
+});
+
+/**
+ * The tax is settled at the sale rather than at the claim: a rate changed later
+ * must not reprice gold somebody has already earned.
+ */
+test("the market keeps its cut, and the seller is owed the rest", async () => {
+  const { shareOf } = await import("../src/market-rules.js");
+  const seller = await anAccount({ gold: 0, items: [weapon(7500)] });
+  const buyer = await anAccount({ gold: 5000 });
+
+  await listForSale({ sellerId: seller.id, itemId: 7500, price: 1000 });
+  await buyListing({ listingId: 7500, buyerId: buyer.id });
+
+  const { tax, proceeds } = shareOf(1000);
+  assert.equal(tax + proceeds, 1000, "the two add back to the price");
+  assert.ok(tax > 0);
+
+  const stall = await stallFor(seller.id);
+  assert.equal(stall.owed, proceeds, "owed is after tax");
+
+  const claim = await claimProceeds({ sellerId: seller.id });
+  assert.equal(claim.claimed, proceeds);
+  assert.equal((await loadAccount(seller.id)).basic_currency, proceeds);
+  assert.equal((await loadAccount(buyer.id)).basic_currency, 4000, "the buyer pays the full price");
+});
+
+/** A mule is as useful to somebody moving gold as a seller is, so both go. */
+test("a barred account neither lists nor buys", async () => {
+  const seller = await anAccount({ items: [weapon(7600)] });
+  const barred = await anAccount({ gold: 5000, items: [weapon(7601)] });
+
+  const account = await loadAccount(barred.id);
+  account.market_barred = true;
+  await saveAccount(account);
+
+  await assert.rejects(
+    () => listForSale({ sellerId: barred.id, itemId: 7601, price: 100 }),
+    (error) => error.reason === "barred"
+  );
+
+  await listForSale({ sellerId: seller.id, itemId: 7600, price: 100 });
+  await assert.rejects(
+    () => buyListing({ listingId: 7600, buyerId: barred.id }),
+    (error) => error.reason === "barred"
+  );
 });

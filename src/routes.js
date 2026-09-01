@@ -86,7 +86,7 @@ const accountDetails = async (req) => {
    * was never told such a thing exists and this response is parsed by code this
    * server does not change — so it is left out rather than sent and hoped over.
    */
-  const { market_listings, ...forTheClient } = account;
+  const { market_listings, market_barred, ...forTheClient } = account;
   return json(forTheClient);
 };
 

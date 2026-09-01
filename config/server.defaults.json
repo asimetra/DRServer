@@ -17,6 +17,7 @@
   "internalPort": 8081,
   "internalToken": "",
   "allowInsecureInternal": false,
+  "marketTaxRate": 0.1,
   "storage": "file",
   "databaseUrl": "postgres://ods:ods@127.0.0.1:5432/open_dungeon",
   "resourcesDir": "../local-data/Resources",

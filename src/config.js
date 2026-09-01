@@ -322,6 +322,16 @@ export const loadServerConfig = (environment = process.env) => {
     internalHost: setting(environment, "INTERNAL_HOST") ?? defaults.internalHost ?? "127.0.0.1",
     internalPort: asInt(setting(environment, "INTERNAL_PORT"), defaults.internalPort ?? 8081),
     internalToken: setting(environment, "INTERNAL_TOKEN") ?? defaults.internalToken ?? "",
+
+    /**
+     * What the market keeps of a sale. A gold sink, and the thing that makes
+     * moving gold through the market lossy — ten per cent compounds, so ten
+     * hops leave two thirds.
+     */
+    marketTaxRate: Math.min(
+      0.9,
+      Math.max(0, Number(setting(environment, "MARKET_TAX_RATE") ?? defaults.marketTaxRate ?? 0.1))
+    ),
     allowInsecureInternal:
       setting(environment, "ALLOW_INSECURE_INTERNAL") === undefined
         ? defaults.allowInsecureInternal === true

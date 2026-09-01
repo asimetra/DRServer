@@ -162,6 +162,10 @@ CREATE TABLE IF NOT EXISTS market_listings (
     listed_at         TIMESTAMPTZ NOT NULL,
     sold_to           BIGINT,
     sold_at           TIMESTAMPTZ,
+    -- Settled at the sale, not at the claim: a rate changed later must not
+    -- reprice gold somebody has already earned.
+    tax               BIGINT,
+    proceeds          BIGINT,
     power             INTEGER,
     requiredlevel     INTEGER,
     rarity            INTEGER,
@@ -269,5 +273,12 @@ CREATE TABLE IF NOT EXISTS dungeon_bests (
 -- idempotently, the way every other statement here is, so re-running the file
 -- brings an older database up to date instead of failing on it.
 ALTER TABLE IF EXISTS dungeon_bests ADD COLUMN IF NOT EXISTS hero_id INTEGER;
+ALTER TABLE IF EXISTS market_listings ADD COLUMN IF NOT EXISTS tax BIGINT;
+ALTER TABLE IF EXISTS market_listings ADD COLUMN IF NOT EXISTS proceeds BIGINT;
+-- Barred from the market. Its own column rather than a bit in `account_flags`,
+-- which is transcribed from captures and goes to the client: this server does
+-- not know which bits that field means to it, and guessing at somebody else's
+-- format is how a client stops working.
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS market_barred BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);
