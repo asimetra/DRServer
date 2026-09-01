@@ -1036,9 +1036,21 @@ const buildNpcs = async (context, placements) => {
   return built;
 };
 
-/** Doober ids 30100..30103 are the four chests — see awardTreasureChest. */
+/**
+ * Doober ids 30100..30105 are the four chests and the two item boxes — see
+ * awardTreasureChest.
+ *
+ * The boxes were left out, and they are not scenery: SMALL_ITEM_BOX carries no
+ * gold, no experience and no health, so `applyDooberReward` returned on its
+ * first line and recorded nothing at all. The client still played the pickup,
+ * because collecting is a frame the server sends before it decides what the
+ * thing was worth — so a box looked collected and vanished.
+ *
+ * They are chests in the client's own vocabulary: UIHud names 60001..60004 for
+ * the four chests and 60005, 60006 for the two boxes, one unbroken run.
+ */
 const FIRST_TREASURE_DOOBER = 30100;
-const LAST_TREASURE_DOOBER = 30103;
+const LAST_TREASURE_DOOBER = 30105;
 
 const isTreasureDoober = (id) =>
   Number(id) >= FIRST_TREASURE_DOOBER && Number(id) <= LAST_TREASURE_DOOBER;
