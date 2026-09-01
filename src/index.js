@@ -3,7 +3,7 @@ import { start as startWebServices } from "./http.js";
 import { start as startGameSocket } from "./socket/index.js";
 import { start as startInternalApi } from "./internal.js";
 import { config } from "./config.js";
-import { purgeLegacyExperienceBoard } from "./leaderboard.js";
+import { purgeLegacyExperienceBoard, seedHeroExperienceStandings } from "./leaderboard.js";
 import {
   checkCompatibilityData,
   ensureSafeTransport,
@@ -26,10 +26,12 @@ reportAuth();
 await checkDatabaseSchema();
 /**
  * Before anything records a run: the experience board changed what it ranks,
- * and the standings kept under its old meaning go. Deleting the dead key is
- * safe on every boot — the old name is never written again.
+ * so the standings kept under its old meaning go, and the figure the board
+ * ranks now is lifted out of the accounts — which have held it all along.
+ * Both are safe to meet on every boot.
  */
 await purgeLegacyExperienceBoard();
+await seedHeroExperienceStandings();
 ensureSafeTransport();
 
 startWebServices();

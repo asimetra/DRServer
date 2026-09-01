@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
-import { warn } from "./log.js";
+import { info, warn } from "./log.js";
 
 /**
  * What a finished run leaves behind, and the boards read off it.
@@ -243,6 +243,57 @@ export const purgeLegacyExperienceBoard = async () => {
   if (bests && LEGACY_EXPERIENCE_KEY in bests) {
     delete bests[LEGACY_EXPERIENCE_KEY];
     await writeJson(BESTS_FILE, bests);
+  }
+};
+
+/**
+ * Seeds the hero experience board from the accounts themselves.
+ *
+ * Every other board is folded from runs, and a standing only a run can set is
+ * a standing nobody has until they finish one — but this board ranks a figure
+ * every account already holds, banked on its avatars since long before the
+ * board existed. So at startup the best avatar per account is lifted in,
+ * never lowering a standing a run set. A run keeps feeding it from there, and
+ * the seed re-runs on every boot, so a hero whose experience arrived outside
+ * a ranked run — Infinite Island pays no standing — is caught up too.
+ *
+ * The file store loads each account once a boot; that is the price of the
+ * boards living in their own small file, and it is paid once, at startup.
+ */
+export const seedHeroExperienceStandings = async () => {
+  if (usingDatabase()) {
+    const seeded = await (await db()).seedHeroExperienceStandings();
+    if (seeded) info(`leaderboard: ${seeded} hero experience standing(s) seeded from the accounts`);
+    return;
+  }
+
+  const { listAccountIds, loadAccount } = await import("./accounts.js");
+  const bests = await readJson(BESTS_FILE, {});
+  let seeded = 0;
+  for (const id of await listAccountIds()) {
+    const account = await loadAccount(id);
+    const best = (account.account_avatars ?? []).reduce(
+      (top, avatar) =>
+        Number(avatar.experience ?? 0) > Number(top?.experience ?? 0) ? avatar : top,
+      null
+    );
+    const value = Number(best?.experience ?? 0);
+    if (!value) continue;
+    const row = (bests.hero_experience ??= {})[id];
+    if (row === undefined || value > row.value) {
+      bests.hero_experience[id] = {
+        value,
+        at: new Date().toISOString(),
+        name: account.name ?? null,
+        trophies: account.trophies ?? 0,
+        hero_id: best.avatar_id ?? null,
+      };
+      seeded += 1;
+    }
+  }
+  if (seeded) {
+    await writeJson(BESTS_FILE, bests);
+    info(`leaderboard: ${seeded} hero experience standing(s) seeded from the accounts`);
   }
 };
 

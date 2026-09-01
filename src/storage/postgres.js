@@ -293,6 +293,40 @@ export const purgeBoard = async (key) => {
   await connect().query("DELETE FROM dungeon_bests WHERE board_key = $1", [key]);
 };
 
+/**
+ * Seeds the hero experience board from the accounts themselves.
+ *
+ * The boards are folded from runs, and a standing only a run can set is a
+ * standing nobody has until they finish one — yet every account already holds
+ * the figure the board ranks, banked on its avatars. This lifts the best
+ * avatar per account into the board, never lowering a standing a run set
+ * higher, and answers with the number of rows it touched.
+ */
+export const seedHeroExperienceStandings = async () => {
+  const { rowCount } = await connect().query(
+    `WITH best AS (
+       SELECT DISTINCT ON (account_id) account_id, avatar_id, experience
+         FROM account_avatars
+        WHERE experience > 0
+        ORDER BY account_id, experience DESC
+     )
+     INSERT INTO dungeon_bests (board_key, account_id, name, trophies, hero_id, value, achieved_at)
+     SELECT 'hero_experience', a.id, a.name, a.trophies, b.avatar_id, b.experience, now()
+       FROM best b JOIN accounts a ON a.id = b.account_id
+     ON CONFLICT (board_key, account_id) DO UPDATE
+       SET value = GREATEST(dungeon_bests.value, EXCLUDED.value),
+           name = EXCLUDED.name,
+           trophies = EXCLUDED.trophies,
+           hero_id = CASE
+             WHEN EXCLUDED.value > dungeon_bests.value
+             THEN EXCLUDED.hero_id ELSE dungeon_bests.hero_id END,
+           achieved_at = CASE
+             WHEN GREATEST(dungeon_bests.value, EXCLUDED.value) <> dungeon_bests.value
+             THEN EXCLUDED.achieved_at ELSE dungeon_bests.achieved_at END`
+  );
+  return rowCount ?? 0;
+};
+
 export const recordRuns = async (runs, boards) => {
   const client = await connect().connect();
   try {

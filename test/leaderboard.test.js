@@ -187,6 +187,36 @@ test("the old experience board's standings are swept at startup", async () => {
 });
 
 /**
+ * The board ranks what heroes hold, and heroes held plenty before the board
+ * existed. Startup lifts the best avatar of every account in, and a run that
+ * set a standing the seed cannot beat stays standing — with the hero that set
+ * it.
+ */
+test("the hero experience board is seeded from the accounts themselves", async () => {
+  const { createNewAccount, loadAccount, saveAccount } = await import("../src/accounts.js");
+  const { seedHeroExperienceStandings } = await import("../src/leaderboard.js");
+
+  const veteran = await createNewAccount({});
+  const account = await loadAccount(veteran.id);
+  account.name = "Old Hand";
+  account.account_avatars[0].experience = 366_773;
+  await saveAccount(account);
+
+  await recordRuns([run({ account_id: 90, hero_id: 106, xp: 10, hero_xp: 400_000 })]);
+  await seedHeroExperienceStandings();
+
+  const board = await boardFor("hero_experience", {});
+  const seeded = board.find((e) => e.account_id === veteran.id);
+  assert.ok(seeded, "the account's banked experience reached the board");
+  assert.equal(seeded.value, 366_773);
+  assert.equal(seeded.name, "Old Hand");
+  assert.equal(seeded.hero_id, account.account_avatars[0].avatar_id);
+
+  const fromRun = board.find((e) => e.account_id === 90);
+  assert.equal(fromRun.value, 400_000, "a standing from a run is not lowered by the seed");
+});
+
+/**
  * The history is kept whole even though nothing draws a board from it — the
  * boards are bounded and the history is what a later question is answered from.
  */
