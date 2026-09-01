@@ -294,3 +294,52 @@ test("a profile carries every hero, with the stats the game computes", async () 
   assert.ok(Object.keys(hero.stats).length > 5, "and the stat vector is filled in");
   assert.equal(typeof hero.active, "boolean");
 });
+
+/**
+ * How a hero was built, which is a different question from what it ended up
+ * with.
+ *
+ * `stats` is the computed vector — the melee attack this hero has, gear and
+ * points and all. What it cannot say is what the player *chose*: four slots,
+ * seventy-five points each, and a build is which of them they filled. Those
+ * live on the avatar as statupgrade1..4 and mean nothing on their own, since
+ * the slots belong to the hero — 75 in the second is cooking on a Battle Chef
+ * and something else on everybody else, and only this side holds the table
+ * that says which.
+ */
+test("a hero says how its points were spent, not only what it ended up with", async () => {
+  const { loadAccount, saveAccount } = await import("../src/accounts.js");
+  const registered = await (
+    await call("POST", "/internal/v1/accounts", { body: { name: "Builder" } })
+  ).json();
+
+  const account = await loadAccount(registered.accountId);
+  Object.assign(account.account_avatars[0], {
+    statupgrade1: 0,
+    statupgrade2: 75,
+    statupgrade3: 50,
+    statupgrade4: 75,
+  });
+  await saveAccount(account);
+
+  const { heroes } = await (await call("GET", "/internal/v1/players/Builder")).json();
+  const [hero] = heroes;
+
+  assert.equal(hero.spent.placed, 200, "the points actually spent");
+  assert.equal(hero.spent.cap, 75, "and what one slot may hold");
+  assert.equal(hero.spent.slots.length, 4);
+
+  const [first, second] = hero.spent.slots;
+  assert.equal(first.points, 0);
+  assert.equal(second.points, 75);
+  assert.ok(second.stat, "a slot names the stat it feeds, or its number means nothing");
+  assert.ok(Number.isFinite(second.perPoint), "and says what a point in it is worth");
+});
+
+test("a hero with nothing spent still says what its slots are", async () => {
+  await call("POST", "/internal/v1/accounts", { body: { name: "Fresh" } });
+  const { heroes } = await (await call("GET", "/internal/v1/players/Fresh")).json();
+
+  assert.equal(heroes[0].spent.placed, 0);
+  assert.equal(heroes[0].spent.slots.length, 4, "the choices are worth showing before any are made");
+});

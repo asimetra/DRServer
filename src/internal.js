@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
 import { BOARDS, boardFor, runsSince, standingsFor, titleFor } from "./leaderboard.js";
 import { levelForExperience } from "./chests.js";
+import { STAT_CAP, statPointsEarned } from "./progression.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { presenceSummary } from "./socket/presence.js";
 import { listen } from "./http.js";
@@ -243,6 +244,35 @@ const readProfile = async (req, [capture]) => {
         /* The stats as the game computes them, which is the point of answering
            here rather than letting a website work them out again and disagree. */
         stats: Object.fromEntries(STAT_NAMES.map((stat) => [stat, totals[stat] ?? 0])),
+        /**
+         * And how it was built, which the vector above cannot say.
+         *
+         * `stats` is what the hero ended up with; this is what the player
+         * chose. Four slots, seventy-five points each, and which of them were
+         * filled is the whole of a build — a Battle Chef with everything in
+         * cooking and one with everything in melee share a name and nothing
+         * else.
+         *
+         * The numbers are meaningless on their own: the slots belong to the
+         * hero, so what the second one feeds differs per hero and only this
+         * side holds the table saying which. Sending the points without the
+         * names would make a panel guess, and every guess would be wrong for
+         * some hero.
+         */
+        spent: {
+          placed: [1, 2, 3, 4].reduce(
+            (total, slot) => total + (Number(avatar[`statupgrade${slot}`]) || 0),
+            0
+          ),
+          earned: statPointsEarned(gm, hero, avatar.experience ?? 0),
+          cap: STAT_CAP,
+          slots: [1, 2, 3, 4].map((slot) => ({
+            slot,
+            stat: hero[`StatUpgrade${slot}`] ?? null,
+            perPoint: Number(hero[`AmtStat${slot}`]) || 0,
+            points: Number(avatar[`statupgrade${slot}`]) || 0,
+          })),
+        },
         active: avatar.id === account.active_avatar,
       };
     })
