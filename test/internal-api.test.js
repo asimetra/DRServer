@@ -341,6 +341,8 @@ test("a hero says how its points were spent, not only what it ended up with", as
   assert.equal(second.points, 75);
   assert.ok(second.stat, "a slot names the stat it feeds, or its number means nothing");
   assert.ok(Number.isFinite(second.perPoint), "and says what a point in it is worth");
+  assert.ok(second.name, "and carries the words a player reads, not only the constant");
+  assert.notEqual(second.name, second.stat, "a constant is not a label");
 });
 
 test("a hero with nothing spent still says what its slots are", async () => {

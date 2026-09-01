@@ -21,6 +21,7 @@ import {
 } from "./market.js";
 import { salesFor } from "./market-history.js";
 import { STAT_NAMES, maxHitPoints, maxManaPoints, statTotals } from "./hero-stats.js";
+import { statLabel } from "./stat-names.js";
 import { weaponSaleValue } from "./store.js";
 import { info, warn } from "./log.js";
 
@@ -269,6 +270,10 @@ const readProfile = async (req, [capture]) => {
           slots: [1, 2, 3, 4].map((slot) => ({
             slot,
             stat: hero[`StatUpgrade${slot}`] ?? null,
+            /* The player-facing words for the constant, from the client's own
+               locale — a page should not have to keep a label table of its
+               own, any more than it keeps an item-id table. */
+            name: statLabel(hero[`StatUpgrade${slot}`]),
             perPoint: Number(hero[`AmtStat${slot}`]) || 0,
             points: Number(avatar[`statupgrade${slot}`]) || 0,
           })),
