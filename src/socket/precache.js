@@ -126,5 +126,15 @@ export const preloadFor = async (tileLibraries, { gm, tierConstant } = {}) => {
     for (const constant of role) await add(constant);
   }
 
+  /**
+   * A late joiner may bring any inventory pet after the area preload has
+   * already completed. There are only five persistent pet rows, so preloading
+   * that bounded set once avoids a missing sprite without rebuilding the area
+   * or making matchmaking depend on which member entered first.
+   */
+  for (const pet of gm?.raw?.Npc ?? []) {
+    if (pet.CharType === "PET" && pet.UsePetUI) await add(pet.Constant);
+  }
+
   return { cacheNpcs: [...npcIds], cacheSwfs: [...swfs] };
 };

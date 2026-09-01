@@ -94,12 +94,24 @@ const load = async () => {
      write `item_id: weapon.Id`, so anything reading a weapon back off an
      account — a market listing, a bag — has the id and wants the name. */
   const weaponById = new Map(parsed.WeaponItem.map((weapon) => [weapon.Id, weapon]));
+  /* Every look a weapon can have, grouped by the weapon it belongs to. A
+     weapon's icon changes as it levels — ten bands — and the top rarity has a
+     look of its own where one was drawn. */
+  const aestheticsByWeapon = new Map();
+  for (const row of parsed.WeaponAesthetics ?? []) {
+    if (!row.WeaponItemConstant) continue;
+    if (!aestheticsByWeapon.has(row.WeaponItemConstant)) {
+      aestheticsByWeapon.set(row.WeaponItemConstant, []);
+    }
+    aestheticsByWeapon.get(row.WeaponItemConstant).push(row);
+  }
 
   gameMaster = {
     raw: parsed,
     npcByConstant,
     heroById,
     weaponById,
+    aestheticsByWeapon,
     dooberByConstant,
     dooberById,
     doobers: parsed.Doobers,
@@ -642,3 +654,33 @@ export const weaponForConstant = async (constant) => {
 };
 
 export const loadGameMaster = load;
+
+/**
+ * Which picture a weapon wears.
+ *
+ * A weapon does not have one icon. `WeaponAesthetics` gives it ten, a band of
+ * ten levels each, so a level 90 Long Sword is drawn differently from a level 1
+ * one — and thirty-seven of the hundred and fifty-three weapons also have a
+ * legendary look, spanning every level, used when the roll earned it.
+ *
+ * Returns the icon's name, which is the filename `tools/export-icons.js` writes
+ * and nothing more. Whether that file exists on a given deployment is the
+ * caller's problem: this server ships no icons.
+ */
+export const weaponIconFor = (gm, item) => {
+  const weapon = gm.weaponById.get(Number(item?.item_id));
+  const rows = weapon && gm.aestheticsByWeapon.get(weapon.Constant);
+  if (!rows?.length) return null;
+
+  const legendary = rows.find((row) => /Lgnd/i.test(row.IconName ?? ""));
+  /* The legendary look is worn by a legendary weapon and only where one was
+     drawn; the other hundred and sixteen fall back to their level band. */
+  if (legendary && (Number(item.rarity) === 4 || Number(item.legendarymodifier) > 0)) {
+    return legendary.IconName;
+  }
+
+  const level = Number(item?.requiredlevel ?? 1) || 1;
+  const banded = rows.filter((row) => !/Lgnd/i.test(row.IconName ?? ""));
+  const fits = banded.find((row) => level >= Number(row.MinLvl) && level <= Number(row.MaxLvl));
+  return (fits ?? banded[0] ?? rows[0])?.IconName ?? null;
+};

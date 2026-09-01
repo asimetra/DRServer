@@ -12,10 +12,12 @@ import { config } from "../config.js";
 import { grantBuff } from "./buffs.js";
 import { hitPointsUpdate, stateUpdate } from "./combat.js";
 import {
+  cancelPetRespawn,
   enterDungeon,
   leaveDungeon,
   prepareDungeonMember,
   rescaleNpcHealthForParty,
+  spawnEquippedPet,
 } from "./dungeon.js";
 import { refreshFloorFailing } from "./floorstate.js";
 import { createMatchWorld, isLiveMember, membersOf } from "./match-world.js";
@@ -240,6 +242,23 @@ const joinDungeonMatchLocked = async (
     directSend(session, heroFrame(peer, false, world.floorDoid, memberPosition(peer, position)));
     sendRemoteHeroState(session, peer, world);
   }
+  await spawnEquippedPet(
+    {
+      session: context,
+      floorDoid: world.floorDoid,
+      heroDoid: session.heroDoid,
+      mapNodeId: match.mapNodeId,
+      partySize: membersOf(world).size + 1,
+      isActive: () =>
+        match.members.has(session) &&
+        !session.closed &&
+        !world.destroyed &&
+        world.floorDoid != null,
+    },
+    session
+  );
+  requireOpenMember(session);
+  requireJoinableWorld(match, world, session);
   world.sendSnapshot(session, "children");
 
   // Existing clients already have the world; they receive only the new member.
@@ -337,6 +356,7 @@ export const leaveDungeonSession = (
   const peers = [...membersOf(world)].filter(
     (member) => member !== session && isLiveMember(member)
   );
+  cancelPetRespawn(session);
   if (peers[0] && typeof world.releaseProximityActor === "function") {
     world.releaseProximityActor(world.contextFor(peers[0]), session.heroDoid);
   }
@@ -346,10 +366,16 @@ export const leaveDungeonSession = (
     }
   }
   for (const peer of peers) {
+    if (session.petDoid) directSend(peer, objectDisable(session.petDoid));
     directSend(peer, objectDisable(session.heroDoid));
     directSend(peer, objectDisable(session.playerDoid));
   }
 
+  if (session.petDoid) {
+    world.actors.delete(session.petDoid);
+    world.objects.delete(session.petDoid);
+    world.forgetObject(session.petDoid);
+  }
   world.playerActors?.delete(session.heroDoid);
   world.actors.delete(session.heroDoid);
   world.objects.delete(session.heroDoid);

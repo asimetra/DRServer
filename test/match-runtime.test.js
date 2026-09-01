@@ -16,6 +16,7 @@ import {
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
 import { applyDamage, hitPointsUpdate } from "../src/socket/combat.js";
+import { readNpc } from "./helpers/floor.js";
 
 let nextDoid = 9000;
 
@@ -247,6 +248,61 @@ test("match admission account data is reused for host and late-join preparation"
 
   assert.equal(hostPreparedWith, hostAccount);
   assert.equal(joinerPreparedWith, joinerAccount);
+});
+
+test("a late joiner's equipped pet is snapshotted for itself and owned by the shared world", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(1071, 1101071);
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+
+  const joiner = member(1072, 1101072);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const hostBefore = host.sent.length;
+  await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: async (session, options) => {
+      await prepareFixture(session, options);
+      session.petSpawn = {
+        instanceId: 81,
+        npcId: 3301,
+        constant: "WOLF_PET",
+        level: 75,
+        ownerHeroDoid: session.heroDoid,
+      };
+      return true;
+    },
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {},
+  });
+
+  const petDoid = joiner.petDoid;
+  assert.ok(petDoid);
+  assert.equal(host.world.objects.get(petDoid), CLID.DistributedNPCGameObject);
+  assert.equal(host.world.actors.get(petDoid).masterId, joiner.heroDoid);
+  const joinerPetFrame = joiner.sent.find((frame) => {
+    const head = frameHead(frame);
+    return head.clid === CLID.DistributedNPCGameObject && head.doid === petDoid;
+  });
+  assert.ok(joinerPetFrame, "the owner's ordered child snapshot includes the pet");
+  const pet = readNpc(joinerPetFrame.subarray(2));
+  assert.equal(pet.masterId, joiner.heroDoid);
+  assert.equal(pet.level, 75);
+  assert.equal(pet.weapons[0].power, 167);
+
+  const hostNewFrames = host.sent.slice(hostBefore).map(frameHead);
+  assert.ok(hostNewFrames.some(({ doid }) => doid === petDoid));
+  const hostBeforeLeave = host.sent.length;
+  leaveDungeonSession(joiner, { registry });
+  assert.equal(host.world.actors.has(petDoid), false);
+  assert.equal(host.world.objects.has(petDoid), false);
+  assert.equal(host.world.snapshotCreates.has(petDoid), false);
+  assert.ok(
+    host.sent.slice(hostBeforeLeave).map(frameHead).some(({ doid }) => doid === petDoid),
+    "remaining members are told to remove the departing member's pet"
+  );
 });
 
 test("member preparation starts each dungeon with fresh completion and summary state", async () => {

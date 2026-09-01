@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { BOARDS, boardFor, runsSince, standingsFor, titleFor } from "./leaderboard.js";
 import { levelForExperience } from "./chests.js";
 import { STAT_CAP, statPointsEarned } from "./progression.js";
-import { loadGameMaster } from "./gamemaster.js";
+import { loadGameMaster, weaponIconFor } from "./gamemaster.js";
 import { presenceSummary } from "./socket/presence.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
@@ -483,6 +483,9 @@ export const describeListings = (listings, gm) => {
       ...listing,
       name: weapon?.Name ?? null,
       mastertype: weapon?.Mastertype ?? null,
+      /* The picture's name, not the picture. Whether a deployment has the file
+         is its own business — see tools/export-icons.js. */
+      icon: weaponIconFor(gm, listing),
       rarity_name:
         gm.raw.Rarity?.find((rarity) => rarity.Id === Number(listing.rarity))?.Type?.toLowerCase()
         ?? null,

@@ -322,3 +322,42 @@ test("no tier roll can ever pay a legendary", async () => {
     }
   }
 });
+
+/**
+ * The item boxes, which were being collected and thrown away.
+ *
+ * SMALL_ITEM_BOX and ROYAL_ITEM_BOX carry no gold, no experience and no health,
+ * so `applyDooberReward` returned on its first line and recorded nothing — while
+ * the client still played the pickup, because collecting is a frame the server
+ * sends before it decides what the thing was worth. A box looked collected and
+ * simply vanished, which is exactly what it looked like from the floor.
+ *
+ * They are chests in the client's own vocabulary rather than by this server's
+ * arithmetic: `UIHud` names 60001..60004 for the four chests and then 60005 and
+ * 60006 for the two boxes, one unbroken run.
+ */
+test("an item box is a treasure, and the run's allowance counts it", async () => {
+  const { awardTreasureChest } = await import("../src/socket/rewards.js");
+  const target = session();
+  target.dungeonAccount.id = 1000000005;
+
+  assert.equal(await awardTreasureChest(target, 30104), 60005, "small item box");
+  assert.equal(await awardTreasureChest(target, 30105), 60006, "royal item box");
+
+  // Alongside the chests, in the order they were picked up: the report shows
+  // four treasures and it should not matter which kind each one was.
+  assert.equal(await awardTreasureChest(target, 30101), 60002);
+  assert.deepEqual(
+    target.dungeonTreasures.map((treasure) => treasure.chestId),
+    [60005, 60006, 60002]
+  );
+});
+
+/** And the run still stops at six: nothing above the boxes is a treasure. */
+test("the treasure range ends at the royal box", async () => {
+  const { awardTreasureChest } = await import("../src/socket/rewards.js");
+  const target = session();
+
+  assert.equal(await awardTreasureChest(target, 30106), null, "one past the last box");
+  assert.equal(await awardTreasureChest(target, 30099), null, "and one before the first chest");
+});

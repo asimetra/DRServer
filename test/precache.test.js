@@ -69,6 +69,19 @@ test("the environment art a theme draws with is preloaded from the Prop table", 
   }
 });
 
+test("the area preload covers any persistent pet a late joiner may bring", async () => {
+  const gm = await loadGameMaster();
+  const { cacheNpcs, cacheSwfs } = await preloadFor([CAVES], {
+    gm,
+    tierConstant: "ICE_CAVES",
+  });
+  const pets = gm.raw.Npc.filter((npc) => npc.CharType === "PET" && npc.UsePetUI);
+  for (const pet of pets) {
+    assert.ok(cacheNpcs.includes(pet.Id), `missing pet row ${pet.Constant}`);
+    assert.ok(cacheSwfs.includes(pet.SwfFilepath), `missing pet art ${pet.Constant}`);
+  }
+});
+
 test("the area generate carries all three lists, and nothing after them", async () => {
   /**
    * The fields are byte-length-prefixed, so a miscounted list does not fail —

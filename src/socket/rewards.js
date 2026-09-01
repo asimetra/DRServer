@@ -299,7 +299,9 @@ const FIRST_CHEST = 60001;
 export const awardTreasureChest = async (session, dooberType) => {
   const account = session.dungeonAccount;
   const chestId = FIRST_CHEST + (Number(dooberType) - FIRST_TREASURE_DOOBER);
-  if (!account || chestId < FIRST_CHEST || chestId > FIRST_CHEST + 3) return null;
+  /* Six, not four: the two item boxes sit at the top of the same run, which is
+     the client's own numbering rather than this server's arithmetic. */
+  if (!account || chestId < FIRST_CHEST || chestId > FIRST_CHEST + 5) return null;
 
   session.dungeonTreasures ??= [];
   session.dungeonTreasures.push({ dooberType: Number(dooberType), chestId });

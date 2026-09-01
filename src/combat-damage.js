@@ -86,5 +86,5 @@ export const netAttackDamage = ({
  * so the shared vector does the work. Their `Level` column, where present, feeds
  * the same LV_ growth.
  */
-export const npcStats = (gm, npc) =>
-  statVector(gm, npc ?? {}, { level: Number(npc?.Level ?? 0) });
+export const npcStats = (gm, npc, level = npc?.Level ?? 0) =>
+  statVector(gm, npc ?? {}, { level: Number(level ?? 0) });

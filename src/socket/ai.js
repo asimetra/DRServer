@@ -5,6 +5,7 @@ import { PacketWriter } from "./packet.js";
 import { performNpcAttack } from "./combat.js";
 import { buffMultiplierFor, hasAbility } from "./buffs.js";
 import { heroMembersOf } from "./match-world.js";
+import { collectNearbyForPet } from "./pickups.js";
 import {
   findPath,
   hasLineOfSight,
@@ -30,6 +31,10 @@ export const npcHeadingUpdate = (doid, heading) =>
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 const ROUTE_REFRESH_MS = 1000;
 const FAILED_PATH_RETRY_MS = 2000;
+/** Only this many enemies may deliberately choose one pet over a live hero. */
+export const MAX_PET_AGGRESSORS = 2;
+/** A pet must be materially ahead of the hero before it is an aggro candidate. */
+const PET_AGGRO_DISTANCE_ADVANTAGE = 100;
 
 const squaredDistanceTo = (from, to) => {
   const x = to.x - from.x;
@@ -198,6 +203,8 @@ const clearNpcTarget = (actor) => {
   ai.pathFailed = false;
   ai.nextPathAt = 0;
   ai.navigationRevision = undefined;
+  ai.targetDoid = null;
+  ai.nextTargetAt = 0;
 };
 
 /** Indexes active NPCs so local separation only considers nearby neighbours. */
@@ -591,19 +598,125 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   }
   const heroDoids = new Set(heroes.map(({ doid }) => doid));
   const spatialIndex = buildNpcSpatialIndex(actors, deltaSeconds, heroDoids);
-
+  const pets = [];
+  const enemies = [];
   for (const [doid, actor] of actors) {
-    const ai = actor.ai;
-    if (!ai || actor.dead || !actor.position) continue;
-    const victim = heroes.reduce(
+    if (actor.dead || !(actor.hitPoints > 0) || !actor.position) continue;
+    const candidate = { doid, actor, position: actor.position, member: null };
+    if (actor.isPet) pets.push(candidate);
+    else if (actor.isEnemy) enemies.push(candidate);
+  }
+  const nearestTo = (position, candidates) =>
+    candidates.reduce(
       (nearest, candidate) =>
         !nearest ||
-        squaredDistanceTo(actor.position, candidate.position) <
-          squaredDistanceTo(actor.position, nearest.position)
+        squaredDistanceTo(position, candidate.position) <
+          squaredDistanceTo(position, nearest.position)
           ? candidate
           : nearest,
       null
     );
+
+  const heroByDoid = new Map(heroes.map((candidate) => [candidate.doid, candidate]));
+  const petByDoid = new Map(pets.map((candidate) => [candidate.doid, candidate]));
+  const petAggressors = new Map();
+  for (const { actor } of enemies) {
+    if (!petByDoid.has(actor.ai?.targetDoid)) continue;
+    petAggressors.set(
+      actor.ai.targetDoid,
+      (petAggressors.get(actor.ai.targetDoid) ?? 0) + 1
+    );
+  }
+
+  const rememberEnemyTarget = (ai, target) => {
+    const previousPet = petByDoid.has(ai.targetDoid) ? ai.targetDoid : null;
+    const nextPet = petByDoid.has(target?.doid) ? target.doid : null;
+    if (previousPet && previousPet !== nextPet) {
+      petAggressors.set(previousPet, Math.max(0, (petAggressors.get(previousPet) ?? 1) - 1));
+    }
+    if (nextPet && previousPet !== nextPet) {
+      petAggressors.set(nextPet, (petAggressors.get(nextPet) ?? 0) + 1);
+    }
+    ai.targetDoid = target?.doid ?? null;
+    ai.nextTargetAt = now + Math.max(
+      250,
+      (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0)
+    );
+    return target;
+  };
+
+  /**
+   * Heroes own aggro; pets only peel a small number of enemies when they are
+   * clearly screening ahead. Official pet floors put just 3.4% of enemy damage
+   * on pets, and heading analysis shows most of even that was collateral from
+   * a swing aimed at the hero. Nearest-body targeting inverted that ratio.
+   */
+  const enemyVictim = (actor, ai) => {
+    const lockedHero = heroByDoid.get(ai.targetDoid);
+    if (lockedHero && now < (ai.nextTargetAt ?? 0)) return lockedHero;
+    const lockedPet = petByDoid.get(ai.targetDoid);
+    if (
+      lockedPet &&
+      now < (ai.nextTargetAt ?? 0) &&
+      (petAggressors.get(lockedPet.doid) ?? 0) <= MAX_PET_AGGRESSORS
+    ) return lockedPet;
+
+    const hero = nearestTo(actor.position, heroes);
+    const pet = nearestTo(actor.position, pets);
+    if (pet && (petAggressors.get(pet.doid) ?? 0) < MAX_PET_AGGRESSORS) {
+      const heroDistance = hero ? distanceTo(actor.position, hero.position) : Infinity;
+      const petDistance = distanceTo(actor.position, pet.position);
+      if (petDistance + PET_AGGRO_DISTANCE_ADVANTAGE < heroDistance) {
+        return rememberEnemyTarget(ai, pet);
+      }
+    }
+    return rememberEnemyTarget(ai, hero);
+  };
+
+  for (const [doid, actor] of actors) {
+    const ai = actor.ai;
+    if (!ai || actor.dead || !actor.position) continue;
+    let followingOwner = false;
+    let victim;
+    if (ai.kind === "pet") {
+      const owner = heroes.find(({ doid: heroDoid }) => heroDoid === ai.ownerDoid);
+      if (!owner) {
+        clearNpcTarget(actor);
+        continue;
+      }
+      if (now >= (ai.nextPickupAt ?? 0)) {
+        ai.nextPickupAt = now + 250;
+        const ownerSession = owner.member.world?.contextFor(owner.member) ?? owner.member;
+        collectNearbyForPet(ownerSession, actor.position, ai.collects);
+      }
+      const enemy = nearestTo(actor.position, enemies);
+      const ownerDistance = distanceTo(actor.position, owner.position);
+      const enemyDistance = enemy ? distanceTo(actor.position, enemy.position) : Infinity;
+      if (ai.tetherDistance > 0 && ownerDistance > ai.tetherDistance) {
+        ai.outsideTetherAt ??= now;
+      } else {
+        ai.outsideTetherAt = null;
+      }
+      const mustReturn =
+        ai.outsideTetherAt != null && now - ai.outsideTetherAt >= (ai.tetherTimerMs ?? 0);
+      if (mustReturn || !enemy || (!ai.engaged && enemyDistance > ai.aggroRadius)) {
+        if (ownerDistance <= Math.max(heroContact(actor, owner.actor), ai.returnDistance ?? 0)) {
+          clearNpcTarget(actor);
+          continue;
+        }
+        victim = owner;
+        followingOwner = true;
+        ai.engaged = false;
+        ai.state = "return";
+        ai.targetDoid = owner.doid;
+      } else {
+        victim = enemy;
+        ai.targetDoid = enemy.doid;
+      }
+    } else {
+      victim = enemyVictim(actor, ai);
+    }
+    if (!victim) continue;
     const target = victim.position;
     if (ai.wave && now >= ai.wave.group.expiresAt) ai.wave = null;
     if (
@@ -621,14 +734,15 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     ) continue;
 
     let distance = distanceTo(actor.position, target);
-    if (!ai.engaged) {
-      if (distance > ai.aggroRadius) continue;
-      ai.engaged = true;
-      ai.state = "chase";
-    } else if (distance > ai.disengageDistance) {
-      ai.engaged = false;
-      ai.state = "idle";
-      continue;
+    if (!followingOwner) {
+      if (!ai.engaged) {
+        if (distance > ai.aggroRadius) continue;
+        ai.engaged = true;
+        ai.state = "chase";
+      } else if (distance > ai.disengageDistance) {
+        clearNpcTarget(actor);
+        continue;
+      }
     }
 
     /**
@@ -686,7 +800,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * range is only ever asked one question, which is whether the thing may
      * swing from where it now stands. That question is still below.
      */
-    const standoff = heroStandoff(actor, victim.actor);
+    const standoff = followingOwner
+      ? Math.max(heroContact(actor, victim.actor), ai.returnDistance ?? 0)
+      : heroStandoff(actor, victim.actor);
     let chaseX = 0;
     let chaseY = 0;
     /**
@@ -739,6 +855,11 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         session.send(npcPositionUpdate(doid, actor.position));
       }
       distance = distanceTo(actor.position, target);
+    }
+
+    if (followingOwner) {
+      ai.state = "return";
+      continue;
     }
 
     const clearAttack = hasLineOfSight(
@@ -796,8 +917,10 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     ai.nextAttackAt = now + attackIntervalMs(ai);
     // Awaited so the hit lands before the tick moves on: damage is the
     // server's own bookkeeping and must not race the next frame.
-    const victimSession = victim.member.world?.contextFor(victim.member) ?? victim.member;
-    await performNpcAttack(victimSession, doid, { ...ai, ...chosen });
+    const victimSession = victim.member
+      ? victim.member.world?.contextFor(victim.member) ?? victim.member
+      : session;
+    await performNpcAttack(victimSession, doid, { ...ai, ...chosen }, victim.doid);
   }
 };
 

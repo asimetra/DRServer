@@ -131,6 +131,15 @@ export const collectNearby = (session, position) => {
     taken.push([doid, doober]);
   }
 
+  collectTracked(session, taken);
+  return taken.length;
+};
+
+const collectTracked = (
+  session,
+  taken,
+  { collectorDoid = session.heroDoid, progressOnly = false, label = "picked up" } = {}
+) => {
   for (const [doid, doober] of taken) {
     const timer = session.dooberTimers?.get(doid);
     if (timer) clearTimeout(timer);
@@ -138,7 +147,7 @@ export const collectNearby = (session, position) => {
     // Class lookup must still exist while MatchWorld routes this field. Deleting
     // first downgraded it to a collector-only direct send and left a ghost loot
     // object on every peer.
-    session.send(collectedBy(doid, session.heroDoid));
+    session.send(collectedBy(doid, collectorDoid));
     session.world?.forgetObject?.(doid);
     session.doobers.delete(doid);
     session.objects.delete(doid);
@@ -150,18 +159,52 @@ export const collectNearby = (session, position) => {
       }
       // Health, Mana, treasure and buffs still belong to the collector; only
       // the three progression currencies above are party-wide.
-      applyDooberReward(session, { ...doober, gold: 0, xp: 0, crowd: 0 });
+      if (!progressOnly) {
+        applyDooberReward(session, { ...doober, gold: 0, xp: 0, crowd: 0 });
+      }
+    } else if (progressOnly) {
+      applyProgressReward(session, doober);
     } else {
       applyDooberReward(session, doober);
     }
-    if (doober.buffGranted) {
+    if (!progressOnly && doober.buffGranted) {
       grantBuff(session, doober.buffGranted).catch((error) =>
         info(`[${session.id}] could not grant ${doober.buffGranted}: ${error.message}`)
       );
     }
-    info(`[${session.id}] picked up ${doober.constant}`);
+    info(`[${session.id}] ${label} ${doober.constant}`);
   }
+};
 
+/**
+ * Wolves collect only the progression stars their GameMaster row permits.
+ * No persistent pet doid appears as `collectedBy` in the capture corpus, so
+ * the owner hero remains the wire collector and reward ownership stays
+ * unambiguous in multiplayer.
+ */
+export const collectNearbyForPet = (session, position, collects = {}) => {
+  if (!session.doobers?.size) return 0;
+  const radius = config.pickupRadius;
+  const taken = [];
+  for (const [doid, doober] of session.doobers) {
+    if (!withinReach(position, doober, radius)) continue;
+    if (
+      doober.treasure ||
+      doober.hpPercentage ||
+      doober.mpPercentage ||
+      doober.buffGranted
+    ) continue;
+    const eligible =
+      (collects.gold && doober.gold) ||
+      (collects.xp && doober.xp) ||
+      (collects.crowd && doober.crowd);
+    if (eligible) taken.push([doid, doober]);
+  }
+  collectTracked(session, taken, {
+    collectorDoid: session.heroDoid,
+    progressOnly: true,
+    label: "pet picked up",
+  });
   return taken.length;
 };
 

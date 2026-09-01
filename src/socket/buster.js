@@ -11,6 +11,7 @@ import { heroMembersOf } from "./match-world.js";
 import {
   healHero,
   queueAccountSave,
+  grantMana,
   heroDungeonBusterPointsUpdate,
   heroManaPointsUpdate,
 } from "./rewards.js";
@@ -18,7 +19,7 @@ import { isPowerupAttack, schedulePowerup } from "./powerups.js";
 import { notePlacementPermit } from "./placeables.js";
 import { isOffCooldown, noteCooldown } from "./cooldowns.js";
 import { RULE, noteViolation } from "./security-events.js";
-import { noteCast } from "./combat.js";
+import { noteCast, healFriendlyTargets } from "./combat.js";
 import { schedulePlaceables } from "./placeables.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
@@ -44,8 +45,24 @@ export const remoteStopChoreography = (heroDoid) =>
 
 const STAT_ATTACK_TYPES = new Set(["MELEE", "SHOOTING", "MAGIC"]);
 
+/**
+ * What an attack does to the caster's Mana, signed.
+ *
+ * A negative `ManaCost` gives Mana rather than taking it, and that is how every
+ * mana consumable in the game is authored: Mana Shot is -15, the potion and the
+ * keg are -999, which is the table's way of writing "all of it". Clamping the
+ * cost at zero read all three as free and did nothing — no Mana spent and none
+ * given — so every one of them was inert.
+ *
+ * A weapon's MP_COST modifier scales a cost and not a gift. A modifier that
+ * makes a hero's attacks cheaper has no business deciding how much a potion is
+ * worth, so it applies only when there is a cost to reduce.
+ */
 const attackManaCost = async (session, attack, weaponSlot) => {
-  const baseCost = Math.max(0, Number(attack.ManaCost ?? 0));
+  const authored = Number(attack.ManaCost ?? 0);
+  if (authored < 0) return Math.trunc(authored);
+
+  const baseCost = Math.max(0, authored);
   if (!baseCost || !STAT_ATTACK_TYPES.has(attack.AttackType)) return Math.ceil(baseCost);
 
   const weapon = session.heroWeapons?.[weaponSlot];
@@ -413,6 +430,16 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
   // Here rather than beside the other grants below, because both attacks that
   // refill are bottles: the consumable branch returns before that code runs.
   const refilled = refillDungeonBuster(session, attack);
+  /*
+   * And the Mana, for the same reason and it was missed the first time.
+   *
+   * A mana consumable is authored as a negative cost — Mana Shot is -15, the
+   * potions -999, which is the table's way of writing "all of it" — and the
+   * code that reads `ManaCost` sits past the return above. All three did
+   * nothing at all: the bar never moved. Three of the four attacks with a
+   * negative cost are reached only through here, so here is where it belongs.
+   */
+  const restored = attack.ManaCost < 0 ? grantMana(session, -Number(attack.ManaCost)) : 0;
   // A thrown bomb is a placeable like any other; the slot it came from indexes
   // the powerups, so the weapon slot is not this one's to give.
   await schedulePlaceables(session, attack, 0, { playSpeed });
@@ -421,6 +448,7 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
       (healed ? `; healed ${healed}` : "") +
       (buff ? `; ${attack.SelfBuff}` : "") +
       (refilled ? `; Dungeon Buster refilled for ${refilled}` : "") +
+      (restored ? `; restored ${restored} Mana` : "") +
       (Array.isArray(shared) ? `; ${attack.TargetBuff1} to ${shared.length} others` : "")
   );
   return true;
@@ -508,7 +536,9 @@ export const handleProposeAttackChoreography = async (
 
   const manaCost = await attackManaCost(session, attack, weaponSlot);
   const manaPoints = Math.max(0, Math.trunc(session.heroManaPoints ?? 0));
-  if (manaPoints < manaCost) {
+  /* Only a cost can be unaffordable. Nothing stops a hero drinking a potion on
+     an empty bar — that is what the potion is for. */
+  if (manaCost > 0 && manaPoints < manaCost) {
     warn(
       `[${session.id}] rejected ${attack.Constant}: ` +
         `${manaPoints}/${manaCost} Mana points`
@@ -525,9 +555,13 @@ export const handleProposeAttackChoreography = async (
     return true;
   }
 
-  if (manaCost) {
+  if (manaCost > 0) {
     session.heroManaPoints = manaPoints - manaCost;
     session.send(heroManaPointsUpdate(session.heroDoid, session.heroManaPoints));
+  } else if (manaCost < 0) {
+    /* `grantMana` is where the ceiling lives: -999 is the table asking for the
+       whole bar, not for nine hundred and ninety-nine points. */
+    grantMana(session, -manaCost);
   }
   if (crowdCost) {
     session.dungeonBusterPoints -= crowdCost;
@@ -574,6 +608,12 @@ export const handleProposeAttackChoreography = async (
    */
   await spawnSelfBuff(session, attack);
   await buffFriendlyTarget(session, attack);
+  /**
+   * And what a Healing Wave gives back, which is the server's to work out: the
+   * client proposes the cast and never proposes a result for it. See
+   * `healFriendlyTargets`.
+   */
+  await healFriendlyTargets(session, attack, weaponSlot);
   await schedulePowerup(session, attack);
   /**
    * Alongside the pots rather than inside them: what an attack cooks and what

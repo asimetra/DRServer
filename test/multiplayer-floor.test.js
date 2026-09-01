@@ -139,9 +139,26 @@ test("one floor transition regenerates every party hero for every recipient", as
   const peer = member(1002, 1_201_002);
   const oldArea = 40_000;
   const oldFloor = 40_001;
+  const oldPet = 40_002;
   host.objects.set(oldArea, CLID.DistributedDungionArea);
   host.objects.set(oldFloor, CLID.DistributedDungeonFloor);
+  host.objects.set(oldPet, CLID.DistributedNPCGameObject);
   host.actors.set(host.heroDoid, { hitPoints: 50, maxHitPoints: 200, position: { x: 0, y: 0 } });
+  host.actors.set(oldPet, {
+    hitPoints: 850,
+    maxHitPoints: 850,
+    isPet: true,
+    masterId: host.heroDoid,
+    position: { x: 0, y: -111 },
+  });
+  host.petDoid = oldPet;
+  host.petSpawn = {
+    instanceId: 81,
+    npcId: 3301,
+    constant: "WOLF_PET",
+    level: 75,
+    ownerHeroDoid: host.heroDoid,
+  };
   const match = { id: 1, members: new Set([host, peer]), floorIndex: 0 };
   const world = createMatchWorld(match, host);
   t.after(() => {
@@ -173,6 +190,9 @@ test("one floor transition regenerates every party hero for every recipient", as
   assert.equal(world.playerActors.size, 2);
   assert.equal(world.actors.get(host.heroDoid).hitPoints, 200);
   assert.equal(world.actors.get(peer.heroDoid).hitPoints, 200);
+  assert.notEqual(host.petDoid, oldPet);
+  assert.equal(world.objects.has(oldPet), false);
+  assert.equal(world.actors.get(host.petDoid).masterId, host.heroDoid);
   for (const recipient of [host, peer]) {
     const heroes = creates(recipient.sent, CLID.HeroGameObject);
     assert.deepEqual(
