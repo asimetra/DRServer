@@ -243,7 +243,7 @@ const readProfile = async (req, [capture]) => {
         mana: maxManaPoints(gm, hero, avatar),
         /* The stats as the game computes them, which is the point of answering
            here rather than letting a website work them out again and disagree. */
-        stats: Object.fromEntries(STAT_NAMES.map((stat) => [stat, totals[stat] ?? 0])),
+         stats: Object.fromEntries(STAT_NAMES.map((stat) => [stat, totals.get(stat) ?? 0])),
         /**
          * And how it was built, which the vector above cannot say.
          *

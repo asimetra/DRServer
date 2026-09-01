@@ -292,6 +292,13 @@ test("a profile carries every hero, with the stats the game computes", async () 
   assert.ok(hero.level >= 1);
   assert.ok(hero.health > 0, "health is computed, not left null");
   assert.ok(Object.keys(hero.stats).length > 5, "and the stat vector is filled in");
+  /* `statTotals` answers with a Map; read it as one. Reading it as a plain
+     object turned every value into zero, and a vector of zeroes passes the
+     key-count check above — which is exactly how it slipped through. */
+  assert.ok(
+    Object.values(hero.stats).some((value) => value > 0),
+    "the vector carries the game's numbers, not zeroes"
+  );
   assert.equal(typeof hero.active, "boolean");
 });
 
