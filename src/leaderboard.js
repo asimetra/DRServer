@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
 import { info, warn } from "./log.js";
+import { trophiesFor } from "./map-progress.js";
 
 /**
  * What a finished run leaves behind, and the boards read off it.
@@ -68,6 +69,15 @@ export const BOARDS = Object.freeze({
    * because it is one.
    */
   hero_experience: { better: "higher", scope: "player", successOnly: false },
+  /**
+   * Trophies: the boss nodes a player has beaten, twelve at the top.
+   *
+   * The run record carries the holder's total as it stood when the run ended,
+   * so any run — a first clear or a replay — refreshes a standing that is
+   * otherwise a best. The bounded ladder is what makes ranking it fair: the
+   * top of this board is a completion table, not a wide-open race.
+   */
+  trophies: { better: "higher", scope: "player", successOnly: false },
   /** Dungeons finished, ever. The plainest measure of having been here a while. */
   clears: { better: "higher", scope: "player", successOnly: true },
 });
@@ -147,6 +157,7 @@ const keyFor = (metric, run) =>
 const valueFor = (metric, run) => {
   if (metric === "speedrun") return run.duration_ms;
   if (metric === "hero_experience") return run.hero_xp ?? 0;
+  if (metric === "trophies") return run.trophies ?? 0;
   return 1;
 };
 
@@ -247,53 +258,77 @@ export const purgeLegacyExperienceBoard = async () => {
 };
 
 /**
- * Seeds the hero experience board from the accounts themselves.
+ * Seeds the player-scoped boards from the accounts themselves.
  *
  * Every other board is folded from runs, and a standing only a run can set is
- * a standing nobody has until they finish one — but this board ranks a figure
- * every account already holds, banked on its avatars since long before the
- * board existed. So at startup the best avatar per account is lifted in,
- * never lowering a standing a run set. A run keeps feeding it from there, and
- * the seed re-runs on every boot, so a hero whose experience arrived outside
- * a ranked run — Infinite Island pays no standing — is caught up too.
+ * a standing nobody has until they finish one — but these rank figures every
+ * account already holds: the experience banked on its best hero, the boss
+ * nodes its mask says it has beaten. Loading each account runs the repairs,
+ * so the trophy count this seed reads is the mask's own answer rather than a
+ * column a legacy import left short.
+ *
+ * Never lowers a standing a run set. A run keeps feeding both boards from
+ * there, and the seed re-runs on every boot, so a hero whose experience
+ * arrived outside a ranked run — Infinite Island pays no standing — is caught
+ * up too.
  *
  * The file store loads each account once a boot; that is the price of the
  * boards living in their own small file, and it is paid once, at startup.
  */
-export const seedHeroExperienceStandings = async () => {
-  if (usingDatabase()) {
-    const seeded = await (await db()).seedHeroExperienceStandings();
-    if (seeded) info(`leaderboard: ${seeded} hero experience standing(s) seeded from the accounts`);
-    return;
-  }
-
+export const seedStandings = async () => {
   const { listAccountIds, loadAccount } = await import("./accounts.js");
-  const bests = await readJson(BESTS_FILE, {});
+  const { loadGameMaster } = await import("./gamemaster.js");
+  const gm = await loadGameMaster();
+  const database = usingDatabase();
+  const bests = database ? null : await readJson(BESTS_FILE, {});
   let seeded = 0;
+
+  const offer = async (key, accountId, entry) => {
+    if (database) {
+      await (await db()).seedStanding(key, accountId, entry);
+      seeded += 1;
+      return;
+    }
+    const row = (bests[key] ??= {})[accountId];
+    if (row === undefined || entry.value > row.value) {
+      bests[key][accountId] = entry;
+      seeded += 1;
+    }
+  };
+
   for (const id of await listAccountIds()) {
     const account = await loadAccount(id);
+    const name = account.name ?? null;
+    const at = new Date().toISOString();
     const best = (account.account_avatars ?? []).reduce(
       (top, avatar) =>
         Number(avatar.experience ?? 0) > Number(top?.experience ?? 0) ? avatar : top,
       null
     );
-    const value = Number(best?.experience ?? 0);
-    if (!value) continue;
-    const row = (bests.hero_experience ??= {})[id];
-    if (row === undefined || value > row.value) {
-      bests.hero_experience[id] = {
-        value,
-        at: new Date().toISOString(),
-        name: account.name ?? null,
+    const experience = Number(best?.experience ?? 0);
+    const trophies = trophiesFor(account.completed_mapnode_mask, gm);
+    if (experience) {
+      await offer("hero_experience", id, {
+        value: experience,
+        at,
+        name,
         trophies: account.trophies ?? 0,
         hero_id: best.avatar_id ?? null,
-      };
-      seeded += 1;
+      });
+    }
+    if (trophies) {
+      await offer("trophies", id, {
+        value: trophies,
+        at,
+        name,
+        trophies,
+        hero_id: best?.avatar_id ?? null,
+      });
     }
   }
   if (seeded) {
-    await writeJson(BESTS_FILE, bests);
-    info(`leaderboard: ${seeded} hero experience standing(s) seeded from the accounts`);
+    if (!database) await writeJson(BESTS_FILE, bests);
+    info(`leaderboard: ${seeded} standing(s) seeded from the accounts`);
   }
 };
 

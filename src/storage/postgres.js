@@ -285,6 +285,7 @@ export const ping = async () => {
 const BOARD_FOLD = {
   speedrun: "LEAST(dungeon_bests.value, EXCLUDED.value)",
   hero_experience: "GREATEST(dungeon_bests.value, EXCLUDED.value)",
+  trophies: "GREATEST(dungeon_bests.value, EXCLUDED.value)",
   clears: "dungeon_bests.value + EXCLUDED.value",
 };
 
@@ -294,25 +295,16 @@ export const purgeBoard = async (key) => {
 };
 
 /**
- * Seeds the hero experience board from the accounts themselves.
+ * One seeded standing, never lowering one a run set.
  *
- * The boards are folded from runs, and a standing only a run can set is a
- * standing nobody has until they finish one — yet every account already holds
- * the figure the board ranks, banked on its avatars. This lifts the best
- * avatar per account into the board, never lowering a standing a run set
- * higher, and answers with the number of rows it touched.
+ * Startup lifts what the accounts already hold into the player-scoped boards;
+ * this is the same fold `recordRuns` applies, fed from the accounts rather
+ * than from a run.
  */
-export const seedHeroExperienceStandings = async () => {
-  const { rowCount } = await connect().query(
-    `WITH best AS (
-       SELECT DISTINCT ON (account_id) account_id, avatar_id, experience
-         FROM account_avatars
-        WHERE experience > 0
-        ORDER BY account_id, experience DESC
-     )
-     INSERT INTO dungeon_bests (board_key, account_id, name, trophies, hero_id, value, achieved_at)
-     SELECT 'hero_experience', a.id, a.name, a.trophies, b.avatar_id, b.experience, now()
-       FROM best b JOIN accounts a ON a.id = b.account_id
+export const seedStanding = async (key, accountId, { value, at, name, trophies, heroId }) => {
+  await connect().query(
+    `INSERT INTO dungeon_bests (board_key, account_id, name, trophies, hero_id, value, achieved_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
      ON CONFLICT (board_key, account_id) DO UPDATE
        SET value = GREATEST(dungeon_bests.value, EXCLUDED.value),
            name = EXCLUDED.name,
@@ -322,9 +314,9 @@ export const seedHeroExperienceStandings = async () => {
              THEN EXCLUDED.hero_id ELSE dungeon_bests.hero_id END,
            achieved_at = CASE
              WHEN GREATEST(dungeon_bests.value, EXCLUDED.value) <> dungeon_bests.value
-             THEN EXCLUDED.achieved_at ELSE dungeon_bests.achieved_at END`
+             THEN EXCLUDED.achieved_at ELSE dungeon_bests.achieved_at END`,
+    [key, accountId, name, trophies ?? 0, heroId ?? null, value, at]
   );
-  return rowCount ?? 0;
 };
 
 export const recordRuns = async (runs, boards) => {

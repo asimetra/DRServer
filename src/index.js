@@ -3,7 +3,7 @@ import { start as startWebServices } from "./http.js";
 import { start as startGameSocket } from "./socket/index.js";
 import { start as startInternalApi } from "./internal.js";
 import { config } from "./config.js";
-import { purgeLegacyExperienceBoard, seedHeroExperienceStandings } from "./leaderboard.js";
+import { purgeLegacyExperienceBoard, seedStandings } from "./leaderboard.js";
 import {
   checkCompatibilityData,
   ensureSafeTransport,
@@ -31,7 +31,7 @@ await checkDatabaseSchema();
  * Both are safe to meet on every boot.
  */
 await purgeLegacyExperienceBoard();
-await seedHeroExperienceStandings();
+await seedStandings();
 ensureSafeTransport();
 
 startWebServices();

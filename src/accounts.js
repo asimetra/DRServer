@@ -7,6 +7,7 @@ import { loadGameMaster } from "./gamemaster.js";
 import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
 import { repairSpentPowerups } from "./powerup-slots.js";
+import { trophiesFor } from "./map-progress.js";
 import { info, warn } from "./log.js";
 import {
   ACCOUNT_OBJECT_ID_FLOOR,
@@ -240,18 +241,35 @@ export const repairAccountAttributes = async (account) => {
   return changed;
 };
 
+/**
+ * The trophy column is a running total that a legacy import can leave short:
+ * the account above was carried over with eight where its mask holds twelve
+ * boss clears. The mask is the truth — every boss it has a bit for was beaten,
+ * by some hero, once — so the count is read off it, and a column already
+ * correct changes nothing.
+ */
+export const repairTrophyCount = async (account) => {
+  const gm = await loadGameMaster();
+  const total = trophiesFor(account.completed_mapnode_mask, gm);
+  if (Number(account.trophies ?? 0) === total) return false;
+  account.trophies = total;
+  return true;
+};
+
 const repairLoadedAccount = async (account) => {
   const migratedAvatars = repairAvatarInstanceIds(account);
   const restoredProgress = repairActiveAvatarProgress(account);
   const restoredAttributes = await repairAccountAttributes(account);
   const namedModifiers = await repairItemModifiers(account);
   const spentPowerups = repairSpentPowerups(account);
+  const countedTrophies = await repairTrophyCount(account);
   if (
     !migratedAvatars &&
     !restoredProgress &&
     !restoredAttributes &&
     !namedModifiers &&
-    !spentPowerups
+    !spentPowerups &&
+    !countedTrophies
   ) {
     return account;
   }
@@ -273,6 +291,11 @@ const repairLoadedAccount = async (account) => {
   }
   if (spentPowerups) {
     info(`accounts: cleared ${spentPowerups} spent powerup(s) from account ${account.id}`);
+  }
+  if (countedTrophies) {
+    info(
+      `accounts: counted ${account.trophies} trophy/trophies off the map mask for account ${account.id}`
+    );
   }
   return account;
 };

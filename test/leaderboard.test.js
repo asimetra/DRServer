@@ -164,7 +164,22 @@ test("the board size is capped", async () => {
 test("an unknown board is not a board", async () => {
   assert.equal(await boardFor("mostGold", {}), null);
   assert.equal(await boardFor("experience", {}), null, "the old name ranks nothing any more");
-  assert.deepEqual(Object.keys(BOARDS), ["speedrun", "hero_experience", "clears"]);
+  assert.deepEqual(Object.keys(BOARDS), ["speedrun", "hero_experience", "trophies", "clears"]);
+});
+
+/**
+ * Trophies rank the boss nodes a player has beaten. The run record carries the
+ * holder's total, so a replay refreshes a standing without raising it, and a
+ * first clear takes it to the new count.
+ */
+test("the trophies standing is the holder's total, replaced only when beaten", async () => {
+  const map_node_id = aNode();
+  await recordRuns([run({ account_id: 91, trophies: 4 })]);
+  await recordRuns([run({ account_id: 91, trophies: 3 })]);
+  await recordRuns([run({ account_id: 91, trophies: 7 })]);
+
+  const mine = (await boardFor("trophies", {})).find((e) => e.account_id === 91);
+  assert.equal(mine.value, 7, "a lower total does not replace a higher one");
 });
 
 /**
@@ -187,23 +202,31 @@ test("the old experience board's standings are swept at startup", async () => {
 });
 
 /**
- * The board ranks what heroes hold, and heroes held plenty before the board
- * existed. Startup lifts the best avatar of every account in, and a run that
- * set a standing the seed cannot beat stays standing — with the hero that set
- * it.
+ * The player-scoped boards rank what accounts already hold, and heroes held
+ * plenty before the boards existed. Startup lifts each account's banked
+ * figure in — experience off its best hero, trophies counted off its map
+ * mask — and a run that set a standing the seed cannot beat stays standing,
+ * with the hero that set it.
  */
-test("the hero experience board is seeded from the accounts themselves", async () => {
+test("the boards are seeded from the accounts themselves", async () => {
   const { createNewAccount, loadAccount, saveAccount } = await import("../src/accounts.js");
-  const { seedHeroExperienceStandings } = await import("../src/leaderboard.js");
+  const { setMapNodeBit } = await import("../src/map-progress.js");
+  const { seedStandings } = await import("../src/leaderboard.js");
 
   const veteran = await createNewAccount({});
   const account = await loadAccount(veteran.id);
   account.name = "Old Hand";
   account.account_avatars[0].experience = 366_773;
+  /* Mask bits for twelve boss clears, where the column says four — the shape
+     a legacy import leaves, which the seed is not allowed to trust. */
+  account.trophies = 4;
+  for (const bit of [0, 3, 7, 12, 18, 24, 33, 41, 49, 54, 67, 81]) {
+    account.completed_mapnode_mask = setMapNodeBit(account.completed_mapnode_mask, bit);
+  }
   await saveAccount(account);
 
   await recordRuns([run({ account_id: 90, hero_id: 106, xp: 10, hero_xp: 400_000 })]);
-  await seedHeroExperienceStandings();
+  await seedStandings();
 
   const board = await boardFor("hero_experience", {});
   const seeded = board.find((e) => e.account_id === veteran.id);
@@ -211,6 +234,10 @@ test("the hero experience board is seeded from the accounts themselves", async (
   assert.equal(seeded.value, 366_773);
   assert.equal(seeded.name, "Old Hand");
   assert.equal(seeded.hero_id, account.account_avatars[0].avatar_id);
+
+  const trophies = (await boardFor("trophies", {})).find((e) => e.account_id === veteran.id);
+  assert.ok(trophies, "the mask's boss clears reached the trophies board");
+  assert.equal(trophies.value, 12, "counted off the mask, not off the short column");
 
   const fromRun = board.find((e) => e.account_id === 90);
   assert.equal(fromRun.value, 400_000, "a standing from a run is not lowered by the seed");
