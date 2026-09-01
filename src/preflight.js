@@ -220,34 +220,95 @@ export const reportAuth = () => {
 export const checkDatabaseSchema = async () => {
   if (config.storage !== "postgres") return true;
 
-  const [{ schemaExpects, driftBetween, columnsInDatabase }, { default: pg }] = await Promise.all([
-    import("./storage/schema-check.js"),
-    import("pg"),
-  ]);
+  const [{ schemaExpects, driftBetween, columnsInDatabase, isAdditiveOnly }, { default: pg }] =
+    await Promise.all([import("./storage/schema-check.js"), import("pg")]);
+
+  const schemaFile = path.join(serverRoot, "db", "schema.sql");
+  const sql = fs.readFileSync(schemaFile, "utf8");
+  const expected = schemaExpects(sql);
 
   const client = new pg.Client({ connectionString: config.databaseUrl });
   try {
     await client.connect();
-    const expected = schemaExpects(
-      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "db", "schema.sql"), "utf8")
-    );
     const drift = driftBetween(expected, await columnsInDatabase(client));
-
     if (!drift.length) {
       info(`database schema is current (${Object.keys(expected).length} tables)`);
       return true;
     }
 
-    warn("the database is older than this server:");
     for (const { table, missing } of drift) {
-      warn(missing === null ? `  ${table}: no such table` : `  ${table}: no ${missing.join(", ")}`);
+      info(missing === null ? `  database: no ${table} table` : `  database: ${table} has no ${missing.join(", ")}`);
     }
-    warn("  db/schema.sql adds all of these and removes nothing. Apply it with:");
-    warn("    $(command -v podman || command -v docker) exec -i ods-postgres \\");
-    warn("      psql -U ods -d open_dungeon < db/schema.sql");
-    return false;
+
+    if (config.migrate === false) {
+      warn("the database is older than this server, and ODS_MIGRATE=0 says not to touch it");
+      warn(`  apply it yourself with: psql ... < ${schemaFile}`);
+      return false;
+    }
+
+    /**
+     * Read before it is run. Everything in the file today adds and nothing
+     * takes away, which is the only reason running it unattended is a
+     * convenience rather than a risk — so that is checked each time rather
+     * than assumed to still be true.
+     */
+    if (!isAdditiveOnly(sql)) {
+      warn("the database is older than this server, and db/schema.sql now removes things.");
+      warn("  It will not be applied automatically. Read it, then apply it yourself.");
+      return false;
+    }
+
+    /**
+     * One writer at a time. Two servers starting together would otherwise both
+     * decide the schema is short and both run the DDL, and `CREATE TABLE IF
+     * NOT EXISTS` racing itself is one of the few ways to deadlock Postgres.
+     * The number is arbitrary and only has to be the same in every process.
+     */
+    await client.query("SELECT pg_advisory_lock($1)", [0x0d5_5c8e]);
+    try {
+      const after = driftBetween(expected, await columnsInDatabase(client));
+      if (!after.length) {
+        info("database schema brought up to date by another server");
+        return true;
+      }
+      await client.query(sql);
+      const remaining = driftBetween(expected, await columnsInDatabase(client));
+      if (remaining.length) {
+        /**
+         * What running the file cannot fix.
+         *
+         * `CREATE TABLE IF NOT EXISTS` skips a table that already exists, so a
+         * column added by editing a CREATE block reaches new databases and no
+         * others. That is why every column added since the first release
+         * carries an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` beside it —
+         * the CREATE is for a fresh database and the ALTER is for every one
+         * that is already running, and a column needs both.
+         */
+        warn("db/schema.sql was applied and the database is still short:");
+        for (const { table, missing } of remaining) {
+          warn(missing === null ? `  no ${table} table` : `  ${table}: no ${missing.join(", ")}`);
+        }
+        warn("  A column inside a CREATE TABLE does not reach a table that already exists.");
+        warn("  Each of these needs a line in db/schema.sql beside its CREATE:");
+        const [first] = remaining;
+        if (first?.missing?.length) {
+          warn(`    ALTER TABLE IF EXISTS ${first.table} ADD COLUMN IF NOT EXISTS ${first.missing[0]} <type>;`);
+        }
+        return false;
+      }
+      info(`database schema brought up to date (${drift.length} table(s) changed)`);
+      return true;
+    } finally {
+      await client.query("SELECT pg_advisory_unlock($1)", [0x0d5_5c8e]).catch(() => undefined);
+    }
   } catch (problem) {
-    warn(`could not read the database schema: ${problem.message}`);
+    /*
+     * A database this server may read but not alter is a legitimate way to run
+     * it — so this says what to run rather than refusing to start, which is the
+     * same choice every other check here makes.
+     */
+    warn(`could not bring the database up to date: ${problem.message}`);
+    warn(`  apply it with: psql ... < ${schemaFile}`);
     return false;
   } finally {
     await client.end().catch(() => undefined);

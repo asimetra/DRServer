@@ -13,6 +13,7 @@
   "permissive": false,
   "dataDir": "../data",
   "authEnabled": true,
+  "migrate": true,
   "internalHost": "127.0.0.1",
   "internalPort": 8081,
   "internalToken": "",

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { schemaExpects, driftBetween } from "../src/storage/schema-check.js";
+import { schemaExpects, driftBetween, isAdditiveOnly } from "../src/storage/schema-check.js";
 
 /**
  * What the code expects of a database, read off the file that builds it.
@@ -73,6 +73,59 @@ test("a database that has everything drifts by nothing", () => {
   );
 
   assert.deepEqual(drift, [], "a column the code does not know about is not its business");
+});
+
+/**
+ * Whether the file is safe to run without being read first.
+ *
+ * The whole reason a server may apply its own schema is that this one only
+ * ever adds: twelve `CREATE TABLE IF NOT EXISTS`, fifteen indexes, four
+ * `ADD COLUMN IF NOT EXISTS`, and nothing that removes anything. The day
+ * somebody writes a `DROP` into it, running it unattended stops being a
+ * convenience and becomes a way to lose a table on a restart — so the file is
+ * checked rather than trusted, and the answer decides.
+ */
+test("a schema that only adds is safe to apply unattended", () => {
+  assert.equal(
+    isAdditiveOnly(`
+CREATE TABLE IF NOT EXISTS accounts (id BIGINT PRIMARY KEY);
+CREATE INDEX IF NOT EXISTS accounts_id ON accounts(id);
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS tax BIGINT;
+`),
+    true
+  );
+});
+
+test("and one that removes anything is not", () => {
+  for (const destructive of [
+    "DROP TABLE accounts;",
+    "TRUNCATE accounts;",
+    "DELETE FROM accounts;",
+    "ALTER TABLE accounts DROP COLUMN tax;",
+    "UPDATE accounts SET tax = 0;",
+  ]) {
+    assert.equal(
+      isAdditiveOnly(`CREATE TABLE IF NOT EXISTS accounts (id BIGINT);\n${destructive}`),
+      false,
+      destructive
+    );
+  }
+});
+
+test("a word inside a comment or a name is not a statement", () => {
+  assert.equal(
+    isAdditiveOnly(`
+-- The tables the trade window used are dropped, since nothing reads them.
+CREATE TABLE IF NOT EXISTS dropped_items (id BIGINT, deleted_at TIMESTAMPTZ);
+`),
+    true,
+    "prose about dropping is not a DROP"
+  );
+});
+
+test("the shipped schema is one this server may run itself", () => {
+  const sql = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8");
+  assert.equal(isAdditiveOnly(sql), true, "db/schema.sql has gained something destructive");
 });
 
 /**

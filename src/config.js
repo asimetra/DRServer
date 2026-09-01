@@ -347,6 +347,21 @@ export const loadServerConfig = (environment = process.env) => {
         : setting(environment, "AUTH") !== "0",
 
     /**
+     * Whether the server brings its own database up to date at startup.
+     *
+     * db/schema.sql only ever adds — every statement in it is a CREATE or an
+     * ADD COLUMN, both guarded by IF NOT EXISTS — so running it against a
+     * database that is behind is safe and idempotent, and the alternative was
+     * finding out from "column tax does not exist" mid-request. Off is for a
+     * deployment where the application's database user has no business holding
+     * DDL rights.
+     */
+    migrate:
+      setting(environment, "MIGRATE") === undefined
+        ? defaults.migrate !== false
+        : setting(environment, "MIGRATE") !== "0",
+
+    /**
      * Where to record this server's own traffic, in the client's own format.
      * Unset records nothing; the recordings hold account tokens and are not
      * something to write by default.

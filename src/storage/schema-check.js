@@ -73,6 +73,36 @@ export const driftBetween = (expected, actual) => {
   return drift;
 };
 
+/**
+ * Whether this file only ever adds, and so may be run without being read.
+ *
+ * A server applying its own schema is a convenience that rests entirely on
+ * this being true: today the file is twelve `CREATE TABLE IF NOT EXISTS`,
+ * fifteen indexes and four `ADD COLUMN IF NOT EXISTS`, and nothing that takes
+ * anything away. The day a `DROP` is written into it, running it unattended
+ * stops being a convenience and becomes a way to lose a table on a restart.
+ *
+ * So it is checked rather than remembered. Comments are stripped first, and
+ * only the word that opens a statement counts — the schema's own prose says
+ * "the tables the trade window used are dropped", and a rule that read that as
+ * a `DROP` would refuse the file it is describing.
+ */
+export const isAdditiveOnly = (sql) => {
+  const statements = sql
+    .replace(/--[^\n]*/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split(";");
+
+  return statements.every((statement) => {
+    const text = statement.trim();
+    if (!text) return true;
+    if (/^(DROP|TRUNCATE|DELETE|UPDATE)\b/i.test(text)) return false;
+    // An ALTER may add and may take away; only the adding kind passes.
+    if (/^ALTER\b/i.test(text)) return /\bADD\s+(COLUMN|CONSTRAINT)\b/i.test(text);
+    return true;
+  });
+};
+
 /** The columns a live database actually has, in the shape `driftBetween` wants. */
 export const columnsInDatabase = async (client, schemas = ["public", "web"]) => {
   const { rows } = await client.query(
