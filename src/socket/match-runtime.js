@@ -257,6 +257,8 @@ const joinDungeonMatchLocked = async (
     },
     session
   );
+  requireOpenMember(session);
+  requireJoinableWorld(match, world, session);
   world.sendSnapshot(session, "children");
 
   // Existing clients already have the world; they receive only the new member.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { collectNearby } from "../src/socket/pickups.js";
+import { collectNearby, collectNearbyForPet } from "../src/socket/pickups.js";
 import { dooberForConstant } from "../src/gamemaster.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
@@ -50,6 +50,44 @@ test("a nearby doober is collected and announced exactly once", () => {
   assert.equal(reader.u16(), FLID_DOOBER_COLLECTED_BY);
   assert.equal(reader.u32(), session.heroDoid);
   assert.equal(reader.eof(), true);
+});
+
+test("a collecting pet takes progression stars for its owner but leaves food alone", async () => {
+  const sent = [];
+  const account = { id: 42, basic_currency: 100, account_avatars: [] };
+  const session = {
+    id: 70,
+    playerDoid: 42,
+    heroDoid: 500,
+    dungeonAccount: account,
+    dungeonRewards: { gold: 0, gems: 0, xp: 0 },
+    doobers: new Map([
+      [100, { x: 5, y: 5, constant: "GOLD_SMALL", gold: 10 }],
+      [101, { x: 5, y: 5, constant: "FOOD", hpPercentage: 0.2 }],
+    ]),
+    objects: new Map([
+      [100, CLID.DistributedDooberGameObject],
+      [101, CLID.DistributedDooberGameObject],
+    ]),
+    persistDungeonAccount: async () => {},
+    send: (frame) => sent.push(frame),
+  };
+
+  assert.equal(
+    collectNearbyForPet(session, { x: 0, y: 0 }, { gold: true }),
+    1
+  );
+  await session.rewardSavePromise;
+  assert.equal(session.doobers.has(100), false);
+  assert.equal(session.doobers.has(101), true);
+  assert.equal(account.basic_currency, 110);
+  assert.equal(session.dungeonRewards.gold, 10);
+
+  const collected = new PacketReader(sent[0].subarray(2));
+  assert.equal(collected.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
+  assert.equal(collected.u32(), 100);
+  assert.equal(collected.u16(), FLID_DOOBER_COLLECTED_BY);
+  assert.equal(collected.u32(), session.heroDoid, "the owner remains the wire collector");
 });
 
 test("GameMaster pickup rewards update live state and persist exactly once", async () => {

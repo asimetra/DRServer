@@ -124,6 +124,11 @@ test("an equipped pet is generated behind its owner with the official wire field
   assert.equal(pet.masterId, avatar.id);
   assert.equal(session.actors.get(doid).isPet, true);
   assert.equal(session.actors.get(doid).ai.kind, "pet");
+  assert.deepEqual(session.actors.get(doid).ai.collects, {
+    gold: true,
+    xp: true,
+    crowd: true,
+  });
 
   applyDamage(session, doid, pet.hitPoints);
   assert.equal(session.actors.has(doid), false);

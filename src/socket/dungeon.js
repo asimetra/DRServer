@@ -715,6 +715,11 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
               tetherDistance: Math.max(0, Number(npc.TetherDist ?? 0)),
               tetherTimerMs: Math.max(0, Number(npc.TetherTimer ?? 0) * 1000),
               returnDistance: Math.max(0, Number(npc.ReturnDist ?? 0)),
+              collects: {
+                gold: Boolean(npc.CollectsGold),
+                xp: Boolean(npc.CollectsXp),
+                crowd: Boolean(npc.CollectsCrowd),
+              },
               state: "idle",
               /**
                * A monster let out of a cage is already coming for you. Waiting
@@ -880,7 +885,14 @@ export const spawnEquippedPet = async (context, member = context?.session?.membe
 } = {}) => {
   const owner = member?.member ?? member;
   const spawn = owner?.petSpawn;
-  if (!spawn || !context?.session || !context.isActive?.()) return null;
+  if (
+    !spawn ||
+    Number(spawn.ownerHeroDoid) !== Number(owner?.heroDoid) ||
+    !context?.session ||
+    !context.isActive?.()
+  ) {
+    return null;
+  }
 
   cancelPetRespawn(owner);
   const gm = context.gm ?? (await loadGameMaster());

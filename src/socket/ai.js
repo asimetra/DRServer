@@ -5,6 +5,7 @@ import { PacketWriter } from "./packet.js";
 import { performNpcAttack } from "./combat.js";
 import { buffMultiplierFor, hasAbility } from "./buffs.js";
 import { heroMembersOf } from "./match-world.js";
+import { collectNearbyForPet } from "./pickups.js";
 import {
   findPath,
   hasLineOfSight,
@@ -622,6 +623,11 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       if (!owner) {
         clearNpcTarget(actor);
         continue;
+      }
+      if (now >= (ai.nextPickupAt ?? 0)) {
+        ai.nextPickupAt = now + 250;
+        const ownerSession = owner.member.world?.contextFor(owner.member) ?? owner.member;
+        collectNearbyForPet(ownerSession, actor.position, ai.collects);
       }
       const enemy = nearestTo(actor.position, enemies);
       const ownerDistance = distanceTo(actor.position, owner.position);
