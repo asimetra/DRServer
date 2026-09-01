@@ -462,6 +462,14 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
    * berserkers and the later dragon / boss specials in the rotation.
    */
   const attackSet = await npcAttackChoices(npc, nativeWeapon, nativeWeaponPower);
+  const petRangedStandoff = options.petOwnerDoid
+    ? Math.max(
+        0,
+        ...attackSet
+          .filter((attack) => attack.projectile && attack.minRange > 0)
+          .map((attack) => attack.minRange)
+      )
+    : 0;
   if (!context.isActive()) return emptyResult;
   const rewardData =
     !options.suppressRewards && (npc.HP ?? 100) > 0
@@ -569,11 +577,19 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
           sourceState: "alive",
         }))
       : [];
-  const aggroRadius = Math.max(npc.AggroRadius ?? 600, config.npcAggroRadius);
-  const disengageDistance = Math.max(
-    npc.DisengageDist ?? 1600,
-    aggroRadius + 400
-  );
+  /**
+   * The global floor widens hostile NPC awareness, not companion awareness.
+   * Applying its default 1800 to a 600-range wolf/dragon and an 800-range
+   * rhino made pets run three rooms ahead of their owners. Their own rows are
+   * already explicit and match the capture corpus, so persistent pets keep the
+   * authored radius.
+   */
+  const aggroRadius = options.petOwnerDoid
+    ? Math.max(0, Number(npc.AggroRadius ?? 600))
+    : Math.max(npc.AggroRadius ?? 600, config.npcAggroRadius);
+  const disengageDistance = options.petOwnerDoid
+    ? Math.max(aggroRadius, Number(npc.DisengageDist ?? aggroRadius))
+    : Math.max(npc.DisengageDist ?? 1600, aggroRadius + 400);
   // Twenty-seven rows author DeathAttack — the exploding barrels in every
   // theme among them — and it is what the thing does as it breaks.
   const deathAttack = npc.DeathAttack ? await attackForConstant(npc.DeathAttack) : null;
@@ -731,9 +747,9 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
                * way.
                */
               engaged: Boolean(options.engaged),
-              // GameMaster's common 600-unit radius is too short for the
-              // server's wider authoritative routes. The configurable floor
-              // prevents enemies from idling just outside the player view.
+              // Hostiles may use the server's wider configured floor; pets
+              // retain their authored awareness radius (see the calculation
+              // above) so they do not run rooms ahead of their owner.
               aggroRadius,
               // A pursuer must not disengage immediately after it aggroes.
               disengageDistance,
@@ -771,7 +787,9 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
                * make it do.
                */
               keepDistance:
-                npc.Aggro_AI_Type === "CHASE_AI"
+                petRangedStandoff > 0
+                  ? petRangedStandoff
+                  : npc.Aggro_AI_Type === "CHASE_AI"
                   ? 0
                   : Math.max(0, Number(npc.MinFleeDistMult ?? 0)) *
                     Math.max(0, Number(nativeAttack.Range ?? 0)),

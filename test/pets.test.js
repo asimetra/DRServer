@@ -17,9 +17,10 @@ import {
   scaledNpcWeaponPower,
 } from "../src/pets.js";
 import { experienceForLevel } from "../src/progression.js";
+import { netAttackDamage } from "../src/combat-damage.js";
 import { readFrame, readNpc } from "./helpers/floor.js";
 
-const contextWithPet = async (level = 75) => {
+const contextWithPet = async (level = 75, npcId = 3301) => {
   await loadNavigationLibrary();
   const gm = await loadGameMaster();
   const hero = gm.heroById.get(102);
@@ -31,7 +32,7 @@ const contextWithPet = async (level = 75) => {
   const account = {
     id: 9001,
     account_pets: [
-      { id: 81, npc_id: 3301, equipped_hero: avatar.id, is_new: 0 },
+      { id: 81, npc_id: npcId, equipped_hero: avatar.id, is_new: 0 },
     ],
   };
   const petSpawn = equippedPetSpawn(gm, account, avatar, hero);
@@ -144,6 +145,87 @@ test("pet health follows the owning hero's level instead of the dungeon tier", a
     observed.push(session.actors.get(doid).maxHitPoints);
   }
   assert.deepEqual(observed, [110, 600, 1100]);
+});
+
+test("pet weapon power and attack damage grow with the owning hero's level", async () => {
+  const powers = [];
+  const damages = [];
+  for (const level of [1, 100]) {
+    const { gm, session, context } = await contextWithPet(level);
+    const doid = await spawnEquippedPet(context, session);
+    const actor = session.actors.get(doid);
+    const bite = actor.ai.attacks.find((attack) => attack.attackType === 920380);
+    const attack = gm.attacksById.get(bite.attackType);
+    powers.push(bite.weaponPower);
+    damages.push(Math.abs(netAttackDamage({
+      gm,
+      attack,
+      weaponPower: bite.weaponPower,
+      attacker: actor.stats,
+      defender: new Map(),
+    })));
+  }
+  assert.deepEqual(powers, [5, 255]);
+  assert.ok(damages[1] > damages[0] * 10, `${damages[0]} -> ${damages[1]}`);
+});
+
+test("persistent pets keep their authored awareness and ranged standoff", async () => {
+  for (const [npcId, expected] of [
+    [3301, { aggro: 600, standoff: 0 }],
+    [3302, { aggro: 600, standoff: 200 }],
+    [3303, { aggro: 800, standoff: 0 }],
+    [3311, { aggro: 300, standoff: 0 }],
+    [3316, { aggro: 600, standoff: 200 }],
+  ]) {
+    const { session, context } = await contextWithPet(75, npcId);
+    const doid = await spawnEquippedPet(context, session);
+    const ai = session.actors.get(doid).ai;
+    assert.equal(ai.aggroRadius, expected.aggro, `npc ${npcId} awareness`);
+    assert.equal(ai.keepDistance, expected.standoff, `npc ${npcId} standoff`);
+  }
+});
+
+test("a dragon ignores distant rooms and opens with its fireball from range", async (t) => {
+  const { session, context } = await contextWithPet(75, 3302);
+  t.after(() => {
+    for (const stop of session.hazardBeats?.values?.() ?? []) stop();
+  });
+  const petDoid = await spawnEquippedPet(context, session);
+  const pet = session.actors.get(petDoid);
+  const enemyDoid = 9100;
+  session.objects.set(enemyDoid, CLID.DistributedNPCGameObject);
+  session.actors.set(enemyDoid, {
+    hitPoints: 500,
+    maxHitPoints: 500,
+    collisionRadius: 25,
+    constant: "BRUTE",
+    isEnemy: true,
+    position: { x: 1700, y: 889 },
+    team: TEAM.ENEMIES,
+  });
+
+  session.sent.length = 0;
+  await tickNpcAi(session, 1000, 0.25);
+  assert.deepEqual(pet.position, { x: 1000, y: 889 });
+  assert.equal(pet.ai.state, "idle");
+
+  session.actors.get(enemyDoid).position = { x: 1500, y: 889 };
+  await tickNpcAi(session, 2000, 0.25);
+  assert.equal(Math.round(pet.position.x), 1100);
+  assert.equal(pet.ai.state, "attack");
+  assert.equal(
+    Math.round(Math.hypot(
+      pet.position.x - session.actors.get(enemyDoid).position.x,
+      pet.position.y - session.actors.get(enemyDoid).position.y
+    )),
+    400
+  );
+  const choreography = session.sent.find(
+    (frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+      frame.readUInt32LE(4) === petDoid && frame.readUInt16LE(8) === 143
+  );
+  assert.ok(choreography);
+  assert.equal(choreography.readUInt32LE(12), 910021, "the dragon chose DRAGON_FIREBALL");
 });
 
 test("a pet returns to its owner when idle and chooses an enemy instead of its owner", async (t) => {
