@@ -1712,6 +1712,32 @@ const generationFalloff = (generation) => 2 ** Math.max(0, Number(generation ?? 
  */
 const MAX_TRAINED_REDUCTION = 0.5;
 
+/**
+ * Whether an attack gives hit points back rather than taking them.
+ *
+ * The client's whole test, from `ActorGameObject.ReceiveCombatResult`:
+ *
+ *     if(gmAttack.DamageMod > 0) actorView.receiveHeal(...)
+ *     else if(blocked == 0)      actorView.receiveDamage(...)
+ *
+ * `DamageMod` is signed and the table is unanimous about which way: all 452
+ * HOSTILE rows that carry one are negative, 280 of them exactly -1, and none is
+ * positive. The eleven positive rows are FRIENDLY and every one of them heals:
+ * the four Healing Waves, the Healing Shot, the four drinks, the party bomb and
+ * the frost dragon's nap.
+ *
+ * Read `Team` instead and the buffs come out wrong: fifty-one FRIENDLY rows sit
+ * at `DamageMod` zero because they are buffs, and a buff is not a heal. Those
+ * already work — a zero-magnitude result that carries `TargetBuff1`.
+ *
+ * A share of the bar is not priced here. Four of the eleven carry
+ * `DoPercentHealthDamage` and all four are drinks, whose heal `useConsumable`
+ * has already paid out through `healHero` by the time any result arrives; the
+ * weapon formula on top of that would heal the drinker twice.
+ */
+const isHealing = (attack) =>
+  Number(attack?.DamageMod ?? 0) > 0 && !attack?.DoPercentHealthDamage;
+
 const computeDamage = async (session, proposal, attack, weaponPower) => {
   const offsets = statOffsetsFor(attack);
   const defender = await statsFor(session, proposal.attackee);
@@ -1733,7 +1759,7 @@ const computeDamage = async (session, proposal, attack, weaponPower) => {
     defenderBuff: 1,
   });
 
-  if (signed >= 0) return 0; // healing is not modelled yet
+  if (signed >= 0) return 0; // a heal is `computeHealing`'s to price
   const raw = -signed / generationFalloff(proposal.generation);
 
   /**
@@ -1781,6 +1807,68 @@ const computeDamage = async (session, proposal, attack, weaponPower) => {
   // and a hit that is entirely turned aside did not land.
   if (reduction >= 1) return 0;
   return Math.max(1, Math.round(raw * (1 - reduction)));
+};
+
+/**
+ * What a friendly attack gives back, as a positive magnitude.
+ *
+ * The same arithmetic as a hit, because it is the same field: `DamageMod` is
+ * the sign and `netAttackDamage` was written signed for exactly this. A Heal
+ * Scroll is power 16 at `DamageMod` +1 against MAGIC_ATK's bonus of 1, so the
+ * wave is worth about the caster's magic attack plus the scroll — it scales
+ * with the healer, which is what makes carrying one a choice.
+ *
+ * What does *not* apply is mitigation. `MELEE_DEF` and its buffs are what a
+ * defender turns aside, and nobody turns aside a heal; running the reduction
+ * here would have a Berserker's own training halve every wave aimed at him.
+ *
+ * The generation falloff does apply, inherited rather than separately measured:
+ * it is the same counter the client sends on the same field, and without it a
+ * Healing Shot through a standing party is a full heal for everyone it clips.
+ */
+const computeHealing = async (session, proposal, attack, weaponPower) => {
+  const offsets = statOffsetsFor(attack);
+  const signed = netAttackDamage({
+    gm: await loadGameMaster(),
+    attack,
+    weaponPower: weaponPower ?? 1,
+    attacker: await statsFor(session, proposal.attacker),
+    defender: await statsFor(session, proposal.attackee),
+    attackerBuff: offsets
+      ? buffMultiplierFor(session, proposal.attacker, STAT_NAMES[offsets.offence])
+      : 1,
+    defenderBuff: 1,
+  });
+  if (signed <= 0) return 0;
+  return Math.max(1, Math.round(signed / generationFalloff(proposal.generation)));
+};
+
+/**
+ * Hit points back onto an actor, and the result that draws the floater.
+ *
+ * A sibling of `applyDamage` rather than a branch of it, because almost every
+ * guard that function opens with is about harm: invulnerability turns aside a
+ * hit and has no business refusing a heal, and neither has the timeline window
+ * an ultimate holds open. Two guards are shared and both are about the floor
+ * rather than the hit — an actor that has gone with its floor is not told
+ * anything, and a downed hero is a revive's problem, not a heal's.
+ */
+const applyHealing = (session, doid, healing, announce) => {
+  const actor = session.actors?.get(doid);
+  const clid = session.objects?.get(doid);
+  if (!session.objects?.has(doid)) return false;
+
+  if (!actor || actor.dead || healing <= 0 || !HITPOINTS_FIELD_BY_CLID[clid]) {
+    announce?.();
+    return false;
+  }
+
+  const maximum = Number(actor.maxHitPoints) || actor.hitPoints;
+  const before = actor.hitPoints;
+  actor.hitPoints = Math.min(maximum, actor.hitPoints + healing);
+  session.send(hitPointsUpdate(doid, clid, actor.hitPoints));
+  announce?.();
+  return actor.hitPoints > before;
 };
 
 /** Rewrites the signed wire damage field of a CombatResult on a copy. */
@@ -2297,9 +2385,48 @@ export const handleProposeCombatResults = async (session, reader) => {
      * index does not mean.
      */
     const swung = proposal.isConsumable ? null : session.heroWeapons?.[proposal.weaponSlot];
+    const weaponPower = Number(swung?.power) || 1;
+
+    /**
+     * A wave of healing takes the other branch entirely.
+     *
+     * This handler had one: price the hit, negate it for the wire, subtract it.
+     * `computeDamage` answered zero for anything friendly — "healing is not
+     * modelled yet" — so a Heal Scroll spent forty mana, played its animation,
+     * and published a result of zero to everyone it reached. Which is what a
+     * scroll that does nothing looks like from inside the game.
+     */
+    if (!proposal.blocked && isHealing(attack)) {
+      const healing = await computeHealing(session, proposal, attack, weaponPower);
+      const restored = receiveCombatResult(
+        proposal.attackee,
+        fieldId,
+        // Positive, which is the only way the client reads it as a heal:
+        // `spawnHealFloater` prints this field straight out.
+        withDamage(proposal.bytes, healing)
+      );
+      const healed = applyHealing(session, proposal.attackee, healing, () =>
+        session.send(restored)
+      );
+      await applyTargetBuff(session, {
+        attack,
+        victimDoid: proposal.attackee,
+        attackerDoid: proposal.attacker,
+        damage: 0,
+      });
+      const target = session.actors?.get(proposal.attackee);
+      summary.push(
+        healed
+          ? `${target?.constant ?? proposal.attackee} +${healing} -> ` +
+            `${target.hitPoints}/${target.maxHitPoints}hp`
+          : `${proposal.attackee} +0`
+      );
+      continue;
+    }
+
     const damage = proposal.blocked
       ? 0
-      : await computeDamage(session, proposal, attack, Number(swung?.power) || 1);
+      : await computeDamage(session, proposal, attack, weaponPower);
 
     const echo = receiveCombatResult(
       proposal.attackee,
