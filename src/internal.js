@@ -39,7 +39,10 @@ import { info, warn } from "./log.js";
 
 const json = (body, status = 200) => ({
   status,
-  headers: { "Content-Type": "application/json" },
+  headers: {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+  },
   body: JSON.stringify(body),
 });
 
@@ -602,7 +605,22 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/accounts/:id/stall/claim", handler: collectProceeds },
 ];
 
-const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
+const isLoopback = (host) =>
+  host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+
+export const internalApiProblem = (settings = config) => {
+  if (!settings.internalToken) return null;
+  if (settings.internalToken.length < 32) {
+    return "ODS_INTERNAL_TOKEN must be at least 32 characters";
+  }
+  if (!isLoopback(settings.internalHost) && !settings.allowInsecureInternal) {
+    return (
+      `refusing cleartext internal API bind on ${settings.internalHost}; use loopback/a tunnel, ` +
+      "or set ODS_ALLOW_INSECURE_INTERNAL=1 for a trusted private network"
+    );
+  }
+  return null;
+};
 
 /**
  * Off unless a token is configured.
@@ -618,7 +636,10 @@ export const start = () => {
     return null;
   }
 
-  if (!LOOPBACK.has(config.internalHost)) {
+  const problem = internalApiProblem();
+  if (problem) throw new Error(problem);
+
+  if (!isLoopback(config.internalHost)) {
     warn(
       `internal API bound to ${config.internalHost}, which is not loopback — ` +
         "anything that can reach it and holds the token can act for every account"
@@ -629,9 +650,10 @@ export const start = () => {
     routeTable: internalRoutes,
     host: config.internalHost,
     port: config.internalPort,
-    // Its caller is one address making every call there is; the player-facing
-    // budget is measured per address against what one game client does.
-    rateLimited: false,
+    // DRWeb itself admits at most 300 requests per minute, while this listener
+    // allows 320 per ten seconds. Normal proxy traffic therefore has ample
+    // room, but a leaked/guessed-token flood no longer has an unlimited path.
+    rateLimited: true,
     onReady: () =>
       info(`internal API listening on http://${config.internalHost}:${config.internalPort}`),
   });

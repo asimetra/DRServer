@@ -38,6 +38,14 @@ test("a body past the limit is refused rather than collected", async () => {
   await assert.rejects(() => readBody(oversized), /too large/i);
 });
 
+test("an aborted upload releases its partial body without waiting for end", async () => {
+  const request = new EventEmitter();
+  const reading = readBody(request);
+  request.emit("data", Buffer.from("partial secret-bearing request"));
+  request.emit("aborted");
+  await assert.rejects(reading, /aborted/i);
+});
+
 test("the limit leaves room the recordings never needed", () => {
   assert.ok(MAX_BODY_BYTES >= 775 * 20, "generous against the largest real request");
   assert.ok(MAX_BODY_BYTES <= 1024 * 1024, "and still a bound worth having");

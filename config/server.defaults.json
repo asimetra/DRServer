@@ -16,6 +16,7 @@
   "internalHost": "127.0.0.1",
   "internalPort": 8081,
   "internalToken": "",
+  "allowInsecureInternal": false,
   "storage": "file",
   "databaseUrl": "postgres://ods:ods@127.0.0.1:5432/open_dungeon",
   "resourcesDir": "../local-data/Resources",

@@ -151,7 +151,9 @@ account or on both. A refusal carries a `reason` (`in_dungeon`, `equipped`,
 has to act differently on each.
 
 Holding the secret is holding every account, so it belongs on the same machine
-or on a private network, never on the public interface.
+or on a private network, never on the public interface. A non-loopback
+cleartext bind is refused unless `ODS_ALLOW_INSECURE_INTERNAL=1` explicitly
+acknowledges a trusted private network.
 
 ## Configuration
 
@@ -183,8 +185,9 @@ that has to match somewhere else — `ODS_INTERNAL_TOKEN` and the website's
 | `ODS_ADMIN_ACCOUNTS` | empty | Bootstrap administrator account ids |
 | `ODS_AUTH` | enabled | Set `0` to accept whatever a client claims |
 | `ODS_TOKEN_SECRET` | written on first run | Key every validation token is signed with |
-| `ODS_INTERNAL_TOKEN` | empty | Shared secret for the internal API; empty leaves it off |
+| `ODS_INTERNAL_TOKEN` | empty | Shared secret (at least 32 characters); empty leaves the internal API off |
 | `ODS_INTERNAL_HOST` / `ODS_INTERNAL_PORT` | `127.0.0.1` / `8081` | Internal API bind address |
+| `ODS_ALLOW_INSECURE_INTERNAL` | disabled | Permit acknowledged cleartext internal binding outside loopback |
 | `ODS_DUNGEON` | enabled | Set `0` to refuse dungeon entry cleanly |
 
 See [config/README.md](config/README.md) for the complete configuration model.

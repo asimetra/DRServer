@@ -322,6 +322,10 @@ export const loadServerConfig = (environment = process.env) => {
     internalHost: setting(environment, "INTERNAL_HOST") ?? defaults.internalHost ?? "127.0.0.1",
     internalPort: asInt(setting(environment, "INTERNAL_PORT"), defaults.internalPort ?? 8081),
     internalToken: setting(environment, "INTERNAL_TOKEN") ?? defaults.internalToken ?? "",
+    allowInsecureInternal:
+      setting(environment, "ALLOW_INSECURE_INTERNAL") === undefined
+        ? defaults.allowInsecureInternal === true
+        : setting(environment, "ALLOW_INSECURE_INTERNAL") === "1",
 
     /**
      * Whether tokens are checked. Off accepts whatever a client claims to be,

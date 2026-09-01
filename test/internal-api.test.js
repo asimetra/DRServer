@@ -45,6 +45,7 @@ const call = (method, route, { token = process.env.ODS_INTERNAL_TOKEN, body } = 
 test("a call without the internal token is refused", async () => {
   const response = await call("POST", "/internal/v1/accounts", { token: null });
   assert.equal(response.status, 401);
+  assert.equal(response.headers.get("cache-control"), "no-store");
 });
 
 test("a call with the wrong internal token is refused", async () => {

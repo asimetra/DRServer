@@ -20,6 +20,7 @@ test("JSON defaults make the server independent from the client repository", () 
   assert.equal(loaded.npcAggroRadius, 900);
   assert.equal(loaded.projectileTickMs, 20);
   assert.equal(loaded.maxOutboundBufferBytes, 4 * 1024 * 1024);
+  assert.equal(loaded.allowInsecureInternal, false);
 });
 
 test("environment values override JSON defaults", () => {
@@ -52,4 +53,13 @@ test("public ODS settings take precedence over legacy DR aliases", () => {
   assert.equal(loaded.port, 28080);
   assert.equal(loaded.resourcesDir, path.resolve("./vendor-resources"));
   assert.equal(loaded.maxOutboundBufferBytes, 2 * 1024 * 1024);
+});
+
+test("remote internal exposure requires its own explicit acknowledgement", () => {
+  const loaded = loadServerConfig({
+    ODS_INTERNAL_HOST: "0.0.0.0",
+    ODS_ALLOW_INSECURE_INTERNAL: "1",
+  });
+  assert.equal(loaded.internalHost, "0.0.0.0");
+  assert.equal(loaded.allowInsecureInternal, true);
 });

@@ -58,6 +58,12 @@ export class BodyTooLarge extends Error {
   }
 }
 
+export class RequestAborted extends Error {
+  constructor() {
+    super("request aborted");
+  }
+}
+
 export const readBody = (req) =>
   new Promise((resolve, reject) => {
     const chunks = [];
@@ -81,6 +87,10 @@ export const readBody = (req) =>
       chunks.push(chunk);
     });
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("aborted", () => {
+      chunks.length = 0;
+      reject(new RequestAborted());
+    });
     req.on("error", reject);
   });
 
@@ -151,6 +161,7 @@ const handle = async (req, res, { routeTable, rateLimited }) => {
   try {
     body = await readBody(req);
   } catch (err) {
+    if (err instanceof RequestAborted) return;
     if (!(err instanceof BodyTooLarge)) throw err;
     warn(`oversized body from ${address} on ${req.method} ${url.pathname}`);
     if (!res.headersSent) refuse(res, 413, "request body too large");
@@ -208,6 +219,13 @@ export const listen = ({ routeTable, host, port, rateLimited = true, onReady }) 
       res.end(JSON.stringify({ error: "internal error" }));
     });
   });
+
+  // Node's defaults allow a client minutes to finish its headers and body.
+  // These requests are at most 64 KiB and normally complete in milliseconds.
+  server.headersTimeout = 10_000;
+  server.requestTimeout = 15_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxRequestsPerSocket = 1000;
 
   server.listen(port, host, onReady);
   return server;
