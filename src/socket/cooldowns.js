@@ -86,8 +86,11 @@ const weaponCooldownReduction = async (session, slot) => {
  * The buff branch is live but inert today: all 157 buff rows author
  * `AttackCooldownMultiplier` 1, so the product is 1 and this returns 0. It is
  * written out anyway because the day a row says otherwise, this reads it.
+ *
+ * Exported so `/stats` can report the share a hero is currently taking off its
+ * own attacks, which is a live number a player feels and no screen shows.
  */
-const heroCooldownMultiplier = async (session) => {
+export const heroCooldownMultiplier = async (session) => {
   const gm = await loadGameMaster();
   const hero = await heroById(session.dungeonAvatar?.avatar_id);
 

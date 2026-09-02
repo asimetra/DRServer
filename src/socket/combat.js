@@ -1720,6 +1720,34 @@ const generationFalloff = (generation) => 2 ** Math.max(0, Number(generation ?? 
 const MAX_TRAINED_REDUCTION = 0.5;
 
 /**
+ * What a defender turns aside from one type of hit, as a share of it.
+ *
+ * The trained half is the `*_DEF` stat, which only one hero has any of:
+ * `MASTER_DEFENSE` is the Berserker's fourth slot and gives 0.0033 a point
+ * across all three types, so every point in it reaches 24.75% and nobody else
+ * reaches anything — a Ranger with all seventy-five there still measures zero.
+ * That is the tankiness he trains for, and it is his.
+ *
+ * Combined with the buffs multiplicatively rather than added, so the two leave
+ * a remainder: a quarter off from training and half off from `DEFENDER_L2` is
+ * 62%, not 75%. Only a source that is itself all of it gets to all of it, and
+ * the trained half is capped well below that in any case.
+ *
+ * A function rather than four lines inside `computeDamage` because `/stats`
+ * reports this number to the player, and a second copy of the formula written
+ * to read it out is a copy that drifts from the one that charges for it.
+ */
+export const damageTurnedAside = (session, doid, stats, offsets) => {
+  if (!offsets) return 0;
+  const stat = STAT_NAMES[offsets.defence];
+  const trained = Math.min(
+    MAX_TRAINED_REDUCTION,
+    Math.max(0, Number(stats?.get(stat)) || 0)
+  );
+  return 1 - (1 - trained) * (1 - damageReductionFor(session, doid, stat));
+};
+
+/**
  * Whether an attack gives hit points back rather than taking them.
  *
  * The client's whole test, from `ActorGameObject.ReceiveCombatResult`:
@@ -1786,30 +1814,7 @@ const computeDamage = async (session, proposal, attack, weaponPower) => {
    * reduction saves a player from walking into spikes. That is the floor's job
    * and it stays the floor's job.
    */
-  /**
-   * What the defender turns aside, from training and from buffs.
-   *
-   * The trained half is the `*_DEF` stat, which only one hero has any of:
-   * `MASTER_DEFENSE` is the Berserker's fourth slot and gives 0.0033 a point
-   * across all three types, so every point in it reaches 24.75% and nobody else
-   * reaches anything — a Ranger with all seventy-five there still measures
-   * zero. That is the tankiness he trains for, and it is his.
-   *
-   * Combined with the buffs multiplicatively rather than added, so the two
-   * leave a remainder: a quarter off from training and half off from
-   * `DEFENDER_L2` is 62%, not 75%. Only a source that is itself all of it gets
-   * to all of it, and the trained half is capped well below that in any case.
-   */
-  const trained = offsets
-    ? Math.min(
-        MAX_TRAINED_REDUCTION,
-        Math.max(0, Number(defender?.get(STAT_NAMES[offsets.defence])) || 0)
-      )
-    : 0;
-  const buffed = offsets
-    ? damageReductionFor(session, proposal.attackee, STAT_NAMES[offsets.defence])
-    : 0;
-  const reduction = 1 - (1 - trained) * (1 - buffed);
+  const reduction = damageTurnedAside(session, proposal.attackee, defender, offsets);
   // All of it is all of it. The floor of one exists so a hit that lands is felt,
   // and a hit that is entirely turned aside did not land.
   if (reduction >= 1) return 0;
