@@ -25,7 +25,7 @@
   "accountTemplateFile": "account-template.json",
   "floorCatalogFile": "floors.json",
   "dungeonsEnabled": true,
-  "floorDelayMs": 3000,
+  "floorDelayMs": 5000,
   "npcFilter": "all",
   "npcAggroRadius": 900,
   "trapCycleMs": 2000,
