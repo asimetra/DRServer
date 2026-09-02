@@ -57,6 +57,7 @@ import {
 } from "../npc-stats.js";
 import {
   equippedPetSpawn,
+  petCombatLevel,
   petSpawnPosition,
   scaledNpcWeaponPower,
 } from "../pets.js";
@@ -611,7 +612,9 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       level: npcLevel,
       // Only a persistent pet needs its levelled vector stored: ordinary NPCs
       // keep the existing lazy lookup, avoiding a 15-entry Map per prop.
-      stats: options.petOwnerDoid ? npcStats(gm, npc, npcLevel) : undefined,
+      stats: options.petOwnerDoid
+        ? npcStats(gm, npc, petCombatLevel(npcLevel))
+        : undefined,
       /**
        * Which side it is on, kept so a trap can be stopped from hitting it.
        *

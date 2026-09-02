@@ -23,6 +23,13 @@ import { salesFor } from "./market-history.js";
 import { STAT_NAMES, maxHitPoints, maxManaPoints, statTotals } from "./hero-stats.js";
 import { statLabel } from "./stat-names.js";
 import { weaponSaleValue } from "./store.js";
+import {
+  dayInProgress,
+  openingTimes,
+  rotationDays,
+  searchSchedule,
+  stockOn,
+} from "./store-rotation.js";
 import { info, warn } from "./log.js";
 
 /**
@@ -473,8 +480,12 @@ const marketRefusal = (problem) => {
  * line on a market page explains none of that to anybody.
  */
 export const describeListings = (listings, gm) => {
+  /* The picture's name for the same reason the weapon's is below: a modifier
+     row names its icon, and the other side has no table to look one up in. */
   const describe = (row) =>
-    row ? { id: row.Id, name: row.Name, description: row.Description } : null;
+    row
+      ? { id: row.Id, name: row.Name, description: row.Description, icon: row.IconName ?? null }
+      : null;
 
   return listings.map((listing) => {
     const weapon = gm.weaponById.get(Number(listing.item_id));
@@ -814,6 +825,107 @@ const withHeroes = (entries, gm) =>
   });
 
 /**
+ * The store, which is not the market.
+ *
+ * The market is players selling to each other and is state this server holds.
+ * The store is the game's own shelf: twenty-two weapons at a fixed price that
+ * change over at 09:00 every day, and the whole four-month schedule is sitting
+ * in `Offers` already. Nothing about it is state, so nothing about it is
+ * stored — it is read out of the tables on the way past. See `store-rotation`.
+ *
+ * Reading only. Buying happens in the client against the account it is logged
+ * in as; a website that could spend somebody's gold for them is a different and
+ * much larger question, and this answers none of it.
+ *
+ * An offer is described exactly as a listing is, because it is the same weapon
+ * asking the same question. `store-rotation` hands over the row an account
+ * would hold if it were bought, and `describeListings` names it — one code path,
+ * so the card cannot say one thing on the market page and another in the shop.
+ */
+
+/**
+ * GET /internal/v1/shop — a day's shelf, and the days either side of it.
+ *
+ * `day` names which; without it, whichever is in progress. The rail is handed
+ * over rather than worked out on the other side, because which days exist is a
+ * fact about the table and a website that guessed "today plus fourteen" would
+ * run off the end of the schedule in December.
+ */
+const readShop = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const gm = await loadGameMaster();
+  const days = rotationDays(gm);
+  const today = dayInProgress(gm);
+  const asked = String(req.query?.get("day") ?? "").slice(0, 10);
+  const day = days.includes(asked) ? asked : today ?? days[0] ?? null;
+
+  if (!day) return json({ error: "this server's tables carry no store schedule" }, 503);
+
+  /*
+   * The rail runs from today, because that is where somebody starts reading —
+   * unless the day being shown is past the end of it, which is what happens
+   * when a search answers "the 18th of October" and the reader follows it.
+   * Then the rail moves to that day, so the day on screen is always one of the
+   * days on the rail. It carries `today` either way, and the page has a way
+   * back to it: a rail that did not contain the day it was showing was a rail
+   * with nothing selected on it, which is how this was found.
+   */
+  const ahead = Math.max(1, Math.min(60, Number(req.query?.get("days")) || 14));
+  const from = Math.max(0, days.indexOf(today ?? day));
+  const at = days.indexOf(day);
+  const start = at < from || at >= from + ahead ? at : from;
+
+  return json({
+    day,
+    today,
+    ...openingTimes(day),
+    days: days.slice(start, start + ahead),
+    first_day: days[0] ?? null,
+    last_day: days.at(-1) ?? null,
+    offers: describeListings(stockOn(gm, day), gm),
+  });
+};
+
+/**
+ * GET /internal/v1/shop/schedule — when is this next on sale?
+ *
+ * The one question a shop that rotates cannot answer by showing today. Three
+ * hundred and thirteen weapons share 2684 days of shelf space, so anything
+ * somebody wants is coming back; what they need is the date.
+ */
+const readShopSchedule = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const gm = await loadGameMaster();
+  const offset = Math.max(0, Math.min(1_000_000, Number(req.query?.get("offset")) || 0));
+  const limit = Math.max(1, Math.min(100, Number(req.query?.get("limit")) || 40));
+  const found = searchSchedule(gm, {
+    q: req.query?.get("q") ?? "",
+    rarity: req.query?.get("rarity") ?? 0,
+    from: req.query?.get("from") ?? "",
+    limit,
+    offset,
+  });
+
+  return json({
+    results: describeListings(found.rows, gm),
+    total: found.total,
+    offset,
+    limit,
+    has_more: offset + limit < found.total,
+    facets: {
+      rarities: found.rarities.map((entry) => ({
+        ...entry,
+        name: gm.raw.Rarity?.find((rarity) => rarity.Id === entry.value)?.Type?.toLowerCase() ?? null,
+      })),
+    },
+  });
+};
+
+/**
  * GET /internal/v1/status — what the front page puts in its margins.
  *
  * The numbers a server portal has always carried: who is on, how many are down
@@ -852,6 +964,11 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/trades", handler: settleTradeRoute },
   /* A listing is addressed under /market; a seller's own stall is a fact about
      their account, so it hangs off /accounts/:id like the summary does. */
+  /* The store is the game's own shelf and is read straight out of the tables;
+     the market next door is players selling to each other. Different things,
+     addressed differently, and the schedule hangs off the shop it belongs to. */
+  { method: "GET", pattern: "/internal/v1/shop", handler: readShop },
+  { method: "GET", pattern: "/internal/v1/shop/schedule", handler: readShopSchedule },
   { method: "GET", pattern: "/internal/v1/market", handler: readMarket },
   { method: "POST", pattern: "/internal/v1/market", handler: createListing },
   { method: "POST", pattern: "/internal/v1/market/:id/buy", handler: takeListing },

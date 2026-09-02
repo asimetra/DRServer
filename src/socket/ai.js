@@ -31,6 +31,7 @@ export const npcHeadingUpdate = (doid, heading) =>
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 const ROUTE_REFRESH_MS = 1000;
 const FAILED_PATH_RETRY_MS = 2000;
+const ATTACK_RANGE_EPSILON = 2;
 /** Only this many enemies may deliberately choose one pet over a live hero. */
 export const MAX_PET_AGGRESSORS = 2;
 /** A pet must be materially ahead of the hero before it is an aggro candidate. */
@@ -187,8 +188,8 @@ const usableAttacks = (ai, distance, contact, now) => {
   return ai.attacks.filter(
     (attack) =>
       now >= (attack.readyAt ?? 0) &&
-      distance >= (attack.minRange ?? 0) &&
-      distance <= Math.max(attack.range ?? 0, contact)
+      distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0) &&
+      distance <= Math.max(attack.range ?? 0, contact) + ATTACK_RANGE_EPSILON
   );
 };
 
@@ -817,6 +818,31 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     if (ai.lunge && now < ai.lunge.until) {
       chaseX = ai.lunge.x * mobility * deltaSeconds;
       chaseY = ai.lunge.y * mobility * deltaSeconds;
+    } else if (
+      ai.kind === "pet" &&
+      (ai.keepDistance ?? 0) > 0 &&
+      route.direct &&
+      distance < standoff &&
+      !(ai.attacks ?? []).some(
+        (attack) =>
+          !attack.projectile &&
+          now >= (attack.readyAt ?? 0) &&
+          distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0) &&
+          distance <= Math.max(attack.range ?? 0, heroContact(actor, victim.actor)) +
+            ATTACK_RANGE_EPSILON
+      )
+    ) {
+      /**
+       * A ranged pet caught between its bite and projectile bands backs out to
+       * the projectile's authored MinRange. Without this, a stationary target
+       * at 100-199 units left Dragon with neither bite nor fireball available,
+       * so both actors could stand still forever.
+       */
+      const retreat = Math.min(speed * deltaSeconds, standoff - distance);
+      if (distance > 0.001) {
+        chaseX = ((actor.position.x - target.x) / distance) * retreat;
+        chaseY = ((actor.position.y - target.y) / distance) * retreat;
+      }
     } else if (route.waypoint && (distance > standoff || !route.direct)) {
       const waypointDistance = distanceTo(actor.position, route.waypoint);
       const remaining = route.direct ? Math.max(0, distance - standoff) : waypointDistance;

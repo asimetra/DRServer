@@ -15,6 +15,12 @@ export const scaledNpcWeaponPower = (weapon, level) => {
 };
 
 /**
+ * Pet health is linear on the player team, but the authoritative server prices
+ * pet offence with the same level^1.5 curve used by hostile NPC attacks.
+ */
+export const petCombatLevel = (level) => Math.pow(Math.max(1, Number(level ?? 1)), 1.5);
+
+/**
  * Resolves the one inventory pet equipped to an avatar into run-local data.
  * Invalid/corrupt inventory rows are ignored rather than becoming arbitrary
  * NPC spawns in a dungeon.

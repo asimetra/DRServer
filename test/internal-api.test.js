@@ -203,6 +203,68 @@ test("market browsing exposes useful item facts and applies filters before pagin
 });
 
 /**
+ * The shop is not the market and the difference is the point: nothing here is
+ * this server's state, so an offer arrives described out of the tables. It is
+ * described by the same code a listing is, which is what the shape check below
+ * is really asserting — one card, drawn from one answer.
+ */
+test("the shop hands over a day's shelf, described as the market describes a weapon", async () => {
+  const body = await (await call("GET", "/internal/v1/shop")).json();
+
+  assert.equal(body.offers.length, 22);
+  assert.equal(body.day, body.today, "with no day asked for, the one in progress");
+  assert.ok(body.days.includes(body.day), "and the rail opens on it");
+  assert.equal(Date.parse(body.closes_at) - Date.parse(body.opens_at), 86_400_000);
+
+  const [best] = body.offers;
+  assert.ok(best.name, "the weapon is named rather than left as an id");
+  assert.equal(best.rarity_name, "legendary");
+  assert.ok(best.price > 0);
+  assert.ok(best.icon, "and says which picture it wears");
+  assert.ok(best.weapon.tap.title, "and carries the weapon's own stat block");
+  assert.ok(best.usable_by.length > 0);
+  assert.ok(best.legendary?.description, "the top rarity carries its third modifier");
+});
+
+test("a day the schedule does not have falls back to the one in progress", async () => {
+  const asked = await (await call("GET", "/internal/v1/shop?day=1999-01-01")).json();
+  const now = await (await call("GET", "/internal/v1/shop")).json();
+
+  assert.equal(asked.day, now.day);
+});
+
+/**
+ * Followed from a search, a day can be months past the end of the rail. The
+ * rail moves to it rather than handing back a set of days with the one being
+ * shown missing from it — which reads on the page as a rail with nothing
+ * selected, and is how this was found.
+ */
+test("the rail always carries the day it is showing", async () => {
+  const now = await (await call("GET", "/internal/v1/shop?days=7")).json();
+  const far = now.last_day;
+
+  const later = await (await call("GET", `/internal/v1/shop?day=${far}&days=7`)).json();
+
+  assert.equal(later.day, far);
+  assert.ok(later.days.includes(far), "the rail opens on the day being shown");
+  assert.equal(later.today, now.today, "and still says which day is the real one");
+  assert.equal(later.days.length, 1, "clamped to what the tables have left");
+});
+
+test("the schedule answers when a weapon is next on the shelf", async () => {
+  const today = await (await call("GET", "/internal/v1/shop")).json();
+  const wanted = today.offers[0].name;
+
+  const found = await (
+    await call("GET", `/internal/v1/shop/schedule?q=${encodeURIComponent(wanted)}&limit=5`)
+  ).json();
+
+  assert.ok(found.total >= 1);
+  assert.ok(found.results.every((row) => row.day >= today.today), "and never behind today");
+  assert.ok(found.facets.rarities.some((entry) => entry.name === "legendary"));
+});
+
+/**
  * Every market route, answered.
  *
  * Written because the sales endpoint shipped broken while the whole suite was
@@ -216,6 +278,8 @@ test("every market route answers rather than throwing", async () => {
 
   for (const route of [
     "/internal/v1/market",
+    "/internal/v1/shop",
+    "/internal/v1/shop/schedule",
     `/internal/v1/accounts/${accountId}/stall`,
     `/internal/v1/accounts/${accountId}/sales`,
     `/internal/v1/accounts/${accountId}/summary`,

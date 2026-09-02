@@ -1383,16 +1383,21 @@ export const performPlaceableAttack = async (
  */
 const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPower, fallback }, victimDoid) => {
   const victim = session.actors?.get(victimDoid);
+  const attacker = session.actors?.get(attackerDoid);
   const clid = session.objects?.get(victimDoid);
   if (!victim || victim.dead || !RECEIVE_FIELD_BY_CLID[clid]) return false;
 
-  const damage =
+  const petResult = attacker?.isPet
+    ? await computePetDamage(session, attackerDoid, victimDoid, attack, weaponPower)
+    : null;
+  const damage = petResult?.damage ?? (
     (await computeDamage(
       session,
       { attacker: attackerDoid, attackee: victimDoid },
       attack,
       weaponPower
-    )) || Math.max(1, fallback ?? 1);
+    )) || Math.max(1, fallback ?? 1)
+  );
 
   const reaction = receiveCombatResult(
     victimDoid,
@@ -1407,6 +1412,7 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
           damage: -damage,
           attackType,
           targetActorDoid: 0,
+          effectiveness: petResult?.effectiveness ?? 0,
           ...staggerFor(attack, damage),
         },
       ],
@@ -1808,6 +1814,58 @@ const computeDamage = async (session, proposal, attack, weaponPower) => {
   // and a hit that is entirely turned aside did not land.
   if (reduction >= 1) return 0;
   return Math.max(1, Math.round(raw * (1 - reduction)));
+};
+
+const PET_DEFENCE_FIELD = {
+  MELEE: "MELEE_DEF",
+  SHOOTING: "SHOOT_DEF",
+  MAGIC: "MAGIC_DEF",
+};
+
+/**
+ * Pet results use an authored categorical defence, not the hero's trained
+ * fractional defence path above. A target rating of +1 resists (half damage),
+ * zero is neutral, and -1 is weak (double damage); the result carries the
+ * inverse value so the client draws the matching effectiveness floater.
+ */
+const petEffectivenessAgainst = async (victim, attack) => {
+  const field = PET_DEFENCE_FIELD[attack?.AttackType];
+  if (!field || !victim?.constant) return 0;
+  const row = await npcForConstant(victim.constant);
+  const rating = Math.round(Number(row?.[field] ?? 0));
+  return Math.max(-2, Math.min(2, -rating));
+};
+
+/** Prices one persistent pet hit exactly as the official pet corpus does. */
+const computePetDamage = async (session, attackerDoid, victimDoid, attack, weaponPower) => {
+  const offsets = statOffsetsFor(attack);
+  const effectiveness = await petEffectivenessAgainst(
+    session.actors?.get(victimDoid),
+    attack
+  );
+  const signed = netAttackDamage({
+    gm: await loadGameMaster(),
+    attack,
+    weaponPower: weaponPower ?? 1,
+    attacker: await statsFor(session, attackerDoid),
+    // The categorical multiplier below is the target's defence for pet hits.
+    defender: undefined,
+    attackerBuff: offsets
+      ? buffMultiplierFor(session, attackerDoid, STAT_NAMES[offsets.offence])
+      : 1,
+    defenderBuff: 1,
+  });
+  if (signed >= 0) return { damage: 0, effectiveness };
+
+  const buffed = offsets
+    ? damageReductionFor(session, victimDoid, STAT_NAMES[offsets.defence])
+    : 0;
+  if (buffed >= 1) return { damage: 0, effectiveness };
+  // The official rounds the neutral pet hit first, then applies the categorical
+  // half/double. L75 Wolf bite is 287.56 -> 288 -> 144/288/576.
+  const neutral = Math.round(-signed);
+  const damage = Math.max(1, Math.round(neutral * (2 ** effectiveness) * (1 - buffed)));
+  return { damage, effectiveness };
 };
 
 /**

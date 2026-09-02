@@ -169,6 +169,37 @@ test("pet weapon power and attack damage grow with the owning hero's level", asy
   assert.ok(damages[1] > damages[0] * 10, `${damages[0]} -> ${damages[1]}`);
 });
 
+test("level 75 wolf damage matches the official resistant neutral and weak hits", async () => {
+  const { session, context } = await contextWithPet(75);
+  const petDoid = await spawnEquippedPet(context, session);
+  const pet = session.actors.get(petDoid);
+  const bite = pet.ai.attacks.find((attack) => attack.attackType === 920380);
+  const observed = [];
+
+  for (const [index, constant] of ["ICE_IMP", "CRAZED_YETI", "BABY_YETI"].entries()) {
+    const targetDoid = 9200 + index;
+    session.objects.set(targetDoid, CLID.DistributedNPCGameObject);
+    session.actors.set(targetDoid, {
+      hitPoints: 2000,
+      maxHitPoints: 2000,
+      collisionRadius: 25,
+      constant,
+      isEnemy: true,
+      position: { x: 1060, y: 889 },
+      team: TEAM.ENEMIES,
+    });
+    await performNpcAttack(
+      session,
+      petDoid,
+      { ...pet.ai, ...bite, attackColliders: [], projectile: null },
+      targetDoid
+    );
+    observed.push(2000 - session.actors.get(targetDoid).hitPoints);
+  }
+
+  assert.deepEqual(observed, [144, 288, 576]);
+});
+
 test("persistent pets keep their authored awareness and ranged standoff", async () => {
   for (const [npcId, expected] of [
     [3301, { aggro: 600, standoff: 0 }],
@@ -226,6 +257,38 @@ test("a dragon ignores distant rooms and opens with its fireball from range", as
   );
   assert.ok(choreography);
   assert.equal(choreography.readUInt32LE(12), 910021, "the dragon chose DRAGON_FIREBALL");
+});
+
+test("a dragon backs out of the bite/fireball dead zone instead of idling", async (t) => {
+  const { session, context } = await contextWithPet(75, 3302);
+  t.after(() => {
+    for (const stop of session.hazardBeats?.values?.() ?? []) stop();
+  });
+  const petDoid = await spawnEquippedPet(context, session);
+  const pet = session.actors.get(petDoid);
+  const enemyDoid = 9150;
+  session.objects.set(enemyDoid, CLID.DistributedNPCGameObject);
+  session.actors.set(enemyDoid, {
+    hitPoints: 500,
+    maxHitPoints: 500,
+    collisionRadius: 25,
+    constant: "BRUTE",
+    isEnemy: true,
+    position: { x: 1150, y: 889 },
+    team: TEAM.ENEMIES,
+  });
+
+  session.sent.length = 0;
+  await tickNpcAi(session, 1000, 0.25);
+
+  assert.equal(Math.round(pet.position.x), 950);
+  assert.equal(pet.ai.state, "attack");
+  const choreography = session.sent.find(
+    (frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+      frame.readUInt32LE(4) === petDoid && frame.readUInt16LE(8) === 143
+  );
+  assert.ok(choreography);
+  assert.equal(choreography.readUInt32LE(12), 910021);
 });
 
 test("a pet returns to its owner when idle and chooses an enemy instead of its owner", async (t) => {

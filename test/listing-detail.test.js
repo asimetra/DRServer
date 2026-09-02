@@ -81,6 +81,21 @@ test("and its modifiers by name, with what they do", async () => {
 });
 
 /**
+ * And its picture's name, for the same reason as the weapon's: the other side
+ * has the files but no table to look one up in, so an id would leave it holding
+ * a picture it cannot match to a line. Twenty-two icons cover a hundred and
+ * twenty modifiers — the row names which, and this passes the name along.
+ */
+test("a modifier says which picture it wears", async () => {
+  const gm = await loadGameMaster();
+  const named = gm.raw.Modifiers.find((row) => row.IconName);
+
+  const [listing] = describeListings([{ item_id: 15001, modifier1: named.Id }], gm);
+
+  assert.equal(listing.modifiers[0].icon, named.IconName);
+});
+
+/**
  * The top rarity carries a third from a table of its own, and it is worth
  * telling apart: the game shows it differently and a page that lumps it in
  * would lose the one line a legendary is bought for.
@@ -93,6 +108,7 @@ test("a legendary modifier is named as one", async () => {
 
   assert.equal(listing.legendary?.name, legendary.Name);
   assert.equal(listing.legendary?.description, legendary.Description);
+  assert.equal(listing.legendary?.icon, legendary.IconName, "and wears its own picture");
   assert.deepEqual(listing.modifiers, [], "and is not counted among the ordinary ones");
 });
 
