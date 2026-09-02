@@ -147,6 +147,32 @@ const buffFriendlyTarget = async (session, attack) => {
 };
 
 /**
+ * Runs a per-hero reward — a heal, Mana back — on the caster and, when the
+ * attack says so, on the rest of the party. The same `contextFor` bridge
+ * `refillDungeonBuster` uses to reach another member's own mutable state.
+ *
+ * The caster goes through that bridge too rather than being handed the raw
+ * `session`: a shared field like `actors` reads the same either way, but a
+ * per-member field like `heroManaPoints` does not, and `session` is not always
+ * the object registered as this hero's own party member.
+ */
+const partyContext = (session, doid) => {
+  const member = heroMembersOf(session).get(doid) ?? (doid === session.heroDoid ? session : null);
+  return member?.world?.contextFor(member) ?? member;
+};
+
+const grantToParty = (session, attack, grant) => {
+  let total = grant(partyContext(session, session.heroDoid) ?? session) || 0;
+  if (attack.AffectsOthers) {
+    for (const doid of heroMembersOf(session).keys()) {
+      if (doid === session.heroDoid) continue;
+      total += grant(partyContext(session, doid)) || 0;
+    }
+  }
+  return total;
+};
+
+/**
  * The buster potions, and the only thing that ever fills the meter.
  *
  * A Dungeon Buster costs 120 Crowd, and Crowd arrives two, six and twenty at a
@@ -421,7 +447,13 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
   equipped.count -= 1;
   spendStackable(session, equipped.type, slot, equipped.count);
 
-  const healed = healHero(session, attack.DoPercentHealthDamage ? attack.PercentHealthDamageValue : 0);
+  // Party health and Mana potions (CONSUMABLE_HEALTH_POTION_PARTY_ATTACK,
+  // CONSUMABLE_MANA_POTION_PARTY_ATTACK) carry AffectsOthers exactly like the
+  // buffs and the buster bottle do, but healHero/grantMana only ever touched
+  // the drinker's own session — the rest of the party got nothing.
+  const healed = attack.DoPercentHealthDamage
+    ? grantToParty(session, attack, (context) => healHero(context, attack.PercentHealthDamageValue))
+    : 0;
   const buff = attack.SelfBuff ? await grantBuff(session, attack.SelfBuff) : null;
   // And the party's half of it. Twelve of the 33 consumable attacks are party
   // potions naming the same buff in `SelfBuff` and `TargetBuff1`; only the
@@ -439,7 +471,9 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
    * nothing at all: the bar never moved. Three of the four attacks with a
    * negative cost are reached only through here, so here is where it belongs.
    */
-  const restored = attack.ManaCost < 0 ? grantMana(session, -Number(attack.ManaCost)) : 0;
+  const restored = attack.ManaCost < 0
+    ? grantToParty(session, attack, (context) => grantMana(context, -Number(attack.ManaCost)))
+    : 0;
   // A thrown bomb is a placeable like any other; the slot it came from indexes
   // the powerups, so the weapon slot is not this one's to give.
   await schedulePlaceables(session, attack, 0, { playSpeed });
