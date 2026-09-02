@@ -38,6 +38,7 @@ import {
   attackTimelineFrames,
   projectileForConstant,
   deathRewardDataForNpc,
+  isArrivalAnimation,
   loadGameMaster,
   mapNode,
   dooberById,
@@ -131,6 +132,7 @@ import {
   hitPointsUpdate,
   startTrapProjectiles,
   killAllEnemies,
+  npcAttackChoreography,
 } from "./combat.js";
 import { isLiveMember, membersOf, worldOf } from "./match-world.js";
 
@@ -926,6 +928,28 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       triggerState: options.triggerState ?? 1,
     })
   );
+
+  /**
+   * The animation an arrival is, for the one thing whose attack is only that.
+   *
+   * `REWARD_CHEST_A` authors `Attack1: LOOT_INTRO_A1`, and its timeline is three
+   * frames of `visible`, `attackEffect` and `sound` — no collider, no
+   * projectile, no spawn of any kind. It is how the chest appears, and the
+   * recorded runs play it once at 0.16 and 0.18 seconds after the create and
+   * never again, even on a chest left standing for 8.78 seconds with an
+   * `AttackTimer` of 1. So it is an entrance, not a cycle.
+   *
+   * Asked of the timeline rather than named: across all 573 attacks and every
+   * NPC that authors an `Attack1`, exactly one carries nothing that acts, and
+   * it is this chest. A rule that reads "an attack which does nothing is
+   * something to look at" cannot fire a real one by accident.
+   */
+  if (await isArrivalAnimation(npc)) {
+    const intro = await attackForConstant(npc.Attack1);
+    session.send(
+      npcAttackChoreography({ doid: npcDoid, attackType: intro.Id, targetActorDoid: 0 })
+    );
+  }
   return options.returnDoid ? npcDoid : 1;
 };
 

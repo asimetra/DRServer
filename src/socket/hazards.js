@@ -350,6 +350,22 @@ export const clearHazardBeats = (session) => {
  *
  * Unlike a trap this plays once and is not held: nothing is registered against
  * a target id, because the thing that owned it is gone.
+ *
+ * The animation and the damage are two halves and only the second needs
+ * colliders. Refusing both when there are none is what left the reward chest
+ * standing still through its own ending: `LOOT_SPAWN_A1` authors no collider —
+ * its `DamageMod` is zero and everything on its timeline is `spawndoober` — so
+ * this returned before sending anything, and the client, never told to play
+ * the death choreography, kept the closed chest on screen while six seconds of
+ * coins came out of it. Against the recorded run, side by side on the chest's
+ * own object:
+ *
+ *   theirs  CREATE, heading, position, choreography 910999, hitPoints,
+ *           choreography 950144, result, result, state "dead"
+ *   ours    CREATE,                                hitPoints,
+ *                              result,             state "dead"
+ *
+ * Both choreographies were missing and this is the one that matters.
  */
 export const playDeathAttack = async (
   session,
@@ -359,7 +375,12 @@ export const playDeathAttack = async (
   colliders,
   { npc, weaponPower } = {}
 ) => {
-  if (!attack || !colliders?.length) return false;
+  if (!attack) return false;
+
+  // The animation, which every death attack has and is the whole of some.
+  session.send(npcAttackChoreography({ doid, attackType: attack.Id, targetActorDoid: 0 }));
+  if (!colliders?.length) return true;
+
   /**
    * The barrel's own weapon, and it matters more here than anywhere.
    *
@@ -378,7 +399,6 @@ export const playDeathAttack = async (
     heroOnly: false,
     combatColliders: colliders,
   };
-  session.send(npcAttackChoreography({ doid, attackType: attack.Id, targetActorDoid: 0 }));
 
   for (const { at, colliders: frame } of beatsOf(hazard)) {
     const timer = setTimeout(() => {

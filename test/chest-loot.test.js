@@ -123,3 +123,127 @@ test("the shower stops when the floor does", async (t) => {
 
   assert.equal(frames.length, partway, "and the rest is not dropped into an ended run");
 });
+
+/**
+ * The animation the chest plays while it empties itself.
+ *
+ * `playDeathAttack` is the damage half of a death timeline and it used to
+ * refuse the whole job when an attack had no colliders. `LOOT_SPAWN_A1` has
+ * none — its `DamageMod` is zero and everything on its timeline is
+ * `spawndoober` — so the choreography was never sent and the client kept a
+ * closed chest on screen while six seconds of coins came out of it.
+ *
+ * Against the recorded run, on the chest's own object:
+ *
+ *   theirs  CREATE, heading, position, choreography 910999, hitPoints,
+ *           choreography 950144, result, result, state "dead"
+ *   ours    CREATE,                                hitPoints,
+ *                              result,             state "dead"
+ *
+ * 950144 is `LOOT_SPAWN_A1` and is the one this pins.
+ */
+test("a chest is told to play the animation it empties itself with", async () => {
+  const { attackForConstant, npcForConstant, attackColliders } = await import(
+    "../src/gamemaster.js"
+  );
+  const { playDeathAttack } = await import("../src/socket/hazards.js");
+
+  const npc = await npcForConstant("REWARD_CHEST_A");
+  assert.equal(npc.DeathAttack, "LOOT_SPAWN_A1", "the chest dies into its loot spawn");
+  const attack = await attackForConstant(npc.DeathAttack);
+  assert.equal(
+    (await attackColliders(attack.AttackTimeline)).length,
+    0,
+    "and that attack hurts nobody, which is why it was skipped"
+  );
+
+  const frames = [];
+  const session = {
+    id: 29,
+    dungeonActive: true,
+    objects: new Map(),
+    actors: new Map(),
+    send: (frame) => frames.push(frame),
+  };
+
+  // No colliders, exactly as the floor computes them for this attack.
+  assert.equal(await playDeathAttack(session, 1433, attack, { x: 0, y: 0 }, []), true);
+
+  assert.equal(frames.length, 1, "the choreography still goes out");
+  const { op, doid, field, reader } = ((frame) => {
+    const r = new PacketReader(frame.subarray(2));
+    const o = r.u16();
+    const d = r.u32();
+    return { op: o, doid: d, field: r.u16(), reader: r };
+  })(frames[0]);
+
+  assert.equal(op, OP.CLIENT_OBJECT_UPDATE_FIELD);
+  assert.equal(doid, 1433, "on the chest");
+  assert.equal(field, 143, "ReceiveAttackChoreography");
+  reader.u8(); // weaponSlot
+  reader.u8(); // isConsumableWeapon
+  assert.equal(reader.u32(), attack.Id, "naming LOOT_SPAWN_A1, as the capture does");
+});
+
+/** A barrel still bangs: the damage half is gated on colliders, not the animation. */
+test("an attack that does hurt somebody still schedules its damage", async () => {
+  const { attackForConstant, npcForConstant, attackColliders } = await import(
+    "../src/gamemaster.js"
+  );
+  const { worldColliders } = await import("../src/socket/heading.js");
+  const { playDeathAttack } = await import("../src/socket/hazards.js");
+
+  const npc = await npcForConstant("CASTLE_ARENA_EXPLODING_BARREL");
+  const attack = await attackForConstant(npc.DeathAttack);
+  const colliders = await attackColliders(attack.AttackTimeline);
+  assert.ok(colliders.length, "the barrel's blast has one");
+
+  const frames = [];
+  const session = { id: 30, dungeonActive: true, objects: new Map(), actors: new Map(), send: (f) => frames.push(f) };
+  const at = { x: 2000, y: 2000 };
+
+  assert.equal(
+    await playDeathAttack(session, 9500, attack, at, worldColliders(at, 0, colliders)),
+    true
+  );
+  assert.equal(frames.length, 1, "announced once, and the bang is still on a timer");
+});
+
+/**
+ * The animation the chest arrives with.
+ *
+ * `REWARD_CHEST_A` authors `Attack1: LOOT_INTRO_A1`, three frames of `visible`,
+ * `attackEffect` and `sound` and nothing else, and the recorded runs play it
+ * once at 0.16 and 0.18s after the create — including on a chest left standing
+ * 8.78 seconds with an `AttackTimer` of 1, which sent exactly one. An entrance,
+ * not a cycle, and this server sent neither.
+ */
+test("an attack that only plays is an arrival, and only the chest has one", async () => {
+  const { isArrivalAnimation, npcForConstant, loadGameMaster } = await import(
+    "../src/gamemaster.js"
+  );
+  const gm = await loadGameMaster();
+
+  assert.equal(await isArrivalAnimation(await npcForConstant("REWARD_CHEST_A")), true);
+
+  // The near misses. Both look empty until what they spawn is counted.
+  for (const constant of ["SHAMAN_IMP", "RIVAL_VAMPIRE_HUNTER_MASTER_TRAPPER"]) {
+    assert.equal(
+      await isArrivalAnimation(await npcForConstant(constant)),
+      false,
+      `${constant} spawns something, so its Attack1 is an attack`
+    );
+  }
+  // And a statue that aims, a knight that swings, a tile that stabs.
+  for (const constant of ["NORDIC_TEMPLE_TRAP_STATUE_LOKI", "KNIGHT", "CASTLE_PRISON_TRAP_SPIKE"]) {
+    assert.equal(await isArrivalAnimation(await npcForConstant(constant)), false, constant);
+  }
+
+  /**
+   * And nothing else in the game, which is what makes the rule safe: it can
+   * only ever reach an attack that does nothing.
+   */
+  let matches = 0;
+  for (const npc of gm.raw.Npc) if (await isArrivalAnimation(npc)) matches += 1;
+  assert.equal(matches, 1, "one NPC in the whole table");
+});

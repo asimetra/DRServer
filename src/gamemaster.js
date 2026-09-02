@@ -684,3 +684,36 @@ export const weaponIconFor = (gm, item) => {
   const fits = banded.find((row) => level >= Number(row.MinLvl) && level <= Number(row.MaxLvl));
   return (fits ?? banded[0] ?? rows[0])?.IconName ?? null;
 };
+
+/**
+ * Whether an NPC's `Attack1` is how it arrives rather than how it fights.
+ *
+ * `REWARD_CHEST_A` authors `LOOT_INTRO_A1`, whose timeline is three frames of
+ * `visible`, `attackEffect` and `sound` and nothing else — the chest appearing.
+ * The recorded runs play it once, 0.16 and 0.18 seconds after the create, and
+ * never again: a chest left standing 8.78 seconds with an `AttackTimer` of 1
+ * sent exactly one. So it is an entrance and not a cycle.
+ *
+ * Asked of the timeline rather than named, and the question is a strict one:
+ * nothing that collides, launches, or spawns a pickup or an NPC. Across every
+ * NPC in the game that authors an `Attack1`, exactly one passes — this chest.
+ * Two others come close and are rightly excluded, the Shaman Imp and the
+ * Vampire Hunter rival, whose timelines look empty until `spawnnpc` is counted.
+ *
+ * Written this way so that a rule reading "an attack that does nothing is
+ * something to look at" cannot fire a real one by accident.
+ */
+export const isArrivalAnimation = async (npc) => {
+  if (!npc?.Attack1) return false;
+  const attack = await attackForConstant(npc.Attack1);
+  const timeline = attack?.AttackTimeline;
+  if (!timeline) return false;
+
+  const [colliders, launches, doobers, npcs] = await Promise.all([
+    attackColliders(timeline),
+    projectileLaunches(timeline),
+    spawnDooberActions(timeline),
+    spawnNpcActions(timeline),
+  ]);
+  return !colliders?.length && !launches?.length && !doobers?.length && !npcs?.length;
+};
