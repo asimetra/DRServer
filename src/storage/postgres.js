@@ -99,12 +99,33 @@ const fromRow = (row) =>
     ])
   );
 
+/**
+ * A field the row does not carry is left out of the statement, so the column's
+ * own DEFAULT applies.
+ *
+ * Naming it as null instead is what `?? null` did, and an explicit null does
+ * not fall back to a DEFAULT — it violates the NOT NULL beside it. Six child
+ * tables carry such columns (`is_new` on four, `power` and the modifier set on
+ * `account_items`, `count` on the stackables), so any writer that built a row
+ * without one produced a save that worked against the file backend and threw
+ * against PostgreSQL. Buying a chest from the store did exactly that.
+ *
+ * `undefined` and `null` stop meaning the same thing here, which is the point:
+ * absent is "the column decides", null is "the value is null". A nullable
+ * column that is deliberately cleared — `account_items.avatar_id`, when a
+ * weapon is unequipped — is assigned null rather than deleted, so it still
+ * travels.
+ *
+ * Safe for these rows because the child tables are emptied and rewritten on
+ * every save: there is no surviving row for an omitted column to inherit from.
+ */
 const insert = async (client, table, columns, row) => {
-  const values = columns.map((column) => row[column] ?? null);
-  const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
+  const present = columns.filter((column) => row[column] !== undefined);
+  if (!present.length) return;
+  const placeholders = present.map((_, index) => `$${index + 1}`).join(", ");
   await client.query(
-    `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders})`,
-    values
+    `INSERT INTO ${table} (${present.join(", ")}) VALUES (${placeholders})`,
+    present.map((column) => row[column])
   );
 };
 

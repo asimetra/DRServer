@@ -70,3 +70,68 @@ test("boosters are still unmodelled, on purpose", () => {
   assert.equal(columnsOf("account_boosters"), null);
   assert.match(schema, /account_boosters is still unmodelled/);
 });
+
+/**
+ * A row that does not carry a column must leave it out of the INSERT, so the
+ * column's own DEFAULT decides.
+ *
+ * Naming it as null instead — which `?? null` did — does not fall back to a
+ * DEFAULT; it violates the NOT NULL beside it. Six of the child tables have
+ * such columns, and a writer that omitted one produced a save that worked
+ * against the file backend and threw against PostgreSQL. Buying a chest from
+ * the store did exactly that, and `tools/grant.js` did it too:
+ *
+ *     null value in column "is_new" of relation "account_chests"
+ *     violates not-null constraint
+ */
+test("a column the row does not carry is left to its default", async () => {
+  const { writeAccount } = await import("../src/storage/postgres.js");
+  const statements = [];
+  const client = {
+    query: async (text, values) => {
+      statements.push({ text, values });
+      return { rows: [] };
+    },
+  };
+
+  await writeAccount(client, {
+    id: 1000000005,
+    // No `is_new`, exactly as the store's purchase path built it.
+    account_chests: [{ id: 1, account_id: 1000000005, chest_id: 60004 }],
+  });
+
+  const chestInsert = statements.find(
+    (statement) => statement.text.startsWith("INSERT INTO account_chests")
+  );
+  assert.ok(chestInsert, "the chest is written");
+  assert.doesNotMatch(chestInsert.text, /is_new/, "the absent column is not named");
+  assert.equal(chestInsert.values.length, 3, "and no null is passed for it");
+});
+
+/** A column the row does carry still travels, including a deliberate null. */
+test("a null the row does carry is still written", async () => {
+  const { writeAccount } = await import("../src/storage/postgres.js");
+  const statements = [];
+  const client = {
+    query: async (text, values) => {
+      statements.push({ text, values });
+      return { rows: [] };
+    },
+  };
+
+  await writeAccount(client, {
+    id: 1000000005,
+    // An unequipped weapon: avatar_id is cleared rather than absent, and that
+    // difference is the whole distinction the writer now draws.
+    account_items: [
+      { id: 1, account_id: 1000000005, item_id: 11001, avatar_id: null, avatar_slot: null, is_new: 1 },
+    ],
+  });
+
+  const itemInsert = statements.find(
+    (statement) => statement.text.startsWith("INSERT INTO account_items")
+  );
+  assert.ok(itemInsert, "the item is written");
+  assert.match(itemInsert.text, /avatar_id/, "an explicit null is named");
+  assert.equal(itemInsert.values[itemInsert.text.match(/\(([^)]*)\)/)[1].split(", ").indexOf("avatar_id")], null);
+});

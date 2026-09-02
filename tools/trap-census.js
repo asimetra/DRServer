@@ -36,6 +36,8 @@
  * the same function the floor builder calls; an oracle that reimplements the
  * rule it checks cannot catch the rule being wrong, only a typo in its copy.
  */
+// Must be first: it fills the environment config.js reads as it is evaluated.
+import "../src/load-env.js";
 import fs from "node:fs";
 import readline from "node:readline";
 import {

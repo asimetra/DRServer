@@ -193,7 +193,12 @@ const applyDetail = async ({ account, detail, gm, nextId, granted }) => {
   if (detail.ChestId) {
     account.account_chests = [
       ...(account.account_chests ?? []),
-      { id: await nextId(), account_id: account.id, chest_id: detail.ChestId },
+      // `is_new` is written rather than left out. The column is NOT NULL, and
+      // the storage writer maps an absent field to an explicit null — which
+      // bypasses the DEFAULT rather than falling back to it, so a purchase that
+      // worked against the file backend threw against PostgreSQL. A bought
+      // chest is new, which is also what `grantChest` says about an awarded one.
+      { id: await nextId(), account_id: account.id, chest_id: detail.ChestId, is_new: 1 },
     ];
     touched.add("account_chests");
   }

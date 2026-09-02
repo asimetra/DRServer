@@ -17,6 +17,8 @@
  *   node tools/wiring-audit.js                 # every library
  *   node tools/wiring-audit.js castle/arena    # one
  */
+// Must be first: it fills the environment config.js reads as it is evaluated.
+import "../src/load-env.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 

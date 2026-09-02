@@ -16,6 +16,8 @@
  *
  * It needs the signing secret and nothing else — no database, no account.
  */
+// Must be first: it fills the environment config.js reads as it is evaluated.
+import "../src/load-env.js";
 import { config } from "../src/config.js";
 import { ensureTokenSecret } from "../src/preflight.js";
 import {

@@ -21,6 +21,8 @@
  * Works against whichever backend the server is configured for, so it needs the
  * same DR_STORAGE / DR_DATABASE_URL as the server.
  */
+// Must be first: it fills the environment config.js reads as it is evaluated.
+import "../src/load-env.js";
 import { loadAccount, saveAccount, nextObjectId } from "../src/accounts.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { generateWeapon } from "../src/chests.js";
@@ -72,6 +74,9 @@ const main = async () => {
         id: await nextObjectId(account),
         account_id: account.id,
         chest_id: chestId,
+        // NOT NULL in the schema, and an absent field is written as an explicit
+        // null rather than falling back to the column default.
+        is_new: 1,
       });
     }
     console.log(`+${count} ${chest.Name} (${chest.Rarity})`);

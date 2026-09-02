@@ -17,6 +17,8 @@
  * copied, and it writes through the Postgres backend so that one row and its
  * children land together or not at all.
  */
+// Must be first: it fills the environment config.js reads as it is evaluated.
+import "../src/load-env.js";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
