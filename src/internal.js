@@ -1,8 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
 import { BOARDS, boardFor, runsSince, standingsFor, titleFor } from "./leaderboard.js";
-import { levelForExperience } from "./chests.js";
-import { STAT_CAP, statPointsEarned } from "./progression.js";
+import { STAT_CAP, heroLevel, statPointsEarned } from "./progression.js";
 import { loadGameMaster, weaponIconFor } from "./gamemaster.js";
 import { presenceSummary } from "./socket/presence.js";
 import { listen } from "./http.js";
@@ -245,7 +244,7 @@ const readProfile = async (req, [capture]) => {
         id: hero.Id,
         name: hero.Name ?? hero.Constant,
         icon: gm.raw.Skins?.find((skin) => skin.Id === avatar.skin_type)?.IconName ?? hero.IconName ?? null,
-        level: levelForExperience(gm, hero.Constant, avatar.experience ?? 0),
+        level: heroLevel(gm, hero, avatar.experience ?? 0),
         experience: Number(avatar.experience ?? 0),
         health: maxHitPoints(gm, hero, avatar),
         mana: maxManaPoints(gm, hero, avatar),
@@ -402,7 +401,7 @@ const readSummary = async (req, [capture]) => {
           /* The icon the client names for this skin, so a page can find the
              picture without a mapping table of its own. */
           icon: gm.raw.Skins?.find((skin) => skin.Id === avatar.skin_type)?.IconName ?? null,
-          level: levelForExperience(gm, hero.Constant, avatar.experience ?? 0),
+          level: heroLevel(gm, hero, avatar.experience ?? 0),
           experience: avatar.experience ?? 0,
         }
       : null,

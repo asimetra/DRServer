@@ -2,6 +2,7 @@ import { loadGameMaster } from "./gamemaster.js";
 import { purchaseOffer } from "./store.js";
 import { storageLimit, unequippedWeapons } from "./inventory-space.js";
 import { warn } from "./log.js";
+import { heroLevel, maxLevel } from "./progression.js";
 
 /**
  * Opening a chest.
@@ -64,18 +65,24 @@ const KEY_COLUMN_BY_RARITY = {
 };
 
 /**
- * Level from experience: the Leveling table carries one XP threshold column per
- * hero, so the same experience means different levels for different classes.
+ * Level from experience is `heroLevel`, and was briefly a second reading of the
+ * same table that disagreed with it.
+ *
+ * The Leveling table's per-hero column is the cost of *that* level, not the
+ * total to reach it. The client accumulates it — `GameMaster.hx` does
+ * `TotalExperience += levelValue` and files the running sum against the level —
+ * and `progression.js` does the same. This file instead compared the raw
+ * experience against each row's cost as though it were a threshold, which is
+ * only correct for level one and drifts upward from there:
+ *
+ *   real level     5    10    20    30    50
+ *   read as        9    22    57   100   100
+ *
+ * A level-30 player's chest therefore rolled a level-100 award — priced by
+ * `rollPower` at level 100 too — and the client will not let them equip it
+ * until they have earned seventy more levels. The best thing the chest could
+ * give them was the thing they could not use.
  */
-export const levelForExperience = (gm, heroConstant, experience) => {
-  let level = 1;
-  for (const row of gm.raw.Leveling) {
-    const threshold = row[heroConstant];
-    if (typeof threshold !== "number" || experience < threshold) break;
-    level = row.Level;
-  }
-  return level;
-};
 
 /** Weapon types a hero can wield, from its `*_TYPE` columns. */
 const masteryTypes = (hero) =>
@@ -184,8 +191,25 @@ const rollPower = (weapon, rarity, level) =>
 /**
  * Item level tracks the opener's level with a small spread, reported from play
  * as roughly ±2 and consistent with the one capture.
+ *
+ * Bounded at the top by the hero's own ladder, because the client refuses to
+ * equip past it: `DBInventoryInfo.canAvatarEquipThisItem` returns false when
+ * `avatarInfo.level < itemInfo.requiredLevel`, and the Leveling table stops at
+ * 100. Unbounded, the +2 handed a level-100 player a legendary they could never
+ * hold — the roll's best outcomes were the ones it made worthless.
+ *
+ * The official server does not produce them. Across 509 item rows on a
+ * captured account, 480 of them late-game, the distribution runs 98×136,
+ * 99×160, 100×184 and stops: not one row above 100.
+ *
+ * Clamping rather than re-rolling or sliding the window down, because those
+ * would be inventions. The capture pins the ceiling and says nothing about the
+ * shape underneath it, so the change is the smallest one that makes the
+ * observed fact true; the resulting weight on the top level is a consequence of
+ * that and not a claim about the original.
  */
-const rollItemLevel = (level, random) => Math.max(1, level + Math.floor(random() * 5) - 2);
+const rollItemLevel = (level, random, ceiling) =>
+  Math.min(ceiling, Math.max(1, level + Math.floor(random() * 5) - 2));
 
 /**
  * The top rarity carries a third modifier drawn from a separate table, which is
@@ -218,7 +242,7 @@ export const generateWeapon = ({ gm, hero, rarity, level, accountId, id, random 
     avatar_id: null,
     avatar_slot: null,
     is_new: 1,
-    requiredlevel: rollItemLevel(level, random),
+    requiredlevel: rollItemLevel(level, random, maxLevel(gm, hero)),
     rarity: rarity.Id,
     modifier1,
     modifier2,
@@ -316,7 +340,7 @@ export const openChest = async ({ account, chestInstanceId, heroInstanceId, next
     throw new ChestError(NOTHING_AWARDED, `no ${keyColumn.replace("_keys", "")} key`);
   }
 
-  const level = levelForExperience(gm, hero.Constant, avatar.experience ?? 0);
+  const level = heroLevel(gm, hero, avatar.experience ?? 0);
   const item = generateWeapon({
     gm,
     hero,

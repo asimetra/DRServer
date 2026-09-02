@@ -322,3 +322,59 @@ test("a weapon roll is untouched by the offer path", async () => {
   assert.equal(reward.OfferId, null);
   assert.equal(account.account_items.length, 1);
 });
+
+/**
+ * A chest rolls the award's level around the opener's, ±2, and that spread has
+ * a ceiling: the client refuses to equip an item whose `requiredLevel` is above
+ * the hero's level (`DBInventoryInfo.canAvatarEquipThisItem`), and the Leveling
+ * table stops at 100. Unclamped, the +2 handed a level-100 player a legendary
+ * they could never hold — the roll's best outcomes were the ones it wasted.
+ *
+ * The official server does not produce them. Across 509 item rows on a captured
+ * account the levels run 98, 99 and 100 and stop; not one is above.
+ */
+test("an award is never rolled past a level the hero can reach", async () => {
+  const gm = await loadGameMaster();
+  const hero = gm.heroById.get(BERSERKER);
+  const { maxLevel, experienceForLevel } = await import("../src/progression.js");
+  const cap = maxLevel(gm, hero);
+
+  for (const level of [cap, cap - 1]) {
+    const seen = new Set();
+    for (let round = 0; round < 200; round++) {
+      const account = accountWith(BERSERKER, {
+        account_avatars: [
+          { id: 1, avatar_id: BERSERKER, experience: experienceForLevel(gm, hero, level) },
+        ],
+        account_chests: [{ id: 9, account_id: 1000000005, chest_id: LEGENDARY_CHEST }],
+      });
+      await open(account);
+      for (const item of account.account_items) seen.add(item.requiredlevel);
+    }
+
+    const highest = Math.max(...seen);
+    assert.ok(highest <= cap, `a hero at ${level} was awarded level ${highest}, past the ${cap} cap`);
+    assert.ok(seen.has(cap), `and the cap itself is still reachable from ${level}`);
+  }
+});
+
+/** Below the cap the spread is untouched — this clamps a ceiling, not the roll. */
+test("the ±2 spread survives everywhere it fits", async () => {
+  const gm = await loadGameMaster();
+  const hero = gm.heroById.get(BERSERKER);
+  const { experienceForLevel } = await import("../src/progression.js");
+
+  const seen = new Set();
+  for (let round = 0; round < 300; round++) {
+    const account = accountWith(BERSERKER, {
+      account_avatars: [
+        { id: 1, avatar_id: BERSERKER, experience: experienceForLevel(gm, hero, 50) },
+      ],
+      account_chests: [{ id: 9, account_id: 1000000005, chest_id: LEGENDARY_CHEST }],
+    });
+    await open(account);
+    for (const item of account.account_items) seen.add(item.requiredlevel);
+  }
+
+  assert.deepEqual([...seen].sort((a, b) => a - b), [48, 49, 50, 51, 52]);
+});
