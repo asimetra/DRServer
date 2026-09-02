@@ -411,6 +411,15 @@ export const applyDamage = (session, doid, damage, announce) => {
        * just moves the reward back to where the monster came from.
        */
       if (!recoverableHero && !actor.permCorpse) removeActor(session, doid);
+      /**
+       * And whatever was waiting for it to be gone rather than merely dead.
+       *
+       * A generator clears here: a chest is still throwing coins for six
+       * seconds after it breaks, and the floor's ending is wired to the
+       * clearing, so signalling it at the death would start the countdown
+       * underneath the shower.
+       */
+      actor.onGone?.(doid);
     };
 
     if (blastMs > 0) setTimeout(() => (callItDead(), retire()), blastMs).unref?.();

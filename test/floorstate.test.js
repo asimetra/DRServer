@@ -593,43 +593,6 @@ const textOf = (frame) => {
   return reader.utf();
 };
 
-/**
- * The seven-second victory delay was implemented and silent. Six recorded chest
- * endings put two lines in it — COLLECT_TREASURE_GO as the shower ends and
- * 3_SECONDS_LEFT three seconds later — and without them a player watched the
- * loot settle and then nothing at all until the screen changed.
- */
-test("the victory delay is narrated, on the game's own beats", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const sent = [];
-  const session = {
-    id: 40,
-    areaDoid: 4000,
-    floorDoid: 4001,
-    dungeonActive: true,
-    send: (frame) => sent.push(frame),
-    scheduleDungeonSummary: () => {},
-    awardDungeonCompletion: async () => {},
-  };
-
-  assert.equal(completeFloor(session), true);
-  assert.deepEqual(sent, [], "nothing is said the instant the floor completes");
-
-  t.mock.timers.tick(0);
-  assert.deepEqual(sent.map(textOf), ["COLLECT_TREASURE_GO"]);
-
-  t.mock.timers.tick(2999);
-  assert.equal(sent.length, 1, "the second line is not early");
-
-  t.mock.timers.tick(1);
-  assert.deepEqual(sent.map(textOf), ["COLLECT_TREASURE_GO", "3_SECONDS_LEFT"]);
-
-  t.mock.timers.tick(4000);
-  // The victory callback awaits the completion award before it announces, and a
-  // mocked clock does not run microtasks for us.
-  for (let flush = 0; flush < 5; flush++) await Promise.resolve();
-  assert.equal(fieldId(sent.at(-1)), FLID_DUNGEON_ENDING, "and the win lands four seconds after");
-});
 
 /**
  * The lines are on their own timers, so cancelling only the victory left a

@@ -762,6 +762,8 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
         if (!options.suppressTriggerReporting) reportNpcDeath(session, position.id);
         options.onDeath?.(doid);
       },
+      /** Once the body has actually been taken away — see combat.js. */
+      onGone: (doid) => options.onGone?.(doid),
       position: { x: at.x, y: at.y },
       collisionRadius,
       heading: spawnHeading,
@@ -1573,8 +1575,21 @@ const spawnGeneratorWave = async (context, runtime) => {
               random: session.random ?? Math.random,
             });
           }
-          completeGenerator(session, runtime);
         },
+        /**
+         * Cleared when the spawn is *gone*, not when it dies.
+         *
+         * A chest spends six seconds throwing its contents across the room
+         * after it breaks, and the floor's whole ending hangs off this signal:
+         * the recorded run puts COLLECT_TREASURE_GO 6.35s after the break —
+         * which is `LOOT_SPAWN_A1` running out — and then the floor's own
+         * gates three and seven seconds after that. Clearing on the death
+         * started the chain underneath the shower it is meant to follow.
+         *
+         * Anything with nothing to play is taken away in the same breath as it
+         * dies, so this is no slower for the generators that hold monsters.
+         */
+        onGone: () => completeGenerator(session, runtime),
       }
     );
     runtime.attemptedSpawns++;

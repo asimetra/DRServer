@@ -398,7 +398,7 @@ const VIRTUAL_TRIGGERABLES = {
      * spawn was dead also meant a live brute could block a win the game had
      * already declared.
      */
-    session.completeFloor?.(session);
+    session.completeFloor?.(session, { immediate: true });
     return true;
   },
   /**
@@ -417,7 +417,7 @@ const VIRTUAL_TRIGGERABLES = {
    * four more, then dungeonEnding.
    */
   FLOOR_COMPLETE_TRIGGERABLE: (session) => {
-    session.completeFloor?.(session);
+    session.completeFloor?.(session, { immediate: true });
     return true;
   },
   /**
@@ -542,6 +542,22 @@ export const emitGeneratorRelease = (session, placement) => {
     const lowered = emitSignal(session, placement.id, false);
     return raised || lowered;
   }
+
+  /**
+   * Except where the gate is the end of the run rather than a door.
+   *
+   * The reward generator's timers are the floor's own ending — three seconds
+   * to "3 SECONDS LEFT" and seven to the completion, both counted from the
+   * chest *clearing*. Poking them as the chest came out started that countdown
+   * while the player was still walking towards it, and put "3 SECONDS LEFT" on
+   * screen three seconds after the boss fell. The recorded run sends three
+   * floor lines in the whole fight and that is not one of them.
+   *
+   * Told apart by where the signal goes, which is the question
+   * `rewardGeneratorIds` already answers: a generator whose wiring reaches a
+   * FLOOR_COMPLETION_IMMEDIATE is ending the floor, and a cage door is not.
+   */
+  if (session.rewardGenerators?.has(placement.id)) return false;
 
   let delivered = false;
   for (const targetId of session.signalTargets?.get(placement.id) ?? []) {

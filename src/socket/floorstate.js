@@ -187,31 +187,6 @@ export const clearFloorFailing = (session) => {
 const FLID_FLOOR_SHOW_TEXT = 201;
 const FLID_FLOOR_PLAY_SOUND = 202;
 
-/**
- * The two lines the floor says while the run is ending, and when.
- *
- * The seven seconds were already right and silent — the delay was implemented
- * and the narration that fills it was not, so a player watched the loot settle
- * and then nothing at all until the screen changed. Six recorded chest endings
- * put the same two lines in the same places, to within a twentieth of a second:
- *
- *   COLLECT_TREASURE_GO   as the shower ends
- *   3_SECONDS_LEFT        3.00, 3.00, 2.99, 3.01, 3.04, 3.06 later
- *   dungeonEnding         4.01, 3.99, 4.00, 4.02, 4.05, 4.06 after that
- *
- * `3_SECONDS_LEFT` names what remains after it, which is the four above and not
- * three; the string is the client's and is left as the game spells it.
- */
-const VICTORY_TEXTS = [
-  { key: "COLLECT_TREASURE_GO", at: 0 },
-  { key: "3_SECONDS_LEFT", at: 3000 },
-];
-
-/**
- * How long after a floor completes the win is announced, in milliseconds.
- * Measured from a captured run: three seconds of countdown and four more before
- * dungeonEnding.
- */
 const VICTORY_DELAY_MS = 7000;
 
 /**
@@ -267,9 +242,19 @@ export const playFloorSound = (session, triggerable) => {
  * A floor with somewhere to go hands over to the next one; the last floor wins
  * the dungeon.
  */
-export const completeFloor = (session) => {
+export const completeFloor = (session, { immediate = false } = {}) => {
   if (session.floorFinished) return false;
   session.floorFinished = true;
+  /**
+   * A floor that says IMMEDIATE has already done the waiting.
+   *
+   * The tutorial's boss floor holds its own completion behind a
+   * RESET_TIMER_GATE of seven seconds, counted from the chest clearing — so
+   * adding this file's seven on top announced the win fourteen seconds after
+   * the floor asked for it. The recorded run is 13.34s from the break: 6.35 of
+   * drop, then the floor's seven, and nothing else.
+   */
+  if (immediate) session.victoryDelayMs = 0;
 
   // How many floors a run has comes from its plan now — a node is either a
   // list of authored files or a tier that says how many to lay out.
@@ -285,49 +270,26 @@ export const completeFloor = (session) => {
   if (match) dungeonMatches.finish(match);
 
   /**
-   * The win is announced late, not at once. A captured tutorial run spaces it
-   * out: the chest breaks and COLLECT_TREASURE_GO goes out, three seconds later
-   * 3_SECONDS_LEFT, and four seconds after that dungeonEnding — with the
-   * summary a further five behind it. Firing the victory the moment the last
-   * object dies takes the loot off the floor before the player can reach it.
-   */
-  /**
-   * The countdown starts once the floor has stopped dropping things.
+   * How long after the floor is complete the run is announced.
    *
-   * A chest completes the floor the instant it breaks, and then spends the next
-   * six seconds throwing its contents across the room — so a countdown begun at
-   * the break runs underneath the shower it is meant to follow. The captures put
-   * COLLECT_TREASURE_GO at the end of the drop, and chest-death to dungeonEnding
-   * at 13.37, 13.41 and 13.45 seconds against the 13.29 that the timeline's 6.29
-   * plus this seven produce.
+   * Nothing here decides it on a floor that ends on a chest: the tutorial's
+   * boss floor wires the whole thing itself —
    *
-   * Read from the loot rather than from the chest, so a floor that ends without
-   * dropping anything still ends immediately — `lootSettlesAt` is only ever set
-   * by something that scheduled a shower.
+   *   GEN REWARD_CHEST_A clears -> COLLECT_TREASURE_GO
+   *                             -> RESET_TIMER_GATE startDelay=3 -> 3_SECONDS_LEFT
+   *                             -> RESET_TIMER_GATE startDelay=7 -> FLOOR_COMPLETION_IMMEDIATE
+   *
+   * and the recorded run agrees: chest broken, COLLECT at 6.35s as the drop
+   * runs out, 3_SECONDS_LEFT 3.00 later, over 6.99 after COLLECT. Saying those
+   * two lines again on a timer of our own printed each of them twice and put
+   * the ending at fourteen seconds instead of the seven the floor asked for.
+   *
+   * This delay is what remains for the floors that author no such chain — the
+   * ones where the last enemy dying is the whole of it — so the loot still has
+   * a moment to be walked over.
    */
-  const settling = Math.max(0, (session.lootSettlesAt ?? 0) - Date.now());
-  const delayMs = (session.victoryDelayMs ?? VICTORY_DELAY_MS) + settling;
-  info(
-    `[${session.id}] final floor complete — victory in ${delayMs}ms` +
-      (settling ? ` (${settling}ms of it waiting on loot)` : "")
-  );
-
-  /**
-   * The narration that fills that wait. Held on the same set the victory timer
-   * is cancelled through, so leaving early takes the countdown with it rather
-   * than announcing treasure into an empty floor.
-   */
-  session.victoryTextTimers ??= new Set();
-  for (const { key, at } of VICTORY_TEXTS) {
-    if (at >= delayMs) continue;
-    const textTimer = setTimeout(() => {
-      session.victoryTextTimers?.delete(textTimer);
-      if (!session.dungeonActive || !session.floorDoid) return;
-      session.send(buildShowText(session.floorDoid, key));
-    }, at);
-    textTimer.unref?.();
-    session.victoryTextTimers.add(textTimer);
-  }
+  const delayMs = session.victoryDelayMs ?? VICTORY_DELAY_MS;
+  info(`[${session.id}] final floor complete — victory in ${delayMs}ms`);
 
   const timer = setTimeout(async () => {
     session.victoryTimer = null;
