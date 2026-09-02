@@ -149,3 +149,47 @@ test("and a floor that never had an enemy is not cleared by its scenery", () => 
 
   assert.equal(checkFloorCleared(session), false);
 });
+
+/**
+ * A body stays as long as its death timeline is still doing something —
+ * which is not the same as as long as it is still hitting anybody.
+ *
+ * `deathEffectMs` was read off the colliders, on the reasoning that a barrel's
+ * blast is what keeps it on screen. That holds for a barrel and fails for the
+ * one death the game ends on: `REWARD_CHEST_A` dies into `LOOT_SPAWN_A1`,
+ * which has no colliders at all — its DamageMod is zero — and forty-seven
+ * `spawndoober` actions running to frame 145. Measured at zero, the chest was
+ * destroyed on the client the instant it broke, and then six seconds of coins
+ * flew out of nothing.
+ */
+test("a chest outlives its own shower of coins", async () => {
+  const { loadGameMaster, npcForConstant, attackForConstant } = await import(
+    "../src/gamemaster.js"
+  );
+  const { deathEffectMsFor } = await import("../src/socket/dungeon.js");
+
+  const gm = await loadGameMaster();
+  const chest = await npcForConstant("REWARD_CHEST_A");
+  const attack = await attackForConstant(chest.DeathAttack);
+
+  const held = deathEffectMsFor(gm, attack);
+  assert.ok(held > 5500, `the chest is taken away after ${held}ms of a 6042ms drop`);
+  assert.ok(held < 7000, "and not held open past what the timeline actually does");
+});
+
+test("and a barrel is still measured by the blast that is its last act", async () => {
+  const { loadGameMaster, attackForConstant } = await import("../src/gamemaster.js");
+  const gm = await loadGameMaster();
+  const blast = await attackForConstant("EN_EXPLODING_BARREL_DEATH_ARENA");
+  const { deathEffectMsFor } = await import("../src/socket/dungeon.js");
+
+  // Frame 29 at 24fps: the collider is the last thing this timeline does, so
+  // reading actions rather than colliders must not move it.
+  assert.equal(Math.round(deathEffectMsFor(gm, blast)), 1208);
+});
+
+test("a death that does nothing holds nothing open", async () => {
+  const { loadGameMaster } = await import("../src/gamemaster.js");
+  const { deathEffectMsFor } = await import("../src/socket/dungeon.js");
+  assert.equal(deathEffectMsFor(await loadGameMaster(), null), 0);
+});

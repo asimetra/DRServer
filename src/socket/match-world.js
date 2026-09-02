@@ -79,6 +79,9 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "floorFinished",
   "floorSettled",
   "victoryTimer",
+  // The countdown lines that fill the victory delay. Shared for the same reason
+  // the timer beside them is: one floor says them once, to everyone on it.
+  "victoryTextTimers",
   "summaryTimer",
   "summaryDoid",
   "victoryDelayMs",
@@ -533,6 +536,10 @@ export const createMatchWorld = (match, seedSession) => {
       for (const timer of [this.floorFailingTimer, this.victoryTimer, this.summaryTimer]) {
         clearTimeout(timer);
       }
+      // The victory narration is a set rather than a single handle, so it is
+      // cleared here beside the timer it accompanies.
+      for (const timer of this.victoryTextTimers ?? []) clearTimeout(timer);
+      this.victoryTextTimers?.clear();
       this.floorFailingTimer = null;
       this.victoryTimer = null;
       this.summaryTimer = null;

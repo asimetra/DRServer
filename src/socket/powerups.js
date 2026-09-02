@@ -258,17 +258,33 @@ export const powerupActionFor = (attack) => spawnDooberAction(attack?.AttackTime
 export const isPowerupAttack = async (attack) => Boolean(await powerupActionFor(attack));
 
 /**
- * Schedules the timeline's own spawn frame at the client's 24 fps cadence.
- * The wait before it can be used again is not this function's business — see
- * cooldowns.js, which applies it to every attack that authors one.
+ * Schedules a timeline's own spawn frames at the client's 24 fps cadence.
+ *
+ * Anchored wherever the caller says rather than always on the hero, because a
+ * cooking pot is not the only thing whose timeline leaves pickups behind: an
+ * NPC's `DeathAttack` authors them too, and the reward chest is the one that
+ * matters. `REWARD_CHEST_A` dies into `LOOT_SPAWN_A1`, whose timeline carries
+ * forty-seven `spawndoober` actions between frames 10 and 145 — 24 EXP_SMALL,
+ * 19 GOLD_SMALL, 4 GOLD_MEDIUM. At 24 fps that is a shower beginning 0.42s
+ * after the break and lasting 5.63, which is what six recorded runs show:
+ * forty-seven pickups, 5.66–5.78 seconds, every time.
+ *
+ * The cadence *is* the animation. Nothing staggers the drops on purpose — they
+ * arrive as their frames come up — and `dooberSpawnFrom`, which `cookOne`
+ * already sends, is what makes each one fly out of the chest instead of
+ * appearing on top of it.
+ *
+ * The wait before an attack may be used again is not this function's business —
+ * see cooldowns.js, which applies it to every attack that authors one.
  */
-export const schedulePowerup = async (session, attack) => {
+export const scheduleTimelineDoobers = async (session, attack, { origin, heading } = {}) => {
   const actions = await spawnDooberActions(attack?.AttackTimeline);
-  if (!actions.length || !session.floorDoid || !session.heroPosition) return false;
+  const from = origin ?? session.heroPosition;
+  if (!actions.length || !session.floorDoid || !from) return false;
 
   const floorDoid = session.floorDoid;
-  const origin = { ...session.heroPosition };
-  const heading = session.heroHeading;
+  const at = { ...from };
+  const facing = heading ?? session.heroHeading;
   session.powerupSpawnTimers ??= new Set();
 
   /**
@@ -279,13 +295,27 @@ export const schedulePowerup = async (session, attack) => {
    */
   const perAction = actions.length > 1 ? 1 : undefined;
 
+  /**
+   * When this floor will have finished dropping things.
+   *
+   * `completeFloor` reads it so the victory countdown starts after the loot has
+   * settled rather than on top of it: the chest's own timeline runs 6.3 seconds,
+   * and the captures put COLLECT_TREASURE_GO at the end of that, not at the
+   * break — chest death to dungeonEnding measures 13.37, 13.41 and 13.45s
+   * against the 13.29 this produces.
+   */
+  const lastFrameMs = Math.max(
+    ...actions.map((action) => (Number(action.frame ?? 0) / FRAMES_PER_SECOND) * 1000)
+  );
+  session.lootSettlesAt = Math.max(session.lootSettlesAt ?? 0, Date.now() + lastFrameMs);
+
   for (const action of actions) {
     const timer = setTimeout(
       () => {
         session.powerupSpawnTimers?.delete(timer);
         if (!session.dungeonActive || session.floorDoid !== floorDoid) return;
-        spawnPowerup(session, { origin, heading, action, count: perAction }).catch((error) =>
-          warn(`[${session.id}] powerup spawn failed: ${error.message}`)
+        spawnPowerup(session, { origin: at, heading: facing, action, count: perAction }).catch(
+          (error) => warn(`[${session.id}] doober spawn failed: ${error.message}`)
         );
       },
       (Number(action.frame ?? 0) / FRAMES_PER_SECOND) * 1000
@@ -295,6 +325,9 @@ export const schedulePowerup = async (session, attack) => {
   }
   return true;
 };
+
+/** The hero-anchored case, which is every powerup a player casts. */
+export const schedulePowerup = (session, attack) => scheduleTimelineDoobers(session, attack);
 
 /** Clears scheduled cooking and uncollected temporary pickup timers on teardown. */
 export const clearDungeonPowerups = (session) => {

@@ -121,7 +121,7 @@ import { settleDungeonAccount } from "./settle-account.js";
 import { holdAccount, releaseAccount } from "../account-registry.js";
 import { spawnNpcRewards, spawnBossReward } from "./drops.js";
 import { clearDungeonBuffs, grantBuff } from "./buffs.js";
-import { clearDungeonPowerups } from "./powerups.js";
+import { clearDungeonPowerups, scheduleTimelineDoobers } from "./powerups.js";
 import { clearDungeonPlaceables, clearPlacementPermits } from "./placeables.js";
 import { setPresenceLocation } from "./presence.js";
 import { clearCooldowns } from "./cooldowns.js";
@@ -402,6 +402,33 @@ export const npcAttackChoices = async (
   return attackSet;
 };
 
+/**
+ * How long a death is still worth drawing: the last frame its timeline does
+ * anything at all, not the last frame it hits somebody.
+ *
+ * Read off the colliders once, on the reasoning that what keeps a broken
+ * barrel on screen is its blast. That is true of a barrel and false of the one
+ * death a run ends on. `REWARD_CHEST_A` dies into `LOOT_SPAWN_A1`, which has
+ * no colliders — its `DamageMod` is zero — and forty-seven `spawndoober`
+ * actions running to frame 145. Measured by colliders that is nothing, so the
+ * chest was taken off the client the instant it broke and six seconds of coins
+ * flew out of a space where a chest had been.
+ *
+ * Every action counts, which leaves a barrel where it was: its collider is
+ * also the last thing its timeline does, so 1208ms either way.
+ */
+export const deathEffectMsFor = (gm, attack) => {
+  const timeline = attack ? gm.timelines?.get(attack.AttackTimeline) : null;
+  if (!timeline) return 0;
+
+  let last = 0;
+  for (const frame of timeline.frames ?? []) {
+    if (!(frame.actions ?? []).length) continue;
+    last = Math.max(last, Number(frame.frame ?? frame.index) || 0);
+  }
+  return (last / FRAMES_PER_SECOND) * 1000;
+};
+
 const spawnNpc = async (context, constant, position, scale, options = {}) => {
   const { session, floorDoid, heroDoid, mapNodeId, gm } = context;
   const emptyResult = options.returnDoid ? null : 0;
@@ -638,11 +665,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
        * draw an object it has been told to destroy — see applyDamage, which
        * holds the death announcement open for exactly this long.
        */
-      deathEffectMs: deathColliders.length
-        ? Math.max(0, ...deathColliders.map((collider) => Number(collider.frame) || 0)) /
-          FRAMES_PER_SECOND *
-          1000
-        : 0,
+      deathEffectMs: deathEffectMsFor(gm, deathAttack),
       /**
        * A gate breaks rather than dying — see applyDamage.
        *
@@ -680,6 +703,22 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
           worldColliders(origin, spawnHeading, deathColliders),
           { npc, weaponPower: deathWeaponPower }
         ).catch((error) => warn(`death attack ${doid}: ${error.message ?? error}`));
+        /**
+         * And whatever the same timeline leaves on the floor.
+         *
+         * `playDeathAttack` is the damage half, and it refuses outright when
+         * the attack has no colliders — which `LOOT_SPAWN_A1` has not, its
+         * `DamageMod` being zero and everything it authors being `spawndoober`.
+         * So the reward chest broke, paid out nothing and showed nothing: the
+         * shower of coins the game ends on was simply absent.
+         *
+         * Read off the NPC's own row rather than named here, so this is every
+         * death attack that authors pickups and not a special case for a chest.
+         */
+        scheduleTimelineDoobers(session, deathAttack, {
+          origin,
+          heading: spawnHeading,
+        }).catch((error) => warn(`death loot ${doid}: ${error.message ?? error}`));
       },
       /**
        * The first real hit on this actor, for `NPC_DAMAGE_TRIGGER`.
