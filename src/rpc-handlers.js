@@ -105,6 +105,42 @@ register("account/AlterAttribute", async ([accountId, , rawName, rawValue]) => {
 });
 
 /**
+ * The bits that remember which tutorials a player has been shown.
+ *
+ * `account_flags` is a bitfield the *client* owns: `DBAccountParams` sets a bit
+ * when a lesson has been given — 5 for movement, 6 for revive, 10 for the
+ * Dungeon Buster and a dozen more — and pushes the whole field here through
+ * `flushParams`. Nothing else writes it, and this server answered nothing, so
+ * the field stayed zero forever.
+ *
+ * Which is not a cosmetic loss. `MainStateMachine.start` reads bit 5 to decide
+ * where a session begins: a hero holding a weapon with that bit clear is sent
+ * into the tutorial dungeon, every launch, however many hundreds of runs are
+ * behind them. The captured official account carries 1050622 — bits 1 through
+ * 10 and one more — against the zero this server was handing back.
+ *
+ * `add` is meant literally: the incoming value is OR'd rather than assigned, so
+ * a client that is behind on what it knows cannot clear a lesson somebody has
+ * already had. The client reads nothing from the reply.
+ */
+register("account/addAccountBits", async ([accountId, , rawFlags]) => {
+  const flags = Number(rawFlags);
+  if (!Number.isInteger(flags) || flags < 0 || flags > 0xffffffff) {
+    throw new Error("invalid account bits");
+  }
+
+  const account = await loadAccount(Number(accountId));
+  const before = Number(account.account_flags ?? 0);
+  const after = before | flags;
+  if (after === before) return true;
+
+  account.account_flags = after;
+  await saveAccount(account);
+  info(`rpc: account ${account.id} flags ${before} -> ${after}`);
+  return true;
+});
+
+/**
  * Epoch parameters, taken from a live capture of the official server rather
  * than guessed: a one-week window offset by 40 hours. The offset is what lines
  * the reset up with the operator's chosen boundary, so a zero here would drift

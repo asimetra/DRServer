@@ -7,7 +7,7 @@ import { loadGameMaster } from "./gamemaster.js";
 import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
 import { repairSpentPowerups } from "./powerup-slots.js";
-import { accountTrophies } from "./map-progress.js";
+import { accountTrophies, getMapNodeBit } from "./map-progress.js";
 import { info, warn } from "./log.js";
 import {
   ACCOUNT_OBJECT_ID_FLOOR,
@@ -256,6 +256,44 @@ export const repairTrophyCount = async (account) => {
   return true;
 };
 
+/**
+ * The bit that says the movement tutorial has been seen, for an account that
+ * plainly saw it.
+ *
+ * `MainStateMachine.start` sends a player into the tutorial dungeon whenever
+ * their hero holds a weapon and `account_flags` bit 5 is clear, and the client
+ * is the only thing that ever sets it — through `addAccountBits`, which this
+ * server did not answer. So every login was a first login: an account with a
+ * hundred and sixty-five dungeons behind it was handed the tutorial again, and
+ * again, because the flag it would have been remembered by never reached
+ * storage.
+ *
+ * Answering the call fixes the next account and not this one. Map node bit 0 is
+ * the tutorial's own `BitIndex`, set on the first clear of a BOSS node, and a
+ * player cannot hold it without having finished the tutorial — which is the
+ * same reasoning as the trophy it also earns them, read off the mask that
+ * `repairTrophyCount` already trusts. So a mask that says the tutorial is
+ * beaten is taken as saying it was seen.
+ *
+ * Only ever adds. A player who has genuinely never played keeps a clear bit and
+ * gets the tutorial they are owed.
+ */
+const MOVEMENT_TUTORIAL_BIT = 1 << 5;
+const TUTORIAL_MAP_NODE_BIT = 0;
+
+export const repairTutorialFlag = (account) => {
+  if (Number(account.account_flags ?? 0) & MOVEMENT_TUTORIAL_BIT) return false;
+
+  const masks = [
+    account.completed_mapnode_mask,
+    ...(account.account_avatars ?? []).map((avatar) => avatar.completed_mapnode_mask),
+  ];
+  if (!masks.some((mask) => getMapNodeBit(mask, TUTORIAL_MAP_NODE_BIT))) return false;
+
+  account.account_flags = Number(account.account_flags ?? 0) | MOVEMENT_TUTORIAL_BIT;
+  return true;
+};
+
 const repairLoadedAccount = async (account) => {
   const migratedAvatars = repairAvatarInstanceIds(account);
   const restoredProgress = repairActiveAvatarProgress(account);
@@ -263,13 +301,15 @@ const repairLoadedAccount = async (account) => {
   const namedModifiers = await repairItemModifiers(account);
   const spentPowerups = repairSpentPowerups(account);
   const countedTrophies = await repairTrophyCount(account);
+  const seenTutorial = repairTutorialFlag(account);
   if (
     !migratedAvatars &&
     !restoredProgress &&
     !restoredAttributes &&
     !namedModifiers &&
     !spentPowerups &&
-    !countedTrophies
+    !countedTrophies &&
+    !seenTutorial
   ) {
     return account;
   }
@@ -295,6 +335,11 @@ const repairLoadedAccount = async (account) => {
   if (countedTrophies) {
     info(
       `accounts: counted ${account.trophies} trophy/trophies off the map mask for account ${account.id}`
+    );
+  }
+  if (seenTutorial) {
+    info(
+      `accounts: account ${account.id} has beaten the tutorial, so it is not shown again`
     );
   }
   return account;
