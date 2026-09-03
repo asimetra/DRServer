@@ -251,7 +251,11 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
         origin: live.position,
         heading: live.heading,
         weaponPower: live.weaponPower,
-        weapon: live.heroWeapon,
+        // `heroWeapon`, not `weapon`: this function already has a `weapon` of
+        // its own, the one the placed NPC fights with. Spelling it the other
+        // way here is silently accepted and drops the hero's — which is a fire
+        // that burns without the modifiers of the bomb that lit it.
+        heroWeapon: live.heroWeapon,
       }).catch((error) =>
         warn(`[${session.id}] ${attack.Constant} spawn failed: ${error.message}`)
       );

@@ -1029,3 +1029,72 @@ test("a Sticky bomb roots whatever its fire catches, not only what it struck", a
   // A trap or a consumable throws nothing of its own, so it leaves nothing.
   assert.ok(!(await caught(null)).includes(sticky.BUFF_1));
 });
+
+test("the fire a bomb leaves keeps the weapon that lit it", async (t) => {
+  /**
+   * Reported: standing in the burning patch took damage and no debuff, while
+   * being hit by the bomb itself did both.
+   *
+   * `BURNING_EXPLOSION` spawns `BURNING_FIRE_PLACEABLE` — the bomb sets the
+   * floor alight where it goes off — and that second spawn was handed the
+   * hero's weapon under the wrong key. `spawnPlaceable` names the parameter
+   * `heroWeapon` because it already has a `weapon` of its own, the one the
+   * placed NPC fights with, so `weapon:` was accepted in silence and dropped.
+   *
+   * The bomb needs something to go off on, and the fire has to be found by its
+   * own name: the first version of this looked for a constant matching /FIRE/
+   * and was satisfied by `FIREBOMB_PLACEABLE_L1` — the bomb — so it passed with
+   * the chain never running and with the bug restored.
+   */
+  const { spawnPlaceable, clearDungeonPlaceables } = await import(
+    "../src/socket/placeables.js"
+  );
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+  const weapon = { type: 12502, power: 30, modifier1: STICKY_L1 };
+
+  const firebomb = gm.raw.Npc.find((row) => row.Constant === "FIREBOMB_PLACEABLE_L1");
+  assert.equal(firebomb?.Attack1, "BURNING_EXPLOSION", "the fixture bomb still explodes into fire");
+
+  const ENEMY = 9900;
+  let nextDoid = 900;
+  const session = {
+    id: 49, heroDoid: 500, floorDoid: 400, dungeonActive: true, dungeonZone: 10,
+    heroPosition: { x: 1000, y: 1000 }, heroHeading: 0,
+    dungeonAvatar: { avatar_id: 104, experience: 0 },
+    heroWeapons: [weapon],
+    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    // Something for the blast to catch, or it never performs and never chains.
+    actors: new Map([[ENEMY, {
+      hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
+      constant: "BRUTE", isEnemy: true, position: { x: 1010, y: 1000 },
+    }]]),
+    allocateDoid: () => ++nextDoid, send: () => {},
+  };
+  t.after(() => clearDungeonPlaceables(session));
+
+  await spawnPlaceable(session, {
+    action: { spawnname: firebomb.Constant, offset: 60, headingOffsetAngle: 0, timetolive: 10, frame: 14 },
+    origin: { x: 1000, y: 1000 },
+    heading: 0,
+    weaponPower: 30,
+    heroWeapon: weapon,
+  });
+
+  const fireOf = () =>
+    [...(session.placeables?.values() ?? [])].find(
+      (placed) => placed.constant === "BURNING_FIRE_PLACEABLE"
+    );
+  for (let waited = 0; waited < 6000 && !fireOf(); waited += 50) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  const fire = fireOf();
+  assert.ok(
+    fire,
+    `the bomb lit no fire — placed ${[...(session.placeables?.values() ?? [])]
+      .map((p) => p.constant)
+      .join(", ") || "nothing"}`
+  );
+  assert.equal(fire.heroWeapon, weapon, "the fire lost the weapon that lit it");
+});
