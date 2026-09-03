@@ -278,3 +278,55 @@ test("a buff authored MaxStacks 1 never doubles", async () => {
 
   assert.equal(held(session, ENEMY, buff), 1, `${buff} stacked past its limit`);
 });
+
+const STURDY_L1 = 70001; // DAMAGE, MELEE_ATK/SHOOT_ATK/MAGIC_ATK 1.1
+
+test("a Sturdy weapon multiplies the stat the swing is paid on", async () => {
+  const { attackMultiplierFor } = await import("../src/socket/modifiers.js");
+  const gm = await loadGameMaster();
+  const weapon = { modifier1: STURDY_L1 };
+
+  const authored = gm.modifiersById.get(STURDY_L1);
+  assert.equal(authored.MODIFIER_TYPE, "DAMAGE", "the fixture is the Sturdy row");
+
+  assert.equal(attackMultiplierFor(gm, weapon, "MELEE_ATK"), authored.MELEE_ATK);
+  assert.equal(attackMultiplierFor(gm, weapon, "SHOOT_ATK"), authored.SHOOT_ATK);
+  // A weapon with no DAMAGE modifier leaves the hit alone.
+  assert.equal(attackMultiplierFor(gm, { modifier1: CRITICAL_L1 }, "MELEE_ATK"), 1);
+  assert.equal(attackMultiplierFor(gm, null, "MELEE_ATK"), 1);
+});
+
+test("two DAMAGE modifiers multiply rather than the larger winning", async () => {
+  const { attackMultiplierFor } = await import("../src/socket/modifiers.js");
+  const gm = await loadGameMaster();
+  const one = gm.modifiersById.get(70001).MELEE_ATK;
+  const five = gm.modifiersById.get(70005).MELEE_ATK;
+
+  assert.equal(
+    attackMultiplierFor(gm, { modifier1: 70001, modifier2: 70005 }, "MELEE_ATK"),
+    one * five
+  );
+});
+
+test("Sturdy actually makes the hit land harder", async () => {
+  /**
+   * End to end, because the multiplier reaching `netAttackDamage` is the part
+   * that was missing rather than the arithmetic. Neither side of the wire read
+   * these columns: the client's modifier pass does speed, mana, chain, pierce,
+   * cooldown, charge and collision, and the three attack columns are not in it.
+   */
+  const gm = await loadGameMaster();
+  const sturdy = gm.modifiersById.get(STURDY_L1).MELEE_ATK;
+
+  const plainArena = await arena({ type: 12502, power: 30 });
+  await swing(plainArena.session, plainArena.ENEMY);
+  const plain = 5000000 - plainArena.session.actors.get(plainArena.ENEMY).hitPoints;
+
+  const sturdyArena = await arena({ type: 12502, power: 30, modifier1: STURDY_L1 });
+  await swing(sturdyArena.session, sturdyArena.ENEMY);
+  const boosted = 5000000 - sturdyArena.session.actors.get(sturdyArena.ENEMY).hitPoints;
+
+  assert.ok(plain > 0, "the plain weapon landed at all");
+  assert.ok(boosted > plain, `Sturdy dealt ${boosted} against a plain ${plain}`);
+  assert.equal(boosted, Math.round(plain * sturdy));
+});

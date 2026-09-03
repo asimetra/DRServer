@@ -27,7 +27,7 @@ import { heroMembersOf } from "./match-world.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { RULE, noteViolation } from "./security-events.js";
-import { critRollFor, onHitBuffsFor } from "./modifiers.js";
+import { critRollFor, onHitBuffsFor, attackMultiplierFor } from "./modifiers.js";
 
 /**
  * Combat.
@@ -1826,7 +1826,7 @@ export const damageTurnedAside = (session, doid, stats, offsets) => {
 const isHealing = (attack) =>
   Number(attack?.DamageMod ?? 0) > 0 && !attack?.DoPercentHealthDamage;
 
-const computeDamage = async (session, proposal, attack, weaponPower) => {
+const computeDamage = async (session, proposal, attack, weaponPower, weapon = null) => {
   const offsets = statOffsetsFor(attack);
   const defender = await statsFor(session, proposal.attackee);
   const signed = netAttackDamage({
@@ -1837,8 +1837,15 @@ const computeDamage = async (session, proposal, attack, weaponPower) => {
     weaponPower: weaponPower ?? 1,
     attacker: await statsFor(session, proposal.attacker),
     defender,
+    /**
+     * The buffs on the attacker and, alongside them, the `DAMAGE` modifiers on
+     * the weapon that swung — see `attackMultiplierFor`. Both are multipliers on
+     * the same stat, so they belong in the same place; the weapon's is null for
+     * every NPC and placeable, which have no modifiers to carry.
+     */
     attackerBuff: offsets
-      ? buffMultiplierFor(session, proposal.attacker, STAT_NAMES[offsets.offence])
+      ? buffMultiplierFor(session, proposal.attacker, STAT_NAMES[offsets.offence]) *
+        attackMultiplierFor(await loadGameMaster(), weapon, STAT_NAMES[offsets.offence])
       : 1,
     /**
      * The defence *stat* is still a flat subtraction and still tiny; what a
@@ -2625,7 +2632,7 @@ const applyProposals = async (session, proposals) => {
 
     const plain = proposal.blocked
       ? 0
-      : await computeDamage(session, proposal, attack, weaponPower);
+      : await computeDamage(session, proposal, attack, weaponPower, swung);
 
     /**
      * And whether the weapon's own modifiers turned it into a crit, which is

@@ -39,13 +39,20 @@
  * The `LegendaryModifiers` table carries no crit columns at all — twelve rows,
  * none of them — so a legendary is not consulted here.
  *
- * Still to do, and deliberately not guessed at: the on-hit debuffs
- * (`POISON`, `BURNING`, `STUN`, `SLOW`, `CRIPPLE`, `ROOT`, `CHILLING`,
- * `SHOCKING`), which the official grants as real Buff objects — 23 of the 40
- * constants they name appear in the recordings — and the passive columns
- * (`DAMAGE`, `ATKSPD`, `MANA_COST`, `COOLDOWN_REDUC`, `CHARGE_REDUC`,
- * `INCREASE_COLLISION`, `CHAIN`, `PIERCE`, `SCALING`, `KNOCKBACK`, `PULL`,
- * `SPAWN_FOOD_ON_HIT`, `DEATH_FOOD`, `BUFF_GRANT_DURATION_MULTIPLIER`).
+ * Where the other types live, counted rather than assumed — the first draft of
+ * this note listed work that was already done, which is worth more care than a
+ * list deserves.
+ *
+ * The client owns six, and `WeaponGameObject.updateStatsForModifiers` is the
+ * whole of its list: `ATKSPD` (`MELEE_SPD`, `SHOOT_SPD`, `MAGIC_SPD`), `CHAIN`,
+ * `PIERCE`, `CHARGE_REDUC` and `INCREASE_COLLISION`, plus `MANA_COST` and
+ * `COOLDOWN_REDUC` which it predicts and this server decides — `buster.js` and
+ * `cooldowns.js` have read those two for a while.
+ *
+ * Which leaves, genuinely unread on both sides: `KNOCKBACK` and `PULL`,
+ * `SPAWN_FOOD_ON_HIT` and `DEATH_FOOD`, `SCALING`'s `MAX_PROJECTILES`, and
+ * `BUFF_GRANT_DURATION_MULTIPLIER`. All four columns return nothing from a grep
+ * of either tree.
  */
 export const critRollFor = (gm, weapon, random = Math.random) => {
   const none = { critical: false, multiplier: 1 };
@@ -100,4 +107,34 @@ export const onHitBuffsFor = (gm, weapon) => {
     if (named) buffs.push(named);
   }
   return buffs;
+};
+
+/**
+ * What the weapon's own `DAMAGE` modifiers multiply a hit by.
+ *
+ * `Sturdy` authors `MELEE_ATK`, `SHOOT_ATK` and `MAGIC_ATK` together — 1.1 at
+ * level one — and nothing anywhere read them. Not the server, which prices
+ * every hit, and not the client either: `WeaponGameObject.updateStatsForModifiers`
+ * is the whole of what a weapon does with its modifiers on that side, and it
+ * applies speed, mana, chain, pierce, cooldown, charge and collision scale. The
+ * three attack columns are not in it. So a Sturdy weapon hit for exactly what a
+ * plain one did, on both sides of the wire.
+ *
+ * Named by stat rather than applied blind, because the columns are three and an
+ * attack is one of them: `statOffsetsFor` already decides whether a swing is
+ * melee, shooting or magic, and a modifier that raises all three still only
+ * raises the one that is being paid.
+ *
+ * Multiplied across the modifiers a weapon carries, which is how the client
+ * treats every other multiplying column it does read.
+ */
+export const attackMultiplierFor = (gm, weapon, statName) => {
+  if (!weapon || !statName) return 1;
+  let multiplier = 1;
+  for (const id of [weapon.modifier1, weapon.modifier2]) {
+    if (!id) continue;
+    const authored = Number(gm?.modifiersById?.get(Number(id))?.[statName]);
+    if (Number.isFinite(authored) && authored > 0) multiplier *= authored;
+  }
+  return multiplier;
 };
