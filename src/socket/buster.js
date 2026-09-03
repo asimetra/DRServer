@@ -19,7 +19,7 @@ import { isPowerupAttack, schedulePowerup } from "./powerups.js";
 import { notePlacementPermit } from "./placeables.js";
 import { isOffCooldown, noteCooldown } from "./cooldowns.js";
 import { RULE, noteViolation } from "./security-events.js";
-import { noteCast, healFriendlyTargets } from "./combat.js";
+import { noteCast, healFriendlyTargets, applyChoreographyResults } from "./combat.js";
 import { schedulePlaceables } from "./placeables.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
@@ -656,6 +656,19 @@ export const handleProposeAttackChoreography = async (
    * second. Reading only `spawndoober` is what left all of those inert.
    */
   await schedulePlaceables(session, attack, weaponSlot, { playSpeed });
+  /**
+   * And the hits the packet has been carrying all along.
+   *
+   * A charge release resolves its collider on the first frame and writes the
+   * victims into the tail of this very packet rather than proposing them
+   * separately. Last, because a result is checked against the cast — see
+   * `castAccepted` — and `noteCast` above is what it is checked against.
+   */
+  await applyChoreographyResults(session, reader, {
+    attackType,
+    weaponSlot,
+    isConsumable: Boolean(isConsumableWeapon),
+  });
   onAccepted?.();
   return true;
 };

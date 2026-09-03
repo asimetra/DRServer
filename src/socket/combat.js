@@ -140,6 +140,23 @@ const COMBAT_RESULT_BYTES = 4 + 4 + 4 + 10 + 6 + 4 + 4 + 1;
 const MAX_RESULTS_PER_PACKET = 8;
 
 /**
+ * And how many a *choreography* may carry, which is a different number.
+ *
+ * A charge release resolves its whole collider on the first frame and posts the
+ * hits inside the choreography rather than in a packet of their own, so the
+ * count is however many enemies were standing in it. `KATANA_SOUL_BANG` reaches
+ * 22 in the recordings — 1490 casts carrying 7102 hits between them, and 177 of
+ * those casts hold more than eight. The limit above would have refused one
+ * honest cast in nine.
+ *
+ * Sixty-four is about three times the most ever recorded. What bounds an honest
+ * cast is how many enemies fit inside the collider rather than anything the
+ * format fixes, and a stocked floor carries sixty of them, so the headroom is
+ * the point — while still being a bounded amount of work for one packet.
+ */
+const MAX_EMBEDDED_RESULTS = 64;
+
+/**
  * A hero carries four weapons and two powerups, so a slot byte has four or two
  * meanings and no others. See `weaponsForAvatar`, which always writes exactly
  * four entries and fills the empty ones itself.
@@ -155,7 +172,7 @@ const POWERUP_SLOTS = 2;
  * declared, so anything that does not divide is either a client this server
  * cannot read or one that is probing. Neither should be half-processed.
  */
-const readProposals = (session, reader) => {
+const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
   const byteLength = reader.u16();
   const available = reader.buf.length - reader.pos;
 
@@ -170,7 +187,7 @@ const readProposals = (session, reader) => {
   }
 
   const count = byteLength / COMBAT_RESULT_BYTES;
-  if (count > MAX_RESULTS_PER_PACKET) {
+  if (count > limit) {
     noteViolation(session, RULE.malformedProposal, `${count} results in one packet`);
     reader.pos += byteLength;
     return null;
@@ -2428,6 +2445,18 @@ export const reachExcess = async (session, proposal, attack) => {
 export const handleProposeCombatResults = async (session, reader) => {
   const proposals = readProposals(session, reader);
   if (!proposals) return;
+  return applyProposals(session, proposals);
+};
+
+/**
+ * The hits a client has proposed, however they arrived.
+ *
+ * Split out from the packet that used to be their only door because it is not:
+ * a charge release posts its hits inside the choreography instead — see
+ * `applyChoreographyResults`. The rules below are about what a result claims,
+ * not about which packet carried it, so both ways in run all of them.
+ */
+const applyProposals = async (session, proposals) => {
   const summary = [];
 
   /**
@@ -2610,4 +2639,62 @@ export const handleProposeCombatResults = async (session, reader) => {
 
   if (summary.length) info(`[${session.id}] combat: ${summary.join(", ")}`);
   return true;
+};
+
+/**
+ * The hits a charge release carries inside its own choreography.
+ *
+ * Muramasa was the report: the animation played, 25 Mana went, the cast was
+ * recorded and nothing took any damage. `KATANA_SOUL_BANG` resolves its collider
+ * on the first frame of the timeline, so the client has its victims before the
+ * choreography leaves — and rather than send them again a moment later it writes
+ * them into the same packet, after the header, in the same byte-length-prefixed
+ * blob field 171 uses. `handleProposeAttackChoreography` read the header and
+ * stopped, so every one of those hits was dropped on the floor.
+ *
+ * It is not a special case for one weapon. Field 172 carries a non-empty list on
+ * 1521 casts across the recordings: `KATANA_SOUL_BANG` 7620 hits, up to 22 from
+ * one swing, `KATANA_SHADOW_SLASH` 131, and eight other attacks besides. The
+ * official server honours them — 1481 of 1490 readable casts are followed by a
+ * hit-point update on a victim the embedded list named, a median 149ms later.
+ *
+ * There is no double counting to fear. Of those 1490 casts, four are followed
+ * within 400ms by a field 171 naming a victim the choreography also named, and
+ * all four carry a different `attackType` 283ms or more later — a second swing
+ * at the same monster, not the same swing twice. The embedded list is the only
+ * carrier these hits have.
+ *
+ * The list has to agree with the choreography it rides in, and it does: all 7264
+ * recorded records repeat the outer attack, weapon slot and consumable flag
+ * exactly, and name the packet's own hero as the attacker. A record that does
+ * not is not a hit this choreography can vouch for.
+ *
+ * Called once the cast has been paid for and recorded, because `castAccepted` is
+ * what these results are then checked against.
+ */
+export const applyChoreographyResults = async (session, reader, choreography) => {
+  // Most choreographies carry no list at all, and an older client may send none.
+  if (reader.pos >= reader.buf.length) return;
+
+  const proposals = readProposals(session, reader, MAX_EMBEDDED_RESULTS);
+  if (!proposals?.length) return;
+
+  const stray = proposals.find(
+    (proposal) =>
+      proposal.attackType !== choreography.attackType ||
+      proposal.weaponSlot !== choreography.weaponSlot ||
+      proposal.isConsumable !== choreography.isConsumable
+  );
+  if (stray) {
+    noteViolation(
+      session,
+      RULE.malformedProposal,
+      `embedded result claims attack ${stray.attackType} from ` +
+        `${stray.isConsumable ? "powerup" : "weapon"} slot ${stray.weaponSlot}, ` +
+        `inside a choreography for ${choreography.attackType} from slot ${choreography.weaponSlot}`
+    );
+    return;
+  }
+
+  return applyProposals(session, proposals);
 };
