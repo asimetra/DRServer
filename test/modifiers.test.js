@@ -755,3 +755,58 @@ test("a shocked monster does not swing", async () => {
   assert.equal(await swung(false), true, "the monster swings when nothing stops it");
   assert.equal(await swung(true), false, "a shocked monster swung anyway");
 });
+
+test("the movement debuffs move a monster as far as they say", async () => {
+  /**
+   * Run rather than read. Muzzling looked correct in the source and did nothing,
+   * so "the multiplier is in the code" is not an answer to "does root work" —
+   * this walks a monster for half a second and measures how far it got.
+   *
+   * `MOVEMENT` is a multiplier on its speed, so a root is a zero and a slow is
+   * a fraction. Both are asserted: a debuff that stops a monster and a debuff
+   * that halves it are different claims and only one of them is "it works".
+   */
+  const { buildFloor } = await import("./helpers/floor.js");
+  const { tickNpcAi } = await import("../src/socket/ai.js");
+  const gm = await loadGameMaster();
+
+  const walked = async (constant) => {
+    const buff = constant ? gm.raw.Buff.find((row) => row.Constant === constant) : null;
+    const world = await buildFloor("castle/arena/db_floor_TUTORIAL_LEVEL_1.json");
+    const { session } = world;
+    const [doid, actor] =
+      [...session.actors].find(([, candidate]) => candidate.ai && candidate.isEnemy) ?? [];
+    assert.ok(actor, "the floor produced an enemy with AI");
+
+    // Far enough that it wants to walk rather than stand and swing.
+    session.heroPosition = { x: actor.position.x + 500, y: actor.position.y };
+    const hero = session.actors.get(session.heroDoid);
+    if (hero) hero.position = { ...session.heroPosition };
+    if (buff) session.activeBuffs = new Map([[1, { affectedActor: doid, buff }]]);
+
+    const from = { ...actor.position };
+    let now = 100000;
+    for (let tick = 0; tick < 5; tick += 1) {
+      await tickNpcAi(session, now, 0.1);
+      now += 100;
+    }
+    return Math.hypot(actor.position.x - from.x, actor.position.y - from.y);
+  };
+
+  const free = await walked(null);
+  assert.ok(free > 20, `an unhindered monster barely moved (${free})`);
+
+  // Sticky, Stunning and Zapping all author MOVEMENT zero.
+  for (const constant of ["STOP_L4", "STUN_L4", "SHOCK_L1"]) {
+    assert.equal(await walked(constant), 0, `${constant} let the monster walk`);
+  }
+
+  // And Slowing is a fraction of the distance, not a stop.
+  const slow = gm.raw.Buff.find((row) => row.Constant === "SLOW_L1");
+  const slowed = await walked("SLOW_L1");
+  assert.ok(slowed > 0, "a slow is not a stop");
+  assert.ok(
+    Math.abs(slowed - free * slow.MOVEMENT) < free * 0.05,
+    `slowed ${Math.round(slowed)} against an expected ${Math.round(free * slow.MOVEMENT)}`
+  );
+});
