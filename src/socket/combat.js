@@ -29,11 +29,13 @@ import { heroMembersOf } from "./match-world.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { RULE, noteViolation } from "./security-events.js";
+import { moveWithNavigation } from "./navigation.js";
 import { spawnFoodDoober } from "./drops.js";
 import {
   critRollFor,
   onHitBuffsFor,
   attackMultiplierFor,
+  knockbackFor,
   foodChanceFor,
   cookingFoodChance,
   FOOD_ON_HIT,
@@ -228,7 +230,7 @@ const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
     head.u32(); // attack.targetActorDoid
     head.u8(); // when
     head.u8(); // suffer
-    head.u8(); // knockback
+    const knockback = head.u8();
     const blocked = head.u8();
     head.u8(); // criticalHit
     head.u8(); // effectiveness
@@ -240,7 +242,10 @@ const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
      * twenty of them, and each is worth half the one before.
      */
     const generation = head.u8();
-    results.push({ attacker, attackee, attackType, weaponSlot, isConsumable, blocked, generation, bytes });
+    results.push({
+      attacker, attackee, attackType, weaponSlot, isConsumable,
+      knockback, blocked, generation, bytes,
+    });
   }
 
   return results;
@@ -700,6 +705,62 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
  * `SufferChance` 0 and `Knockback` 0, and all 34 of its damaging hits are
  * unstaggered, where the spikes carry 30 knockback and the mace 90.
  */
+const npcPositionUpdate = (doid, position) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(doid)
+    .u16(132) // DistributedNPCGameObject.position
+    .f32(position.x)
+    .f32(position.y)
+    .frame();
+
+/**
+ * Moving what a hit knocked back, which the server does and this one did not.
+ *
+ * The flag was published and nothing followed it. Measured on official NPC
+ * victims, holding the attack constant and comparing hits that carry the flag
+ * against hits that do not: `TRAP_ARROWS`, whose row authors 30, moves its
+ * victim a median 27 with the flag and 0 without it across 437 and 61 samples;
+ * `TRAP_FLAME_JET`, authoring 60, moves it 57 against 5. So the push is a real
+ * displacement, it is the server's, and it is the authored distance.
+ *
+ * Along the line from the attacker, so a negative distance pulls instead — which
+ * is exactly how `PULL` is authored, at -100 through -300, and the only reading
+ * under which those negatives mean anything.
+ *
+ * Through navigation, so a monster is not shoved into a wall or out of the
+ * floor. A push that ends where it started is still a push as far as the client
+ * is concerned; it plays its own animation off the flag.
+ */
+export const pushVictim = (session, victimDoid, attackerDoid, distance) => {
+  if (!distance) return false;
+  const victim = session.actors?.get(victimDoid);
+  const attacker = session.actors?.get(attackerDoid);
+  const from = attacker?.position ?? session.heroPosition;
+  if (!victim?.position || !from) return false;
+
+  const dx = victim.position.x - from.x;
+  const dy = victim.position.y - from.y;
+  const span = Math.hypot(dx, dy);
+  if (!(span > 0)) return false;
+
+  const wanted = {
+    x: (dx / span) * distance,
+    y: (dy / span) * distance,
+  };
+  const landed = moveWithNavigation(
+    session.navigation,
+    victim.position,
+    wanted,
+    Math.max(1, Number(victim.collisionRadius) || 1)
+  );
+  if (Math.hypot(landed.x - victim.position.x, landed.y - victim.position.y) < 0.5) return false;
+
+  victim.position.x = landed.x;
+  victim.position.y = landed.y;
+  session.send(npcPositionUpdate(victimDoid, victim.position));
+  return true;
+};
+
 const staggerFor = (attack, damage) =>
   damage <= 0
     ? { suffer: 0, knockback: 0 }
@@ -2816,6 +2877,26 @@ const applyProposals = async (session, proposals) => {
         attackerDoid: proposal.attacker,
         damage,
       });
+    }
+
+    /**
+     * And the shove, if this hit carries one.
+     *
+     * The flag was published and nothing followed it. Measured on official NPC
+     * victims with the attack held constant: `TRAP_ARROWS` authors 30 and moves
+     * its victim a median 27 when the flag is set and 0 when it is not, over 437
+     * and 61 samples; `TRAP_FLAME_JET` authors 60 and moves it 57 against 5.
+     *
+     * The weapon's own `KNOCKBACK` or `PULL` takes precedence over the attack's,
+     * because those modifiers name distances on the same scale rather than
+     * bonuses — `Blastback` is 250 where the party bomb is 250. That part is a
+     * reading of the table and not a measurement: no recorded player carried
+     * one, so the corpus cannot show what a Trapper does.
+     */
+    const shove = knockbackFor(await loadGameMaster(), swung) ||
+      Number(attack?.Knockback ?? 0);
+    if (proposal.knockback && shove) {
+      pushVictim(session, proposal.attackee, proposal.attacker, shove);
     }
 
     const actor = session.actors?.get(proposal.attackee);

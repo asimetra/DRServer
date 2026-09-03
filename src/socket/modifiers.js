@@ -77,48 +77,26 @@ import { superStatValue } from "../hero-stats.js";
  * item records. `SCALING` is unreachable the same way. Both are rows the data
  * describes and the game cannot hand out.
  *
- * `KNOCKBACK` and `PULL` are reachable — 13 weapons allow one and 3 the other,
- * and the official puts `KNOCKBACK` on 1278 real items — and there is still
- * nothing to write, for a different reason. The push is drawn entirely by the
- * client, and it takes its size from the attack and from nothing else:
+ * `KNOCKBACK` and `PULL` were called impossible here once, and that was wrong.
  *
- *     mDistance = attackById.itemFor(mAttackType).Knockback;
- *     mDuration = attackById.itemFor(mAttackType).KnockbackDur;
+ * The reasoning went: the push is drawn by the client from the attack row, the
+ * wire carries a flag, `GMModifier` has no `KNOCKBACK_DISTANCE` field, so
+ * nothing this server sends can change how far anything goes. Every one of
+ * those statements is true and the conclusion does not follow, because the
+ * server does not need the client to move a monster — it owns their positions.
  *
- * That is the whole of `KnockBackTimelineAction`, thirty-six lines, and
- * `mDistance` is assigned once. `receiveDamage` reads the result's knockback
- * byte as a 0 or a 1 and nothing more.
+ * Looking at the victim rather than the attack settles it. Holding the attack
+ * constant and comparing hits that carry the knockback flag against hits that
+ * do not: `TRAP_ARROWS`, whose row authors 30, moves its NPC victim a median 27
+ * with the flag and 0 without, over 437 and 61 samples; `TRAP_FLAME_JET`,
+ * authoring 60, moves it 57 against 5. The official displaces the body and
+ * sends the position. This server published the flag and moved nothing.
  *
- * And the client cannot see the columns in any case. `GMModifier` — the class
- * it parses a modifier row into — declares `MELEE_SPD`, `SHOOT_SPD`,
- * `MAGIC_SPD`, `MP_COST`, `CHAIN`, `PIERCE`, `COOLDOWN_REDUC`, `CHARGE_REDUC`,
- * `INCREASE_COLLISION`, `MAX_PROJECTILES` and `INCREASED_PROJECTILE_ANGLE_PERCENT`,
- * and stops. There is no `KNOCKBACK_DISTANCE` field on it to fill.
- *
- * Nor is the packet short. The byte is a flag, which is how the client's own
- * writer sets it (`CombatGameObject`: `if (suffer == 1 && Knockback != 0)
- * knockback = 1`) and how its reader tests it. Measured across 23288 echoed
- * results the value is 0 or 1 on all but eight, and where it is 1 the attack's
- * authored distance is variously 15, 30, 40, 50, 60, 90, 100, 140 and 250 — a
- * flag would carry ones, and this one does.
- *
- * So there is nothing for this server to send. The push is computed on the
- * other side from a row this build does not read, and no field on the wire
- * reaches it.
- *
- * What that does *not* settle is whether the original Flash client read those
- * columns. This one is a decompiled port, and a dropped field would look
- * exactly like a field the original never had. The parser argues against it —
- * it is mechanical and exhaustive, and it preserves the two spellings that do
- * not match their type (`CHARGE_UP_REDUC` into `CHARGE_REDUC`,
- * `ATTACK_COLLISION_SCALE` into `INCREASE_COLLISION`), which a hand-written
- * subset would not have bothered with — but that is an inference and not a
- * measurement, and it is written here as one.
- *
- * If it turns out the push should grow, the change is the client's: two fields
- * on `GMModifier` and an addition to `mDistance` in `KnockBackTimelineAction`,
- * which would need the attacker's equipped weapon reachable from the action.
- * Nothing here would move.
+ * `knockbackFor` and `pushVictim` are the two halves of that. What is measured
+ * is the displacement and its size; what is not is the weapon's part — no
+ * recorded player carried a `Hitback` or a `Grabber`, so that the modifier's
+ * distance replaces the attack's is read off the table, where the levels run on
+ * the same scale as the attacks' own column.
  *
  * So all twenty-four are accounted for. Thirteen are this server's and are
  * done; `MANA_COST` and `COOLDOWN_REDUC` were already; six are the client's and
@@ -303,4 +281,31 @@ export const cookingFoodChance = (gm, hero, avatar, column) => {
   const [base, increase] = columns;
   const trained = Math.max(0, superStatValue(gm, hero, avatar, "COOKING"));
   return Math.max(0, Number(row[base]) || 0) + trained * (Number(row[increase]) || 0);
+};
+
+/**
+ * How far a weapon's `KNOCKBACK` or `PULL` modifiers throw what they hit.
+ *
+ * Absolute rather than added, and the levels say so: `Hitback` through
+ * `Blastback` run 50, 100, 150, 200, 250 and `Grabber` through `Trapper` run
+ * -100 to -300, which is the same scale the attacks' own `Knockback` column
+ * uses — spikes 30, a mace 90, the party bomb 250. A modifier naming 250 is
+ * naming the distance, not a bonus on top of one.
+ *
+ * Negative is a pull. `pushVictim` moves along the line from the attacker, so
+ * the sign is the direction, which is the only reading under which those
+ * negatives mean anything at all.
+ *
+ * The larger magnitude wins when a weapon somehow carries both, since one hit
+ * throws a body one way.
+ */
+export const knockbackFor = (gm, weapon) => {
+  if (!weapon) return 0;
+  let furthest = 0;
+  for (const id of [weapon.modifier1, weapon.modifier2]) {
+    if (!id) continue;
+    const authored = Number(gm?.modifiersById?.get(Number(id))?.KNOCKBACK_DISTANCE);
+    if (Number.isFinite(authored) && Math.abs(authored) > Math.abs(furthest)) furthest = authored;
+  }
+  return furthest;
 };

@@ -1191,3 +1191,118 @@ test("a muzzled monster swings slowly, not just seldom", async () => {
     `swung at ${muzzled} against an authored ${cripple.MELEE_SPD}`
   );
 });
+
+const TRAPPER = 70065; // PULL_5, KNOCKBACK_DISTANCE -300
+const BLASTBACK = 70055; // KNOCKBACK_5, KNOCKBACK_DISTANCE 250
+
+test("the knockback modifiers name a distance, and a pull is a negative one", async () => {
+  const { knockbackFor } = await import("../src/socket/modifiers.js");
+  const gm = await loadGameMaster();
+
+  assert.equal(gm.modifiersById.get(BLASTBACK).Name, "Blastback");
+  assert.equal(gm.modifiersById.get(TRAPPER).Name, "Trapper");
+  assert.equal(knockbackFor(gm, { modifier1: BLASTBACK }), 250);
+  assert.equal(knockbackFor(gm, { modifier1: TRAPPER }), -300);
+  assert.equal(knockbackFor(gm, { modifier1: CRITICAL_L1 }), 0);
+  assert.equal(knockbackFor(gm, null), 0);
+});
+
+test("a knocked-back monster is actually moved, and a Trapper pulls it in", async () => {
+  const { knockbackFor } = await import("../src/socket/modifiers.js");
+  /**
+   * The flag was published and nothing followed it. Measured on official NPC
+   * victims with the attack held constant: `TRAP_ARROWS` authors 30 and moves
+   * its victim a median 27 when the flag is set against 0 when it is not, over
+   * 437 and 61 samples; `TRAP_FLAME_JET` authors 60 and moves it 57 against 5.
+   * So the displacement is real, it is the server's, and it is the authored
+   * distance — which is what "the same client works on the official" meant.
+   */
+  const { pushVictim } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+
+  const shoved = (distance) => {
+    const HERO = 500;
+    const ENEMY = 9900;
+    const victim = {
+      hitPoints: 100, maxHitPoints: 100, collisionRadius: 25,
+      constant: "BRUTE", isEnemy: true, position: { x: 1200, y: 1000 },
+    };
+    const session = {
+      id: 50, heroDoid: HERO, floorDoid: 400, dungeonActive: true,
+      heroPosition: { x: 1000, y: 1000 },
+      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      actors: new Map([
+        [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
+        [ENEMY, victim],
+      ]),
+      navigation: null,
+      send: () => {},
+    };
+    pushVictim(session, ENEMY, HERO, distance);
+    return victim.position.x - 1200;
+  };
+
+  // The monster stands 200 to the hero's right, so away is +x and toward is -x.
+  assert.equal(shoved(knockbackFor(gm, { modifier1: BLASTBACK })), 250, "Blastback throws it away");
+  assert.equal(shoved(knockbackFor(gm, { modifier1: TRAPPER })), -300, "Trapper pulls it in");
+  assert.equal(shoved(0), 0, "nothing moves without a distance");
+});
+
+test("swinging a Trapper weapon drags the monster in", async () => {
+  /**
+   * The wiring, not the arithmetic. Removing the call from `applyProposals`
+   * broke none of the tests above, because they all reached `pushVictim`
+   * directly — the same gap that let Muzzling look correct twice.
+   */
+  const { handleProposeAttackChoreography } = await import("../src/socket/buster.js");
+  const { PacketReader, PacketWriter } = await import("../src/socket/packet.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+  const SOUL_BANG = 902509;
+  const HERO = 500;
+  const ENEMY = 9900;
+
+  const swungWithPull = async (weapon) => {
+    const victim = {
+      hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
+      constant: "BRUTE", isEnemy: true, position: { x: 1200, y: 1000 },
+    };
+    let nextDoid = 900;
+    const session = {
+      id: 51, heroDoid: HERO, floorDoid: 400, dungeonActive: true,
+      heroPosition: { x: 1000, y: 1000 }, heroHeading: 0,
+      heroManaPoints: 1000, maxHeroManaPoints: 1000, dungeonBusterPoints: 0,
+      dungeonAvatar: { avatar_id: 104, experience: 0 },
+      heroWeapons: [weapon], random: () => 1,
+      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      actors: new Map([
+        [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
+        [ENEMY, victim],
+      ]),
+      navigation: null,
+      allocateDoid: () => ++nextDoid, send: () => {},
+    };
+
+    // The client's own resolver sets this byte; the record here says the swing
+    // knocked back, which is what the server then has to act on.
+    const record = new PacketWriter()
+      .u32(HERO).u32(ENEMY).u32(0)
+      .u8(0).u8(0).u32(SOUL_BANG).u32(ENEMY)
+      .u8(0).u8(0).u8(1).u8(0).u8(0).u8(0)
+      .u32(0).u32(0).u8(0)
+      .body();
+    const packet = new PacketWriter()
+      .u8(0).u8(0).u32(SOUL_BANG).u32(ENEMY).u8(0).f32(1).f32(1)
+      .u16(record.length).raw(record)
+      .body();
+    await handleProposeAttackChoreography(session, new PacketReader(packet));
+    return victim.position.x - 1200;
+  };
+
+  const trapper = await swungWithPull({ type: 12502, power: 30, modifier1: TRAPPER });
+  assert.equal(trapper, -300, `Trapper moved it ${trapper} instead of dragging it 300 in`);
+
+  const blastback = await swungWithPull({ type: 12502, power: 30, modifier1: BLASTBACK });
+  assert.equal(blastback, 250, "Blastback did not throw it away");
+});
