@@ -52,17 +52,23 @@ test("a roll above the chance is an ordinary hit", async () => {
   );
 });
 
-test("two crit modifiers each roll, and the larger one is paid", async () => {
+test("two crit modifiers each roll, and together they multiply", async () => {
   /**
    * "Stacks with Vicious!" and "Stacks with Critical!" — each brings its own
-   * chance and its own damage. A single hit crits once, so when both come up
-   * the bigger multiplier is the one the player sees.
+   * chance and its own damage, and when both come up the two multiply.
+   *
+   * Measured, and it overturned the first reading. Grouping the official's
+   * crits by session and attack and dividing by the modal ordinary hit of the
+   * same group, two groups carry three magnitudes on one weapon: x2, x4 and x8
+   * — `AXE_COMBO_1` at 6/4/4 and `KATANA_SOUL_BANG` at 53/44/18. Summing the
+   * extras would put the third tier at x5; taking the larger would never
+   * produce it.
    */
   const gm = await loadGameMaster();
   const weapon = { modifier1: CRITICAL_L1, modifier2: VICIOUS_L5 };
 
-  // Both roll under: Critical would pay 2, Vicious 5.
-  assert.equal(critRollFor(gm, weapon, rolls(0.05, 0.01)).multiplier, 5);
+  // Both roll under: Critical pays 2 and Vicious 5, so together 10.
+  assert.equal(critRollFor(gm, weapon, rolls(0.05, 0.01)).multiplier, 10);
   // Only Critical comes up.
   assert.equal(critRollFor(gm, weapon, rolls(0.05, 0.9)).multiplier, 2);
   // Only Vicious.
@@ -461,4 +467,24 @@ test("a body takes its buffs with it", async () => {
 
   assert.equal(held(session, ENEMY, "POISON_L1"), 0, "poison outlived the monster");
   for (const timer of session.damageOverTimeTimers ?? []) clearInterval(timer);
+});
+
+test("the crit ladder the official shows is reproducible", async () => {
+  /**
+   * The whole of what the measurement found, asserted as one shape: a weapon
+   * carrying `Critical` and a `Vicious` worth x4 produces x2 when the first
+   * fires alone, x4 when the second does, x8 when both do, and nothing when
+   * neither. Two recorded groups carry exactly that ladder on a single weapon.
+   */
+  const gm = await loadGameMaster();
+  const VICIOUS_X4 = 70123; // CRIT_DAMAGE 3, so 1 + 3
+  assert.equal(gm.modifiersById.get(VICIOUS_X4).CRIT_DAMAGE, 3, "the fixture pays x4 alone");
+
+  const weapon = { modifier1: CRITICAL_L1, modifier2: VICIOUS_X4 };
+  const ladder = ([first, second]) => critRollFor(gm, weapon, rolls(first, second)).multiplier;
+
+  assert.equal(ladder([0.05, 0.9]), 2, "Critical alone");
+  assert.equal(ladder([0.9, 0.01]), 4, "Vicious alone");
+  assert.equal(ladder([0.05, 0.01]), 8, "both, which is the product and not the sum");
+  assert.equal(critRollFor(gm, weapon, rolls(0.9, 0.9)).critical, false, "neither");
 });

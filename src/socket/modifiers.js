@@ -33,8 +33,23 @@
  * Rolled per modifier rather than from a pooled chance, because that is what
  * makes both descriptions literally true: "10% chance to deal 100% extra
  * damage! Stacks with Vicious!" and "Adds 5% chance to crit with 200% damage!
- * Stacks with Critical!". Each brings its own chance and its own damage. When
- * both fire the larger one is paid, since a single hit crits once.
+ * Stacks with Critical!". Each brings its own chance and its own damage.
+ *
+ * And when both fire they *multiply*, which took a second look to see. Grouping
+ * the official's crits by session and attack and dividing each by the modal
+ * ordinary hit of the same group — so the weapon is held constant — the ratios
+ * land on clean tiers, and two groups carry the whole ladder at once:
+ *
+ *     AXE_COMBO_1        x2 ×6    x4 ×4    x8 ×4
+ *     KATANA_SOUL_BANG   x2 ×53   x4 ×44   x8 ×18
+ *
+ * One weapon, one attack, three magnitudes. `Critical` alone is x2, a `Vicious`
+ * at 3 extra is x4, and both together are x8 — the product. Summing the extras
+ * would put that third tier at x5 and taking the larger would never produce it
+ * at all, so both of those readings are ruled out by the same 22 hits.
+ *
+ * This was `Math.max` first, on the reasoning that a single hit crits once. The
+ * reasoning was fine and the data disagrees.
  *
  * The `LegendaryModifiers` table carries no crit columns at all — twelve rows,
  * none of them — so a legendary is not consulted here.
@@ -114,19 +129,20 @@ export const critRollFor = (gm, weapon, random = Math.random) => {
   const none = { critical: false, multiplier: 1 };
   if (!weapon) return none;
 
-  let extra = 0;
+  let multiplier = 1;
   for (const id of [weapon.modifier1, weapon.modifier2]) {
     if (!id) continue;
     const modifier = gm?.modifiersById?.get(Number(id));
     const chance = Number(modifier?.CRIT_CHANCE);
     if (!Number.isFinite(chance) || chance <= 0) continue;
     if (random() >= chance) continue;
-    extra = Math.max(extra, Number(modifier.CRIT_DAMAGE) || 0);
+    const extra = Number(modifier.CRIT_DAMAGE) || 0;
+    // A modifier that rolls a chance without naming any extra damage is not a
+    // crit, whatever it rolled; there would be nothing to show for it.
+    if (extra > 0) multiplier *= 1 + extra;
   }
 
-  // A modifier that rolls a chance without naming any extra damage is not a
-  // crit, whatever it rolled; there would be nothing to show for it.
-  return extra > 0 ? { critical: true, multiplier: 1 + extra } : none;
+  return multiplier > 1 ? { critical: true, multiplier } : none;
 };
 
 /**
