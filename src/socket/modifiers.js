@@ -78,17 +78,30 @@
  * `INCREASE_COLLISION`, `MAX_PROJECTILES` and `INCREASED_PROJECTILE_ANGLE_PERCENT`,
  * and stops. There is no `KNOCKBACK_DISTANCE` field on it to fill.
  *
- * So this is not something the official does and we do not. It is the same
- * client on both sides, computing the same push from the same attack row, and
- * no packet can reach it — the byte is a flag, which is how the client's own
+ * Nor is the packet short. The byte is a flag, which is how the client's own
  * writer sets it (`CombatGameObject`: `if (suffer == 1 && Knockback != 0)
  * knockback = 1`) and how its reader tests it. Measured across 23288 echoed
- * results, the value is 0 or 1 on all but eight, and where it is 1 the attack's
+ * results the value is 0 or 1 on all but eight, and where it is 1 the attack's
  * authored distance is variously 15, 30, 40, 50, 60, 90, 100, 140 and 250 — a
- * flag, not a distance.
+ * flag would carry ones, and this one does.
  *
- * A Hitback weapon therefore pushes exactly as far as the attack says on the
- * official server too. This server can only flip a flag it already flips.
+ * So there is nothing for this server to send. The push is computed on the
+ * other side from a row this build does not read, and no field on the wire
+ * reaches it.
+ *
+ * What that does *not* settle is whether the original Flash client read those
+ * columns. This one is a decompiled port, and a dropped field would look
+ * exactly like a field the original never had. The parser argues against it —
+ * it is mechanical and exhaustive, and it preserves the two spellings that do
+ * not match their type (`CHARGE_UP_REDUC` into `CHARGE_REDUC`,
+ * `ATTACK_COLLISION_SCALE` into `INCREASE_COLLISION`), which a hand-written
+ * subset would not have bothered with — but that is an inference and not a
+ * measurement, and it is written here as one.
+ *
+ * If it turns out the push should grow, the change is the client's: two fields
+ * on `GMModifier` and an addition to `mDistance` in `KnockBackTimelineAction`,
+ * which would need the attacker's equipped weapon reachable from the action.
+ * Nothing here would move.
  *
  * So all twenty-four are accounted for. Thirteen are this server's and are
  * done; `MANA_COST` and `COOLDOWN_REDUC` were already; six are the client's and
