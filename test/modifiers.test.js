@@ -976,3 +976,56 @@ test("a consumable bomb is not lent the first weapon's modifiers", async (t) => 
     assert.equal(live.heroWeapon, null, "a consumable's placeable was lent a weapon");
   }
 });
+
+const STICKY_L1 = 70041; // ROOT, BUFF_1 = STOP_L0
+
+test("a Sticky bomb roots whatever its fire catches, not only what it struck", async () => {
+  /**
+   * Reported: a Sticky napalm rooted the enemy the bomb hit on its way down and
+   * nothing that walked into the burning patch afterwards. The weapon's debuffs
+   * were applied where the client proposes a hit and nowhere else, so the
+   * lingering half of every placeable left nothing behind.
+   */
+  const { performPlaceableAttack } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+
+  const sticky = gm.modifiersById.get(STICKY_L1);
+  assert.equal(sticky.MODIFIER_TYPE, "ROOT", "the fixture is the Sticky row");
+  const rooted = gm.raw.Buff.find((row) => row.Constant === sticky.BUFF_1);
+  assert.equal(Number(rooted.MOVEMENT), 0, "and what it leaves is a root");
+
+  const caught = async (weapon) => {
+    const ENEMY = 9900;
+    const actor = {
+      hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
+      constant: "BRUTE", isEnemy: true, position: { x: 1050, y: 1000 },
+    };
+    let nextDoid = 900;
+    const session = {
+      id: 48, heroDoid: 500, floorDoid: 400, dungeonActive: true, dungeonZone: 10,
+      dungeonAvatar: { avatar_id: 104, experience: 0 },
+      heroWeapons: [weapon ?? {}], random: () => 1,
+      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      actors: new Map([[ENEMY, actor]]),
+      allocateDoid: () => ++nextDoid, send: () => {},
+    };
+    await performPlaceableAttack(session, 700, {
+      attack: gm.raw.Attack.find((row) => row.Constant === "GARLIC_EXPLOSION"),
+      victims: [{ doid: ENEMY, actor }],
+      weaponPower: 30,
+      weapon,
+    });
+    return [...(session.activeBuffs?.values() ?? [])]
+      .filter((live) => live.affectedActor === ENEMY)
+      .map((live) => live.buff?.Constant);
+  };
+
+  assert.ok(
+    (await caught({ type: 12502, power: 30, modifier1: STICKY_L1 })).includes(sticky.BUFF_1),
+    "the fire caught it and left nothing"
+  );
+
+  // A trap or a consumable throws nothing of its own, so it leaves nothing.
+  assert.ok(!(await caught(null)).includes(sticky.BUFF_1));
+});

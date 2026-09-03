@@ -1500,6 +1500,30 @@ export const performPlaceableAttack = async (
         attackerDoid,
         damage,
       });
+      /**
+       * And what the weapon that threw this leaves on whatever the fire caught.
+       *
+       * Reported: a Sticky napalm rooted only the enemy the bomb struck on its
+       * way down, and anything that walked into the burning patch afterwards
+       * walked out again. The debuffs were applied where the client proposes a
+       * hit and nowhere else, so the lingering half of every placeable — the
+       * cloud, the fire, the mine's field — left nothing behind.
+       *
+       * Gated on the weapon like the crit above, so a floor trap and a
+       * consumable bomb still leave only what their own `TargetBuff1` says.
+       *
+       * Consistent with how the damage and the crit are handled rather than
+       * separately measured: a capture cannot say which of a cloud's victims
+       * were caught by the throw and which walked in afterwards.
+       */
+      if (weapon) {
+        await applyModifierBuffs(session, {
+          weapon,
+          victimDoid: victim.doid,
+          attackerDoid,
+          damage,
+        });
+      }
     }
   }
   return hits;
