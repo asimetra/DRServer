@@ -683,3 +683,75 @@ test("the AI tick actually pays the muzzle, not just the arithmetic", async () =
     `muzzled waited ${muzzled} against an ordinary ${plain}`
   );
 });
+
+test("every debuff a weapon can leave has something that reads it", async () => {
+  /**
+   * An audit rather than a case: the eight modifier debuffs between them author
+   * four kinds of effect, and each needs a different part of the server to be
+   * looking. The first version of this audit filtered zero out as "no effect"
+   * and reported `STOP` and `SHOCK` as dead — but `MOVEMENT` zero is the whole
+   * of what a root is, and reading it as nothing is how a debuff stays a
+   * picture on the health bar.
+   */
+  const gm = await loadGameMaster();
+  const named = new Set();
+  for (const modifier of gm.raw.Modifiers) if (modifier.BUFF_1) named.add(modifier.BUFF_1);
+
+  const families = new Map();
+  for (const buff of gm.raw.Buff) {
+    if (!named.has(buff.Constant)) continue;
+    const family = buff.Constant.replace(/_L\d+$/, "");
+    const carries = (key) => buff[key] !== undefined && buff[key] !== "" && Number(buff[key]) !== 1;
+    families.set(family, {
+      dot: buff.BuffType === "DAMAGE_OVER_TIME" && Number(buff.PercentDamage) > 0,
+      movement: carries("MOVEMENT"),
+      speed: carries("MELEE_SPD"),
+      ability: buff.Ability1,
+      ...(families.get(family) ?? {}),
+    });
+  }
+
+  assert.equal(families.size, 8, "eight families of debuff come off a weapon");
+  for (const [family, row] of families) {
+    const covered =
+      row.dot || // startDamageOverTime
+      row.movement || // the AI's mobility multiplier
+      row.speed || // attackIntervalMs
+      row.ability === "STUN" ||
+      row.ability === "SHOCK"; // the attack gate
+    assert.ok(covered, `${family} authors nothing this server acts on`);
+  }
+});
+
+test("a shocked monster does not swing", async () => {
+  /**
+   * `SHOCK_L0` says "Unable to attack or move". Its `MOVEMENT` zero held the
+   * monster still and the swinging half was nobody's, so Zapping pinned a
+   * monster in place and let it go on hitting whoever stood next to it.
+   */
+  const { buildFloor } = await import("./helpers/floor.js");
+  const { tickNpcAi } = await import("../src/socket/ai.js");
+  const gm = await loadGameMaster();
+  const shock = gm.raw.Buff.find((row) => row.Constant === "SHOCK_L1");
+  assert.equal(shock.Ability1, "SHOCK");
+
+  const swung = async (buffed) => {
+    const world = await buildFloor("castle/arena/db_floor_TUTORIAL_LEVEL_1.json");
+    const { session } = world;
+    const [doid, actor] =
+      [...session.actors].find(([, candidate]) => candidate.ai && candidate.isEnemy) ?? [];
+    session.heroPosition = { ...actor.position };
+    const hero = session.actors.get(session.heroDoid);
+    if (hero) hero.position = { ...actor.position };
+    if (buffed) session.activeBuffs = new Map([[1, { affectedActor: doid, buff: shock }]]);
+
+    actor.ai.attackTimerMs = 1000;
+    actor.ai.attackRandMs = 0;
+    actor.ai.nextAttackAt = 0;
+    await tickNpcAi(session, 100000, 0.1);
+    return actor.ai.nextAttackAt !== 0;
+  };
+
+  assert.equal(await swung(false), true, "the monster swings when nothing stops it");
+  assert.equal(await swung(true), false, "a shocked monster swung anyway");
+});

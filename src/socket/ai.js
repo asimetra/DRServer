@@ -797,9 +797,16 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * STUN_L4 and STOP_L4 carry a zero, SLOW_L1 a 0.75 — so a stunned monster
      * simply has no speed. Attacking is separate: a stun stops it, a root does
      * not, which is what the two abilities mean.
+     *
+     * A shock is the third case and stops both. `SHOCK_L0` says so in its own
+     * words — "Unable to attack or move for 0.5 secs" — and carries `MOVEMENT`
+     * zero for the moving half; the swinging half is this ability, which
+     * nothing read. So `Zapping` held a monster still and let it go on hitting
+     * whoever was standing next to it.
      */
     const mobility = buffMultiplierFor(session, doid, "MOVEMENT");
-    const stunned = hasAbility(session, doid, "STUN");
+    const cannotAttack =
+      hasAbility(session, doid, "STUN") || hasAbility(session, doid, "SHOCK");
     const speed = ai.moveSpeed * mobility;
 
     const route = routeToTarget(session, actor, target, now);
@@ -947,7 +954,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     ai.state = "attack";
     // A garlic trap's whole point: STUN_L4 for three seconds, during which it
     // does not swing. Without this the debuff was a picture on the health bar.
-    if (stunned) continue;
+    if (cannotAttack) continue;
     if (now < ai.nextAttackAt) continue;
 
     /**
