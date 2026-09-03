@@ -10,7 +10,11 @@ import {
   projectileForConstant,
 } from "../gamemaster.js";
 import { netAttackDamage, npcStats, statOffsetsFor } from "../combat-damage.js";
-import { STAT_NAMES, legendaryShieldFor } from "../hero-stats.js";
+import {
+  STAT_NAMES,
+  legendaryShieldFor,
+  legendaryBusterPerKill,
+} from "../hero-stats.js";
 import {
   buffColorTypeFor,
   buffEffectReport,
@@ -759,6 +763,37 @@ export const pushVictim = (session, victimDoid, attackerDoid, distance) => {
   victim.position.y = landed.y;
   session.send(npcPositionUpdate(victimDoid, victim.position));
   return true;
+};
+
+/**
+ * What a kill pays into the Dungeon Buster.
+ *
+ * `Buster Gen` is the only source of it — nothing else in the game grants a
+ * point for a kill — and it was unread, so a legendary that promises a point an
+ * enemy gave none. Capped at the hero's own maximum, which is his buster's own
+ * `CrowdCost`, so the bar fills rather than overflowing.
+ *
+ * Called from both places a hero's kill is counted, since a monster killed by a
+ * thrown bomb is as dead as one killed by a swing.
+ */
+/**
+ * Written here rather than imported from `rewards.js`, which already imports
+ * `hitPointsUpdate` from this file — taking its buster packet back would close
+ * the loop. `DistributedHeroGameObject.dungeonBusterPoints` is field 166.
+ */
+const busterPointsUpdate = (doid, value) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD).u32(doid).u16(166).u32(value).frame();
+
+const payBusterForKill = (session) => {
+  const points = legendaryBusterPerKill(session.heroWeapons ?? []);
+  if (!points) return 0;
+  const full = Math.max(1, Number(session.maxDungeonBusterPoints ?? 0));
+  const before = Number(session.dungeonBusterPoints ?? 0);
+  const after = Math.min(full, before + points);
+  if (after === before) return 0;
+  session.dungeonBusterPoints = after;
+  session.send?.(busterPointsUpdate(session.heroDoid, after));
+  return after - before;
 };
 
 const staggerFor = (attack, damage) =>
@@ -1591,7 +1626,10 @@ export const performPlaceableAttack = async (
       if (victim.actor.isEnemy) {
         session.dungeonContribution ??= { kills: 0, damage: 0 };
         session.dungeonContribution.damage += Math.min(damage, before);
-        if (!wasDead && victim.actor.dead) session.dungeonContribution.kills += 1;
+        if (!wasDead && victim.actor.dead) {
+          session.dungeonContribution.kills += 1;
+          payBusterForKill(session);
+        }
       }
       /**
        * And the food, on the same two events as everywhere else — see
@@ -3051,7 +3089,10 @@ const applyProposals = async (session, proposals) => {
       if (actor.isEnemy) {
         session.dungeonContribution ??= { kills: 0, damage: 0 };
         session.dungeonContribution.damage += Math.min(damage, hitPointsBefore);
-        if (!wasDead && actor.dead) session.dungeonContribution.kills += 1;
+        if (!wasDead && actor.dead) {
+          session.dungeonContribution.kills += 1;
+          payBusterForKill(session);
+        }
       }
       summary.push(
         `${actor.constant ?? proposal.attackee} -${damage} -> ` +

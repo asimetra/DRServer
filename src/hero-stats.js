@@ -313,3 +313,12 @@ export const legendaryDropBonus = (weapons = [], kind) => {
   }
   return 0;
 };
+
+/**
+ * Whether a weapon pays a Buster point for a kill.
+ *
+ * `Buster Gen` — "Gain 1 Buster Point per enemy killed!" — and one is one: two
+ * of them do not pay two, on the same reading as the shields beside them.
+ */
+export const legendaryBusterPerKill = (weapons = []) =>
+  weapons.some((weapon) => Number(weapon?.legendarymodifier ?? 0) === 7) ? 1 : 0;

@@ -1509,3 +1509,34 @@ test("Midas Touch and Brain Trust raise what a drop is worth, each its own", asy
   assert.equal(credited([{ legendarymodifier: 9 }]).xp, 1000, "and paid it in the wrong currency");
   assert.equal(credited([{ legendarymodifier: 8 }]).xp, 1050);
 });
+
+test("Buster Gen pays a point for a kill, and stops at the bar's top", async () => {
+  /**
+   * "Gain 1 Buster Point per enemy killed!" and nothing else in the game grants
+   * a point for a kill, so a legendary promising one gave none.
+   */
+  const { legendaryBusterPerKill } = await import("../src/hero-stats.js");
+  const gm = await loadGameMaster();
+  assert.equal(gm.raw.LegendaryModifiers.find((row) => row.Id === 7)?.Name, "Buster Gen");
+
+  assert.equal(legendaryBusterPerKill([{ legendarymodifier: 7 }]), 1);
+  assert.equal(legendaryBusterPerKill([{}]), 0);
+  // One is one: two of them do not pay two.
+  assert.equal(
+    legendaryBusterPerKill([{ legendarymodifier: 7 }, { legendarymodifier: 7 }]),
+    1
+  );
+
+  const killWith = async (weapon, points = 0) => {
+    const { session, ENEMY } = await arena({ type: 12502, power: 30, ...weapon });
+    session.maxDungeonBusterPoints = 120;
+    session.dungeonBusterPoints = points;
+    session.actors.get(ENEMY).hitPoints = 1;
+    await swing(session, ENEMY);
+    return session.dungeonBusterPoints;
+  };
+
+  assert.equal(await killWith({ legendarymodifier: 7 }), 1, "the kill paid nothing");
+  assert.equal(await killWith({}), 0, "a plain weapon paid anyway");
+  assert.equal(await killWith({ legendarymodifier: 7 }, 120), 120, "the bar overflowed");
+});
