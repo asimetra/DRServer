@@ -27,7 +27,15 @@ import { heroMembersOf } from "./match-world.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { RULE, noteViolation } from "./security-events.js";
-import { critRollFor, onHitBuffsFor, attackMultiplierFor } from "./modifiers.js";
+import { spawnFoodDoober } from "./drops.js";
+import {
+  critRollFor,
+  onHitBuffsFor,
+  attackMultiplierFor,
+  foodChanceFor,
+  FOOD_ON_HIT,
+  FOOD_ON_DEATH,
+} from "./modifiers.js";
 
 /**
  * Combat.
@@ -2692,7 +2700,27 @@ const applyProposals = async (session, proposals) => {
     const actor = session.actors?.get(proposal.attackee);
     const wasDead = Boolean(actor?.dead);
     const hitPointsBefore = actor?.hitPoints ?? 0;
+    const origin = actor?.position ? { ...actor.position } : null;
     if (actor && applyDamage(session, proposal.attackee, damage, () => session.send(echo))) {
+      /**
+       * And what a Saucier or a Cook's weapon leaves on the floor for it.
+       *
+       * Two rolls at two moments, because they are two modifiers: killing rolls
+       * `Cook's` and any other landed hit rolls `Saucier`. The victim's position
+       * is taken before the hit, since a kill takes the actor off the floor and
+       * the drop would otherwise fall back to the spawn point.
+       */
+      const column = !wasDead && actor.dead ? FOOD_ON_DEATH : FOOD_ON_HIT;
+      const chance = foodChanceFor(await loadGameMaster(), swung, column);
+      if (chance > 0 && (session.random ?? Math.random)() < chance) {
+        spawnFoodDoober(session, {
+          gm: await loadGameMaster(),
+          floorDoid: session.floorDoid,
+          npc: await npcForConstant(actor.constant),
+          origin,
+          random: session.random ?? Math.random,
+        });
+      }
       if (actor.isEnemy) {
         session.dungeonContribution ??= { kills: 0, damage: 0 };
         session.dungeonContribution.damage += Math.min(damage, hitPointsBefore);

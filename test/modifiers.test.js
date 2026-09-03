@@ -330,3 +330,69 @@ test("Sturdy actually makes the hit land harder", async () => {
   assert.ok(boosted > plain, `Sturdy dealt ${boosted} against a plain ${plain}`);
   assert.equal(boosted, Math.round(plain * sturdy));
 });
+
+const SAUCIER_L1 = 70191; // SPAWN_FOOD_ON_HIT, 3%
+const COOKS_L1 = 70201; // DEATH_FOOD, 5%
+
+test("the food modifiers read their own percentage column", async () => {
+  const { foodChanceFor, FOOD_ON_HIT, FOOD_ON_DEATH } = await import("../src/socket/modifiers.js");
+  const gm = await loadGameMaster();
+
+  const saucier = gm.modifiersById.get(SAUCIER_L1);
+  const cooks = gm.modifiersById.get(COOKS_L1);
+  assert.equal(saucier.MODIFIER_TYPE, "SPAWN_FOOD_ON_HIT", "the fixture is Saucier");
+  assert.equal(cooks.MODIFIER_TYPE, "DEATH_FOOD", "the fixture is Cook's");
+
+  assert.equal(
+    foodChanceFor(gm, { modifier1: SAUCIER_L1 }, FOOD_ON_HIT),
+    saucier.SPAWN_FOOD_ON_HIT_PERCENTAGE / 100
+  );
+  // Each column is its own roll: Saucier never fires on a kill and Cook's never
+  // on an ordinary hit.
+  assert.equal(foodChanceFor(gm, { modifier1: SAUCIER_L1 }, FOOD_ON_DEATH), 0);
+  assert.equal(foodChanceFor(gm, { modifier1: COOKS_L1 }, FOOD_ON_HIT), 0);
+  assert.equal(foodChanceFor(gm, { modifier1: CRITICAL_L1 }, FOOD_ON_HIT), 0);
+});
+
+test("two food modifiers add their chances", async () => {
+  const { foodChanceFor, FOOD_ON_HIT } = await import("../src/socket/modifiers.js");
+  const gm = await loadGameMaster();
+  const one = gm.modifiersById.get(70191).SPAWN_FOOD_ON_HIT_PERCENTAGE;
+  const five = gm.modifiersById.get(70195).SPAWN_FOOD_ON_HIT_PERCENTAGE;
+
+  assert.equal(
+    foodChanceFor(gm, { modifier1: 70191, modifier2: 70195 }, FOOD_ON_HIT),
+    (one + five) / 100
+  );
+});
+
+test("a Saucier weapon drops food on a hit that does not kill", async () => {
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const { session, sent, ENEMY } = await arena({
+    type: 12502, power: 30, modifier1: SAUCIER_L1,
+  });
+  session.random = () => 0; // every roll succeeds; the crit roll is separate
+
+  await swing(session, ENEMY);
+
+  assert.ok(!session.actors.get(ENEMY).dead, "the enemy survived the hit");
+  const doobers = sent.filter(
+    (packet) => (packet.readUInt16LE(2) === 134 || packet.readUInt16LE(2) === 135) &&
+      packet.readUInt16LE(12) === CLID.DistributedDooberGameObject
+  );
+  assert.equal(doobers.length, 1, "the hit dropped no food");
+});
+
+test("a weapon with no food modifier drops nothing", async () => {
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const { session, sent, ENEMY } = await arena({ type: 12502, power: 30 });
+  session.random = () => 0;
+
+  await swing(session, ENEMY);
+
+  const doobers = sent.filter(
+    (packet) => (packet.readUInt16LE(2) === 134 || packet.readUInt16LE(2) === 135) &&
+      packet.readUInt16LE(12) === CLID.DistributedDooberGameObject
+  );
+  assert.equal(doobers.length, 0, "food appeared without a modifier asking for it");
+});

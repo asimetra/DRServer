@@ -192,3 +192,52 @@ export const spawnBossReward = (session, { floorDoid, origin, node, random = Mat
   );
   return doid;
 };
+
+/**
+ * One piece of food, dropped by a weapon rather than by the monster.
+ *
+ * `Saucier` and `Cook's` spawn food on hitting and on killing, and neither the
+ * client nor this server read their columns — a grep of both trees returns
+ * nothing for either. The recordings cannot settle it either way: food does
+ * appear without a death, 592 times, but the game has two other ways to make it
+ * — the `FOOD_SPAWNER` prop and the cooking pot's own attack — and a capture
+ * does not say which modifiers the recorded player was carrying. So this rests
+ * on the columns, which are explicit, and on the mechanism, which is this
+ * server's either way.
+ *
+ * Which food is not authored anywhere, so it is taken from what the victim
+ * could have dropped by itself: `DooberDrop` already says which doobers each
+ * NPC yields, and three of them are food. A monster that drops no food drops
+ * none here either, rather than being handed a sausage the table never gave it.
+ */
+export const spawnFoodDoober = (session, { gm, floorDoid, npc, origin, random = Math.random }) => {
+  if (!floorDoid || !origin || !npc?.Constant) return null;
+  const allowed = (gm?.dooberDropsByNpcConstant?.get(npc.Constant) ?? []).filter(
+    (doober) => /^FOOD/.test(doober.Constant ?? "")
+  );
+  const doober = randomItem(allowed, random);
+  if (!doober) return null;
+
+  const position = landingPosition(origin, 0, 1, unitRandom(random) * Math.PI * 2, random);
+  const doid = session.allocateDoid(CLID.DistributedDooberGameObject);
+  trackDoober(session, doid, {
+    ...position,
+    constant: doober.Constant,
+    gold: doober.Gold ?? 0,
+    xp: doober.Exp ?? 0,
+    crowd: doober.Crowd ?? 0,
+    hpPercentage: doober.HP_PERCENTAGE ?? 0,
+    mpPercentage: doober.MP_PERCENTAGE ?? 0,
+  });
+  session.send(
+    dooberGenerate({
+      doid,
+      parent: floorDoid,
+      zone: session.dungeonZone ?? 0,
+      dooberType: doober.Id,
+      position,
+    })
+  );
+  session.send(dooberSpawnFrom(doid, origin));
+  return { doid, doober, position };
+};

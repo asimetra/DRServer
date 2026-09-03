@@ -49,10 +49,18 @@
  * `COOLDOWN_REDUC` which it predicts and this server decides — `buster.js` and
  * `cooldowns.js` have read those two for a while.
  *
- * Which leaves, genuinely unread on both sides: `KNOCKBACK` and `PULL`,
- * `SPAWN_FOOD_ON_HIT` and `DEATH_FOOD`, `SCALING`'s `MAX_PROJECTILES`, and
- * `BUFF_GRANT_DURATION_MULTIPLIER`. All four columns return nothing from a grep
- * of either tree.
+ * `SCALING` turned out to be the client's too, and already working:
+ * `ScalingWeaponController` reads `MAX_PROJECTILES` off the modifier and puts
+ * the result in the choreography header, which this server forwards. All 7943
+ * recorded headers carry 1.00 only because no recorded player had a Split bow.
+ *
+ * Which leaves two, both genuinely unread on either side. `KNOCKBACK` and
+ * `PULL` author a distance and a duration that never cross the wire — the
+ * result's knockback byte is a flag, set by the official on 13024 of its
+ * echoed hits and by the client on 2 of 13626, so the push is the server's to
+ * decide but its size is not something the recordings can show. And
+ * `BUFF_GRANT_DURATION_MULTIPLIER`, which wants a multiplier threaded into
+ * `durationOf` from whichever weapon granted the buff.
  */
 export const critRollFor = (gm, weapon, random = Math.random) => {
   const none = { critical: false, multiplier: 1 };
@@ -138,3 +146,32 @@ export const attackMultiplierFor = (gm, weapon, statName) => {
   }
   return multiplier;
 };
+
+/**
+ * The chance a weapon's modifiers give it of dropping food.
+ *
+ * `Saucier` is 3% to 15% on hitting, `Cook's` 5% to 25% on killing, and both
+ * say so in a percentage column of their own — which is what marks them out
+ * from the eight debuff types, whose rows carry no chance at all and so apply
+ * every time.
+ *
+ * Summed rather than rolled apart, because unlike the two crit modifiers these
+ * do not each bring a different reward: two sources of food are two chances at
+ * the same food, and one hit drops at most one.
+ *
+ * Read by column name so the caller says which event it is asking about; the
+ * two are separate rolls at separate moments and a weapon may carry both.
+ */
+export const foodChanceFor = (gm, weapon, column) => {
+  if (!weapon) return 0;
+  let percent = 0;
+  for (const id of [weapon.modifier1, weapon.modifier2]) {
+    if (!id) continue;
+    const authored = Number(gm?.modifiersById?.get(Number(id))?.[column]);
+    if (Number.isFinite(authored) && authored > 0) percent += authored;
+  }
+  return percent / 100;
+};
+
+export const FOOD_ON_HIT = "SPAWN_FOOD_ON_HIT_PERCENTAGE";
+export const FOOD_ON_DEATH = "SPAWN_FOOD_ON_DEATH_PERCENTAGE";
