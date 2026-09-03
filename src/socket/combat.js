@@ -4,6 +4,7 @@ import { config } from "../config.js";
 import {
   attackById,
   FRAMES_PER_SECOND,
+  heroById,
   npcForConstant,
   loadGameMaster,
   projectileForConstant,
@@ -34,6 +35,7 @@ import {
   onHitBuffsFor,
   attackMultiplierFor,
   foodChanceFor,
+  cookingFoodChance,
   FOOD_ON_HIT,
   FOOD_ON_DEATH,
 } from "./modifiers.js";
@@ -2752,14 +2754,25 @@ const applyProposals = async (session, proposals) => {
        * the drop would otherwise fall back to the spawn point.
        */
       const onDeath = !wasDead && actor.dead;
-      const chance = foodChanceFor(
-        await loadGameMaster(),
-        swung,
-        onDeath ? FOOD_ON_DEATH : FOOD_ON_HIT
-      );
+      /**
+       * Both sources of it, added. The weapon's `Saucier` or `Cook's` and the
+       * Battle Chef's own `COOKING`, which is a class ability rather than a
+       * property of what he is holding — see `cookingFoodChance`. They fire on
+       * the same two events and make the same two doobers, so they are one roll.
+       */
+      const column = onDeath ? FOOD_ON_DEATH : FOOD_ON_HIT;
+      const gm = await loadGameMaster();
+      const chance =
+        foodChanceFor(gm, swung, column) +
+        cookingFoodChance(
+          gm,
+          await heroById(session.dungeonAvatar?.avatar_id),
+          session.dungeonAvatar,
+          column
+        );
       if (chance > 0 && (session.random ?? Math.random)() < chance) {
         spawnFoodDoober(session, {
-          gm: await loadGameMaster(),
+          gm,
           floorDoid: session.floorDoid,
           origin,
           onDeath,

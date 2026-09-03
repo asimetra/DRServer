@@ -1,3 +1,5 @@
+import { superStatValue } from "../hero-stats.js";
+
 /**
  * What the modifiers on a weapon do once it is swung.
  *
@@ -239,3 +241,46 @@ export const foodChanceFor = (gm, weapon, column) => {
 
 export const FOOD_ON_HIT = "SPAWN_FOOD_ON_HIT_PERCENTAGE";
 export const FOOD_ON_DEATH = "SPAWN_FOOD_ON_DEATH_PERCENTAGE";
+
+/**
+ * The Battle Chef's own share of the same two rolls.
+ *
+ * `COOKING` is his second slot and it is not a combat stat: every ordinary
+ * column on the row is zero, and its real fields are `HitSpawnBase` 0.01,
+ * `HitSpawnIncrease` 0.00125, `DeathSpawnBase` 0.05 and `DeathSpawnIncrease`
+ * 0.0025. Its own description says what it is for — "Better chance to make Food
+ * when attacking enemies" — and the two doobers it makes are the ones named
+ * after him, `FOOD_CHEF_HIT` and `FOOD_CHEF_DEATH`. Nothing on this server read
+ * any of it, so a Chef who had spent every point in the stat produced no food
+ * at all unless his weapon happened to carry `Saucier` or `Cook's`.
+ *
+ * Small, and worth being plain about: his slot pays 0.1 units a point, so the
+ * hit chance runs from 1% untrained to about 1.6% at fifty points and the kill
+ * chance from 5% to 6.3%. It was briefly offered here as the explanation for a
+ * recorded session dropping food on 13.6% of hits against a 6% modifier, and it
+ * cannot be — it is nowhere near large enough. Two food modifiers on one weapon
+ * would be, and that is the likelier reading, but the equipped weapon could not
+ * be recovered from the capture and so it stays a reading.
+ *
+ * Only for a hero whose slots declare the stat. The base is not a floor every
+ * hero stands on — a Berserker has no `COOKING` slot, so the stat does not
+ * exist for him and neither does its base.
+ */
+const COOKING_SPAWN_COLUMNS = {
+  [FOOD_ON_HIT]: ["HitSpawnBase", "HitSpawnIncrease"],
+  [FOOD_ON_DEATH]: ["DeathSpawnBase", "DeathSpawnIncrease"],
+};
+
+export const cookingFoodChance = (gm, hero, avatar, column) => {
+  const columns = COOKING_SPAWN_COLUMNS[column];
+  if (!hero || !columns) return 0;
+  const declares = [1, 2, 3, 4].some((slot) => hero[`StatUpgrade${slot}`] === "COOKING");
+  if (!declares) return 0;
+
+  const row = (gm?.raw?.SuperStats ?? []).find((entry) => entry.Constant === "COOKING");
+  if (!row) return 0;
+
+  const [base, increase] = columns;
+  const trained = Math.max(0, superStatValue(gm, hero, avatar, "COOKING"));
+  return Math.max(0, Number(row[base]) || 0) + trained * (Number(row[increase]) || 0);
+};

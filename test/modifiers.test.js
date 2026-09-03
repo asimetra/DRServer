@@ -421,18 +421,29 @@ test("a Cook's weapon drops the Chef Cupcake on the kill", async () => {
   assert.deepEqual(await dropped(sent), ["FOOD_CHEF_DEATH"]);
 });
 
-test("a weapon with no food modifier drops nothing", async () => {
-  const { CLID } = await import("../src/socket/opcodes.js");
+test("a plain weapon on a hero without COOKING drops nothing", async () => {
+  /**
+   * The arena's own avatar is 104, the Battle Chef, so a plain weapon still
+   * makes food there — his `COOKING` base is 1% and this roll always succeeds.
+   * That is the class ability working, so the assertion moves to a hero who has
+   * no such slot.
+   */
   const { session, sent, ENEMY } = await arena({ type: 12502, power: 30 });
   session.random = () => 0;
+  session.dungeonAvatar = { avatar_id: 101 }; // Berserker, no COOKING slot
 
   await swing(session, ENEMY);
 
-  const doobers = sent.filter(
-    (packet) => (packet.readUInt16LE(2) === 134 || packet.readUInt16LE(2) === 135) &&
-      packet.readUInt16LE(12) === CLID.DistributedDooberGameObject
-  );
-  assert.equal(doobers.length, 0, "food appeared without a modifier asking for it");
+  assert.deepEqual(await dropped(sent), [], "food appeared with nothing asking for it");
+});
+
+test("a plain weapon on the Chef still makes food, from the stat alone", async () => {
+  const { session, sent, ENEMY } = await arena({ type: 12502, power: 30 });
+  session.random = () => 0; // under the 1% base
+
+  await swing(session, ENEMY);
+
+  assert.deepEqual(await dropped(sent), ["FOOD_CHEF_HIT"]);
 });
 
 test("a poison tick is a share of the hit, not the whole of it", async () => {
@@ -519,4 +530,43 @@ test("the crit ladder the official shows is reproducible", async () => {
   assert.equal(ladder([0.9, 0.01]), 4, "Vicious alone");
   assert.equal(ladder([0.05, 0.01]), 8, "both, which is the product and not the sum");
   assert.equal(critRollFor(gm, weapon, rolls(0.9, 0.9)).critical, false, "neither");
+});
+
+test("the Battle Chef makes food from his own COOKING, and nobody else does", async () => {
+  /**
+   * `COOKING` is his second slot and is not a combat stat — every ordinary
+   * column on the row is zero. Its real fields are the four spawn columns, its
+   * description is "Better chance to make Food when attacking enemies", and the
+   * doobers it makes are the two named after him.
+   *
+   * Small, and asserted as such: the slot pays 0.1 units a point, so an
+   * untrained Chef sits on the base and a well-trained one is barely above it.
+   */
+  const { cookingFoodChance, FOOD_ON_HIT, FOOD_ON_DEATH } = await import(
+    "../src/socket/modifiers.js"
+  );
+  const gm = await loadGameMaster();
+  const row = gm.raw.SuperStats.find((entry) => entry.Constant === "COOKING");
+  const chef = gm.raw.Hero.find((hero) => hero.Constant === "BATTLE_CHEF");
+  const berserker = gm.raw.Hero.find((hero) => hero.Constant === "BERSERKER");
+
+  const untrained = { avatar_id: 104 };
+  assert.equal(cookingFoodChance(gm, chef, untrained, FOOD_ON_HIT), row.HitSpawnBase);
+  assert.equal(cookingFoodChance(gm, chef, untrained, FOOD_ON_DEATH), row.DeathSpawnBase);
+
+  /**
+   * The base is not a floor every hero stands on. A Berserker has no `COOKING`
+   * slot, so the stat does not exist for him and neither does its base.
+   */
+  assert.equal(cookingFoodChance(gm, berserker, untrained, FOOD_ON_HIT), 0);
+  assert.equal(cookingFoodChance(gm, null, untrained, FOOD_ON_HIT), 0);
+
+  // And training it raises the chance rather than leaving it on the base.
+  const cookingSlot = [1, 2, 3, 4].find((slot) => chef[`StatUpgrade${slot}`] === "COOKING");
+  assert.ok(cookingSlot, "the Chef declares COOKING in a slot");
+  const trained = { avatar_id: 104, [`statupgrade${cookingSlot}`]: 50 };
+  assert.ok(
+    cookingFoodChance(gm, chef, trained, FOOD_ON_HIT) > row.HitSpawnBase,
+    "fifty points bought nothing"
+  );
 });
