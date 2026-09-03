@@ -44,7 +44,7 @@ import {
   dooberById,
   FRAMES_PER_SECOND,
 } from "../gamemaster.js";
-import {
+import { legendaryPetBonuses,
   maxHitPoints,
   maxManaPoints,
   effectiveMaxHitPoints,
@@ -496,6 +496,18 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       ? 0
       : npcMaxHitPoints(gm, npc, npcLevel, heroes, session.npcDepthBonus ?? 0)
   );
+  /**
+   * A flat addition on top, for every party size at once. `Beast Master` gives a
+   * pet health and the table is cached across sizes so a late join can rescale
+   * the floor — adding the bonus to the chosen entry alone would lose it the
+   * moment somebody else walked in.
+   */
+  const bonusHitPoints = Math.max(0, Math.round(Number(options.bonusHitPoints ?? 0)));
+  if (bonusHitPoints) {
+    for (let size = 1; size < partyHitPoints.length; size += 1) {
+      partyHitPoints[size] += bonusHitPoints;
+    }
+  }
   const hitPoints = partyHitPoints[Math.min(5, partySize)];
   /**
    * The body the client actually collides with, which is not the one in the
@@ -953,6 +965,7 @@ export const spawnEquippedPet = async (context, member = context?.session?.membe
     towards: ownerPosition,
   }) ?? desired;
   const weapon = npc.Weapon1 ? await weaponForConstant(npc.Weapon1) : null;
+  const petBonuses = legendaryPetBonuses(context.session.heroWeapons ?? []);
   const floorAtSpawn = context.floorDoid;
 
   const doid = await spawnNpc(
@@ -963,7 +976,13 @@ export const spawnEquippedPet = async (context, member = context?.session?.membe
     {
       returnDoid: true,
       level: spawn.level,
-      weaponPower: scaledNpcWeaponPower(weapon, spawn.level),
+      /**
+       * Raised by whatever its owner carries — see `legendaryPetBonuses`. The
+       * pet's own row decides the rest; these two are the owner's legendaries
+       * reaching past him, which is the only thing in the table that does.
+       */
+      weaponPower: scaledNpcWeaponPower(weapon, spawn.level) + petBonuses.damage,
+      bonusHitPoints: petBonuses.health,
       masterId: owner.heroDoid,
       petOwnerDoid: owner.heroDoid,
       partySize: context.partySize,

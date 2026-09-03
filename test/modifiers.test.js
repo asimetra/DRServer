@@ -1571,3 +1571,37 @@ test("Buster Gen pays a point for a kill, and stops at the bar's top", async () 
   });
   assert.equal(session.dungeonBusterPoints, 1, "a kill by a bomb paid nothing");
 });
+
+test("Beast Master and Animal Fury reach the pet, each its own number", async () => {
+  /**
+   * `Beast Master` gives a pet 10 + Weapon Level * 0.9 health and `Animal Fury`
+   * 20 + Weapon Level * 1.8 damage. The level is the weapon's required level,
+   * the same reading `Stamina` and `Aptitude` already use — they are written in
+   * the same sentence pattern.
+   */
+  const { legendaryPetBonuses } = await import("../src/hero-stats.js");
+  const gm = await loadGameMaster();
+  assert.equal(gm.raw.LegendaryModifiers.find((row) => row.Id === 4)?.Name, "Beast Master");
+  assert.equal(gm.raw.LegendaryModifiers.find((row) => row.Id === 5)?.Name, "Animal Fury");
+
+  const beast = legendaryPetBonuses([{ legendarymodifier: 4, requiredlevel: 100 }]);
+  assert.equal(beast.health, 10 + 100 * 0.9);
+  assert.equal(beast.damage, 0, "Beast Master is health and not damage");
+
+  const fury = legendaryPetBonuses([{ legendarymodifier: 5, requiredlevel: 100 }]);
+  assert.equal(fury.damage, 20 + 100 * 1.8);
+  assert.equal(fury.health, 0);
+
+  // The weapon's level, not a fixed number: a level 1 weapon pays less.
+  assert.equal(legendaryPetBonuses([{ legendarymodifier: 4, requiredlevel: 1 }]).health, 10.9);
+
+  // These add rather than being a share, so two do pay twice.
+  assert.equal(
+    legendaryPetBonuses([
+      { legendarymodifier: 4, requiredlevel: 100 },
+      { legendarymodifier: 4, requiredlevel: 100 },
+    ]).health,
+    2 * (10 + 100 * 0.9)
+  );
+  assert.deepEqual(legendaryPetBonuses([{}]), { health: 0, damage: 0 });
+});

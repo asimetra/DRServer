@@ -322,3 +322,29 @@ export const legendaryDropBonus = (weapons = [], kind) => {
  */
 export const legendaryBusterPerKill = (weapons = []) =>
   weapons.some((weapon) => Number(weapon?.legendarymodifier ?? 0) === 7) ? 1 : 0;
+
+/**
+ * What the owner's legendaries add to the pet standing beside him.
+ *
+ * `Beast Master` gives it 10 + Weapon Level * 0.9 health and `Animal Fury`
+ * 20 + Weapon Level * 1.8 damage, in the prose the GameMaster describes them
+ * with. Neither was read, so a legendary bought for a pet did nothing for it.
+ *
+ * The level in each formula is the *weapon's* required level, not the hero's or
+ * the pet's — the same reading `Stamina` and `Aptitude` already use two blocks
+ * above, and they are written in the same sentence pattern.
+ *
+ * Summed across the weapons that carry them, unlike the shields: these are
+ * additions to a number rather than a share taken off one, and nothing in
+ * either description says otherwise.
+ */
+export const legendaryPetBonuses = (weapons = []) => {
+  const totals = { health: 0, damage: 0 };
+  for (const weapon of weapons) {
+    const level = Number(weapon?.requiredlevel ?? 0);
+    const id = Number(weapon?.legendarymodifier ?? 0);
+    if (id === 4) totals.health += 10 + level * 0.9; // Beast Master
+    if (id === 5) totals.damage += 20 + level * 1.8; // Animal Fury
+  }
+  return totals;
+};
