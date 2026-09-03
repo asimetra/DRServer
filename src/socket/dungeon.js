@@ -103,6 +103,8 @@ import {
 } from "./floorstate.js";
 import { classifyHazard } from "./hazards.js";
 import { startNpcAi } from "./ai.js";
+import { npcAttackChoices } from "./npc-attacks.js";
+export { npcAttackChoices } from "./npc-attacks.js";
 import { startManaRegen } from "./regen.js";
 import {
   addNavigationObstacle,
@@ -336,72 +338,6 @@ const TEAM_BY_CHAR_TYPE = {
   BEAST: TEAM.THIRD,
   PET: TEAM.PLAYERS,
   HERO: TEAM.PLAYERS,
-};
-
-const NPC_ATTACK_SLOTS = ["Attack1", "Attack2", "Attack3", "Attack4", "Attack5", "Attack6"];
-
-export const npcAttackChoices = async (
-  npc,
-  nativeWeapon,
-  weaponPower = nativeWeapon?.Power ?? 1
-) => {
-  /**
-   * Everything it can swing, not just the first three.
-   *
-   * Several authored warriors carry their charge or ultimate in Attack4..6 —
-   * `RIVAL_BERSERKER` puts `FISSURE` in Attack4 and `EN_DBUSTER_BERSERK` in
-   * Attack5, while `BLUE_DRAGON` uses Attack4..6 for three distinct specials.
-   * Reading only Attack1..3 silently drops those moves and leaves the server
-   * animating a reduced kit.
-   */
-  const attackSet = [];
-  for (const slot of NPC_ATTACK_SLOTS) {
-    const named = npc[slot];
-    if (!named) continue;
-    const attack = await attackForConstant(named);
-    if (!attack) continue;
-    const shape = await attackColliders(attack.AttackTimeline);
-    const projectileRow = attack.Projectile && (await projectileForConstant(attack.Projectile));
-    attackSet.push({
-      attackType: attack.Id,
-      range: Math.max(20, attack.Range ?? 80),
-      minRange: Math.max(0, Number(attack.MinRange ?? 0)),
-      rechargeMs: Math.max(0, Number(attack.AI_RechargeT ?? 0) * 1000),
-      readyAt: 0,
-      weaponPower,
-      damage: Math.max(
-        1,
-        Math.round(weaponPower * Math.abs(attack.DamageMod ?? -1))
-      ),
-      attackColliders: shape,
-      projectile: projectileRow || null,
-      projectileLaunches: await projectileLaunches(attack.AttackTimeline),
-      impactFrame: shape.length ? Math.min(...shape.map((collider) => Number(collider.frame ?? 0))) : 0,
-      /**
-       * Some attacks move the thing making them, and it is the server's job.
-       *
-       * `AttackAutoMoveTimelineAction.buildFromJson` in the client returns the
-       * action only `if (param1.isOwner)` — so the client auto-moves the local
-       * player and nothing else, and a monster's lunge is nobody's but ours.
-       *
-       * Measured over 66 recordings, taking each NPC's furthest displacement in
-       * the window after a swing, against the direction it was facing:
-       *
-       *   EN_ICE_IMP_ATTACK_HEADBUTT  400@0     769 swings  went 252  facing +0.99
-       *   EN_ICE_IMP_ATTACK_BACKOFF   500@180   690 swings  went 202  facing -0.99
-       *   EN_LION_TACKLE               40@0      36 swings  went  56  facing +0.96
-       *   attacks authoring no move    ---     ~8000 swings went  25-49  facing +0.7
-       *
-       * The direction is not ambiguous. The distance falls short of the
-       * authored amount because a charge stops against whatever it runs into,
-       * which is what running it through the ordinary movement clamps does.
-       */
-      moveAmount: Math.max(0, Number(attack.MoveAmount ?? 0)),
-      moveAngle: Number(attack.MoveAngle ?? 0),
-      moveDurationMs: Math.max(0, Number(attack.MoveDuration ?? 0) * 1000),
-    });
-  }
-  return attackSet;
 };
 
 /**

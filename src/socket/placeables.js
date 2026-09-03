@@ -12,6 +12,9 @@ import {
   weaponForConstant,
 } from "../gamemaster.js";
 import { heroLevel } from "../progression.js";
+import { npcStats } from "../combat-damage.js";
+import { npcMaxHitPoints } from "../npc-stats.js";
+import { petCombatLevel, scaledNpcWeaponPower } from "../pets.js";
 import { config } from "../config.js";
 import { info, warn } from "../log.js";
 import { CLID, TEAM } from "./opcodes.js";
@@ -19,6 +22,8 @@ import { isPlausiblePosition } from "./coordinates.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { npcGenerate, objectDisable } from "./objects.js";
 import { npcHeadingUpdate } from "./ai.js";
+import { npcAttackChoices } from "./npc-attacks.js";
+import { membersOf } from "./match-world.js";
 import {
   hitPointsUpdate,
   npcAttackChoreography,
@@ -280,6 +285,8 @@ const expirePlaceable = async (session, doid) => {
   session.send(objectDisable(doid));
   session.objects.delete(doid);
   session.actors?.delete(doid);
+  session.hazardBeats?.get(`swing:${doid}`)?.();
+  session.hazardBeats?.delete(`swing:${doid}`);
 };
 
 /**
@@ -382,8 +389,60 @@ export const spawnPlaceable = async (
 
   const { living: livingAttack, death: deathAttack } = await attacksOf(npc);
   const weapon = npc.Weapon1 && (await weaponForConstant(npc.Weapon1));
+  const level = await placerLevel(session);
+  const mobileSummon = npc.CharType === "PET" && Boolean(npc.IsMover);
+  const nativeWeaponPower = mobileSummon
+    ? scaledNpcWeaponPower(weapon, level)
+    : Number(weapon?.Power ?? 1);
+  const attackSet = mobileSummon
+    ? await npcAttackChoices(npc, weapon, nativeWeaponPower)
+    : [];
+  const primaryAttack = attackSet[0] ?? null;
+  const partySize = Math.max(
+    1,
+    Math.min(5, [...membersOf(session)].filter((member) => member?.heroDoid != null).length)
+  );
+  const gm = mobileSummon ? await loadGameMaster() : null;
+  const partyHitPoints = mobileSummon
+    ? Array.from({ length: 6 }, (_, heroes) =>
+        heroes === 0 ? 0 : npcMaxHitPoints(gm, npc, level, heroes)
+      )
+    : null;
   const doid = session.allocateDoid(CLID.DistributedNPCGameObject);
-  const hitPoints = npc.HP ?? 10;
+  const hitPoints = mobileSummon
+    ? partyHitPoints[Math.min(5, partySize)]
+    : npc.HP ?? 10;
+
+  const summonAi = mobileSummon && primaryAttack
+    ? {
+        ...primaryAttack,
+        kind: "pet",
+        ownerDoid: session.heroDoid,
+        tetherDistance: Math.max(0, Number(npc.TetherDist ?? 0)),
+        tetherTimerMs: Math.max(0, Number(npc.TetherTimer ?? 0) * 1000),
+        returnDistance: Math.max(0, Number(npc.ReturnDist ?? 0)),
+        targetTimerMs: Math.max(0, Number(npc.ChangeTargetT ?? 2) * 1000),
+        targetRandMs: Math.max(0, Number(npc.ChangeTargetRand ?? 0) * 1000),
+        collects: { gold: false, xp: false, crowd: false },
+        state: "idle",
+        engaged: false,
+        aggroRadius: Math.max(0, Number(npc.AggroRadius ?? 600)),
+        disengageDistance: Math.max(
+          Number(npc.AggroRadius ?? 600),
+          Number(npc.DisengageDist ?? 1600)
+        ),
+        moveSpeed: Math.max(0, Number(npc.BaseMove ?? 180)),
+        collisionRadius,
+        attackRange: Math.max(20, ...attackSet.map((attack) => attack.range)),
+        attacks: attackSet,
+        keepDistance: 0,
+        attackTimerMs: Math.max(0, Number(npc.AttackTimer ?? 1.5) * 1000),
+        attackRandMs: Math.max(0, Number(npc.AttackTimeRand ?? 0) * 1000),
+        nextAttackAt: 0,
+        release: null,
+        wave: null,
+      }
+    : null;
 
   session.objects?.set(doid, CLID.DistributedNPCGameObject);
   /**
@@ -394,12 +453,18 @@ export const spawnPlaceable = async (
   session.actors?.set(doid, {
     hitPoints,
     maxHitPoints: hitPoints,
+    partyHitPoints,
+    partySize,
     constant: npc.Constant,
     isEnemy: false,
+    isPet: mobileSummon,
+    masterId: mobileSummon ? session.heroDoid : 0,
+    team: TEAM.PLAYERS,
+    stats: mobileSummon ? npcStats(gm, npc, petCombatLevel(level)) : undefined,
     position: { x: position.x, y: position.y },
     collisionRadius,
     heading,
-    ai: null,
+    ai: summonAi,
   });
 
   session.send(
@@ -407,14 +472,14 @@ export const spawnPlaceable = async (
       doid,
       parent: session.floorDoid,
       npcType: npc.Id,
-      level: await placerLevel(session),
+      level,
       masterId: session.heroDoid,
       position,
       heading: 0,
       scale: npc.Scale ?? 1,
       hitPoints,
       weapons: weapon
-        ? [{ type: weapon.Id, power: weapon.Power ?? 1, requiredlevel: 1, rarity: 1 }]
+        ? [{ type: weapon.Id, power: nativeWeaponPower, requiredlevel: 1, rarity: 1 }]
         : [],
       // Whoever placed it owns it. Not the row's CharType — see above.
       team: TEAM.PLAYERS,
@@ -489,6 +554,7 @@ export const spawnPlaceable = async (
     weaponPower,
     position,
     floorDoid: session.floorDoid,
+    mobileSummon,
     ticker: null,
     activation: null,
     deathStarted: false,
@@ -497,7 +563,7 @@ export const spawnPlaceable = async (
   session.placeables ??= new Map();
   session.placeables.set(doid, live);
 
-  if (livingAttack) {
+  if (livingAttack && !mobileSummon) {
     /**
      * A thrown trap with no delay checks the moment it lands. Timeline-owned
      * placeables may instead author `delayattack`, which is their arming time:
@@ -593,7 +659,10 @@ export const spawnPlaceable = async (
 
   info(
     `[${session.id}] placed ${npc.Constant} for ${lifetimeMs}ms` +
-      (livingAttack ? ` (${livingAttack.Constant} every ${beatMs}ms)` : "") +
+      (livingAttack && !mobileSummon
+        ? ` (${livingAttack.Constant} every ${beatMs}ms)`
+        : "") +
+      (mobileSummon ? " (mobile summon)" : "") +
       (deathAttack ? ` (${deathAttack.Constant} on death)` : "") +
       (livingAttack || deathAttack ? "" : " (no attack)")
   );

@@ -11,6 +11,7 @@ import {
   spawnPlaceable,
   timelineDelayMs,
 } from "../src/socket/placeables.js";
+import { tickNpcAi } from "../src/socket/ai.js";
 
 /** The poison pot's own action, as authored on TM_COOKING_COOLDOWN_POISON. */
 const POISON_ACTION = {
@@ -75,6 +76,81 @@ test("both spellings of the spawn-npc action are read, and disabled ones are not
 
   // TM_LOOT_SPAWN_A1's only spawn is "#spawnnpc" — commented out in the data.
   assert.deepEqual(await spawnNpcActions("TM_LOOT_SPAWN_A1"), []);
+});
+
+test("an Iron Legion clone is a levelled mobile summon with its full attack kit", async (t) => {
+  const [action] = await spawnNpcActions("TM_DBUSTER_IRON_LEGION");
+  const session = sessionWith({
+    dungeonAvatar: { avatar_id: 106, experience: 10_000_000 },
+  });
+  session.actors.set(session.heroDoid, {
+    hitPoints: 1000,
+    maxHitPoints: 1000,
+    collisionRadius: 26,
+    position: { ...session.heroPosition },
+    team: TEAM.PLAYERS,
+  });
+
+  const doid = await spawnPlaceable(session, {
+    action,
+    origin: session.heroPosition,
+    heading: 0,
+    weaponPower: 10,
+  });
+  t.after(() => {
+    clearDungeonPlaceables(session);
+    for (const stop of session.hazardBeats?.values?.() ?? []) stop();
+  });
+
+  const clone = session.actors.get(doid);
+  assert.equal(clone.isPet, true);
+  assert.equal(clone.masterId, session.heroDoid);
+  assert.equal(clone.maxHitPoints, 1100);
+  assert.equal(clone.ai.kind, "pet");
+  assert.equal(clone.ai.attacks.length, 4);
+
+  const generate = session.sent.find((packet) => {
+    const body = packet.subarray(2);
+    return body.readUInt16LE(0) === OP.CLIENT_CREATE_OBJECT_REQUIRED_RESP &&
+      body.readUInt32LE(12) === doid;
+  });
+  const reader = bodyOf(generate);
+  reader.u32(); // parent
+  reader.u32(); // zone
+  assert.equal(reader.u16(), CLID.DistributedNPCGameObject);
+  assert.equal(reader.u32(), doid);
+  assert.equal(reader.u32(), 3306);
+  assert.equal(reader.u8(), 100);
+  reader.f32(); reader.f32(); reader.f32(); reader.f32();
+  reader.u8();
+  assert.equal(reader.u32(), 1100);
+  assert.equal(reader.u32(), 27051);
+  assert.equal(reader.u16(), 306);
+
+  const enemyDoid = 9900;
+  session.objects.set(enemyDoid, CLID.DistributedNPCGameObject);
+  session.actors.set(enemyDoid, {
+    hitPoints: 5000,
+    maxHitPoints: 5000,
+    collisionRadius: 25,
+    constant: "BRUTE",
+    isEnemy: true,
+    position: { x: clone.position.x + 200, y: clone.position.y },
+    team: TEAM.ENEMIES,
+  });
+  const start = { ...clone.position };
+  session.sent.length = 0;
+  await tickNpcAi(session, 1000, 0.25);
+  await tickNpcAi(session, 1250, 0.25);
+
+  assert.ok(clone.position.x > start.x, "the clone pursued the enemy");
+  assert.ok(
+    session.sent.some(
+      (packet) => packet.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+        packet.readUInt32LE(4) === doid && packet.readUInt16LE(8) === 143
+    ),
+    "the clone attacked after reaching it"
+  );
 });
 
 test("the poison pot schedules its cloud instead of charging Mana for nothing", async () => {

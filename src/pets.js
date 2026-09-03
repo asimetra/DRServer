@@ -11,7 +11,7 @@ export const scaledNpcWeaponPower = (weapon, level) => {
   const base = Math.max(0, Number(weapon?.Power ?? 0));
   const exponent = Math.max(0, Number(weapon?.ScalingFactor ?? 0));
   const at = Math.max(1, Number(level ?? 1));
-  return Math.max(1, Math.floor(base + Math.pow(at, exponent) / 4));
+  return Math.max(1, Math.floor(base * (1 + Math.pow(at, exponent) / 20)));
 };
 
 /**
