@@ -70,9 +70,25 @@
  *
  * That is the whole of `KnockBackTimelineAction`, thirty-six lines, and
  * `mDistance` is assigned once. `receiveDamage` reads the result's knockback
- * byte as a 0 or a 1 and nothing more, so a modifier's fifty inches have no
- * wire to travel on and no line to be added to at the far end. This server can
- * only flip a flag it already flips.
+ * byte as a 0 or a 1 and nothing more.
+ *
+ * And the client cannot see the columns in any case. `GMModifier` — the class
+ * it parses a modifier row into — declares `MELEE_SPD`, `SHOOT_SPD`,
+ * `MAGIC_SPD`, `MP_COST`, `CHAIN`, `PIERCE`, `COOLDOWN_REDUC`, `CHARGE_REDUC`,
+ * `INCREASE_COLLISION`, `MAX_PROJECTILES` and `INCREASED_PROJECTILE_ANGLE_PERCENT`,
+ * and stops. There is no `KNOCKBACK_DISTANCE` field on it to fill.
+ *
+ * So this is not something the official does and we do not. It is the same
+ * client on both sides, computing the same push from the same attack row, and
+ * no packet can reach it — the byte is a flag, which is how the client's own
+ * writer sets it (`CombatGameObject`: `if (suffer == 1 && Knockback != 0)
+ * knockback = 1`) and how its reader tests it. Measured across 23288 echoed
+ * results, the value is 0 or 1 on all but eight, and where it is 1 the attack's
+ * authored distance is variously 15, 30, 40, 50, 60, 90, 100, 140 and 250 — a
+ * flag, not a distance.
+ *
+ * A Hitback weapon therefore pushes exactly as far as the attack says on the
+ * official server too. This server can only flip a flag it already flips.
  *
  * So all twenty-four are accounted for. Thirteen are this server's and are
  * done; `MANA_COST` and `COOLDOWN_REDUC` were already; six are the client's and
