@@ -545,16 +545,18 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
         }))
       : [];
   /**
-   * The global floor widens hostile NPC awareness, not companion awareness.
+   * The global floor widens hostile NPC awareness, not companion or wild-beast
+   * awareness.
    * Applying its default 1800 to a 600-range wolf/dragon and an 800-range
    * rhino made pets run three rooms ahead of their owners. Their own rows are
-   * already explicit and match the capture corpus, so persistent pets keep the
+   * already explicit and match the capture corpus, so those actors keep the
    * authored radius.
    */
-  const aggroRadius = options.petOwnerDoid
+  const authoredAwareness = options.petOwnerDoid || npc.CharType === "BEAST";
+  const aggroRadius = authoredAwareness
     ? Math.max(0, Number(npc.AggroRadius ?? 600))
     : Math.max(npc.AggroRadius ?? 600, config.npcAggroRadius);
-  const disengageDistance = options.petOwnerDoid
+  const disengageDistance = authoredAwareness
     ? Math.max(aggroRadius, Number(npc.DisengageDist ?? aggroRadius))
     : Math.max(npc.DisengageDist ?? 1600, aggroRadius + 400);
   // Twenty-seven rows author DeathAttack — the exploding barrels in every
@@ -576,11 +578,13 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       partySize,
       constant: resolved,
       level: npcLevel,
-      // Only a persistent pet needs its levelled vector stored: ordinary NPCs
-      // keep the existing lazy lookup, avoiding a 15-entry Map per prop.
-      stats: options.petOwnerDoid
-        ? npcStats(gm, npc, petCombatLevel(npcLevel))
-        : undefined,
+      // Persistent pets and rare moving BEAST rows need their levelled vector.
+      // Ordinary NPCs keep the existing lazy lookup, avoiding a 15-entry Map
+      // per prop.
+      stats:
+        options.petOwnerDoid || npc.CharType === "BEAST"
+          ? npcStats(gm, npc, petCombatLevel(npcLevel))
+          : undefined,
       /**
        * Which side it is on, kept so a trap can be stopped from hitting it.
        *
@@ -595,6 +599,9 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       // Only real enemies gate floor completion; smashing every barrel is not
       // what finishes a dungeon.
       isEnemy: npc.CharType === "ENEMY",
+      // A moving BEAST is a neutral third-party combatant. Static BEAST rows
+      // are traps/placeables and must never enter NPC target selection.
+      isBeast: npc.CharType === "BEAST" && Boolean(npc.IsMover),
       isPet: npc.CharType === "PET" && Boolean(options.petOwnerDoid),
       masterId: Number(options.masterId ?? 0),
       /**
@@ -712,9 +719,15 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       collisionRadius,
       heading: spawnHeading,
       ai:
-        (npc.CharType === "ENEMY" || options.petOwnerDoid) && npc.IsMover && nativeAttack
+        (["ENEMY", "BEAST"].includes(npc.CharType) || options.petOwnerDoid) &&
+        npc.IsMover &&
+        nativeAttack
           ? {
-              kind: options.petOwnerDoid ? "pet" : "enemy",
+              kind: options.petOwnerDoid
+                ? "pet"
+                : npc.CharType === "BEAST"
+                  ? "beast"
+                  : "enemy",
               ownerDoid: Number(options.petOwnerDoid ?? 0),
               tetherDistance: Math.max(0, Number(npc.TetherDist ?? 0)),
               tetherTimerMs: Math.max(0, Number(npc.TetherTimer ?? 0) * 1000),

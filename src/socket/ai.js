@@ -591,21 +591,23 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       return { doid, member, actor, position };
     })
     .filter(({ actor, position }) => actor && !actor.dead && actor.hitPoints > 0 && position);
-  if (!heroes.length) {
-    // The server owns death. Explicitly releasing every chase state prevents
-    // an NPC from resuming a stale route while the player is down or reviving.
-    for (const actor of actors.values()) clearNpcTarget(actor);
-    return;
-  }
   const heroDoids = new Set(heroes.map(({ doid }) => doid));
   const spatialIndex = buildNpcSpatialIndex(actors, deltaSeconds, heroDoids);
   const pets = [];
   const enemies = [];
+  const beasts = [];
   for (const [doid, actor] of actors) {
     if (actor.dead || !(actor.hitPoints > 0) || !actor.position) continue;
     const candidate = { doid, actor, position: actor.position, member: null };
     if (actor.isPet) pets.push(candidate);
     else if (actor.isEnemy) enemies.push(candidate);
+    else if (actor.isBeast) beasts.push(candidate);
+  }
+  if (!heroes.length && !pets.length && (!enemies.length || !beasts.length)) {
+    // Nothing has an opposing combatant left. Releasing chase state prevents
+    // stale routes resuming after a revive or a new spawn.
+    for (const actor of actors.values()) clearNpcTarget(actor);
+    return;
   }
   const nearestTo = (position, candidates) =>
     candidates.reduce(
@@ -620,6 +622,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
 
   const heroByDoid = new Map(heroes.map((candidate) => [candidate.doid, candidate]));
   const petByDoid = new Map(pets.map((candidate) => [candidate.doid, candidate]));
+  const beastByDoid = new Map(beasts.map((candidate) => [candidate.doid, candidate]));
+  const petTargets = [...enemies, ...beasts];
+  const beastTargets = [...heroes, ...pets, ...enemies];
   const petAggressors = new Map();
   for (const { actor } of enemies) {
     if (!petByDoid.has(actor.ai?.targetDoid)) continue;
@@ -661,17 +666,39 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       now < (ai.nextTargetAt ?? 0) &&
       (petAggressors.get(lockedPet.doid) ?? 0) <= MAX_PET_AGGRESSORS
     ) return lockedPet;
+    const lockedBeast = beastByDoid.get(ai.targetDoid);
+    if (lockedBeast && now < (ai.nextTargetAt ?? 0)) return lockedBeast;
 
     const hero = nearestTo(actor.position, heroes);
     const pet = nearestTo(actor.position, pets);
+    let player = hero;
     if (pet && (petAggressors.get(pet.doid) ?? 0) < MAX_PET_AGGRESSORS) {
       const heroDistance = hero ? distanceTo(actor.position, hero.position) : Infinity;
       const petDistance = distanceTo(actor.position, pet.position);
       if (petDistance + PET_AGGRO_DISTANCE_ADVANTAGE < heroDistance) {
-        return rememberEnemyTarget(ai, pet);
+        player = pet;
       }
     }
-    return rememberEnemyTarget(ai, hero);
+    const beast = nearestTo(actor.position, beasts);
+    const victim =
+      beast && (!player || squaredDistanceTo(actor.position, beast.position) <
+        squaredDistanceTo(actor.position, player.position))
+        ? beast
+        : player;
+    return rememberEnemyTarget(ai, victim);
+  };
+
+  /** Team 7 fights every living combatant outside team 7, whichever is near. */
+  const beastVictim = (actor, ai) => {
+    const locked = beastTargets.find(({ doid }) => doid === ai.targetDoid);
+    if (locked && now < (ai.nextTargetAt ?? 0)) return locked;
+    const victim = nearestTo(actor.position, beastTargets);
+    ai.targetDoid = victim?.doid ?? null;
+    ai.nextTargetAt = now + Math.max(
+      250,
+      (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0)
+    );
+    return victim;
   };
 
   for (const [doid, actor] of actors) {
@@ -690,7 +717,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         const ownerSession = owner.member.world?.contextFor(owner.member) ?? owner.member;
         collectNearbyForPet(ownerSession, actor.position, ai.collects);
       }
-      const enemy = nearestTo(actor.position, enemies);
+      const enemy = nearestTo(actor.position, petTargets);
       const ownerDistance = distanceTo(actor.position, owner.position);
       const enemyDistance = enemy ? distanceTo(actor.position, enemy.position) : Infinity;
       if (ai.tetherDistance > 0 && ownerDistance > ai.tetherDistance) {
@@ -714,6 +741,8 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         victim = enemy;
         ai.targetDoid = enemy.doid;
       }
+    } else if (ai.kind === "beast") {
+      victim = beastVictim(actor, ai);
     } else {
       victim = enemyVictim(actor, ai);
     }
