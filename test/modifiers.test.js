@@ -1472,3 +1472,40 @@ test("a Barrier weapon halves a melee hit on the hero, and not a magic one", asy
     "the hero's legendary shielded a monster"
   );
 });
+
+test("Midas Touch and Brain Trust raise what a drop is worth, each its own", async () => {
+  /**
+   * `Midas Touch` raises gold by 5% and `Brain Trust` experience by 5%, and
+   * neither was read. Applied where the reward is credited rather than where the
+   * doober is made: a drop is shared across the party and a legendary is not, so
+   * one player's Midas pays that player and nobody else.
+   */
+  const { legendaryDropBonus } = await import("../src/hero-stats.js");
+  const { applyProgressReward } = await import("../src/socket/rewards.js");
+  const gm = await loadGameMaster();
+
+  const named = (id) => gm.raw.LegendaryModifiers.find((row) => row.Id === id)?.Name;
+  assert.equal(named(8), "Brain Trust");
+  assert.equal(named(9), "Midas Touch");
+
+  assert.equal(legendaryDropBonus([{ legendarymodifier: 9 }], "gold"), 0.05);
+  assert.equal(legendaryDropBonus([{ legendarymodifier: 9 }], "xp"), 0, "Midas pays no experience");
+  assert.equal(legendaryDropBonus([{ legendarymodifier: 8 }], "xp"), 0.05);
+  assert.equal(legendaryDropBonus([{ legendarymodifier: 8 }], "gold"), 0);
+  // Four copies are still five per cent.
+  assert.equal(
+    legendaryDropBonus([{ legendarymodifier: 9 }, { legendarymodifier: 9 }], "gold"),
+    0.05
+  );
+
+  const credited = (weapons) => {
+    const session = { heroWeapons: weapons, dungeonAccount: {}, dungeonRewards: null };
+    applyProgressReward(session, { gold: 1000, xp: 1000 });
+    return session.dungeonRewards;
+  };
+
+  assert.deepEqual(credited([{}]), { gold: 1000, gems: 0, xp: 1000 });
+  assert.equal(credited([{ legendarymodifier: 9 }]).gold, 1050, "Midas paid nothing extra");
+  assert.equal(credited([{ legendarymodifier: 9 }]).xp, 1000, "and paid it in the wrong currency");
+  assert.equal(credited([{ legendarymodifier: 8 }]).xp, 1050);
+});

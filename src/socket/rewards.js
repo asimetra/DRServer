@@ -1,3 +1,4 @@
+import { legendaryDropBonus } from "../hero-stats.js";
 import { saveAccount, nextObjectId } from "../accounts.js";
 import { info, warn } from "../log.js";
 import { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
@@ -115,8 +116,16 @@ export const applyProgressReward = (
   session,
   { gold: offeredGold = 0, xp: offeredXp = 0, crowd: offeredCrowd = 0 }
 ) => {
-  const gold = rewardAmount(offeredGold);
-  const xp = rewardAmount(offeredXp);
+  /**
+   * Raised by whatever this member's own weapons carry — see
+   * `legendaryDropBonus`. Applied here rather than where the doober is made,
+   * because the drop is shared across the party and the legendary is not: one
+   * player's `Midas Touch` pays that player and nobody else, which is what this
+   * function being called once per member with their own context is for.
+   */
+  const weapons = session.heroWeapons ?? [];
+  const gold = rewardAmount(offeredGold * (1 + legendaryDropBonus(weapons, "gold")));
+  const xp = rewardAmount(offeredXp * (1 + legendaryDropBonus(weapons, "xp")));
   const crowd = rewardAmount(offeredCrowd);
   if (!gold && !xp && !crowd) return false;
 

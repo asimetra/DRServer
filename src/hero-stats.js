@@ -287,3 +287,29 @@ export const legendaryShieldFor = (weapons = [], defenceStat) => {
   }
   return 0;
 };
+
+/**
+ * The two legendary multipliers on what an enemy drops.
+ *
+ * `Midas Touch` raises gold by 5% and `Brain Trust` experience by 5%, both in
+ * their own words and both unread. Like the shields, neither stacks — the
+ * descriptions do not say so outright, but they are written the same way as the
+ * three that do, and a flat five per cent is the reading that does not turn
+ * four weapons into twenty.
+ */
+const LEGENDARY_DROP = new Map([
+  [8, "xp"], // Brain Trust
+  [9, "gold"], // Midas Touch
+]);
+
+const LEGENDARY_DROP_SHARE = 0.05;
+
+export const legendaryDropBonus = (weapons = [], kind) => {
+  if (!kind) return 0;
+  for (const weapon of weapons) {
+    if (LEGENDARY_DROP.get(Number(weapon?.legendarymodifier ?? 0)) === kind) {
+      return LEGENDARY_DROP_SHARE;
+    }
+  }
+  return 0;
+};
