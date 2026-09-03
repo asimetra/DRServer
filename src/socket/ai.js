@@ -433,8 +433,23 @@ const faceTarget = (session, doid, actor, target) => {
  * The 100ms floor is for the four enemy rows that author `AttackTimer` 0 with
  * no spread. Without it they attack on every tick of the AI loop.
  */
-export const attackIntervalMs = (ai) =>
-  Math.max(100, (ai.attackTimerMs ?? 1500) + Math.random() * (ai.attackRandMs ?? 0));
+/**
+ * How long until this one swings again, and what is slowing it down.
+ *
+ * `slowness` is the reciprocal of an attack-speed multiplier: `CRIPPLE_L4`
+ * authors `MELEE_SPD` 0.2, so a muzzled monster waits five times as long.
+ *
+ * This is the whole of what `CRIPPLE` — "Muzzling" at five stars, "Slow enemy
+ * attacks for 6 sec!" — was supposed to do, and nothing read those columns. The
+ * buff object was created and drawn and the monster swung on exactly the same
+ * clock, which is the same shape of bug the stun check above was written for:
+ * a debuff that was a picture on the health bar.
+ */
+export const attackIntervalMs = (ai, slowness = 1) =>
+  Math.max(
+    100,
+    ((ai.attackTimerMs ?? 1500) + Math.random() * (ai.attackRandMs ?? 0)) * Math.max(1, slowness)
+  );
 
 /** Moves a freshly generated prisoner through its own cage before normal AI starts. */
 /** How long a release may make no headway before it is given up on. */
@@ -969,7 +984,15 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       };
     }
 
-    ai.nextAttackAt = now + attackIntervalMs(ai);
+    /**
+     * Read off `MELEE_SPD` alone. Nineteen buffs touch the three speed columns
+     * and exactly one sets them differently from each other — `BERSERK_DB`,
+     * which is a hero's own ultimate and never reaches an NPC. Every debuff that
+     * does reach one sets all three alike, so which is read does not change the
+     * answer.
+     */
+    const attackSpeed = buffMultiplierFor(session, doid, "MELEE_SPD");
+    ai.nextAttackAt = now + attackIntervalMs(ai, attackSpeed > 0 ? 1 / attackSpeed : 1);
     // Awaited so the hit lands before the tick moves on: damage is the
     // server's own bookkeeping and must not race the next frame.
     const victimSession = victim.member

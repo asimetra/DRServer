@@ -590,3 +590,96 @@ test("the Battle Chef makes food from his own COOKING, and nobody else does", as
     "fifty points bought nothing"
   );
 });
+
+test("Muzzling actually slows an enemy's attacks", async () => {
+  /**
+   * `CRIPPLE_5` is "Muzzling" and promises "Slow enemy attacks for 6 sec!". Its
+   * `CRIPPLE_L4` authors `MELEE_SPD`, `SHOOT_SPD` and `MAGIC_SPD` at 0.2, and
+   * nothing read them — the buff was created and drawn and the monster swung on
+   * exactly the same clock. Reported as: the effect is there, it does not slow.
+   */
+  const { attackIntervalMs } = await import("../src/socket/ai.js");
+  const gm = await loadGameMaster();
+
+  const cripple = gm.raw.Buff.find((row) => row.Constant === "CRIPPLE_L4");
+  assert.equal(cripple.MELEE_SPD, 0.2, "the fixture still authors a fifth speed");
+  assert.equal(
+    gm.modifiersById.get(70035).Name,
+    "Muzzling",
+    "CRIPPLE_5 is the one the report named"
+  );
+
+  const ai = { attackTimerMs: 1000, attackRandMs: 0 };
+  assert.equal(attackIntervalMs(ai), 1000, "an unhindered monster keeps its own cadence");
+  assert.equal(
+    attackIntervalMs(ai, 1 / cripple.MELEE_SPD),
+    5000,
+    "a muzzled one waits five times as long"
+  );
+
+  // A buff that speeds an actor up must not shorten an NPC's interval below its
+  // authored one; the floor is the monster's own cadence.
+  assert.equal(attackIntervalMs(ai, 1 / 1.5), 1000);
+});
+
+test("a muzzled monster's cadence is read off its live buffs", async () => {
+  const { attackIntervalMs } = await import("../src/socket/ai.js");
+  const { buffMultiplierFor } = await import("../src/socket/buffs.js");
+  const gm = await loadGameMaster();
+  const cripple = gm.raw.Buff.find((row) => row.Constant === "CRIPPLE_L4");
+
+  const ENEMY = 9900;
+  const session = { activeBuffs: new Map([[1, { affectedActor: ENEMY, buff: cripple }]]) };
+  const speed = buffMultiplierFor(session, ENEMY, "MELEE_SPD");
+
+  assert.equal(speed, 0.2, "the live buff reports the authored speed");
+  assert.equal(attackIntervalMs({ attackTimerMs: 1000, attackRandMs: 0 }, 1 / speed), 5000);
+  // And an enemy carrying nothing is unaffected.
+  assert.equal(buffMultiplierFor({ activeBuffs: new Map() }, ENEMY, "MELEE_SPD"), 1);
+});
+
+test("the AI tick actually pays the muzzle, not just the arithmetic", async () => {
+  /**
+   * The two tests above assert `attackIntervalMs` and `buffMultiplierFor`
+   * separately, and both pass with the two never introduced to each other — the
+   * first version of this fix was checked that way and the check was worthless.
+   * This one runs the tick.
+   */
+  const { buildFloor } = await import("./helpers/floor.js");
+  const { tickNpcAi } = await import("../src/socket/ai.js");
+  const gm = await loadGameMaster();
+  const cripple = gm.raw.Buff.find((row) => row.Constant === "CRIPPLE_L4");
+
+  /** Runs one tick with the hero standing on a monster, and reports its wait. */
+  const waitAfterSwinging = async (buffed) => {
+    const world = await buildFloor("castle/arena/db_floor_TUTORIAL_LEVEL_1.json");
+    const { session } = world;
+    const [doid, actor] =
+      [...session.actors].find(([, candidate]) => candidate.ai && candidate.isEnemy) ?? [];
+    assert.ok(actor, "the floor produced an enemy with AI");
+
+    session.heroPosition = { ...actor.position };
+    const hero = session.actors.get(session.heroDoid);
+    if (hero) hero.position = { ...actor.position };
+    if (buffed) {
+      session.activeBuffs = new Map([[1, { affectedActor: doid, buff: cripple }]]);
+    }
+
+    actor.ai.attackTimerMs = 1000;
+    actor.ai.attackRandMs = 0;
+    actor.ai.nextAttackAt = 0;
+    const now = 100000;
+    await tickNpcAi(session, now, 0.1);
+    return actor.ai.nextAttackAt - now;
+  };
+
+  const plain = await waitAfterSwinging(false);
+  const muzzled = await waitAfterSwinging(true);
+
+  assert.ok(plain > 0, `the monster never swung (wait ${plain})`);
+  assert.equal(
+    muzzled,
+    plain * (1 / cripple.MELEE_SPD),
+    `muzzled waited ${muzzled} against an ordinary ${plain}`
+  );
+});
