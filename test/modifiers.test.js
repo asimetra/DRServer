@@ -1284,12 +1284,13 @@ test("swinging a Trapper weapon drags the monster in", async () => {
       allocateDoid: () => ++nextDoid, send: () => {},
     };
 
-    // The client's own resolver sets this byte; the record here says the swing
-    // knocked back, which is what the server then has to act on.
+    // The client proposes no knockback — it sends that byte as 0 on 13624 of
+    // 13626 recorded results — so the server has to decide it, and the push
+    // must not wait to be asked.
     const record = new PacketWriter()
       .u32(HERO).u32(ENEMY).u32(0)
       .u8(0).u8(0).u32(SOUL_BANG).u32(ENEMY)
-      .u8(0).u8(0).u8(1).u8(0).u8(0).u8(0)
+      .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0)
       .u32(0).u32(0).u8(0)
       .body();
     const packet = new PacketWriter()

@@ -2293,6 +2293,13 @@ const withDamage = (bytes, wireDamage) => {
  * `critRollFor` — so setting it here is the whole of how it is ever set.
  */
 const CRITICAL_HIT_BYTE = 26; // attacker, attackee, damage, Attack(10), when, suffer, knockback, blocked
+const KNOCKBACK_BYTE = 24; // attacker, attackee, damage, Attack(10), when, suffer
+const withKnockback = (bytes) => {
+  const copy = Buffer.from(bytes);
+  copy.writeUInt8(1, KNOCKBACK_BYTE);
+  return copy;
+};
+
 const withCrit = (bytes) => {
   const copy = Buffer.from(bytes);
   copy.writeUInt8(1, CRITICAL_HIT_BYTE);
@@ -2838,7 +2845,24 @@ const applyProposals = async (session, proposals) => {
       : { critical: false, multiplier: 1 };
     const damage = critical ? Math.round(plain * multiplier) : plain;
 
-    const bytes = critical ? withCrit(proposal.bytes) : proposal.bytes;
+    const shove = knockbackFor(await loadGameMaster(), swung);
+    /**
+     * Not gated on the client's flag, which is the mistake the first version
+     * made: the client proposes that byte as 0 on 13624 of 13626 recorded
+     * results. It is the server that sets it — the official does so on 13024 of
+     * its echoes — exactly as it decides the crit beside it. Waiting for the
+     * client to ask meant the push never happened at all.
+     *
+     * Only for a weapon that carries one of the two modifiers. The attack's own
+     * `Knockback` column is deliberately not used here: `KATANA_SOUL_BANG`
+     * authors 50 and the official's monsters do not move for it — 6568 flagged
+     * hits, median displacement zero — so a hero's ordinary swing does not
+     * shove, whatever its row says. What the corpus cannot show is a `Hitback`
+     * or a `Trapper`, since no recorded player carried one.
+     */
+    let bytes = critical ? withCrit(proposal.bytes) : proposal.bytes;
+    // And says so, so the client plays the stagger over the move.
+    if (shove) bytes = withKnockback(bytes);
     const echo = receiveCombatResult(proposal.attackee, fieldId, withDamage(bytes, -damage));
 
     /**
@@ -2893,11 +2917,8 @@ const applyProposals = async (session, proposals) => {
      * reading of the table and not a measurement: no recorded player carried
      * one, so the corpus cannot show what a Trapper does.
      */
-    const shove = knockbackFor(await loadGameMaster(), swung) ||
-      Number(attack?.Knockback ?? 0);
-    if (proposal.knockback && shove) {
-      pushVictim(session, proposal.attackee, proposal.attacker, shove);
-    }
+
+    if (shove) pushVictim(session, proposal.attackee, proposal.attacker, shove);
 
     const actor = session.actors?.get(proposal.attackee);
     const wasDead = Boolean(actor?.dead);
