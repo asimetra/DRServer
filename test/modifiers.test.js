@@ -1539,4 +1539,35 @@ test("Buster Gen pays a point for a kill, and stops at the bar's top", async () 
   assert.equal(await killWith({ legendarymodifier: 7 }), 1, "the kill paid nothing");
   assert.equal(await killWith({}), 0, "a plain weapon paid anyway");
   assert.equal(await killWith({ legendarymodifier: 7 }, 120), 120, "the bar overflowed");
+
+  /**
+   * And a kill by a placeable, which is the other place a hero's kill is
+   * counted. Removing the payment from that call site alone broke nothing until
+   * this was here — the same one-end-of-the-chain gap as before.
+   */
+  const { performPlaceableAttack } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const ENEMY = 9900;
+  const actor = {
+    hitPoints: 1, maxHitPoints: 5000, collisionRadius: 25,
+    constant: "BRUTE", isEnemy: true, position: { x: 1050, y: 1000 },
+  };
+  const session = {
+    id: 54, heroDoid: 500, floorDoid: 400, dungeonActive: true,
+    heroPosition: { x: 1000, y: 1000 },
+    maxDungeonBusterPoints: 120, dungeonBusterPoints: 0,
+    dungeonAvatar: { avatar_id: 104, experience: 0 },
+    heroWeapons: [{ type: 12502, power: 30, legendarymodifier: 7 }],
+    random: () => 1,
+    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    actors: new Map([[ENEMY, actor]]),
+    allocateDoid: () => 901, send: () => {},
+  };
+  await performPlaceableAttack(session, 700, {
+    attack: gm.raw.Attack.find((row) => row.Constant === "GARLIC_EXPLOSION"),
+    victims: [{ doid: ENEMY, actor }],
+    weaponPower: 30,
+    weapon: session.heroWeapons[0],
+  });
+  assert.equal(session.dungeonBusterPoints, 1, "a kill by a bomb paid nothing");
 });
