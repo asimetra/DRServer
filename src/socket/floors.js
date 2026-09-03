@@ -4,6 +4,7 @@ import path from "node:path";
 import { config } from "../config.js";
 import { envSetting } from "../env.js";
 import { generateFloor } from "./tilegen.js";
+import { sealedRooms } from "./secrets.js";
 import {
   mapNode,
   coliseumTier,
@@ -378,23 +379,51 @@ export const levelsFile = (relative) => {
   return path.join(config.resourcesDir, wanted);
 };
 
+/**
+ * The tile list the floor opens with: everything except the rooms being held
+ * back. Each withheld tile goes on the wire later, appended to this list, when
+ * the wall in its doorway breaks — see revealSecretRoom in dungeon.js.
+ */
+const visibleTiles = (tiles, secrets) => {
+  const hidden = new Set(secrets.map((room) => room.tile));
+  return hidden.size ? tiles.filter((tile) => !hidden.has(tile)) : tiles;
+};
+
+const emptyPlacements = () => ({
+  heroSpawn: [],
+  npc: [],
+  collectable: [],
+  generator: [],
+  triggerable: [],
+  trigger: [],
+  logicGate: [],
+});
+
+/**
+ * What a reveal rebuilds. The triggers and the hero spawn are left on the floor
+ * whatever happens: the wiring is read once, at floor build, and a trigger shut
+ * inside a room nobody can enter cannot fire anyway.
+ */
+const REVEALED_KINDS = new Set(["npc", "collectable", "generator", "triggerable"]);
+
 export const readPlacements = async (libraryPath, tiles) => {
   const file = levelsFile(libraryPath);
   const library = JSON.parse(await fs.readFile(file, "utf8"));
 
   const definitionsById = new Map(library.LETiles.map((tile) => [tile.id, tile]));
   const navigationDefinitions = await loadNavigationLibrary();
+  /**
+   * The rooms this floor will not admit to having yet — see secrets.js. Their
+   * placements are read exactly like everyone else's and then set aside, so
+   * revealing one later is the same work as building it now, minus the wait.
+   */
+  const sealed = sealedRooms(definitionsById, tiles);
+  const withheld = new Map(
+    [...sealed].map(([instance, room]) => [instance, { ...room, placements: emptyPlacements() }])
+  );
   const staticColliders = [];
   const triggerColliders = new Map();
-  const byKind = {
-    heroSpawn: [],
-    npc: [],
-    collectable: [],
-    generator: [],
-    triggerable: [],
-    trigger: [],
-    logicGate: [],
-  };
+  const byKind = emptyPlacements();
 
   /**
    * A placed tile brings its own object ids, and a layout places the same tile
@@ -573,7 +602,9 @@ export const readPlacements = async (libraryPath, tiles) => {
             navigationEntry.combatCollisions
           );
         }
-        byKind[placement.kind].push(placement);
+        const room = withheld.get(instance);
+        if (room && REVEALED_KINDS.has(placement.kind)) room.placements[placement.kind].push(placement);
+        else byKind[placement.kind].push(placement);
       }
     }
   }
@@ -582,6 +613,20 @@ export const readPlacements = async (libraryPath, tiles) => {
 
   return {
     placements: byKind,
+    /**
+     * One entry per withheld room, carrying its tile, what opens it and
+     * everything that stands inside it.
+     *
+     * Navigation deliberately keeps the room — its cells, its colliders and its
+     * bounds are all below, built from the whole tile list. The room is walled
+     * off rather than missing, so nothing can path into it before the wall
+     * breaks, and leaving it in means a reveal has no navigation work to do.
+     */
+    secrets: [...withheld].map(([instance, room]) => ({
+      tile: tiles[instance],
+      openedBy: room.openedBy,
+      placements: room.placements,
+    })),
     wiring,
     navigation: {
       bounds: {
@@ -629,8 +674,8 @@ export const loadFloor = async (name = "arena_gauntlet") => {
   const floor = {
     name,
     tileLibrary: parsed.tileLibrary,
-    tiles,
     ...placements,
+    tiles: visibleTiles(tiles, placements.secrets),
   };
 
   const counts = Object.entries(floor.placements)
@@ -659,10 +704,10 @@ export const buildFloor = async (tileLibrary, { tier = 1, tileCount = 9, seed = 
   const floor = {
     name: `${tileLibrary}#${seed}`,
     tileLibrary,
-    tiles: layout.tiles,
     generated: true,
     hasExit: layout.hasExit,
     ...placements,
+    tiles: visibleTiles(layout.tiles, placements.secrets),
   };
 
   const counts = Object.entries(floor.placements)

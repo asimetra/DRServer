@@ -699,6 +699,11 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
         // tile's is, and it is what starts the reward chest and the floor's
         // completion chain.
         if (!options.suppressTriggerReporting) reportNpcDeath(session, position.id);
+        // And the room this one was standing in front of, if it was the wall
+        // sealing a secret. Outside the trigger guard: a reveal is not a
+        // trigger report, and a wall does not stop being a door because the
+        // spawn that placed it asked for quiet.
+        session.revealSecretRoom?.(position.id);
         options.onDeath?.(doid);
       },
       /** Once the body has actually been taken away — see combat.js. */
@@ -2083,6 +2088,52 @@ const BUILDERS = {
   triggerable: buildTriggerables,
 };
 
+/**
+ * A secret room arriving on a floor that has already been built.
+ *
+ * The wall in its doorway has just lost its last hit point, and this is the
+ * whole of what the official does next: hand the floor a tile list with the
+ * room's tile appended, then generate everything standing in it. Node 50088
+ * reads 8 tiles, then 9 sixty milliseconds after the wall breaks, then the
+ * creates for a secret wall, an iron maiden, a torture chair, a weapon table
+ * and four knights — the room and its contents in one breath.
+ *
+ * The list goes out whole rather than as a delta because that is what the field
+ * is: `DistributedDungeonFloor.tiles` is a list, not a stream. Re-sending the
+ * tiles the client already has costs nothing, because it dedupes them by
+ * (x, y) and only builds placements it has not seen — the same property that
+ * lets production repeat the list on every floor after the first.
+ *
+ * Which rooms are withheld, and why only the ones sealed by a *neighbour's*
+ * wall, is written down in secrets.js.
+ */
+const revealSecretRoom = async (context, floor, floorDoid, placementId) => {
+  const { session, isActive } = context;
+  const index = (floor.secrets ?? []).findIndex((room) => room.openedBy.includes(placementId));
+  if (index < 0 || !isActive() || session.revealedRooms?.has(index)) return;
+
+  /**
+   * Tracked on the session and never on the floor. `loadFloor` caches an
+   * authored floor by name and hands the same object to every run that asks
+   * for it, so a `revealed` flag written there would open the room for the
+   * next player before they had swung at anything.
+   */
+  session.revealedRooms.add(index);
+  const room = floor.secrets[index];
+  session.revealedTiles.push(room.tile);
+  session.send(floorTilesUpdate(floorDoid, [...floor.tiles, ...session.revealedTiles]));
+
+  for (const [kind, build] of Object.entries(BUILDERS)) {
+    if (!isActive()) return;
+    const placements = room.placements[kind] ?? [];
+    if (placements.length) await build(context, placements);
+  }
+  info(
+    `[${session.id}] secret room revealed at ${room.tile.x},${room.tile.y} ` +
+      `by ${placementId}`
+  );
+};
+
 const dungeonMembers = (session) =>
   [...membersOf(session)].filter(
     (member) => isLiveMember(member) && member?.heroSpawn && member?.heroDoid
@@ -2577,6 +2628,18 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
     isActive,
   };
   const summary = [];
+
+  /**
+   * Reset per floor, because both live on the session and a run has several
+   * floors: carrying the last floor's revealed tiles into the next one appends
+   * rooms from a layout that is no longer there.
+   */
+  session.revealedRooms = new Set();
+  session.revealedTiles = [];
+  session.revealSecretRoom = (placementId) =>
+    revealSecretRoom(context, floor, floorDoid, placementId).catch((error) =>
+      warn(`secret reveal ${placementId}: ${error.message ?? error}`)
+    );
 
   let petsBuilt = 0;
   for (const member of party) {
