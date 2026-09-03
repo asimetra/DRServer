@@ -1098,3 +1098,38 @@ test("the fire a bomb leaves keeps the weapon that lit it", async (t) => {
   );
   assert.equal(fire.heroWeapon, weapon, "the fire lost the weapon that lit it");
 });
+
+const MUZZLING = 70035; // CRIPPLE_5, BUFF_1 = CRIPPLE_L4
+
+test("swinging a Muzzling weapon leaves the slowdown where the AI reads it", async () => {
+  /**
+   * The link between "the weapon grants the debuff" and "the AI pays it". Both
+   * halves were tested on their own — the grant in one test and the interval in
+   * another, with the buff placed by hand — and a chain tested only at its ends
+   * is how Muzzling looked correct while doing nothing in the first place.
+   */
+  const { buffMultiplierFor } = await import("../src/socket/buffs.js");
+  const { attackIntervalMs } = await import("../src/socket/ai.js");
+  const gm = await loadGameMaster();
+
+  const muzzling = gm.modifiersById.get(MUZZLING);
+  assert.equal(muzzling.Name, "Muzzling", "the fixture is the reported modifier");
+  const cripple = gm.raw.Buff.find((row) => row.Constant === muzzling.BUFF_1);
+
+  const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: MUZZLING });
+  await swing(session, ENEMY);
+
+  assert.equal(
+    held(session, ENEMY, muzzling.BUFF_1),
+    1,
+    "the swing left no muzzle on the monster"
+  );
+
+  // The value the AI tick reads off that same session, and what it does with it.
+  const speed = buffMultiplierFor(session, ENEMY, "MELEE_SPD");
+  assert.equal(speed, cripple.MELEE_SPD, "the AI would read a different speed than was granted");
+  assert.equal(
+    attackIntervalMs({ attackTimerMs: 1000, attackRandMs: 0 }, 1 / speed),
+    1000 / cripple.MELEE_SPD
+  );
+});
