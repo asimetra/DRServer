@@ -364,3 +364,28 @@ export const legendaryTrapShield = (weapons = []) =>
   weapons.some((weapon) => Number(weapon?.legendarymodifier ?? 0) === 6)
     ? ADMIRALS_LUCK_SHARE
     : 0;
+
+/**
+ * Which legendaries stack, and how much of that is known.
+ *
+ * Three say so themselves: `Barrier`, `Cover` and `Comprehend` each end with
+ * "Does not stack", and they are implemented flat. The other six say nothing,
+ * and the rules here are readings rather than measurements:
+ *
+ *   flat    `Midas Touch`, `Brain Trust`, `Buster Gen`, `Admiral's Luck`
+ *   summed  `Beast Master`, `Animal Fury`
+ *
+ * The split is that the first four take a share of something or pay a fixed
+ * price, where doubling turns 5% into 10% and a point into two, while the last
+ * two add to a number the way `Stamina` and `Aptitude` add to health and mana —
+ * and those two are the client's, where the addition is what it does.
+ *
+ * The captures cannot settle it. Legendaries are common enough — 33687 of the
+ * items in the recorded RPC traffic carry one — but of the 384 heroes seen with
+ * one equipped, exactly one carries the same kind twice, and that one is
+ * `Barrier`, whose rule was never in doubt. There is no recorded player holding
+ * two Midas Touches or two Beast Masters, so nothing on the wire has an opinion.
+ *
+ * Worth revisiting only with a capture of somebody wearing a pair. Searching for
+ * one has been done; the result is above.
+ */
