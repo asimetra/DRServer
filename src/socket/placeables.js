@@ -907,16 +907,24 @@ export const schedulePlaceables = async (
   session,
   attack,
   weaponSlot = 0,
-  { playSpeed = 1 } = {}
+  { playSpeed = 1, fromWeapon = true } = {}
 ) => {
   const weaponPower = session.heroWeapons?.[weaponSlot]?.power;
   /**
-   * And the weapon itself, for what its modifiers say — see `attackMultiplierFor`.
-   * A placeable's lingering damage is priced from the weapon that threw it, and
-   * carrying only the power meant a Sturdy bomb burned exactly as hard as a
-   * plain one.
+   * And the weapon itself, for what its modifiers say — see `attackMultiplierFor`
+   * and `critRollFor`. A placeable's lingering damage is priced from the weapon
+   * that threw it, and carrying only the power meant a Sturdy bomb burned
+   * exactly as hard as a plain one.
+   *
+   * `fromWeapon` is false for a consumable, and it has to be asked rather than
+   * inferred from the slot. A thrown bomb passes slot 0 because the slot it
+   * really came from indexes the powerups — so reading `heroWeapons[0]` hands
+   * it whatever weapon happens to be in the hero's first slot, and it would
+   * crit and scale on modifiers that have nothing to do with it. The official
+   * carries no crit on `HEALTH_BOMB_ATTACK` or `PARTY_BOMB_ATTACK` across 623
+   * recorded hits.
    */
-  const weapon = session.heroWeapons?.[weaponSlot];
+  const weapon = fromWeapon ? session.heroWeapons?.[weaponSlot] : null;
   const actions = await spawnNpcActions(attack?.AttackTimeline);
   if (!actions.length || !session.floorDoid || !session.heroPosition) return false;
 

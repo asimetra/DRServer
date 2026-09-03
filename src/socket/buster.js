@@ -475,8 +475,10 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
     ? grantToParty(session, attack, (context) => grantMana(context, -Number(attack.ManaCost)))
     : 0;
   // A thrown bomb is a placeable like any other; the slot it came from indexes
-  // the powerups, so the weapon slot is not this one's to give.
-  await schedulePlaceables(session, attack, 0, { playSpeed });
+  // the powerups, so the weapon slot is not this one's to give — and neither is
+  // the weapon. `fromWeapon` says so out loud, because the zero above reads as
+  // a real weapon otherwise and lends the bomb its modifiers.
+  await schedulePlaceables(session, attack, 0, { playSpeed, fromWeapon: false });
   info(
     `[${session.id}] used ${stackable.Constant} from slot ${slot}, ${equipped.count} left` +
       (healed ? `; healed ${healed}` : "") +

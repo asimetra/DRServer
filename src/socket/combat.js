@@ -1441,14 +1441,36 @@ export const performPlaceableAttack = async (
      * echoes against 11 proposals, and 13 `THROW_GARLIC` echoes against 7,
      * those extra six being the cloud ticking on its own.
      */
-    const damage = await computeDamage(
+    const plainDamage = await computeDamage(
       session,
       { attacker: session.heroDoid, attackee: victim.doid, attackType: attack.Id },
       attack,
       weaponPower,
       weapon
     );
-    if (!(damage > 0)) continue;
+    if (!(plainDamage > 0)) continue;
+
+    /**
+     * And whether the weapon's modifiers turn this one into a crit.
+     *
+     * Gated on there being a weapon at all, which is what keeps it off the
+     * things that are not one: a floor trap passes none, and neither does a
+     * consumable bomb. The official agrees — `THROW_GARLIC`, `THROW_FIREBOMB`
+     * and `THROW_MINE` all crit, while `HEALTH_BOMB_ATTACK` and
+     * `PARTY_BOMB_ATTACK` carry no crit across 623 recorded hits, and no floor
+     * trap does either.
+     *
+     * That the *lingering* half crits is a decision rather than a measurement.
+     * Every recorded crit on a thrown weapon has a client proposal behind it,
+     * so the captures only ever show the impact critting; whether the cloud it
+     * leaves does too is not separable from them.
+     */
+    const { critical, multiplier } = critRollFor(
+      await loadGameMaster(),
+      weapon,
+      session.random ?? Math.random
+    );
+    const damage = critical ? Math.round(plainDamage * multiplier) : plainDamage;
 
     const reaction = receiveCombatResult(
       victim.doid,
@@ -1463,6 +1485,7 @@ export const performPlaceableAttack = async (
             damage: -damage,
             attackType: attack.Id,
             targetActorDoid: 0,
+            criticalHit: critical ? 1 : 0,
             ...staggerFor(attack, damage),
           },
         ],

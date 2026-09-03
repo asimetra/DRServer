@@ -869,3 +869,110 @@ test("a placed bomb burns with the modifiers of the weapon that threw it", async
   assert.ok(plain > 0, "the bomb hurt anything at all");
   assert.equal(boosted, Math.round(plain * sturdy.MELEE_ATK));
 });
+
+test("a bomb crits when the weapon that threw it can, and not otherwise", async () => {
+  /**
+   * Thrown weapons crit officially — `THROW_GARLIC` 13, `THROW_FIREBOMB` 11,
+   * `THROW_MINE` 7 — while `HEALTH_BOMB_ATTACK` and `PARTY_BOMB_ATTACK` carry
+   * none across 623 recorded hits, and no floor trap does either. A crit comes
+   * off a weapon's modifiers, so the thing without a weapon does not get one.
+   */
+  const { performPlaceableAttack } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+  const attack = gm.raw.Attack.find((row) => row.Constant === "GARLIC_EXPLOSION");
+
+  const dealt = async (weapon, random) => {
+    const ENEMY = 9900;
+    const actor = {
+      hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
+      constant: "BRUTE", isEnemy: true, position: { x: 1050, y: 1000 },
+    };
+    const sent = [];
+    const session = {
+      id: 46, heroDoid: 500, floorDoid: 400, dungeonActive: true,
+      dungeonAvatar: { avatar_id: 104, experience: 0 },
+      heroWeapons: [weapon ?? {}], random,
+      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      actors: new Map([[ENEMY, actor]]),
+      allocateDoid: () => 901,
+      send: (packet) => sent.push(packet),
+    };
+    await performPlaceableAttack(session, 700, {
+      attack, victims: [{ doid: ENEMY, actor }], weaponPower: 30, weapon,
+    });
+    const echo = sent.find(
+      (packet) => packet.readUInt16LE(2) === 124 && packet.readUInt32LE(4) === ENEMY &&
+        packet.readUInt16LE(8) === 144
+    );
+    return { damage: 5000000 - actor.hitPoints, crit: echo ? echo.readUInt8(2 + 8 + 26) : null };
+  };
+
+  const critical = { type: 12502, power: 30, modifier1: CRITICAL_L1 };
+  const rolled = await dealt(critical, () => 0); // under the chance
+  const missed = await dealt(critical, () => 1); // over it
+
+  assert.ok(missed.damage > 0, "the bomb hurt anything at all");
+  assert.equal(rolled.damage, missed.damage * 2, "a Critical bomb hits twice as hard");
+  assert.equal(rolled.crit, 1, "and says so on the wire");
+  assert.equal(missed.crit, 0);
+
+  // A bomb with no weapon behind it — a consumable, or a floor trap — never does.
+  const bare = await dealt(null, () => 0);
+  assert.equal(bare.crit, 0, "something with no weapon crit anyway");
+});
+
+test("a consumable bomb is not lent the first weapon's modifiers", async (t) => {
+  /**
+   * `useConsumable` passes slot 0 because the slot a bomb came from indexes the
+   * powerups, not the weapons — so reading `heroWeapons[0]` hands the bomb
+   * whatever is in the hero's first slot. It would crit and scale on modifiers
+   * that have nothing to do with it.
+   *
+   * Asserted on the placeable that is actually left standing rather than on the
+   * shape of the call, because a flag that is passed and ignored looks the same
+   * from the caller.
+   */
+  const { schedulePlaceables, clearDungeonPlaceables } = await import(
+    "../src/socket/placeables.js"
+  );
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+
+  const placed = async (options) => {
+    let nextDoid = 900;
+    const session = {
+      id: 47, heroDoid: 500, floorDoid: 400, dungeonActive: true, dungeonZone: 10,
+      heroPosition: { x: 1000, y: 1000 }, heroHeading: 0,
+      dungeonAvatar: { avatar_id: 104, experience: 0 },
+      heroWeapons: [{ type: 12502, power: 30, modifier1: CRITICAL_L1 }],
+      objects: new Map(), actors: new Map(),
+      allocateDoid: () => ++nextDoid, send: () => {},
+    };
+    // COOKING_COOLDOWN_POISON is the poison pot: an attack that places a cloud.
+    const attack = gm.raw.Attack.find((row) => row.Constant === "COOKING_COOLDOWN_POISON");
+    assert.ok(attack, "the fixture attack still places something");
+    await schedulePlaceables(session, attack, 0, options);
+    t.after(() => clearDungeonPlaceables(session));
+    /**
+     * The spawn is scheduled on the attack's own timeline frame. Waiting a fixed
+     * sleep guesses at that; polling until it lands does not, and gives up
+     * rather than hanging if the fixture ever stops placing anything.
+     */
+    for (let waited = 0; waited < 3000 && !(session.placeables?.size > 0); waited += 50) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return [...(session.placeables?.values() ?? [])];
+  };
+
+  const fromWeapon = await placed({ playSpeed: 1 });
+  const fromBomb = await placed({ playSpeed: 1, fromWeapon: false });
+
+  assert.ok(fromWeapon.length || fromBomb.length, "something was placed to inspect");
+  for (const live of fromWeapon) {
+    assert.ok(live.heroWeapon, "a weapon's placeable lost the weapon that threw it");
+  }
+  for (const live of fromBomb) {
+    assert.equal(live.heroWeapon, null, "a consumable's placeable was lent a weapon");
+  }
+});
