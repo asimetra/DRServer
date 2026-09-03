@@ -2762,14 +2762,31 @@ const applyProposals = async (session, proposals) => {
        */
       const column = onDeath ? FOOD_ON_DEATH : FOOD_ON_HIT;
       const gm = await loadGameMaster();
-      const chance =
-        foodChanceFor(gm, swung, column) +
-        cookingFoodChance(
-          gm,
-          await heroById(session.dungeonAvatar?.avatar_id),
-          session.dungeonAvatar,
-          column
-        );
+      /**
+       * The weapon has to promise food before any is made.
+       *
+       * `COOKING` was briefly read as its own source, on the strength of
+       * `HitSpawnBase` being 1% — so a Chef made food with any weapon at all.
+       * Nothing measured supports that. Three official captures drop chef food
+       * and two of them are a Ghost Samurai, who has no `COOKING` slot, so that
+       * food is the modifier's; and players on the live game report that a
+       * weapon without the modifier makes none. A column that reads like a
+       * standalone chance is not the same as one observed behaving like one.
+       *
+       * So the stat improves a chance rather than creating it, which is what
+       * its description says of itself — "Better chance to make Food when
+       * attacking enemies".
+       */
+      const fromWeapon = foodChanceFor(gm, swung, column);
+      const chance = fromWeapon
+        ? fromWeapon +
+          cookingFoodChance(
+            gm,
+            await heroById(session.dungeonAvatar?.avatar_id),
+            session.dungeonAvatar,
+            column
+          )
+        : 0;
       if (chance > 0 && (session.random ?? Math.random)() < chance) {
         spawnFoodDoober(session, {
           gm,

@@ -437,13 +437,33 @@ test("a plain weapon on a hero without COOKING drops nothing", async () => {
   assert.deepEqual(await dropped(sent), [], "food appeared with nothing asking for it");
 });
 
-test("a plain weapon on the Chef still makes food, from the stat alone", async () => {
+test("a plain weapon makes no food, whoever is holding it", async () => {
+  /**
+   * Including the Battle Chef, whose `COOKING` improves a chance rather than
+   * creating one. Nothing measured shows the stat firing on its own: of the
+   * three official captures that drop chef food, two are a Ghost Samurai — who
+   * has no `COOKING` slot at all — so that food belongs to the weapon, and
+   * players on the live game report a weapon without the modifier makes none.
+   */
   const { session, sent, ENEMY } = await arena({ type: 12502, power: 30 });
-  session.random = () => 0; // under the 1% base
+  session.random = () => 0; // every roll would succeed, if one were taken
 
   await swing(session, ENEMY);
 
-  assert.deepEqual(await dropped(sent), ["FOOD_CHEF_HIT"]);
+  assert.deepEqual(await dropped(sent), []);
+});
+
+test("the Chef's COOKING raises a chance the weapon already has", async () => {
+  const { foodChanceFor, cookingFoodChance, FOOD_ON_HIT } = await import(
+    "../src/socket/modifiers.js"
+  );
+  const gm = await loadGameMaster();
+  const chef = gm.raw.Hero.find((hero) => hero.Constant === "BATTLE_CHEF");
+  const weapon = { modifier1: SAUCIER_L1 };
+
+  const alone = foodChanceFor(gm, weapon, FOOD_ON_HIT);
+  const withChef = alone + cookingFoodChance(gm, chef, { avatar_id: 104 }, FOOD_ON_HIT);
+  assert.ok(withChef > alone, "the stat added nothing to a weapon that has the modifier");
 });
 
 test("a poison tick is a share of the hit, not the whole of it", async () => {
