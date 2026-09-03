@@ -81,18 +81,66 @@ const ONLY = (() => {
   return new Set(process.argv[at + 1].split(",").map((name) => name.trim()).filter(Boolean));
 })();
 const ONLY_CONSTANT = ONLY ? [...ONLY][0] : null;
+
+/**
+ * What a floor is searched for. `kinds` asks for every distinct thing placed on
+ * a tile, `tiles` for the tiles themselves, and `secret` for the treasure rooms
+ * alone — the one category a player cannot go and stand in front of on demand,
+ * because a floor only carries one about one time in fifty.
+ */
+const COVER = ONLY ? "kinds" : (argument("cover") ?? "kinds");
+
+/**
+ * How a treasure room is shut, which is two mechanisms and worth testing apart.
+ *
+ * Of the 22 placed in the official floor payloads, 21 are shut: 15 by a
+ * `WALL_SECRET` in the doorway of the tile *below*, an attackable prop that has
+ * to be broken; 5 by a `PROXIMITY_TRIGGER` wired through a `NOT_GATE` to a line
+ * of wall segments, which the room carries itself and which drops when somebody
+ * walks near; 1 by a wall inside the room.
+ *
+ * `tilegen` will not place a room that carries neither next to a tile that does
+ * not hold the door, so a room with no seal of its own is a room the layout
+ * guaranteed a neighbour for — which is why `neighbour` is a label here and not
+ * a hole.
+ *
+ * Worth separating because they fail differently: a proximity room that stands
+ * open means the gate is evaluated wrong, and a broken-wall room that stands
+ * open means the prop never spawned.
+ */
+const sealOf = (tile) => {
+  const objects = tile?.LEObjects ?? [];
+  if (objects.some((o) => o.type === "LETrigger" && /PROXIMITY/.test(o.constant ?? ""))) {
+    return "proximity";
+  }
+  if (objects.some((o) => /WALL_SECRET/.test(o.constant ?? ""))) return "breakable";
+  return "neighbour";
+};
+
+/** `--seal proximity|breakable|neighbour`, for testing one mechanism at a time. */
+const SEAL = argument("seal");
+const wantedSeal = (tile) => {
+  if (!SEAL) return true;
+  const seal = sealOf(tile);
+  // "broken" is the pair a player experiences as one thing: a wall to hit,
+  // whether it stands inside the room or in the doorway below it.
+  if (SEAL === "broken") return seal === "breakable" || seal === "neighbour";
+  return seal === SEAL;
+};
+
+/**
+ * Each cover writes its own directory, because a run wipes the one it is about
+ * to fill: sharing would mean the secret map deleted the trap set and back.
+ */
 const OUTPUT_SLUG = ONLY
   ? `focus-${(argument("name") ?? [...ONLY].join("-")).toLowerCase()}`
-  : "trap-test";
+  : COVER === "secret"
+    ? `secret-test${SEAL ? `-${SEAL}` : ""}`
+    : "trap-test";
 const outputDir = path.join(levels, OUTPUT_SLUG);
 const catalogueFile = `config/floors.${OUTPUT_SLUG}.json`;
 
 
-/**
- * What a floor is searched for. `kinds` asks for every distinct thing placed on
- * a tile, `tiles` for the tiles themselves.
- */
-const COVER = ONLY ? "kinds" : (argument("cover") ?? "kinds");
 const ONLY_THEME = argument("theme");
 
 /**
@@ -172,6 +220,19 @@ const run = async () => {
      */
     const coveredBy = (tileId) => {
       if (COVER === "tiles") return new Set([`${theme}#${tileId}`]);
+      /**
+       * A treasure room counts for itself and an ordinary room for nothing, so
+       * the search puts every one a library has on as few floors as it can.
+       * Themes that author none — the three jungle libraries — come out empty
+       * and are skipped, which is the honest answer rather than a floor of
+       * nothing.
+       */
+      if (COVER === "secret") {
+        const tile = tilesById.get(tileId);
+        return tile?.category === "SECRET_TILE" && wantedSeal(tile)
+          ? new Set([`${theme}#${tileId}`])
+          : new Set();
+      }
       const kinds = new Set();
       for (const object of tilesById.get(tileId)?.LEObjects ?? []) {
         if (!PLACED_TYPES.has(object.type) || !object.constant) continue;
@@ -252,7 +313,9 @@ const run = async () => {
     chosen.forEach((pick, index) => {
       const suffix = chosen.length > 1 ? `_${index + 1}` : "";
       const slug = theme.replace("/", "_");
-      const file = `${OUTPUT_SLUG}/db_floor_TRAPS_${slug.toUpperCase()}${suffix}.json`;
+      // Named after what it covers, so a directory listing says what it is for.
+      const stem = COVER === "secret" ? "SECRET" : "TRAPS";
+      const file = `${OUTPUT_SLUG}/db_floor_${stem}_${slug.toUpperCase()}${suffix}.json`;
       floorsToWrite.push({
         file,
         body: {
@@ -266,11 +329,27 @@ const run = async () => {
           })),
         },
       });
-      catalogue.floors[`traps_${slug}${suffix}`] = file;
+      catalogue.floors[`${stem.toLowerCase()}_${slug}${suffix}`] = file;
       sequence.push(file);
     });
 
     const tiles = chosen.reduce((sum, pick) => sum + pick.layout.tiles.length, 0);
+
+    /**
+     * Which seal each room on these floors carries, because that is what says
+     * whether an open room is a fault or the point. Printed per floor so the
+     * list can be read with the map in front of you.
+     */
+    if (COVER === "secret") {
+      for (const pick of chosen) {
+        const seals = pick.layout.tiles
+          .map(({ tileId }) => tilesById.get(tileId))
+          .filter((tile) => tile?.category === "SECRET_TILE")
+          .map(sealOf);
+        if (seals.length) console.log(`   ${theme} seed ${pick.seed}: ${seals.join(", ")}`);
+      }
+    }
+
     console.log(
       `${theme.padEnd(17)} ${String(available.size - wanted.size).padStart(2)}/${available.size}` +
         ` ${COVER} in ${String(tiles).padStart(3)} tiles across ${chosen.length} floor(s)` +

@@ -165,3 +165,213 @@ test("a generated node comes out the size its tier asks for", async () => {
     assert.ok(floor.placements.npc.length > 0, `node ${nodeId} brought its monsters`);
   }
 });
+
+/**
+ * The treasure rooms, which were never placed at all.
+ *
+ * `SECRET_TILE` was missing from the categories a floor's body is grown from,
+ * so thirty-six authored rooms — a dead end holding ten to twenty-two
+ * collectables, several times what an ordinary room carries — could not appear
+ * on any floor. Not hidden: absent.
+ *
+ * The rate is measured off the wire, per tile and never per floor: the official
+ * builds small floors — 9.4 tiles on average, 10 median, 15 at the largest —
+ * and a floor grown to a different size is not comparable to one of them. The
+ * tiers agree, asking for 2 to 18 with a median of 7.
+ *
+ * Accumulating each floor object's tile list across 118 floor births gives 22
+ * secret rooms in 1110 tiles, 1.98%. Ours sits just under it at 1.69%, because
+ * a room is only placed where something shuts it — see the tests below, which
+ * are the property that matters more than the count.
+ *
+ * Every one of the 478 distinct tile ids the official placed is in a library we
+ * hold, so nothing here is measured against a partial view.
+ */
+test("secret rooms are placed, at something like the rate the official does", async () => {
+  const themes = [
+    "castle/arena", "castle/catacombs", "castle/prison",
+    "jungle/aztec", "jungle/dino", "jungle/tribal",
+    "nordic/caves", "nordic/temple", "nordic/village",
+  ];
+
+  let tiles = 0;
+  let secret = 0;
+  for (const theme of themes) {
+    const lib = await library(`${theme}/tiles.json`);
+    const categoryOf = new Map(
+      (lib.LETiles ?? []).map((tile) => [String(tile.id), tile.category])
+    );
+    for (let seed = 1; seed <= 40; seed++) {
+      const floor = generateFloor(lib, { tier: 3, tileCount: 12, seed });
+      for (const tile of floor.tiles) {
+        tiles += 1;
+        if (categoryOf.get(String(tile.tileId)) === "SECRET_TILE") secret += 1;
+      }
+    }
+  }
+
+  assert.ok(tiles > 3000, "enough floors to measure a rate on");
+  const rate = (100 * secret) / tiles;
+  assert.ok(rate > 0.6 && rate < 2.6, `secret rooms at ${rate.toFixed(2)}%, official is 1.98%`);
+});
+
+/**
+ * And every one of them is shut, which is the whole of what makes it secret.
+ *
+ * Seam matching alone will hang a room off any northward opening, and only
+ * three per hundred of those happen to carry a wall — so the first version of
+ * this placed rooms that stood open, 63% of them against the official's 5%.
+ * Twenty-one of the twenty-two secret rooms in the official floor payloads are
+ * shut: fifteen by a `WALL_SECRET` in the doorway of the tile below, five by a
+ * `PROXIMITY_TRIGGER` of their own, one by a wall inside the room itself.
+ *
+ * Asked of the layout rather than the library, because the same room is secret
+ * behind one tile and not behind another.
+ */
+test("a secret room is never placed somewhere nothing shuts it", async () => {
+  const themes = ["castle/arena", "castle/catacombs", "castle/prison", "nordic/caves", "nordic/temple", "nordic/village"];
+
+  const shutsItself = (tile) =>
+    (tile?.LEObjects ?? []).some(
+      (object) =>
+        (object.type === "LETrigger" && /PROXIMITY/.test(object.constant ?? "")) ||
+        /WALL_SECRET/.test(object.constant ?? "")
+    );
+  const shutsTheRoomAbove = (tile) =>
+    (tile?.LEObjects ?? []).some(
+      (object) => /WALL_SECRET/.test(object.constant ?? "") && Number(object.y) < 150
+    );
+
+  let rooms = 0;
+  for (const theme of themes) {
+    const lib = await library(`${theme}/tiles.json`);
+    const byId = new Map((lib.LETiles ?? []).map((tile) => [String(tile.id), tile]));
+
+    for (let seed = 1; seed <= 40; seed++) {
+      const floor = generateFloor(lib, { tier: 3, tileCount: 12, seed });
+      const at = new Map(floor.tiles.map((tile) => [`${tile.x},${tile.y}`, byId.get(String(tile.tileId))]));
+
+      for (const tile of floor.tiles) {
+        const room = byId.get(String(tile.tileId));
+        if (room?.category !== "SECRET_TILE") continue;
+        rooms += 1;
+        // Its one opening is south, so the tile below holds the door.
+        const below = at.get(`${tile.x},${tile.y + TILE_SIZE}`);
+        assert.ok(
+          shutsItself(room) || shutsTheRoomAbove(below),
+          `${theme} seed ${seed}: a secret room at ${tile.x},${tile.y} nothing shuts`
+        );
+      }
+    }
+  }
+  assert.ok(rooms > 20, `enough rooms to be worth asserting on, saw ${rooms}`);
+});
+
+test("every secret room a library offers is a one-way dead end", async () => {
+  for (const theme of ["castle/arena", "nordic/caves", "castle/prison"]) {
+    const lib = await library(`${theme}/tiles.json`);
+    const rooms = candidates(lib, { category: "SECRET_TILE", tier: 3 });
+    assert.ok(rooms.length, `${theme} offers some`);
+    for (const room of rooms) {
+      assert.deepEqual(room.exits, [0, 0, 5, 0], `${theme} secret room opens south and nowhere else`);
+    }
+  }
+});
+
+test("no two secret rooms are placed touching", async () => {
+  /**
+   * Reported from a test map: two treasure rooms side by side, each with its
+   * own breakable door, one wall apart. None of the 22 secret rooms in the
+   * official payloads touches another on any of the eight sides, and only one
+   * of 118 recorded floors carries two rooms at all. Ours produced 15 flat
+   * pairs and 13 corner pairs over 1800 floors before the layout rule.
+   *
+   * Diagonals are asserted with the rest: a room is meant to be come upon, and
+   * a second one showing through the corner gives the first away.
+   */
+  const around = [-TILE_SIZE, 0, TILE_SIZE]
+    .flatMap((dx) => [-TILE_SIZE, 0, TILE_SIZE].map((dy) => [dx, dy]))
+    .filter(([dx, dy]) => dx || dy);
+
+  let rooms = 0;
+  for (const theme of ["castle/arena", "castle/prison", "nordic/caves", "nordic/village"]) {
+    const lib = await library(`${theme}/tiles.json`);
+    const byId = new Map((lib.LETiles ?? []).map((tile) => [String(tile.id), tile]));
+
+    for (let seed = 1; seed <= 60; seed++) {
+      const floor = generateFloor(lib, { tier: 1, tileCount: 24, seed });
+      const at = new Map(
+        floor.tiles.map((tile) => [`${tile.x},${tile.y}`, byId.get(String(tile.tileId))])
+      );
+
+      for (const tile of floor.tiles) {
+        if (byId.get(String(tile.tileId))?.category !== "SECRET_TILE") continue;
+        rooms += 1;
+        for (const [dx, dy] of around) {
+          assert.notEqual(
+            at.get(`${tile.x + dx},${tile.y + dy}`)?.category,
+            "SECRET_TILE",
+            `${theme} seed ${seed}: rooms at ${tile.x},${tile.y} and ${tile.x + dx},${tile.y + dy} touch`
+          );
+        }
+      }
+    }
+  }
+  assert.ok(rooms > 20, `enough rooms to be worth asserting on, saw ${rooms}`);
+});
+
+test("a secret wall always has a treasure room behind it", async () => {
+  /**
+   * Reported from a test map as two breakable doors back to back: an
+   * `EXIT_TILE` laid down above a doorway that already held a
+   * `CASTLE_ARENA_WALL_SECRET`, so the wall and the exit gate stood 75 units
+   * apart in the same seam.
+   *
+   * The wider fault was that the grower read a sealed doorway as ordinary
+   * passage. Of 789 walls over 1800 floors, 88 had a treasure room behind them;
+   * the rest had a corridor, and 43 of those were the way out and 10 the tile
+   * the player starts on.
+   *
+   * There is no blank door either, which took a second look at the evidence to
+   * see. Four of the official's walls appear to shut nothing, but three were
+   * never broken in the capture — the room behind them was simply never
+   * revealed — and the fourth is `1756.1363807809773`, whose `WALL_SECRET` sits
+   * on a north edge with no doorway in it at all. Every wall a player actually
+   * opened had a room behind it: 15 of 15.
+   *
+   * So the assertion is exact, and the doorway is checked rather than assumed,
+   * because that scenery tile would otherwise fail it.
+   */
+  const isWall = (object) =>
+    object.type === "LENPC" && /WALL_SECRET/.test(object.constant ?? "");
+  const sealsNorth = (definition) =>
+    (definition?.LEObjects ?? []).some((object) => isWall(object) && Number(object.y) < 150);
+
+  let walls = 0;
+  for (const theme of ["castle/arena", "castle/prison", "nordic/caves", "nordic/village"]) {
+    const lib = await library(`${theme}/tiles.json`);
+    const byId = new Map((lib.LETiles ?? []).map((tile) => [String(tile.id), tile]));
+
+    for (let seed = 1; seed <= 60; seed++) {
+      const floor = generateFloor(lib, { tier: 1, tileCount: 24, seed });
+      const at = new Map(
+        floor.tiles.map((tile) => [`${tile.x},${tile.y}`, byId.get(String(tile.tileId))])
+      );
+
+      for (const tile of floor.tiles) {
+        const definition = byId.get(String(tile.tileId));
+        // A wall on a solid edge is scenery; only a doorway can shut a room.
+        if (!sealsNorth(definition) || !(Number(definition.exits?.[0]) > 0)) continue;
+        walls += 1;
+        const behind = at.get(`${tile.x},${tile.y - TILE_SIZE}`);
+        assert.equal(
+          behind?.category,
+          "SECRET_TILE",
+          `${theme} seed ${seed}: the wall at ${tile.x},${tile.y} shuts ` +
+            `${behind ? `a ${behind.category}` : "nothing at all"}`
+        );
+      }
+    }
+  }
+  assert.ok(walls > 20, `enough walls to be worth asserting on, saw ${walls}`);
+});
