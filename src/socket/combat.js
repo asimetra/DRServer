@@ -1570,7 +1570,47 @@ export const performPlaceableAttack = async (
     const shove = knockbackFor(await loadGameMaster(), weapon);
     if (shove) pushVictim(session, victim.doid, session.heroDoid, shove);
 
-    if (applyDamage(session, victim.doid, damage, () => session.send(reaction))) hits++;
+    /**
+     * Mana back for landing it, which `ManaPerHit` gives to exactly one attack
+     * in the game — the Ranger's snare scroll. It was paid where the client
+     * proposes a hit and nowhere else, so a scroll that lands through a
+     * placeable gave nothing back.
+     */
+    if (Number(attack?.ManaPerHit) > 0) grantMana(session, Number(attack.ManaPerHit));
+
+    const wasDead = Boolean(victim.actor.dead);
+    const before = victim.actor.hitPoints ?? 0;
+    if (applyDamage(session, victim.doid, damage, () => session.send(reaction))) {
+      hits++;
+      /**
+       * And it counts on the report. Every hit a placeable landed was missing
+       * from the run's damage and every kill from its tally, so a player who
+       * fought with bombs or a fissure weapon finished the floor having, by the
+       * server's reckoning, done very little.
+       */
+      if (victim.actor.isEnemy) {
+        session.dungeonContribution ??= { kills: 0, damage: 0 };
+        session.dungeonContribution.damage += Math.min(damage, before);
+        if (!wasDead && victim.actor.dead) session.dungeonContribution.kills += 1;
+      }
+      /**
+       * And the food, on the same two events as everywhere else — see
+       * `foodChanceFor`. A Saucier fissure left nothing on the floor.
+       */
+      const onDeath = !wasDead && victim.actor.dead;
+      const column = onDeath ? FOOD_ON_DEATH : FOOD_ON_HIT;
+      const gm = await loadGameMaster();
+      const chance = foodChanceFor(gm, weapon, column);
+      if (chance > 0 && (session.random ?? Math.random)() < chance) {
+        spawnFoodDoober(session, {
+          gm,
+          floorDoid: session.floorDoid,
+          origin: { ...victim.actor.position },
+          onDeath,
+          random: session.random ?? Math.random,
+        });
+      }
+    }
 
     if (!victim.actor.dead) {
       await applyTargetBuff(session, {

@@ -1353,3 +1353,66 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
 
   assert.equal(victim.position.x - 1200, 250, "the fissure left the monster where it stood");
 });
+
+test("a placeable's hits count on the report, pay Mana and drop food", async () => {
+  /**
+   * Everything `applyProposals` does that `performPlaceableAttack` did not.
+   * The pattern has repeated four times on this path — the `DAMAGE` multiplier,
+   * the crit, the debuffs and the shove each stopped at the moment of impact —
+   * so the two were compared side by side rather than waiting for a fifth
+   * report.
+   */
+  const { performPlaceableAttack } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+
+  const run = async ({ weapon, attack, lethal = false }) => {
+    const ENEMY = 9900;
+    const actor = {
+      hitPoints: lethal ? 1 : 5000000, maxHitPoints: 5000000, collisionRadius: 25,
+      constant: "BRUTE", isEnemy: true, position: { x: 1050, y: 1000 },
+    };
+    const sent = [];
+    let nextDoid = 900;
+    const session = {
+      id: 53, heroDoid: 500, floorDoid: 400, dungeonActive: true, dungeonZone: 10,
+      heroPosition: { x: 1000, y: 1000 },
+      heroManaPoints: 10, maxHeroManaPoints: 200,
+      dungeonAvatar: { avatar_id: 104, experience: 0 },
+      heroWeapons: [weapon ?? {}], random: () => 0,
+      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      actors: new Map([[ENEMY, actor]]),
+      allocateDoid: () => ++nextDoid,
+      sent, send: (packet) => sent.push(packet),
+    };
+    await performPlaceableAttack(session, 700, {
+      attack, victims: [{ doid: ENEMY, actor }], weaponPower: 30, weapon,
+    });
+    return { session, sent, actor };
+  };
+
+  const explosion = gm.raw.Attack.find((row) => row.Constant === "GARLIC_EXPLOSION");
+
+  // The run's tally.
+  const counted = await run({ weapon: { type: 12502, power: 30 }, attack: explosion });
+  assert.ok(
+    counted.session.dungeonContribution?.damage > 0,
+    "a placeable's damage was missing from the report"
+  );
+
+  const killed = await run({ weapon: { type: 12502, power: 30 }, attack: explosion, lethal: true });
+  assert.equal(killed.session.dungeonContribution.kills, 1, "and its kills from the tally");
+
+  // The snare scroll's Mana back.
+  const scroll = gm.raw.Attack.find((row) => Number(row.ManaPerHit) > 0);
+  assert.ok(scroll, "some attack still authors ManaPerHit");
+  const paid = await run({ weapon: { type: 12502, power: 30 }, attack: scroll });
+  assert.ok(paid.session.heroManaPoints > 10, `Mana stayed at ${paid.session.heroManaPoints}`);
+
+  // And a Saucier weapon's food.
+  const saucier = await run({
+    weapon: { type: 12502, power: 30, modifier1: SAUCIER_L1 },
+    attack: explosion,
+  });
+  assert.deepEqual(await dropped(saucier.sent), ["FOOD_CHEF_HIT"]);
+});
