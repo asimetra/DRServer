@@ -27,6 +27,7 @@ import { heroMembersOf } from "./match-world.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { RULE, noteViolation } from "./security-events.js";
+import { critRollFor, onHitBuffsFor } from "./modifiers.js";
 
 /**
  * Combat.
@@ -1257,6 +1258,32 @@ const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) =
  * since an aura ticking every second would otherwise pile up copies of its own
  * burn — the captured buffs arrive once and are left to run.
  */
+/**
+ * The debuffs the weapon's own modifiers leave on what it hit.
+ *
+ * Deliberately not routed through `applyTargetBuff`: that one refuses to
+ * re-apply a buff the victim already carries, which is right for an attack's
+ * `TargetBuff1` and wrong here. Poison is authored to stack six deep and the
+ * official reaches exactly six, so the decision belongs to `grantBuff` and its
+ * `MaxStacks`, which already refreshes the oldest once the limit is reached.
+ */
+const applyModifierBuffs = async (session, { weapon, victimDoid, attackerDoid, damage }) => {
+  const constants = onHitBuffsFor(await loadGameMaster(), weapon);
+  for (const constant of constants) {
+    await grantBuff(session, constant, {
+      affectedActor: victimDoid,
+      attackerActor: attackerDoid,
+    });
+    const buff = await buffForConstant(constant);
+    startDamageOverTime(session, {
+      victimDoid,
+      buff,
+      damage,
+      colorType: await buffColorTypeFor(buff),
+    });
+  }
+};
+
 export const applyTargetBuff = async (session, { attack, victimDoid, attackerDoid, damage }) => {
   if (!attack?.TargetBuff1) return;
   // A friendly attack with a distinct SelfBuff has already covered its caster.
@@ -2064,6 +2091,18 @@ const withDamage = (bytes, wireDamage) => {
 };
 
 /**
+ * Says so on the copy that goes back out, so the client draws the number the
+ * way it draws a crit. The client proposes this byte as 0 every time — see
+ * `critRollFor` — so setting it here is the whole of how it is ever set.
+ */
+const CRITICAL_HIT_BYTE = 26; // attacker, attackee, damage, Attack(10), when, suffer, knockback, blocked
+const withCrit = (bytes) => {
+  const copy = Buffer.from(bytes);
+  copy.writeUInt8(1, CRITICAL_HIT_BYTE);
+  return copy;
+};
+
+/**
  * Applies each proposed result: computes the damage, tells the victim, and
  * publishes its new hit points. Returns true when handled so the caller does
  * not log it as unimplemented.
@@ -2584,15 +2623,26 @@ const applyProposals = async (session, proposals) => {
     const swung = proposal.isConsumable ? null : session.heroWeapons?.[proposal.weaponSlot];
     const weaponPower = Number(swung?.power) || 1;
 
-    const damage = proposal.blocked
+    const plain = proposal.blocked
       ? 0
       : await computeDamage(session, proposal, attack, weaponPower);
 
-    const echo = receiveCombatResult(
-      proposal.attackee,
-      fieldId,
-      withDamage(proposal.bytes, -damage)
-    );
+    /**
+     * And whether the weapon's own modifiers turned it into a crit, which is
+     * the server's call and nobody else's.
+     *
+     * After the defender's reduction rather than before it, so a crit doubles
+     * what actually landed rather than what was swung. Nothing measured
+     * separates the two — the recordings hold no crit against a buffed defender
+     * — but this is the order the rest of the pricing already runs in.
+     */
+    const { critical, multiplier } = plain
+      ? critRollFor(await loadGameMaster(), swung, session.random ?? Math.random)
+      : { critical: false, multiplier: 1 };
+    const damage = critical ? Math.round(plain * multiplier) : plain;
+
+    const bytes = critical ? withCrit(proposal.bytes) : proposal.bytes;
+    const echo = receiveCombatResult(proposal.attackee, fieldId, withDamage(bytes, -damage));
 
     /**
      * Mana back for landing it. `ManaPerHit` belongs to exactly one attack in
@@ -2613,6 +2663,19 @@ const applyProposals = async (session, proposals) => {
     if (!proposal.blocked) {
       await applyTargetBuff(session, {
         attack,
+        victimDoid: proposal.attackee,
+        attackerDoid: proposal.attacker,
+        damage,
+      });
+      /**
+       * And what the weapon itself leaves behind, which is a different thing
+       * from what the attack does — see `onHitBuffsFor`. A Noxious katana
+       * poisons with every swing it has, so this is not `attack.TargetBuff1`
+       * and does not go through its "already has one" guard: stacking is
+       * `grantBuff`'s to decide, and `MaxStacks` is what decides it.
+       */
+      await applyModifierBuffs(session, {
+        weapon: swung,
         victimDoid: proposal.attackee,
         attackerDoid: proposal.attacker,
         damage,
