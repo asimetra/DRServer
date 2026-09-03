@@ -142,41 +142,43 @@ test("legendary rarity adds a legendary modifier", async () => {
  * Each WeaponItem row declares, column by column, which modifier types it can
  * take. Rolling outside that set is how a weapon ends up with a modifier it has
  * no business carrying.
+ *
+ * Asked of the weapon row rather than of a list kept here. This test used to
+ * hold its own copy of the seven columns `chests.js` read, so when the real list
+ * grew to the twenty-two the data authors, the test failed a roll that was
+ * correct — it was checking a duplicate rather than the rule. A column named
+ * after the modifier type is the game's own statement, and there is exactly one
+ * type whose column is spelled differently.
  */
-const MODIFIER_COLUMNS = {
-  DAMAGE: "DAMAGE",
-  POISON: "POISON",
-  CRIT_CHANCE: "CRIT_CHANCE",
-  CRIT_DAMAGE: "CRIT_DAMAGE",
-  ATKSPD: "ATKSPD",
-  MANA_COST: "MANA_COST",
-  CHARGE_TIME_REDUCTION: "CHARGE_REDUC",
-};
-
-const acceptedTypes = (weapon) =>
-  new Set(
-    Object.entries(MODIFIER_COLUMNS)
-      .filter(([column]) => weapon[column])
-      .map(([, type]) => type)
-  );
+const COLUMN_FOR_TYPE = (type) =>
+  type === "CHARGE_REDUC" ? "CHARGE_TIME_REDUCTION" : type;
 
 test("modifiers stay within the types the weapon accepts", async () => {
   const gm = await loadGameMaster();
   const modifiers = new Map(gm.raw.Modifiers.map((row) => [row.Id, row]));
+  const seen = new Set();
 
   for (let attempt = 0; attempt < 150; attempt++) {
     const item = (await open(accountWith(BERSERKER))).NewWeaponDetails;
     const weapon = gm.raw.WeaponItem.find((entry) => entry.Id === item.item_id);
-    const allowed = acceptedTypes(weapon);
 
     for (const id of [item.modifier1, item.modifier2].filter(Boolean)) {
       const modifier = modifiers.get(id);
-      assert.ok(
-        allowed.has(modifier.MODIFIER_TYPE),
+      seen.add(modifier.MODIFIER_TYPE);
+      assert.equal(
+        weapon[COLUMN_FOR_TYPE(modifier.MODIFIER_TYPE)],
+        true,
         `${weapon.Constant} cannot carry ${modifier.Constant} (${modifier.MODIFIER_TYPE})`
       );
     }
   }
+
+  /**
+   * And that the roll reaches past the seven types it used to be stuck on.
+   * Twelve of the nineteen types the official puts on real items were
+   * unreachable here, and they are forty-two per cent of its modifier slots.
+   */
+  assert.ok(seen.size > 7, `only ${seen.size} distinct types came up in 150 chests`);
 });
 
 // Declaring a modifier type is also what separates a current player weapon from

@@ -99,14 +99,51 @@ const masteryTypes = (hero) =>
  * has no business carrying.
  *
  * One column is spelled differently from the modifier type it refers to.
+ *
+ * The list was seven long and the weapons author twenty-two. The other fifteen
+ * were named on real weapons — `BURNING` on 13, `COOLDOWN_REDUC` on 21,
+ * `INCREASE_COLLISION` on 16 — and no chest could ever roll one, so a Burning
+ * sword or a Snappy axe was a thing the data described and the game could not
+ * produce.
+ *
+ * Measured against the official rather than reasoned about. Across 33729 item
+ * records in the captured RPC traffic, 66736 modifier slots are filled and
+ * nineteen distinct types appear in them. Twelve of those nineteen are ones
+ * this list could not produce, and they are 27908 of the slots — forty-two per
+ * cent of every modifier on every official item.
+ *
+ * All twenty-two go in, not only the nineteen that were seen. The boolean on
+ * the weapon is the game's own statement of what that weapon may carry, and the
+ * three unseen ones are rare rather than absent: `PULL` is allowed on three
+ * weapons, `CHAIN` on one, and `CHARGE_REDUC` on twenty-three that a single
+ * player's captures happen not to have drawn.
+ *
+ * `SCALING` and `BUFF_GRANT_DURATION_MULTIPLIER` stay out, and not by oversight:
+ * neither has a column on `WeaponItem` at all, so no weapon can carry either.
+ * Nor does either appear once in those 66736 slots.
  */
 const MODIFIER_COLUMNS = {
   DAMAGE: "DAMAGE",
   POISON: "POISON",
+  BURNING: "BURNING",
+  CHILLING: "CHILLING",
+  SHOCKING: "SHOCKING",
+  STUN: "STUN",
+  SLOW: "SLOW",
+  CRIPPLE: "CRIPPLE",
+  ROOT: "ROOT",
+  KNOCKBACK: "KNOCKBACK",
+  PULL: "PULL",
   CRIT_CHANCE: "CRIT_CHANCE",
   CRIT_DAMAGE: "CRIT_DAMAGE",
+  CHAIN: "CHAIN",
+  PIERCE: "PIERCE",
   ATKSPD: "ATKSPD",
   MANA_COST: "MANA_COST",
+  INCREASE_COLLISION: "INCREASE_COLLISION",
+  COOLDOWN_REDUC: "COOLDOWN_REDUC",
+  SPAWN_FOOD_ON_HIT: "SPAWN_FOOD_ON_HIT",
+  DEATH_FOOD: "DEATH_FOOD",
   CHARGE_TIME_REDUCTION: "CHARGE_REDUC",
 };
 

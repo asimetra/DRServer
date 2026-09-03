@@ -54,13 +54,18 @@
  * the result in the choreography header, which this server forwards. All 7943
  * recorded headers carry 1.00 only because no recorded player had a Split bow.
  *
- * Which leaves two, both genuinely unread on either side. `KNOCKBACK` and
- * `PULL` author a distance and a duration that never cross the wire — the
- * result's knockback byte is a flag, set by the official on 13024 of its
- * echoed hits and by the client on 2 of 13626, so the push is the server's to
- * decide but its size is not something the recordings can show. And
- * `BUFF_GRANT_DURATION_MULTIPLIER`, which wants a multiplier threaded into
- * `durationOf` from whichever weapon granted the buff.
+ * `BUFF_GRANT_DURATION_MULTIPLIER` needs nothing at all, which took looking to
+ * find out. It has no column on `WeaponItem`, so no weapon may carry it, and it
+ * does not appear once in the 66736 filled modifier slots across 33729 official
+ * item records. `SCALING` is unreachable the same way. Both are rows the data
+ * describes and the game cannot hand out.
+ *
+ * Which leaves `KNOCKBACK` and `PULL`, and they are reachable — 13 weapons
+ * allow one and 3 the other, and the official puts `KNOCKBACK` on 1278 real
+ * items. What is missing is the size: the result's knockback byte is a flag,
+ * set by the official on 13024 of its echoed hits and by the client on 2 of
+ * 13626, so the push is this server's decision, but the distance and duration
+ * the modifiers author never cross the wire at all.
  */
 export const critRollFor = (gm, weapon, random = Math.random) => {
   const none = { critical: false, multiplier: 1 };
