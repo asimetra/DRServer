@@ -440,10 +440,10 @@ test("a plain weapon on a hero without COOKING drops nothing", async () => {
 test("a plain weapon makes no food, whoever is holding it", async () => {
   /**
    * Including the Battle Chef, whose `COOKING` improves a chance rather than
-   * creating one. Nothing measured shows the stat firing on its own: of the
-   * three official captures that drop chef food, two are a Ghost Samurai — who
-   * has no `COOKING` slot at all — so that food belongs to the weapon, and
-   * players on the live game report a weapon without the modifier makes none.
+   * creating one. This is on a report from the live game and on the row's own
+   * wording — "Better *chance* to make Food" — and not on the captures: the two
+   * that looked like a Ghost Samurai making food he has no slot for are both
+   * parties with a Battle Chef in them.
    */
   const { session, sent, ENEMY } = await arena({ type: 12502, power: 30 });
   session.random = () => 0; // every roll would succeed, if one were taken

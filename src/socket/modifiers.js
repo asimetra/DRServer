@@ -256,12 +256,16 @@ export const FOOD_ON_DEATH = "SPAWN_FOOD_ON_DEATH_PERCENTAGE";
  *
  * It raises a chance rather than creating one, and the caller enforces that: a
  * weapon with no food modifier makes no food, whoever is holding it. This was
- * first written the other way, reading `HitSpawnBase` 0.01 as a standalone 1%,
- * and nothing measured supports that. Of the three official captures that drop
- * chef food, two are a Ghost Samurai — who has no `COOKING` slot at all — so
- * that food is the weapon's; and players on the live game report that a weapon
- * without the modifier makes none. The row's own description agrees on the
- * reading: "Better *chance* to make Food when attacking enemies".
+ * first written the other way, reading `HitSpawnBase` 0.01 as a standalone 1%.
+ *
+ * That rests on a report from the live game — a weapon without the modifier
+ * makes none — and on the row's own description once the emphasis is put where
+ * it belongs: "Better *chance* to make Food when attacking enemies". It does
+ * not rest on the captures, and an earlier version of this note said it did.
+ * Two of the three that drop chef food looked like a `GHOST_SAMURAI` making
+ * food he has no slot for, which would have settled it; both turn out to be
+ * parties with a Battle Chef standing in them. Whose food that was is not a
+ * question those captures can answer.
  *
  * Small either way: the slot pays 0.1 units a point, so the hit share runs from
  * 1% untrained to about 1.6% at fifty points and the kill share from 5% to
@@ -270,12 +274,17 @@ export const FOOD_ON_DEATH = "SPAWN_FOOD_ON_DEATH_PERCENTAGE";
  * Only for a hero whose slots declare the stat. A Berserker has no `COOKING`
  * slot, so the stat does not exist for him and adds nothing.
  *
- * What none of this explains is the rate. The same account's captures drop chef
- * food on 13.6% of hits as the Chef, 2.5% as the Samurai and 0.2% as the
- * Samurai again, against a `SPAWN_FOOD_ON_HIT_4` worth 6%. Whatever decides
- * that is not in hand — the equipped weapon cannot be recovered from a capture,
- * so which run carried which modifier is unknown, and three runs is not a
- * sample. The percentages here are the table's, not a fit to those numbers.
+ * One capture is solo and therefore worth reading: a Battle Chef alone drops
+ * food on 28 of 206 hits and 9 of 31 kills — 13.6% and 29%. A weapon carrying
+ * two hit modifiers at 6% plus this stat comes to about 13.6%, and a
+ * `DEATH_FOOD_5` at 25% plus this stat to about 31%. Both land close, which is
+ * some support for adding the two together rather than taking either alone. It
+ * is one run, and the equipped weapon cannot be recovered from a capture, so it
+ * is offered as an arithmetic that fits and not as a measurement.
+ *
+ * The other two are parties. Their rates were computed once anyway — 2.5% and
+ * 0.2% — by dividing everybody's food by one player's hits, which is not a rate
+ * of anything.
  */
 const COOKING_SPAWN_COLUMNS = {
   [FOOD_ON_HIT]: ["HitSpawnBase", "HitSpawnIncrease"],
