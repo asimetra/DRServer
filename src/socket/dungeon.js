@@ -108,6 +108,7 @@ export { npcAttackChoices } from "./npc-attacks.js";
 import { startManaRegen } from "./regen.js";
 import {
   addNavigationObstacle,
+  collisionPointOf,
   createNavigationState,
   findCageReleasePath,
   hasLineOfSight,
@@ -2717,10 +2718,14 @@ export const checkFloorExit = (session, position) => {
    */
   if (session.floorTransition || !session.floorExits?.length) return false;
 
+  const hero = session.actors?.get(session.heroDoid);
+  const body = collisionPointOf(hero, position) ?? position;
+  const bodyRadius = Math.max(0, Number(hero?.collisionRadius ?? 0));
   const reached = session.floorExits.find((exit) => {
-    const dx = position.x - exit.x;
-    const dy = position.y - exit.y;
-    return dx * dx + dy * dy <= exit.radius * exit.radius;
+    const dx = body.x - exit.x;
+    const dy = body.y - exit.y;
+    const contactRadius = Math.max(0, Number(exit.radius ?? 0)) + bodyRadius;
+    return dx * dx + dy * dy <= contactRadius * contactRadius;
   });
   if (!reached) return false;
 

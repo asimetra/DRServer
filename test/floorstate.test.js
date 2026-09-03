@@ -222,6 +222,31 @@ test("reaching the exit is what advances a floor", async () => {
   assert.equal(session.floorTransition, true, "and the floor is handing over");
 });
 
+test("an exit sensor accepts the hero body at a gate edge, not only its centre", async () => {
+  const { checkFloorExit } = await import("../src/socket/dungeon.js");
+  const makeSession = () => ({
+    id: 2,
+    heroDoid: 500,
+    floorTransition: false,
+    floorExits: [{ x: 100, y: 200, radius: 50 }],
+    actors: new Map([
+      [500, { collisionRadius: 25, position: { x: 174, y: 200 } }],
+    ]),
+    advanceFloor: () => {},
+  });
+
+  assert.equal(
+    checkFloorExit(makeSession(), { x: 176, y: 200 }),
+    false,
+    "a body wholly outside the authored sensor does not advance"
+  );
+  assert.equal(
+    checkFloorExit(makeSession(), { x: 174, y: 200 }),
+    true,
+    "touching the sensor with the body's edge is enough"
+  );
+});
+
 /**
  * A kill gate waits for its generator to report itself clear. Generators learned
  * to switch off when their input goes low, and clearing still demanded the full
