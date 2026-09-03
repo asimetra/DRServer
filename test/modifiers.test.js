@@ -1605,3 +1605,55 @@ test("Beast Master and Animal Fury reach the pet, each its own number", async ()
   );
   assert.deepEqual(legendaryPetBonuses([{}]), { health: 0, damage: 0 });
 });
+
+const ADMIRALS_LUCK = 6;
+
+test("Admiral's Luck takes a quarter off a trap and nothing off a sword", async () => {
+  /**
+   * "Decreases damage taken by traps by 25%" — the one legendary that names a
+   * source of damage rather than a type of it, which is why it sits in the trap
+   * pricing rather than beside the three typed shields.
+   */
+  const { legendaryTrapShield } = await import("../src/hero-stats.js");
+  const { dealTrapHit } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+  assert.equal(gm.raw.LegendaryModifiers.find((row) => row.Id === 6)?.Name, "Admiral's Luck");
+
+  assert.equal(legendaryTrapShield([{ legendarymodifier: ADMIRALS_LUCK }]), 0.25);
+  assert.equal(legendaryTrapShield([{}]), 0);
+  // Flat: two are still a quarter.
+  assert.equal(
+    legendaryTrapShield([{ legendarymodifier: 6 }, { legendarymodifier: 6 }]),
+    0.25
+  );
+
+  const spikes = gm.raw.Attack.find(
+    (row) => row.DoPercentHealthDamage && Number(row.PercentHealthDamageValue) > 0
+  );
+  assert.ok(spikes, "some trap still charges a share of the bar");
+
+  const took = async (weapons) => {
+    const HERO = 500;
+    const hero = {
+      hitPoints: 10000, maxHitPoints: 10000, collisionRadius: 22,
+      constant: "RANGER", position: { x: 1000, y: 1000 },
+    };
+    const session = {
+      id: 55, heroDoid: HERO, floorDoid: 400, dungeonActive: true,
+      heroPosition: { x: 1000, y: 1000 }, heroWeapons: weapons,
+      dungeonAvatar: { avatar_id: 104, experience: 0 },
+      objects: new Map([[HERO, CLID.HeroGameObject]]),
+      actors: new Map([[HERO, hero]]),
+      activeBuffs: new Map(),
+      allocateDoid: () => 901, send: () => {},
+    };
+    await dealTrapHit(session, 700, spikes, HERO, 1);
+    return 10000 - hero.hitPoints;
+  };
+
+  const plain = await took([{}]);
+  const lucky = await took([{ legendarymodifier: ADMIRALS_LUCK }]);
+  assert.ok(plain > 0, "the trap hurt at all");
+  assert.equal(lucky, Math.max(1, Math.round(plain * 0.75)), `took ${lucky} against ${plain}`);
+});

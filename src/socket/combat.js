@@ -14,6 +14,7 @@ import {
   STAT_NAMES,
   legendaryShieldFor,
   legendaryBusterPerKill,
+  legendaryTrapShield,
 } from "../hero-stats.js";
 import {
   buffColorTypeFor,
@@ -650,10 +651,25 @@ const segmentHitsCircle = (from, to, center, radius) => {
  * trap's weapon against the victim's defence.
  */
 const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, weaponPower) => {
+  /**
+   * `Admiral's Luck` takes a quarter off whatever a trap does — the one
+   * legendary that names a source of damage rather than a type of it, so it is
+   * applied here rather than in `damageTurnedAside` beside the three shields.
+   *
+   * Only for the hero, whose weapons these are, and floored at one so a trap
+   * that goes off is still felt.
+   */
+  const luck = victimDoid === session.heroDoid
+    ? legendaryTrapShield(session.heroWeapons ?? [])
+    : 0;
+  const spared = (damage) => (luck ? Math.max(1, Math.round(damage * (1 - luck))) : damage);
+
   if (attack?.DoPercentHealthDamage) {
-    return Math.max(
-      1,
-      Math.round(victim.maxHitPoints * Math.max(0, attack.PercentHealthDamageValue ?? 0))
+    return spared(
+      Math.max(
+        1,
+        Math.round(victim.maxHitPoints * Math.max(0, attack.PercentHealthDamageValue ?? 0))
+      )
     );
   }
   const priced = await computeDamage(
@@ -678,7 +694,7 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
    * measurement to settle which the game did, and the cross-wired defence
    * columns above make this a bad place to guess.
    */
-  return priced || Math.max(1, Math.round(Math.abs(attack?.DamageMod ?? -1)));
+  return spared(priced || Math.max(1, Math.round(Math.abs(attack?.DamageMod ?? -1))));
 };
 
 /**

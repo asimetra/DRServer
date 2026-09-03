@@ -348,3 +348,19 @@ export const legendaryPetBonuses = (weapons = []) => {
   }
   return totals;
 };
+
+/**
+ * What `Admiral's Luck` takes off a trap.
+ *
+ * "Decreases damage taken by traps by 25%" — the only legendary that names a
+ * source of damage rather than a type of it, and the only reduction in the
+ * twelve that is not one of the three typed shields. Unread like the rest.
+ *
+ * Flat, like the shields it sits beside: two of them are still a quarter.
+ */
+const ADMIRALS_LUCK_SHARE = 0.25;
+
+export const legendaryTrapShield = (weapons = []) =>
+  weapons.some((weapon) => Number(weapon?.legendarymodifier ?? 0) === 6)
+    ? ADMIRALS_LUCK_SHARE
+    : 0;
