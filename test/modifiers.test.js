@@ -396,3 +396,69 @@ test("a weapon with no food modifier drops nothing", async () => {
   );
   assert.equal(doobers.length, 0, "food appeared without a modifier asking for it");
 });
+
+test("a poison tick is a share of the hit, not the whole of it", async () => {
+  /**
+   * `PercentDamage` is authored per level — 2.5%, 5%, 10%, 15%, 20% from one
+   * star to five — and was never read, so an eight-second poison dealt nine
+   * times the swing that applied it. Fifteen per cent at four stars is what the
+   * item card promises and what the table says.
+   */
+  const gm = await loadGameMaster();
+  for (const [constant, expected] of [["POISON_L1", 0.025], ["POISON_L4", 0.15], ["FIRE_L5", 0.5]]) {
+    const buff = gm.raw.Buff.find((row) => row.Constant === constant);
+    assert.equal(buff.PercentDamage, expected, `${constant} authors a different share`);
+  }
+
+  const { session, sent, ENEMY } = await arena({ type: 12502, power: 30, modifier1: NOXIOUS_L1 });
+  const before = session.actors.get(ENEMY).hitPoints;
+  await swing(session, ENEMY);
+  const hit = before - session.actors.get(ENEMY).hitPoints;
+
+  // The floater the tick sends carries the amount, so the tick can be read
+  // without waiting a second for it.
+  const share = gm.raw.Buff.find((row) => row.Constant === "POISON_L1").PercentDamage;
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const ticked = before - hit - session.actors.get(ENEMY).hitPoints;
+  assert.equal(ticked, Math.max(1, Math.round(hit * share)), `tick was ${ticked} against a ${hit} hit`);
+  for (const timer of session.damageOverTimeTimers ?? []) clearInterval(timer);
+});
+
+test("repeated hits do not pile up poison clocks", async () => {
+  /**
+   * `grantBuff` refreshes the oldest copy once `MaxStacks` is reached rather
+   * than adding another, and the damage-over-time used to start a fresh
+   * interval whatever it did — so a fast weapon accumulated timers without
+   * limit, each ticking for the whole authored duration.
+   */
+  const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: NOXIOUS_L1 });
+
+  for (let swings = 0; swings < 12; swings += 1) await swing(session, ENEMY);
+
+  assert.equal(
+    session.damageOverTimeTimers.size,
+    6,
+    "one clock per live poison, and poison stacks six deep"
+  );
+  for (const timer of session.damageOverTimeTimers) clearInterval(timer);
+});
+
+test("a body takes its buffs with it", async () => {
+  /**
+   * The report: poison still showing on a monster that is gone. `removeActor`
+   * deleted the actor and disabled its object and left the buffs running. The
+   * official takes them together — of 3048 poison and fire buffs whose victim
+   * was disabled in the recordings, 2176 are disabled within 250ms of it and
+   * only 8 outlive their host.
+   */
+  const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: NOXIOUS_L1 });
+  await swing(session, ENEMY);
+  assert.ok(held(session, ENEMY, "POISON_L1") > 0, "the enemy was poisoned to begin with");
+
+  const { applyDamage } = await import("../src/socket/combat.js");
+  applyDamage(session, ENEMY, session.actors.get(ENEMY).hitPoints);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(held(session, ENEMY, "POISON_L1"), 0, "poison outlived the monster");
+  for (const timer of session.damageOverTimeTimers ?? []) clearInterval(timer);
+});

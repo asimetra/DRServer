@@ -14,6 +14,7 @@ import {
   buffColorTypeFor,
   buffEffectReport,
   buffMultiplierFor,
+  clearBuffsOn,
   damageReductionFor,
   grantBuff,
   hasAbility,
@@ -474,6 +475,9 @@ export const applyDamage = (session, doid, damage, announce) => {
  */
 const removeActor = (session, doid) => {
   if (!session.actors?.delete(doid)) return false;
+  // Whatever it was carrying goes with it — see `clearBuffsOn`. Before the
+  // disable, so the buffs are taken off a floor that still holds their host.
+  clearBuffsOn(session, doid);
   session.objects?.delete(doid);
   session.send(objectDisable(doid));
   return true;
@@ -1201,7 +1205,7 @@ export const heroStateAndChoreography = ({
 export const isPartyHero = (session, doid) =>
   session?.playerActors?.has(doid) ?? doid === session?.heroDoid;
 
-const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) => {
+const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colorType }) => {
   /**
    * The hero does not burn.
    *
@@ -1231,6 +1235,39 @@ const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) =
   const ticks = Math.max(0, Math.round(Number(buff.Duration ?? 0)));
   if (!ticks) return;
 
+  /**
+   * A share of the hit, not the whole of it.
+   *
+   * `PercentDamage` is authored per level and was never read: poison runs 2.5%,
+   * 5%, 10%, 15%, 20% from one star to five, and fire 10% to 50%. Ticking the
+   * full hit instead meant an eight-second poison dealt nine times the swing
+   * that applied it — which is the report, in the words of the item card that
+   * promises 15% at four stars.
+   *
+   * Floored at one so a tick that happens is felt, the same floor the hit
+   * itself is priced with.
+   */
+  const share = Number(buff.PercentDamage);
+  const perTick = Number.isFinite(share) && share > 0
+    ? Math.max(1, Math.round(damage * share))
+    : damage;
+
+  /**
+   * One clock per buff, not one per hit.
+   *
+   * `grantBuff` refreshes the oldest copy once `MaxStacks` is reached rather
+   * than adding another, and this used to start a fresh interval whatever it
+   * did — so a weapon that hits four times a second piled up timers without
+   * limit, each ticking for the whole authored duration. Keyed by the buff's
+   * own doid, a refresh restarts one clock instead of racing a second.
+   */
+  const clocks = (session.damageOverTimeByBuff ??= new Map());
+  const existing = clocks.get(buffDoid);
+  if (existing) {
+    clearInterval(existing);
+    session.damageOverTimeTimers?.delete(existing);
+  }
+
   let remaining = ticks;
   const timer = setInterval(() => {
     const actor = session.actors?.get(victimDoid);
@@ -1238,16 +1275,17 @@ const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) =
     if (done) {
       clearInterval(timer);
       session.damageOverTimeTimers?.delete(timer);
+      clocks.delete(buffDoid);
       return;
     }
     remaining -= 1;
     // Hit points first, then the floater — the order every captured tick shows.
-    if (!applyDamage(session, victimDoid, damage)) return;
+    if (!applyDamage(session, victimDoid, perTick)) return;
     session.send(
       buffEffectReport({
         heroDoid: session.heroDoid,
         actorDoid: victimDoid,
-        amount: -damage,
+        amount: -perTick,
         colorType,
       })
     );
@@ -1255,6 +1293,7 @@ const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) =
   timer.unref?.();
   session.damageOverTimeTimers ??= new Set();
   session.damageOverTimeTimers.add(timer);
+  clocks.set(buffDoid, timer);
 };
 
 /**
@@ -1278,12 +1317,13 @@ const startDamageOverTime = (session, { victimDoid, buff, damage, colorType }) =
 const applyModifierBuffs = async (session, { weapon, victimDoid, attackerDoid, damage }) => {
   const constants = onHitBuffsFor(await loadGameMaster(), weapon);
   for (const constant of constants) {
-    await grantBuff(session, constant, {
+    const buffDoid = await grantBuff(session, constant, {
       affectedActor: victimDoid,
       attackerActor: attackerDoid,
     });
     const buff = await buffForConstant(constant);
     startDamageOverTime(session, {
+      buffDoid,
       victimDoid,
       buff,
       damage,
@@ -1310,12 +1350,13 @@ export const applyTargetBuff = async (session, { attack, victimDoid, attackerDoi
   );
   if (already) return;
 
-  await grantBuff(session, attack.TargetBuff1, {
+  const buffDoid = await grantBuff(session, attack.TargetBuff1, {
     affectedActor: victimDoid,
     attackerActor: attackerDoid,
   });
   const buff = await buffForConstant(attack.TargetBuff1);
   startDamageOverTime(session, {
+    buffDoid,
     victimDoid,
     buff,
     damage,

@@ -18,6 +18,29 @@ const expireBuff = (session, doid) => {
   session.objects.delete(doid);
 };
 
+
+/**
+ * Everything a body was carrying, taken off with it.
+ *
+ * A buff outlived its host: `removeActor` deleted the actor and disabled its
+ * object and left the buffs alone, so poison went on being drawn on a monster
+ * that was no longer there, and `buffMultiplierFor` went on walking entries for
+ * a doid nothing could look up.
+ *
+ * The official takes them together. Of 3048 poison and fire buffs whose victim
+ * was disabled in the recordings, 2176 are disabled within 250ms of it and only
+ * 8 outlive their host at all.
+ */
+export const clearBuffsOn = (session, actorDoid) => {
+  let cleared = 0;
+  for (const [doid, active] of [...(session.activeBuffs?.entries() ?? [])]) {
+    if (active.affectedActor !== actorDoid) continue;
+    expireBuff(session, doid);
+    cleared += 1;
+  }
+  return cleared;
+};
+
 /**
  * Creates one client-visible buff and retains the same GameMaster row for the
  * server's combat calculation. The client owns the HUD/VFX; the server owns
