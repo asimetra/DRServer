@@ -60,12 +60,26 @@
  * item records. `SCALING` is unreachable the same way. Both are rows the data
  * describes and the game cannot hand out.
  *
- * Which leaves `KNOCKBACK` and `PULL`, and they are reachable — 13 weapons
- * allow one and 3 the other, and the official puts `KNOCKBACK` on 1278 real
- * items. What is missing is the size: the result's knockback byte is a flag,
- * set by the official on 13024 of its echoed hits and by the client on 2 of
- * 13626, so the push is this server's decision, but the distance and duration
- * the modifiers author never cross the wire at all.
+ * `KNOCKBACK` and `PULL` are reachable — 13 weapons allow one and 3 the other,
+ * and the official puts `KNOCKBACK` on 1278 real items — and there is still
+ * nothing to write, for a different reason. The push is drawn entirely by the
+ * client, and it takes its size from the attack and from nothing else:
+ *
+ *     mDistance = attackById.itemFor(mAttackType).Knockback;
+ *     mDuration = attackById.itemFor(mAttackType).KnockbackDur;
+ *
+ * That is the whole of `KnockBackTimelineAction`, thirty-six lines, and
+ * `mDistance` is assigned once. `receiveDamage` reads the result's knockback
+ * byte as a 0 or a 1 and nothing more, so a modifier's fifty inches have no
+ * wire to travel on and no line to be added to at the far end. This server can
+ * only flip a flag it already flips.
+ *
+ * So all twenty-four are accounted for. Thirteen are this server's and are
+ * done; `MANA_COST` and `COOLDOWN_REDUC` were already; six are the client's and
+ * work. The last three — `KNOCKBACK`, `PULL` and
+ * `BUFF_GRANT_DURATION_MULTIPLIER` — cannot be made to do anything from here,
+ * the first two for want of anywhere to act and the third for want of a weapon
+ * that may carry it.
  */
 export const critRollFor = (gm, weapon, random = Math.random) => {
   const none = { critical: false, multiplier: 1 };
