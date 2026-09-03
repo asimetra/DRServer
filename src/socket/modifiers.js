@@ -92,11 +92,17 @@ import { superStatValue } from "../hero-stats.js";
  * authoring 60, moves it 57 against 5. The official displaces the body and
  * sends the position. This server published the flag and moved nothing.
  *
- * `knockbackFor` and `pushVictim` are the two halves of that. What is measured
- * is the displacement and its size; what is not is the weapon's part — no
- * recorded player carried a `Hitback` or a `Grabber`, so that the modifier's
- * distance replaces the attack's is read off the table, where the levels run on
- * the same scale as the attacks' own column.
+ * The weapon's part is measured too, in a capture made for it. An account
+ * holding `Blowback` (200) and `Blastback` (250) swings an axe whose combos
+ * author `Knockback` 0 — and its monsters move anyway: medians of 119, 132 and
+ * 82 for `AXE_COMBO_1`, `_3` and `_2`. Nothing in the attack row can account for
+ * that. Across the 49 flagged NPC hits in that run the displacement runs to a
+ * median of 134, a 75th of 270 and a maximum of 499, which is the neighbourhood
+ * of the two distances the account carries.
+ *
+ * So the modifier's distance drives the push and the attack's own column does
+ * not: `KATANA_SOUL_BANG` authors 50 and moves nothing over 6568 flagged hits,
+ * because that katana carried no knockback modifier.
  *
  * So all twenty-four are accounted for. Thirteen are this server's and are
  * done; `MANA_COST` and `COOLDOWN_REDUC` were already; six are the client's and
