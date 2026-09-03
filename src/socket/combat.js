@@ -1760,11 +1760,28 @@ export const performNpcAttack = async (
    * animation from frame zero, so the result cannot ride along on a second one
    * — it goes out by itself when the swing connects, the way a trap's does.
    */
+  /**
+   * And it swings at whatever speed its debuffs leave it.
+   *
+   * `playSpeed` scales the animation the client plays, and the official scales
+   * it by exactly the attack-speed multiplier the actor is carrying: of its
+   * `ReceiveAttackChoreography` packets, 57 land on 0.20 while the monster holds
+   * a `CRIPPLE_L3` or `CRIPPLE_L4` — both authoring `MELEE_SPD` 0.2 — and 3 on
+   * 0.85 under `CHILL_L1`, which authors 0.85. Fifty-seven of fifty-seven, on
+   * the nose.
+   *
+   * This is the half of Muzzling that was reported missing twice. The interval
+   * between swings was lengthened first, and the swing itself went on playing at
+   * full speed — so a muzzled monster hit less often and looked exactly as
+   * quick, which is the opposite of what the modifier promises.
+   */
+  const attackSpeed = buffMultiplierFor(session, attackerDoid, "MELEE_SPD");
   session.send(
     npcAttackChoreography({
       doid: attackerDoid,
       attackType: ai.attackType,
       targetActorDoid: victimDoid,
+      playSpeed: attackSpeed > 0 ? attackSpeed : 1,
     })
   );
 

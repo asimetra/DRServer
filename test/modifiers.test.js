@@ -1133,3 +1133,61 @@ test("swinging a Muzzling weapon leaves the slowdown where the AI reads it", asy
     1000 / cripple.MELEE_SPD
   );
 });
+
+test("a muzzled monster swings slowly, not just seldom", async () => {
+  /**
+   * Reported twice, and the second report was the precise one: the monster's
+   * *motion* while striking should slow, which is a different thing from how
+   * often it strikes and a different thing again from how fast it walks.
+   *
+   * `playSpeed` on `ReceiveAttackChoreography` is what the client plays the
+   * swing at, and the official scales it by exactly the attack-speed multiplier
+   * the actor carries — 57 of its packets sit on 0.20 while the monster holds a
+   * `CRIPPLE_L3` or `CRIPPLE_L4`, both authoring `MELEE_SPD` 0.2, and 3 on 0.85
+   * under `CHILL_L1`, which authors 0.85.
+   */
+  const { buildFloor } = await import("./helpers/floor.js");
+  const { tickNpcAi } = await import("../src/socket/ai.js");
+  const gm = await loadGameMaster();
+  const cripple = gm.raw.Buff.find((row) => row.Constant === "CRIPPLE_L4");
+
+  const playSpeedOf = async (buffed) => {
+    const world = await buildFloor("castle/arena/db_floor_TUTORIAL_LEVEL_1.json");
+    const { session } = world;
+    const [doid, actor] =
+      [...session.actors].find(([, candidate]) => candidate.ai && candidate.isEnemy) ?? [];
+    session.heroPosition = { ...actor.position };
+    const hero = session.actors.get(session.heroDoid);
+    if (hero) hero.position = { ...actor.position };
+    if (buffed) session.activeBuffs = new Map([[1, { affectedActor: doid, buff: cripple }]]);
+
+    actor.ai.attackTimerMs = 1000;
+    actor.ai.attackRandMs = 0;
+    actor.ai.nextAttackAt = 0;
+    // The helper keeps its frames to itself, so take the tap for this tick.
+    const sent = [];
+    session.send = (frame) => sent.push(frame);
+    await tickNpcAi(session, 100000, 0.1);
+
+    // Field 143 on the monster: op(2) doid(4) field(2), then the header, whose
+    // playSpeed sits past weaponSlot, isConsumable, attackType, target and loop.
+    const packet = sent
+      .find(
+        (frame) => frame.readUInt16LE(2) === 124 &&
+          frame.readUInt32LE(4) === doid &&
+          frame.readUInt16LE(8) === 143
+      );
+    assert.ok(packet, "the monster sent no attack choreography");
+    return packet.readFloatLE(2 + 8 + 11);
+  };
+
+  assert.equal(await playSpeedOf(false), 1, "an unhindered monster swings at full speed");
+
+  // Compared with a tolerance: the field is an f32 on the wire, so an authored
+  // 0.2 comes back as 0.20000000298023224.
+  const muzzled = await playSpeedOf(true);
+  assert.ok(
+    Math.abs(muzzled - cripple.MELEE_SPD) < 1e-6,
+    `swung at ${muzzled} against an authored ${cripple.MELEE_SPD}`
+  );
+});
