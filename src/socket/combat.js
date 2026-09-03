@@ -1419,7 +1419,7 @@ export const placeableVictims = (session, attackerDoid, colliders = []) => {
 export const performPlaceableAttack = async (
   session,
   attackerDoid,
-  { attack, victims = [], weaponPower }
+  { attack, victims = [], weaponPower, weapon = null }
 ) => {
   if (!attack) return 0;
 
@@ -1428,11 +1428,25 @@ export const performPlaceableAttack = async (
     const clid = session.objects?.get(victim.doid);
     if (!RECEIVE_FIELD_BY_CLID[clid] || victim.actor.dead) continue;
 
+    /**
+     * Priced with the weapon that placed it, modifiers and all.
+     *
+     * The power has always come from the weapon; its `DAMAGE` modifiers had
+     * not, so a Sturdy bomb burned exactly as hard as a plain one. Reported as
+     * a napalm bomb's fire not taking its power from the modifier.
+     *
+     * Only the lingering damage runs through here. A thrown weapon's impact is
+     * proposed by the client and priced in `applyProposals`, which has had the
+     * weapon since the modifiers went in — the recordings show 11 `THROW_MINE`
+     * echoes against 11 proposals, and 13 `THROW_GARLIC` echoes against 7,
+     * those extra six being the cloud ticking on its own.
+     */
     const damage = await computeDamage(
       session,
       { attacker: session.heroDoid, attackee: victim.doid, attackType: attack.Id },
       attack,
-      weaponPower
+      weaponPower,
+      weapon
     );
     if (!(damage > 0)) continue;
 

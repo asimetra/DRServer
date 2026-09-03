@@ -810,3 +810,62 @@ test("the movement debuffs move a monster as far as they say", async () => {
     `slowed ${Math.round(slowed)} against an expected ${Math.round(free * slow.MOVEMENT)}`
   );
 });
+
+test("a placed bomb burns with the modifiers of the weapon that threw it", async () => {
+  /**
+   * Reported: a napalm bomb's fire should take its power from the modifier.
+   * The placeable path has always carried the weapon's `power` and never the
+   * weapon, so `attackMultiplierFor` had nothing to read and a Sturdy bomb
+   * burned exactly as hard as a plain one.
+   *
+   * Only the lingering damage runs through here. A thrown weapon's impact is
+   * proposed by the client and priced in `applyProposals`, which has had the
+   * weapon since the modifiers went in.
+   */
+  const { performPlaceableAttack } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+  const sturdy = gm.modifiersById.get(STURDY_L1);
+
+  /**
+   * `GARLIC_EXPLOSION` and not `THROW_FIREBOMB`: the throw carries no
+   * `DamageMod` at all — it is the arc, and the damage belongs to the thing it
+   * leaves behind, which is the half that runs through here.
+   */
+  const attack = gm.raw.Attack.find((row) => row.Constant === "GARLIC_EXPLOSION");
+  assert.ok(Number(attack?.DamageMod) < 0, "the fixture attack still deals damage");
+
+  const dealt = async (weapon) => {
+    const ENEMY = 9900;
+    const actor = {
+      hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
+      constant: "BRUTE", isEnemy: true, position: { x: 1050, y: 1000 },
+    };
+    const session = {
+      id: 45,
+      heroDoid: 500,
+      floorDoid: 400,
+      dungeonActive: true,
+      dungeonAvatar: { avatar_id: 104, experience: 0 },
+      heroWeapons: [weapon ?? {}],
+      random: () => 1,
+      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      actors: new Map([[ENEMY, actor]]),
+      allocateDoid: () => 901,
+      send: () => {},
+    };
+    await performPlaceableAttack(session, 700, {
+      attack,
+      victims: [{ doid: ENEMY, actor }],
+      weaponPower: 30,
+      weapon,
+    });
+    return 5000000 - actor.hitPoints;
+  };
+
+  const plain = await dealt(null);
+  const boosted = await dealt({ type: 12502, power: 30, modifier1: STURDY_L1 });
+
+  assert.ok(plain > 0, "the bomb hurt anything at all");
+  assert.equal(boosted, Math.round(plain * sturdy.MELEE_ATK));
+});

@@ -221,6 +221,7 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
         attack,
         victims: caught,
         weaponPower: live.weaponPower,
+        weapon: live.heroWeapon,
       }).catch((error) => warn(`[${session.id}] ${attack.Constant}: ${error.message}`));
     }, at);
     timer.unref?.();
@@ -250,6 +251,7 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
         origin: live.position,
         heading: live.heading,
         weaponPower: live.weaponPower,
+        weapon: live.heroWeapon,
       }).catch((error) =>
         warn(`[${session.id}] ${attack.Constant} spawn failed: ${error.message}`)
       );
@@ -360,7 +362,7 @@ const timelineLengthMs = async (name) => {
 /** Builds one placeable and starts its clock. */
 export const spawnPlaceable = async (
   session,
-  { action, origin, heading, weaponPower, placementGroup }
+  { action, origin, heading, weaponPower, heroWeapon = null, placementGroup }
 ) => {
   const npc = await npcForConstant(action.spawnname);
   if (!npc) {
@@ -552,6 +554,7 @@ export const spawnPlaceable = async (
     heading,
     // The weapon that placed it prices its hits — see performPlaceableAttack.
     weaponPower,
+    heroWeapon,
     position,
     floorDoid: session.floorDoid,
     mobileSummon,
@@ -893,6 +896,7 @@ export const handleProposeCreateNPC = async (session, reader) => {
     origin: { x, y },
     heading: session.heroHeading,
     weaponPower: session.heroWeapons?.[weaponSlot]?.power,
+    heroWeapon: session.heroWeapons?.[weaponSlot],
   });
   info(`[${session.id}] client landed ${npc.Constant} at ${Math.round(x)},${Math.round(y)}`);
   return true;
@@ -906,6 +910,13 @@ export const schedulePlaceables = async (
   { playSpeed = 1 } = {}
 ) => {
   const weaponPower = session.heroWeapons?.[weaponSlot]?.power;
+  /**
+   * And the weapon itself, for what its modifiers say — see `attackMultiplierFor`.
+   * A placeable's lingering damage is priced from the weapon that threw it, and
+   * carrying only the power meant a Sturdy bomb burned exactly as hard as a
+   * plain one.
+   */
+  const weapon = session.heroWeapons?.[weaponSlot];
   const actions = await spawnNpcActions(attack?.AttackTimeline);
   if (!actions.length || !session.floorDoid || !session.heroPosition) return false;
 
@@ -919,7 +930,7 @@ export const schedulePlaceables = async (
       () => {
         session.placeableSpawnTimers?.delete(timer);
         if (!session.dungeonActive || session.floorDoid !== floorDoid) return;
-        spawnPlaceable(session, { action, origin, heading, weaponPower, placementGroup }).catch((error) =>
+        spawnPlaceable(session, { action, origin, heading, weaponPower, heroWeapon: weapon, placementGroup }).catch((error) =>
           warn(`[${session.id}] placeable spawn failed: ${error.message}`)
         );
       },
