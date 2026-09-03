@@ -10,7 +10,7 @@ import {
   projectileForConstant,
 } from "../gamemaster.js";
 import { netAttackDamage, npcStats, statOffsetsFor } from "../combat-damage.js";
-import { STAT_NAMES } from "../hero-stats.js";
+import { STAT_NAMES, legendaryShieldFor } from "../hero-stats.js";
 import {
   buffColorTypeFor,
   buffEffectReport,
@@ -2045,7 +2045,21 @@ export const damageTurnedAside = (session, doid, stats, offsets) => {
     MAX_TRAINED_REDUCTION,
     Math.max(0, Number(stats?.get(stat)) || 0)
   );
-  return 1 - (1 - trained) * (1 - damageReductionFor(session, doid, stat));
+  /**
+   * And the legendary shield, if a weapon carries the one for this damage type
+   * — see `legendaryShieldFor`. Only the hero's own weapons shield the hero; an
+   * NPC has none, so this is nothing for everybody else.
+   */
+  const legendary = doid === session.heroDoid
+    ? legendaryShieldFor(session.heroWeapons ?? [], stat)
+    : 0;
+
+  return (
+    1 -
+    (1 - trained) *
+      (1 - damageReductionFor(session, doid, stat)) *
+      (1 - legendary)
+  );
 };
 
 /**

@@ -253,3 +253,37 @@ export const wireSlotPoints = (gm, hero, avatar) => {
   const spent = points.reduce((total, value) => total + value, 0);
   return spent <= earned ? points : [0, 0, 0, 0];
 };
+
+/**
+ * The three legendary shields, which are typed and do not stack.
+ *
+ * `Barrier` takes half of melee damage, `Cover` half of ranged and `Comprehend`
+ * half of magic — one per damage type, each saying "Does not stack" in its own
+ * description. The client handles none of the nine legendaries past the third,
+ * which by the usual contract leaves them here, and they were not here either.
+ *
+ * Keyed on the defence stat the hit is already priced against, so a weapon that
+ * shields against arrows does nothing about a sword. That is the whole point of
+ * there being three of them, and the thing most likely to be got wrong by
+ * applying whichever one the hero happens to carry.
+ *
+ * Flat rather than summed. Two weapons carrying `Barrier` are still 50%, which
+ * is what "does not stack" means; the caller folds this into the other
+ * reductions multiplicatively, as it already does for buffs.
+ */
+const LEGENDARY_SHIELD = new Map([
+  [10, "MELEE_DEF"], // Barrier
+  [11, "SHOOT_DEF"], // Cover
+  [12, "MAGIC_DEF"], // Comprehend
+]);
+
+const LEGENDARY_SHIELD_SHARE = 0.5;
+
+export const legendaryShieldFor = (weapons = [], defenceStat) => {
+  if (!defenceStat) return 0;
+  for (const weapon of weapons) {
+    const shields = LEGENDARY_SHIELD.get(Number(weapon?.legendarymodifier ?? 0));
+    if (shields === defenceStat) return LEGENDARY_SHIELD_SHARE;
+  }
+  return 0;
+};

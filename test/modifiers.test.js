@@ -1416,3 +1416,59 @@ test("a placeable's hits count on the report, pay Mana and drop food", async () 
   });
   assert.deepEqual(await dropped(saucier.sent), ["FOOD_CHEF_HIT"]);
 });
+
+test("a legendary shield covers its own damage type and no other", async () => {
+  /**
+   * `Barrier` takes half of melee, `Cover` half of ranged, `Comprehend` half of
+   * magic — one per type, each saying "Does not stack". Nine of the twelve
+   * legendaries are the server's by the usual contract and none of the nine was
+   * here; these three are the ones a player feels, and applying whichever one
+   * the hero happens to carry is the way to get them wrong.
+   */
+  const { legendaryShieldFor } = await import("../src/hero-stats.js");
+  const gm = await loadGameMaster();
+
+  const named = (id) => gm.raw.LegendaryModifiers.find((row) => row.Id === id)?.Name;
+  assert.equal(named(10), "Barrier");
+  assert.equal(named(11), "Cover");
+  assert.equal(named(12), "Comprehend");
+
+  const barrier = [{ legendarymodifier: 10 }];
+  assert.equal(legendaryShieldFor(barrier, "MELEE_DEF"), 0.5, "Barrier stops swords");
+  assert.equal(legendaryShieldFor(barrier, "SHOOT_DEF"), 0, "and not arrows");
+  assert.equal(legendaryShieldFor(barrier, "MAGIC_DEF"), 0, "and not spells");
+
+  assert.equal(legendaryShieldFor([{ legendarymodifier: 11 }], "SHOOT_DEF"), 0.5);
+  assert.equal(legendaryShieldFor([{ legendarymodifier: 12 }], "MAGIC_DEF"), 0.5);
+
+  // Does not stack: two of the same are still half.
+  assert.equal(
+    legendaryShieldFor([{ legendarymodifier: 10 }, { legendarymodifier: 10 }], "MELEE_DEF"),
+    0.5
+  );
+  assert.equal(legendaryShieldFor([{}, {}], "MELEE_DEF"), 0);
+});
+
+test("a Barrier weapon halves a melee hit on the hero, and not a magic one", async () => {
+  const { damageTurnedAside } = await import("../src/socket/combat.js");
+  const { STAT_NAMES } = await import("../src/hero-stats.js");
+  const HERO = 500;
+
+  const aside = (weapons, defence) => {
+    const session = { heroDoid: HERO, heroWeapons: weapons, activeBuffs: new Map() };
+    const offsets = { defence: STAT_NAMES.indexOf(defence) };
+    return damageTurnedAside(session, HERO, new Map(), offsets);
+  };
+
+  assert.equal(aside([{ legendarymodifier: 10 }], "MELEE_DEF"), 0.5);
+  assert.equal(aside([{ legendarymodifier: 10 }], "MAGIC_DEF"), 0);
+  assert.equal(aside([{}], "MELEE_DEF"), 0);
+
+  // A monster carries no weapons of the hero's, so it is shielded by nothing.
+  const session = { heroDoid: HERO, heroWeapons: [{ legendarymodifier: 10 }], activeBuffs: new Map() };
+  assert.equal(
+    damageTurnedAside(session, 9900, new Map(), { defence: STAT_NAMES.indexOf("MELEE_DEF") }),
+    0,
+    "the hero's legendary shielded a monster"
+  );
+});
