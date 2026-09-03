@@ -1492,10 +1492,10 @@ test("Midas Touch and Brain Trust raise what a drop is worth, each its own", asy
   assert.equal(legendaryDropBonus([{ legendarymodifier: 9 }], "xp"), 0, "Midas pays no experience");
   assert.equal(legendaryDropBonus([{ legendarymodifier: 8 }], "xp"), 0.05);
   assert.equal(legendaryDropBonus([{ legendarymodifier: 8 }], "gold"), 0);
-  // Four copies are still five per cent.
+  // Summed: two carry ten per cent.
   assert.equal(
     legendaryDropBonus([{ legendarymodifier: 9 }, { legendarymodifier: 9 }], "gold"),
-    0.05
+    0.1
   );
 
   const credited = (weapons) => {
@@ -1521,10 +1521,10 @@ test("Buster Gen pays a point for a kill, and stops at the bar's top", async () 
 
   assert.equal(legendaryBusterPerKill([{ legendarymodifier: 7 }]), 1);
   assert.equal(legendaryBusterPerKill([{}]), 0);
-  // One is one: two of them do not pay two.
+  // Summed: two pay two.
   assert.equal(
     legendaryBusterPerKill([{ legendarymodifier: 7 }, { legendarymodifier: 7 }]),
-    1
+    2
   );
 
   const killWith = async (weapon, points = 0) => {
@@ -1622,10 +1622,10 @@ test("Admiral's Luck takes a quarter off a trap and nothing off a sword", async 
 
   assert.equal(legendaryTrapShield([{ legendarymodifier: ADMIRALS_LUCK }]), 0.25);
   assert.equal(legendaryTrapShield([{}]), 0);
-  // Flat: two are still a quarter.
+  // Summed, like the client's own three: two carry half.
   assert.equal(
     legendaryTrapShield([{ legendarymodifier: 6 }, { legendarymodifier: 6 }]),
-    0.25
+    0.5
   );
 
   const spikes = gm.raw.Attack.find(

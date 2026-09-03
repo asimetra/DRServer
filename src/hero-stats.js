@@ -292,10 +292,9 @@ export const legendaryShieldFor = (weapons = [], defenceStat) => {
  * The two legendary multipliers on what an enemy drops.
  *
  * `Midas Touch` raises gold by 5% and `Brain Trust` experience by 5%, both in
- * their own words and both unread. Like the shields, neither stacks — the
- * descriptions do not say so outright, but they are written the same way as the
- * three that do, and a flat five per cent is the reading that does not turn
- * four weapons into twenty.
+ * their own words and both unread. Summed across the weapons carrying them: the
+ * game's idiom is to add, and only three of the twelve say they do not. See the
+ * note on stacking below.
  */
 const LEGENDARY_DROP = new Map([
   [8, "xp"], // Brain Trust
@@ -306,22 +305,28 @@ const LEGENDARY_DROP_SHARE = 0.05;
 
 export const legendaryDropBonus = (weapons = [], kind) => {
   if (!kind) return 0;
-  for (const weapon of weapons) {
-    if (LEGENDARY_DROP.get(Number(weapon?.legendarymodifier ?? 0)) === kind) {
-      return LEGENDARY_DROP_SHARE;
-    }
-  }
-  return 0;
+  return weapons.reduce(
+    (total, weapon) =>
+      total +
+      (LEGENDARY_DROP.get(Number(weapon?.legendarymodifier ?? 0)) === kind
+        ? LEGENDARY_DROP_SHARE
+        : 0),
+    0
+  );
 };
 
 /**
  * Whether a weapon pays a Buster point for a kill.
  *
- * `Buster Gen` — "Gain 1 Buster Point per enemy killed!" — and one is one: two
- * of them do not pay two, on the same reading as the shields beside them.
+ * `Buster Gen` — "Gain 1 Buster Point per enemy killed!" — one point per weapon
+ * carrying it, since the game's idiom is to add and this one does not say
+ * otherwise. See the note on stacking below.
  */
 export const legendaryBusterPerKill = (weapons = []) =>
-  weapons.some((weapon) => Number(weapon?.legendarymodifier ?? 0) === 7) ? 1 : 0;
+  weapons.reduce(
+    (total, weapon) => total + (Number(weapon?.legendarymodifier ?? 0) === 7 ? 1 : 0),
+    0
+  );
 
 /**
  * What the owner's legendaries add to the pet standing beside him.
@@ -356,36 +361,49 @@ export const legendaryPetBonuses = (weapons = []) => {
  * source of damage rather than a type of it, and the only reduction in the
  * twelve that is not one of the three typed shields. Unread like the rest.
  *
- * Flat, like the shields it sits beside: two of them are still a quarter.
+ * Summed across the weapons carrying it and capped below one, so a stack of
+ * them cannot make a trap free. See the note on stacking below.
  */
 const ADMIRALS_LUCK_SHARE = 0.25;
 
 export const legendaryTrapShield = (weapons = []) =>
-  weapons.some((weapon) => Number(weapon?.legendarymodifier ?? 0) === 6)
-    ? ADMIRALS_LUCK_SHARE
-    : 0;
+  Math.min(
+    0.95,
+    weapons.reduce(
+      (total, weapon) =>
+        total + (Number(weapon?.legendarymodifier ?? 0) === 6 ? ADMIRALS_LUCK_SHARE : 0),
+      0
+    )
+  );
 
 /**
- * Which legendaries stack, and how much of that is known.
+ * Which legendaries stack, and why.
  *
- * Three say so themselves: `Barrier`, `Cover` and `Comprehend` each end with
- * "Does not stack", and they are implemented flat. The other six say nothing,
- * and the rules here are readings rather than measurements:
+ * The client answers it, in the three it handles itself:
  *
- *   flat    `Midas Touch`, `Brain Trust`, `Buster Gen`, `Admiral's Luck`
- *   summed  `Beast Master`, `Animal Fury`
+ *     for (weapon in mWeaponDetails)
+ *       switch (weapon.legendarymodifier - 1) {
+ *         case 0: mStaminaModMultiplier      += 10 + weapon.requiredlevel * 0.9;
+ *         case 1: mAptitudeModMultiplier     += 10 + weapon.requiredlevel * 0.4;
+ *         case 2: mAccelerationModMultiplier += 0.1;
+ *       }
  *
- * The split is that the first four take a share of something or pay a fixed
- * price, where doubling turns 5% into 10% and a point into two, while the last
- * two add to a number the way `Stamina` and `Aptitude` add to health and mana —
- * and those two are the client's, where the addition is what it does.
+ * Every weapon, and `+=`. So the game's idiom is to add — including for a
+ * *share*: `Acceleration` is ten per cent of movement and two of them make
+ * twenty, which is the case that decides it for `Midas Touch` and
+ * `Admiral's Luck` too.
  *
- * The captures cannot settle it. Legendaries are common enough — 33687 of the
- * items in the recorded RPC traffic carry one — but of the 384 heroes seen with
- * one equipped, exactly one carries the same kind twice, and that one is
- * `Barrier`, whose rule was never in doubt. There is no recorded player holding
- * two Midas Touches or two Beast Masters, so nothing on the wire has an opinion.
+ * Which makes "Does not stack" the exception, written down on the three that
+ * take it: `Barrier`, `Cover` and `Comprehend`. Those are flat and the other
+ * nine are summed.
  *
- * Worth revisiting only with a capture of somebody wearing a pair. Searching for
- * one has been done; the result is above.
+ * `Admiral's Luck` is capped below one all the same, so four of them cannot
+ * make a trap free — the descriptions do not contemplate a stack that large and
+ * a floor that cannot hurt anybody is worse than a rule bent.
+ *
+ * This replaces an earlier reading that made four of them flat on the argument
+ * that doubling 5% into 10% looked wrong. The client had the answer the whole
+ * time and it was not consulted; the captures were, and could not help — of 384
+ * heroes seen with a legendary equipped, exactly one wears the same kind twice,
+ * and it is a `Barrier`.
  */
