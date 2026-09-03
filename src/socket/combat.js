@@ -2751,14 +2751,18 @@ const applyProposals = async (session, proposals) => {
        * is taken before the hit, since a kill takes the actor off the floor and
        * the drop would otherwise fall back to the spawn point.
        */
-      const column = !wasDead && actor.dead ? FOOD_ON_DEATH : FOOD_ON_HIT;
-      const chance = foodChanceFor(await loadGameMaster(), swung, column);
+      const onDeath = !wasDead && actor.dead;
+      const chance = foodChanceFor(
+        await loadGameMaster(),
+        swung,
+        onDeath ? FOOD_ON_DEATH : FOOD_ON_HIT
+      );
       if (chance > 0 && (session.random ?? Math.random)() < chance) {
         spawnFoodDoober(session, {
           gm: await loadGameMaster(),
           floorDoid: session.floorDoid,
-          npc: await npcForConstant(actor.constant),
           origin,
+          onDeath,
           random: session.random ?? Math.random,
         });
       }

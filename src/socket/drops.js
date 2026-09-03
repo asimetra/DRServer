@@ -197,25 +197,25 @@ export const spawnBossReward = (session, { floorDoid, origin, node, random = Mat
  * One piece of food, dropped by a weapon rather than by the monster.
  *
  * `Saucier` and `Cook's` spawn food on hitting and on killing, and neither the
- * client nor this server read their columns — a grep of both trees returns
- * nothing for either. The recordings cannot settle it either way: food does
- * appear without a death, 592 times, but the game has two other ways to make it
- * — the `FOOD_SPAWNER` prop and the cooking pot's own attack — and a capture
- * does not say which modifiers the recorded player was carrying. So this rests
- * on the columns, which are explicit, and on the mechanism, which is this
- * server's either way.
+ * client nor this server read their columns.
  *
- * Which food is not authored anywhere, so it is taken from what the victim
- * could have dropped by itself: `DooberDrop` already says which doobers each
- * NPC yields, and three of them are food. A monster that drops no food drops
- * none here either, rather than being handed a sausage the table never gave it.
+ * Which food is not a choice. Two doobers carry `DooberType` `CHEF_FOOD` and
+ * they are named after the two events: `FOOD_CHEF_HIT`, the "Chef Burger" worth
+ * 2% of the bar, and `FOOD_CHEF_DEATH`, the "Chef Cupcake" worth 20%. Neither
+ * appears in `DooberDrop` at all — no monster drops either — so they exist for
+ * this and for the Battle Chef's `COOKING`, whose `HitSpawnBase` of 1% and
+ * `DeathSpawnBase` of 5% are the same two events again.
+ *
+ * The first version of this picked from the victim's own drop table instead,
+ * which handed out sausages and bacon. Those are ordinary loot; the burger is
+ * the one the modifier promises.
  */
-export const spawnFoodDoober = (session, { gm, floorDoid, npc, origin, random = Math.random }) => {
-  if (!floorDoid || !origin || !npc?.Constant) return null;
-  const allowed = (gm?.dooberDropsByNpcConstant?.get(npc.Constant) ?? []).filter(
-    (doober) => /^FOOD/.test(doober.Constant ?? "")
-  );
-  const doober = randomItem(allowed, random);
+const CHEF_FOOD = { hit: "FOOD_CHEF_HIT", death: "FOOD_CHEF_DEATH" };
+
+export const spawnFoodDoober = (session, { gm, floorDoid, origin, onDeath = false, random = Math.random }) => {
+  if (!floorDoid || !origin) return null;
+  const wanted = onDeath ? CHEF_FOOD.death : CHEF_FOOD.hit;
+  const doober = gm?.dooberByConstant?.get(wanted);
   if (!doober) return null;
 
   const position = landingPosition(origin, 0, 1, unitRandom(random) * Math.PI * 2, random);

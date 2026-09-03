@@ -372,8 +372,29 @@ test("two food modifiers add their chances", async () => {
   );
 });
 
-test("a Saucier weapon drops food on a hit that does not kill", async () => {
+/** The doober constants a session put on the floor, in order. */
+const dropped = async (sent) => {
   const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+  const byId = new Map(gm.raw.Doobers.map((row) => [row.Id, row.Constant]));
+  return sent
+    .filter(
+      (packet) => (packet.readUInt16LE(2) === 134 || packet.readUInt16LE(2) === 135) &&
+        packet.readUInt16LE(12) === CLID.DistributedDooberGameObject
+    )
+    .map((packet) => byId.get(packet.readUInt32LE(18)) ?? packet.readUInt32LE(18));
+};
+
+test("a Saucier weapon drops the Chef Burger on a hit that does not kill", async () => {
+  /**
+   * Which food is not a choice: two doobers carry `DooberType` `CHEF_FOOD` and
+   * are named after the two events — `FOOD_CHEF_HIT`, the Chef Burger worth 2%
+   * of the bar, and `FOOD_CHEF_DEATH`, the Chef Cupcake worth 20%. Neither is
+   * in `DooberDrop`, so no monster drops either.
+   *
+   * This first picked from the victim's own drop table and handed out sausages.
+   * Those are ordinary loot; the burger is what the modifier promises.
+   */
   const { session, sent, ENEMY } = await arena({
     type: 12502, power: 30, modifier1: SAUCIER_L1,
   });
@@ -382,11 +403,22 @@ test("a Saucier weapon drops food on a hit that does not kill", async () => {
   await swing(session, ENEMY);
 
   assert.ok(!session.actors.get(ENEMY).dead, "the enemy survived the hit");
-  const doobers = sent.filter(
-    (packet) => (packet.readUInt16LE(2) === 134 || packet.readUInt16LE(2) === 135) &&
-      packet.readUInt16LE(12) === CLID.DistributedDooberGameObject
-  );
-  assert.equal(doobers.length, 1, "the hit dropped no food");
+  assert.deepEqual(await dropped(sent), ["FOOD_CHEF_HIT"]);
+});
+
+test("a Cook's weapon drops the Chef Cupcake on the kill", async () => {
+  const COOKS = 70201;
+  const { session, sent, ENEMY } = await arena({ type: 12502, power: 30, modifier1: COOKS });
+  session.random = () => 0;
+  const victim = session.actors.get(ENEMY);
+  victim.hitPoints = 1; // the next hit kills
+
+  await swing(session, ENEMY);
+
+  // Held from before the swing: a death takes the actor off the floor, so
+  // `session.actors` no longer has it to ask.
+  assert.ok(victim.dead, "the enemy died");
+  assert.deepEqual(await dropped(sent), ["FOOD_CHEF_DEATH"]);
 });
 
 test("a weapon with no food modifier drops nothing", async () => {
