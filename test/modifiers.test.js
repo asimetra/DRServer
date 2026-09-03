@@ -1307,3 +1307,49 @@ test("swinging a Trapper weapon drags the monster in", async () => {
   const blastback = await swungWithPull({ type: 12502, power: 30, modifier1: BLASTBACK });
   assert.equal(blastback, 250, "Blastback did not throw it away");
 });
+
+test("a fissure weapon shoves too, not only a direct swing", async () => {
+  /**
+   * A `HERO_WAR_MALLET` carrying `Knockback` did nothing while another weapon
+   * with the same modifier worked. Its `FISSURE_HAMMER` deals damage through
+   * the placeable it opens rather than a hit the client proposes, so it never
+   * reached the push.
+   */
+  const { performPlaceableAttack } = await import("../src/socket/combat.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const gm = await loadGameMaster();
+
+  const mallet = gm.raw.WeaponItem.find((row) => row.Constant === "HERO_WAR_MALLET");
+  assert.equal(mallet?.Attack1, "FISSURE_HAMMER", "the mallet still fights through a fissure");
+
+  const HERO = 500;
+  const ENEMY = 9900;
+  const victim = {
+    hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
+    constant: "BRUTE", isEnemy: true, position: { x: 1200, y: 1000 },
+  };
+  const session = {
+    id: 52, heroDoid: HERO, floorDoid: 400, dungeonActive: true,
+    heroPosition: { x: 1000, y: 1000 },
+    dungeonAvatar: { avatar_id: 104, experience: 0 },
+    heroWeapons: [{ type: mallet.Id, power: 30, modifier1: BLASTBACK }],
+    random: () => 1,
+    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    actors: new Map([
+      [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
+      [ENEMY, victim],
+    ]),
+    navigation: null,
+    allocateDoid: () => 901,
+    send: () => {},
+  };
+
+  await performPlaceableAttack(session, 700, {
+    attack: gm.raw.Attack.find((row) => row.Constant === "FISSURE_HAMMER"),
+    victims: [{ doid: ENEMY, actor: victim }],
+    weaponPower: 30,
+    weapon: session.heroWeapons[0],
+  });
+
+  assert.equal(victim.position.x - 1200, 250, "the fissure left the monster where it stood");
+});

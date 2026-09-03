@@ -1552,6 +1552,24 @@ export const performPlaceableAttack = async (
         ],
       })
     );
+    /**
+     * And the shove, on the same gate as the crit beside it.
+     *
+     * A `HERO_WAR_MALLET` carrying `Knockback` did nothing while an ordinary
+     * weapon carrying the same modifier worked, and the difference is this
+     * path: the mallet's `FISSURE_HAMMER` does its damage through the placeable
+     * it opens, not through a hit the client proposes, so it never reached the
+     * push in `applyProposals`.
+     *
+     * The official displaces here too, though less tidily than for a direct
+     * hit: its `FISSURE_SMASH_ATTACK` victims move a median 48 and its
+     * `FISSURE_SLOW_SMASH_ATTACK` 65, with maxima of 326 and 142 — and its
+     * `FISSURE_SMASH_AXE` a median of nothing over 52 hits, which is what a
+     * weapon without the modifier looks like.
+     */
+    const shove = knockbackFor(await loadGameMaster(), weapon);
+    if (shove) pushVictim(session, victim.doid, session.heroDoid, shove);
+
     if (applyDamage(session, victim.doid, damage, () => session.send(reaction))) hits++;
 
     if (!victim.actor.dead) {
