@@ -48,6 +48,7 @@ import { legendaryPetBonuses,
   maxHitPoints,
   maxManaPoints,
   effectiveMaxHitPoints,
+  effectiveMaxManaPoints,
   wireSlotPoints,
   statTotals,
 } from "../hero-stats.js";
@@ -2196,7 +2197,9 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
     const spawn = member.heroSpawn;
     const at = { x: floor.spawn.x, y: floor.spawn.y };
     session.actors.set(member.heroDoid, {
-      hitPoints: spawn.effectiveHitPoints,
+      // The generate sends this same current value. Stamina raises the ceiling
+      // on the client; it does not silently heal the current bar on the wire.
+      hitPoints: spawn.hitPoints,
       maxHitPoints: spawn.effectiveHitPoints,
       collisionRadius: spawn.collisionRadius,
       constant: spawn.constant,
@@ -2323,9 +2326,12 @@ export const prepareDungeonMember = async (
   const effectiveHitPoints = hero
     ? effectiveMaxHitPoints(gm, hero, avatar, weapons)
     : hitPoints;
+  const effectiveManaPoints = hero
+    ? effectiveMaxManaPoints(gm, hero, avatar, weapons)
+    : manaPoints;
   const slotPoints = hero ? wireSlotPoints(gm, hero, avatar) : [0, 0, 0, 0];
   session.heroManaPoints = manaPoints;
-  session.maxHeroManaPoints = manaPoints;
+  session.maxHeroManaPoints = effectiveManaPoints;
   session.heroSpawn = {
     doid: heroDoid,
     heroType: avatar.avatar_id ?? 101,
@@ -2526,9 +2532,10 @@ export const enterDungeon = async (
   const manaPoints = hero ? maxManaPoints(gm, hero, avatar) : 100;
   // What the health bar really tops out at, and so what damage is taken from.
   const effectiveHitPoints = hero ? effectiveMaxHitPoints(gm, hero, avatar, weapons) : hitPoints;
+  const effectiveManaPoints = hero ? effectiveMaxManaPoints(gm, hero, avatar, weapons) : manaPoints;
   const slotPoints = hero ? wireSlotPoints(gm, hero, avatar) : [0, 0, 0, 0];
   session.heroManaPoints = manaPoints;
-  session.maxHeroManaPoints = manaPoints;
+  session.maxHeroManaPoints = effectiveManaPoints;
 
   /**
    * Everything about the hero that survives a floor change. Only its position

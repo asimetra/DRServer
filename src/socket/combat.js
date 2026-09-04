@@ -30,7 +30,7 @@ import { beginFloorFailing, checkFloorCleared } from "./floorstate.js";
 import { objectDisable } from "./objects.js";
 import { grantMana, queueAccountSave } from "./rewards.js";
 import { collisionPointOf, hasLineOfSight, isPositionBlocked } from "./navigation.js";
-import { heroMembersOf } from "./match-world.js";
+import { heroMembersOf, memberForHero } from "./match-world.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { RULE, noteViolation } from "./security-events.js";
@@ -659,16 +659,20 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
    * Only for the hero, whose weapons these are, and floored at one so a trap
    * that goes off is still felt.
    */
-  const luck = victimDoid === session.heroDoid
-    ? legendaryTrapShield(session.heroWeapons ?? [])
-    : 0;
+  const weapons = weaponsForHero(session, victimDoid);
+  const luck = legendaryTrapShield(weapons);
   const spared = (damage) => (luck ? Math.max(1, Math.round(damage * (1 - luck))) : damage);
 
   if (attack?.DoPercentHealthDamage) {
+    const shield = legendaryShieldFor(weapons, attack.AttackType);
     return spared(
       Math.max(
         1,
-        Math.round(victim.maxHitPoints * Math.max(0, attack.PercentHealthDamageValue ?? 0))
+        Math.round(
+          victim.maxHitPoints *
+            Math.max(0, attack.PercentHealthDamageValue ?? 0) *
+            (1 - shield)
+        )
       )
     );
   }
@@ -1393,8 +1397,17 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
       return;
     }
     remaining -= 1;
+    const hitPointsBefore = actor.hitPoints ?? 0;
     // Hit points first, then the floater — the order every captured tick shows.
     if (!applyDamage(session, victimDoid, perTick)) return;
+    if (actor.isEnemy) {
+      session.dungeonContribution ??= { kills: 0, damage: 0 };
+      session.dungeonContribution.damage += Math.min(perTick, hitPointsBefore);
+      if (actor.dead) {
+        session.dungeonContribution.kills += 1;
+        payBusterForKill(session);
+      }
+    }
     session.send(
       buffEffectReport({
         heroDoid: session.heroDoid,
@@ -2064,6 +2077,16 @@ const statsFor = async (session, doid) => {
  */
 const generationFalloff = (generation) => 2 ** Math.max(0, Number(generation ?? 0));
 
+/** The equipment belonging to a hero doid, including a remote party member. */
+const weaponsForHero = (session, doid) => {
+  // Most damage targets an NPC. Avoid rebuilding the at-most-four-member hero
+  // lookup on that hot path when the shared actor set already answers no.
+  if (!isPartyHero(session, doid)) return [];
+  if (doid === session?.heroDoid) return session.heroWeapons ?? [];
+  const member = memberForHero(session, doid);
+  return member?.heroWeapons ?? [];
+};
+
 /**
  * The most a hero may turn aside through training alone.
  *
@@ -2104,9 +2127,8 @@ export const damageTurnedAside = (session, doid, stats, offsets) => {
    * — see `legendaryShieldFor`. Only the hero's own weapons shield the hero; an
    * NPC has none, so this is nothing for everybody else.
    */
-  const legendary = doid === session.heroDoid
-    ? legendaryShieldFor(session.heroWeapons ?? [], stat)
-    : 0;
+  const attackType = ["MELEE", "SHOOTING", "MAGIC"][offsets.type];
+  const legendary = legendaryShieldFor(weaponsForHero(session, doid), attackType);
 
   return (
     1 -
@@ -2420,15 +2442,15 @@ const withDamage = (bytes, wireDamage) => {
  */
 const CRITICAL_HIT_BYTE = 26; // attacker, attackee, damage, Attack(10), when, suffer, knockback, blocked
 const KNOCKBACK_BYTE = 24; // attacker, attackee, damage, Attack(10), when, suffer
-const withKnockback = (bytes) => {
+const withKnockback = (bytes, enabled = true) => {
   const copy = Buffer.from(bytes);
-  copy.writeUInt8(1, KNOCKBACK_BYTE);
+  copy.writeUInt8(enabled ? 1 : 0, KNOCKBACK_BYTE);
   return copy;
 };
 
-const withCrit = (bytes) => {
+const withCrit = (bytes, enabled = true) => {
   const copy = Buffer.from(bytes);
-  copy.writeUInt8(1, CRITICAL_HIT_BYTE);
+  copy.writeUInt8(enabled ? 1 : 0, CRITICAL_HIT_BYTE);
   return copy;
 };
 
@@ -2971,7 +2993,7 @@ const applyProposals = async (session, proposals) => {
       : { critical: false, multiplier: 1 };
     const damage = critical ? Math.round(plain * multiplier) : plain;
 
-    const shove = knockbackFor(await loadGameMaster(), swung);
+    const shove = proposal.blocked ? 0 : knockbackFor(await loadGameMaster(), swung);
     /**
      * Not gated on the client's flag, which is the mistake the first version
      * made: the client proposes that byte as 0 on 13624 of 13626 recorded
@@ -2985,10 +3007,18 @@ const applyProposals = async (session, proposals) => {
      * hits, median displacement zero — so a hero's ordinary swing does not
      * shove, whatever its row says. What the corpus cannot show is a `Hitback`
      * or a `Trapper`, since no recorded player carried one.
+     *
+     * And not on a blocked result. The client's own resolver clears blocked
+     * hits before it ever considers a knockback flag; letting a modifier push
+     * through that gate would let a hit that landed for zero still reposition
+     * the victim.
      */
-    let bytes = critical ? withCrit(proposal.bytes) : proposal.bytes;
-    // And says so, so the client plays the stagger over the move.
-    if (shove) bytes = withKnockback(bytes);
+    // Both flags are server decisions. Always overwrite the proposal so a
+    // modified client cannot preserve a forged critical/knockback marker in
+    // the authoritative echo when the corresponding effect was refused.
+    let bytes = withCrit(proposal.bytes, critical);
+    if (proposal.blocked) bytes = withKnockback(bytes, false);
+    else if (shove) bytes = withKnockback(bytes);
     const echo = receiveCombatResult(proposal.attackee, fieldId, withDamage(bytes, -damage));
 
     /**

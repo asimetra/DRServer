@@ -262,28 +262,28 @@ export const wireSlotPoints = (gm, hero, avatar) => {
  * description. The client handles none of the nine legendaries past the third,
  * which by the usual contract leaves them here, and they were not here either.
  *
- * Keyed on the defence stat the hit is already priced against, so a weapon that
- * shields against arrows does nothing about a sword. That is the whole point of
- * there being three of them, and the thing most likely to be got wrong by
- * applying whichever one the hero happens to carry.
+ * Keyed on the attack type, not on the defence-stat column used by the old
+ * damage formula. That formula intentionally carries the shipped client's
+ * crossed melee/ranged defence offsets; using those offsets here would make
+ * Barrier stop arrows and Cover stop swords.
  *
  * Flat rather than summed. Two weapons carrying `Barrier` are still 50%, which
  * is what "does not stack" means; the caller folds this into the other
  * reductions multiplicatively, as it already does for buffs.
  */
 const LEGENDARY_SHIELD = new Map([
-  [10, "MELEE_DEF"], // Barrier
-  [11, "SHOOT_DEF"], // Cover
-  [12, "MAGIC_DEF"], // Comprehend
+  [10, "MELEE"], // Barrier
+  [11, "SHOOTING"], // Cover
+  [12, "MAGIC"], // Comprehend
 ]);
 
 const LEGENDARY_SHIELD_SHARE = 0.5;
 
-export const legendaryShieldFor = (weapons = [], defenceStat) => {
-  if (!defenceStat) return 0;
+export const legendaryShieldFor = (weapons = [], attackType) => {
+  if (!attackType) return 0;
   for (const weapon of weapons) {
     const shields = LEGENDARY_SHIELD.get(Number(weapon?.legendarymodifier ?? 0));
-    if (shields === defenceStat) return LEGENDARY_SHIELD_SHARE;
+    if (shields === attackType) return LEGENDARY_SHIELD_SHARE;
   }
   return 0;
 };

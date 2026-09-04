@@ -104,12 +104,10 @@ import { superStatValue } from "../hero-stats.js";
  * not: `KATANA_SOUL_BANG` authors 50 and moves nothing over 6568 flagged hits,
  * because that katana carried no knockback modifier.
  *
- * So all twenty-four are accounted for. Thirteen are this server's and are
+ * So all twenty-four are accounted for. Fifteen are this server's and are
  * done; `MANA_COST` and `COOLDOWN_REDUC` were already; six are the client's and
- * work. The last three — `KNOCKBACK`, `PULL` and
- * `BUFF_GRANT_DURATION_MULTIPLIER` — cannot be made to do anything from here,
- * the first two for want of anywhere to act and the third for want of a weapon
- * that may carry it.
+ * work; and `BUFF_GRANT_DURATION_MULTIPLIER` remains unreachable because no
+ * weapon may carry it.
  */
 export const critRollFor = (gm, weapon, random = Math.random) => {
   const none = { critical: false, multiplier: 1 };

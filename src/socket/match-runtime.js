@@ -110,7 +110,9 @@ const rememberMemberObjects = (member, world) => {
 const installHeroActor = (member, world, position) => {
   const spawn = member.heroSpawn;
   world.actors.set(member.heroDoid, {
-    hitPoints: spawn.effectiveHitPoints,
+    // Keep authoritative current HP equal to the value generated to clients;
+    // Stamina changes only the separately tracked maximum.
+    hitPoints: spawn.hitPoints,
     maxHitPoints: spawn.effectiveHitPoints,
     collisionRadius: spawn.collisionRadius,
     constant: spawn.constant,

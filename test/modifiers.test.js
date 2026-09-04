@@ -493,6 +493,46 @@ test("a poison tick is a share of the hit, not the whole of it", async () => {
   for (const timer of session.damageOverTimeTimers ?? []) clearInterval(timer);
 });
 
+test("a damage-over-time kill is credited and pays Buster Gen", async () => {
+  const weapon = {
+    type: 12502,
+    power: 30,
+    modifier1: NOXIOUS_L1,
+    legendarymodifier: 7,
+  };
+
+  // Measure the direct hit first, then leave exactly one poison tick behind it.
+  const calibration = await arena({ type: 12502, power: 30 });
+  const calibrationVictim = calibration.session.actors.get(calibration.ENEMY);
+  const before = calibrationVictim.hitPoints;
+  await swing(calibration.session, calibration.ENEMY);
+  const directDamage = before - calibrationVictim.hitPoints;
+
+  const gm = await loadGameMaster();
+  const poison = gm.buffsByConstant.get("POISON_L1");
+  const tickDamage = Math.max(1, Math.round(directDamage * poison.PercentDamage));
+  const { session, ENEMY } = await arena(weapon);
+  const victim = session.actors.get(ENEMY);
+  victim.hitPoints = directDamage + tickDamage;
+  victim.maxHitPoints = victim.hitPoints;
+  session.dungeonBusterPoints = 0;
+  session.maxDungeonBusterPoints = 100;
+
+  await swing(session, ENEMY);
+  assert.equal(victim.dead, undefined, "the direct hit killed before poison could be credited");
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+
+  assert.equal(victim.dead, true, "the poison tick did not kill the enemy");
+  assert.equal(session.dungeonContribution.kills, 1, "the poison kill vanished from contribution");
+  assert.equal(
+    session.dungeonContribution.damage,
+    directDamage + tickDamage,
+    "the poison damage was not added to the direct hit"
+  );
+  assert.equal(session.dungeonBusterPoints, 1, "Buster Gen ignored the poison kill");
+  for (const timer of session.damageOverTimeTimers ?? []) clearInterval(timer);
+});
+
 test("repeated hits do not pile up poison clocks", async () => {
   /**
    * `grantBuff` refreshes the oldest copy once `MaxStacks` is reached rather
@@ -1308,6 +1348,68 @@ test("swinging a Trapper weapon drags the monster in", async () => {
   assert.equal(blastback, 250, "Blastback did not throw it away");
 });
 
+test("a blocked hit clears forged modifier flags and does not reposition the victim", async () => {
+  const { handleProposeAttackChoreography } = await import("../src/socket/buster.js");
+  const { PacketReader, PacketWriter } = await import("../src/socket/packet.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const SOUL_BANG = 902509;
+  const HERO = 500;
+  const ENEMY = 9900;
+
+  const victim = {
+    hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
+    constant: "BRUTE", isEnemy: true, position: { x: 1200, y: 1000 },
+  };
+  const sent = [];
+  let nextDoid = 900;
+  const session = {
+    id: 511,
+    heroDoid: HERO,
+    floorDoid: 400,
+    dungeonActive: true,
+    heroPosition: { x: 1000, y: 1000 },
+    heroHeading: 0,
+    heroManaPoints: 1000,
+    maxHeroManaPoints: 1000,
+    dungeonBusterPoints: 0,
+    dungeonAvatar: { avatar_id: 104, experience: 0 },
+    heroWeapons: [{ type: 12502, power: 30, modifier1: BLASTBACK }],
+    random: () => 1,
+    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    actors: new Map([
+      [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
+      [ENEMY, victim],
+    ]),
+    navigation: null,
+    allocateDoid: () => ++nextDoid,
+    send: (packet) => sent.push(packet),
+  };
+
+  const record = new PacketWriter()
+    .u32(HERO).u32(ENEMY).u32(0)
+    .u8(0).u8(0).u32(SOUL_BANG).u32(ENEMY)
+    // A modified client claims knockback and critical on a blocked result.
+    .u8(0).u8(0).u8(1).u8(1).u8(1).u8(0)
+    .u32(0).u32(0).u8(0)
+    .body();
+  const packet = new PacketWriter()
+    .u8(0).u8(0).u32(SOUL_BANG).u32(ENEMY).u8(0).f32(1).f32(1)
+    .u16(record.length).raw(record)
+    .body();
+  await handleProposeAttackChoreography(session, new PacketReader(packet));
+
+  assert.equal(victim.position.x, 1200, "the blocked hit still moved the monster");
+  const echo = sent.find(
+    (frame) =>
+      frame.readUInt16LE(2) === 124 &&
+      frame.readUInt32LE(4) === ENEMY &&
+      frame.readUInt16LE(8) === 144
+  );
+  assert.ok(echo, "the blocked result was not echoed");
+  assert.equal(echo.readUInt8(2 + 8 + 24), 0, "the blocked echo still claimed knockback");
+  assert.equal(echo.readUInt8(2 + 8 + 26), 0, "the blocked echo trusted a forged critical flag");
+});
+
 test("a fissure weapon shoves too, not only a direct swing", async () => {
   /**
    * A `HERO_WAR_MALLET` carrying `Knockback` did nothing while another weapon
@@ -1434,40 +1536,40 @@ test("a legendary shield covers its own damage type and no other", async () => {
   assert.equal(named(12), "Comprehend");
 
   const barrier = [{ legendarymodifier: 10 }];
-  assert.equal(legendaryShieldFor(barrier, "MELEE_DEF"), 0.5, "Barrier stops swords");
-  assert.equal(legendaryShieldFor(barrier, "SHOOT_DEF"), 0, "and not arrows");
-  assert.equal(legendaryShieldFor(barrier, "MAGIC_DEF"), 0, "and not spells");
+  assert.equal(legendaryShieldFor(barrier, "MELEE"), 0.5, "Barrier stops swords");
+  assert.equal(legendaryShieldFor(barrier, "SHOOTING"), 0, "and not arrows");
+  assert.equal(legendaryShieldFor(barrier, "MAGIC"), 0, "and not spells");
 
-  assert.equal(legendaryShieldFor([{ legendarymodifier: 11 }], "SHOOT_DEF"), 0.5);
-  assert.equal(legendaryShieldFor([{ legendarymodifier: 12 }], "MAGIC_DEF"), 0.5);
+  assert.equal(legendaryShieldFor([{ legendarymodifier: 11 }], "SHOOTING"), 0.5);
+  assert.equal(legendaryShieldFor([{ legendarymodifier: 12 }], "MAGIC"), 0.5);
 
   // Does not stack: two of the same are still half.
   assert.equal(
-    legendaryShieldFor([{ legendarymodifier: 10 }, { legendarymodifier: 10 }], "MELEE_DEF"),
+    legendaryShieldFor([{ legendarymodifier: 10 }, { legendarymodifier: 10 }], "MELEE"),
     0.5
   );
-  assert.equal(legendaryShieldFor([{}, {}], "MELEE_DEF"), 0);
+  assert.equal(legendaryShieldFor([{}, {}], "MELEE"), 0);
 });
 
 test("a Barrier weapon halves a melee hit on the hero, and not a magic one", async () => {
   const { damageTurnedAside } = await import("../src/socket/combat.js");
-  const { STAT_NAMES } = await import("../src/hero-stats.js");
+  const { statOffsetsFor } = await import("../src/combat-damage.js");
   const HERO = 500;
 
-  const aside = (weapons, defence) => {
+  const aside = (weapons, attackType) => {
     const session = { heroDoid: HERO, heroWeapons: weapons, activeBuffs: new Map() };
-    const offsets = { defence: STAT_NAMES.indexOf(defence) };
+    const offsets = statOffsetsFor({ AttackType: attackType });
     return damageTurnedAside(session, HERO, new Map(), offsets);
   };
 
-  assert.equal(aside([{ legendarymodifier: 10 }], "MELEE_DEF"), 0.5);
-  assert.equal(aside([{ legendarymodifier: 10 }], "MAGIC_DEF"), 0);
-  assert.equal(aside([{}], "MELEE_DEF"), 0);
+  assert.equal(aside([{ legendarymodifier: 10 }], "MELEE"), 0.5);
+  assert.equal(aside([{ legendarymodifier: 10 }], "MAGIC"), 0);
+  assert.equal(aside([{}], "MELEE"), 0);
 
   // A monster carries no weapons of the hero's, so it is shielded by nothing.
   const session = { heroDoid: HERO, heroWeapons: [{ legendarymodifier: 10 }], activeBuffs: new Map() };
   assert.equal(
-    damageTurnedAside(session, 9900, new Map(), { defence: STAT_NAMES.indexOf("MELEE_DEF") }),
+    damageTurnedAside(session, 9900, new Map(), statOffsetsFor({ AttackType: "MELEE" })),
     0,
     "the hero's legendary shielded a monster"
   );

@@ -11,6 +11,8 @@ const multiplier = (value) =>
   Number.isFinite(Number(value)) ? Number(value) : 1;
 
 const expireBuff = (session, doid) => {
+  const timer = session.buffTimers?.get(doid);
+  if (timer) clearTimeout(timer);
   session.buffTimers?.delete(doid);
   session.activeBuffs?.delete(doid);
   if (!session.objects?.has(doid)) return;
@@ -35,6 +37,12 @@ export const clearBuffsOn = (session, actorDoid) => {
   let cleared = 0;
   for (const [doid, active] of [...(session.activeBuffs?.entries() ?? [])]) {
     if (active.affectedActor !== actorDoid) continue;
+    const damageTimer = session.damageOverTimeByBuff?.get(doid);
+    if (damageTimer) {
+      clearInterval(damageTimer);
+      session.damageOverTimeTimers?.delete(damageTimer);
+      session.damageOverTimeByBuff.delete(doid);
+    }
     expireBuff(session, doid);
     cleared += 1;
   }
@@ -280,5 +288,6 @@ export const clearDungeonBuffs = (session) => {
   // Damage-over-time runs on its own interval per victim — see combat.js.
   for (const timer of session.damageOverTimeTimers ?? []) clearInterval(timer);
   session.damageOverTimeTimers?.clear();
+  session.damageOverTimeByBuff?.clear();
   session.activeBuffs?.clear();
 };

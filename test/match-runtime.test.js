@@ -44,6 +44,8 @@ const member = (accountId, avatarDoid) => {
 };
 
 const prepareFixture = async (session, { sendPlayerOwner = false } = {}) => {
+  const hitPoints = session.fixtureHitPoints ?? 100;
+  const effectiveHitPoints = session.fixtureEffectiveHitPoints ?? hitPoints;
   session.dungeonAccount = {
     id: session.accountId,
     name: `Player${session.accountId}`,
@@ -65,9 +67,9 @@ const prepareFixture = async (session, { sendPlayerOwner = false } = {}) => {
     slotPoints: [0, 0, 0, 0],
     weapons: [],
     consumables: [],
-    hitPoints: 100,
+    hitPoints,
     manaPoints: 100,
-    effectiveHitPoints: 100,
+    effectiveHitPoints,
     collisionRadius: 24,
     scale: 1,
     constant: "BERSERKER",
@@ -170,6 +172,10 @@ test("late join replays one shared world in captured parent/owner order", async 
   });
 
   const joiner = member(1002, 1101002);
+  // Models a Stamina item: current HP stays on the generated base while the
+  // client and server agree on a higher maximum.
+  joiner.fixtureHitPoints = 80;
+  joiner.fixtureEffectiveHitPoints = 130;
   const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
   const hostBefore = host.sent.length;
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
@@ -214,6 +220,8 @@ test("late join replays one shared world in captured parent/owner order", async 
   );
   assert.equal(host.world, joiner.world);
   assert.equal(host.world.actors.has(joiner.heroDoid), true);
+  assert.equal(host.world.actors.get(joiner.heroDoid).hitPoints, 80);
+  assert.equal(host.world.actors.get(joiner.heroDoid).maxHitPoints, 130);
   assert.equal(host.world.playerActors.has(joiner.heroDoid), true);
 });
 
