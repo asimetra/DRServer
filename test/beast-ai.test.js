@@ -242,4 +242,8 @@ test("a moving BEAST placement is built as third-party AI, not an inert prop", a
   assert.equal(wild.ai.aggroRadius, 600, "wild beasts keep their authored local awareness");
   assert.ok(wild.ai.attacks.length >= 2, "the full authored attack kit is available");
   assert.ok(wild.stats instanceof Map, "its levelled combat stats are ready");
+  assert.ok(
+    Math.abs(wild.stats.get("MELEE_ATK") - 13.6) < 1e-9,
+    `level-43 wild lion offence should be linear, got ${wild.stats.get("MELEE_ATK")}`
+  );
 });

@@ -54,6 +54,7 @@ import { legendaryPetBonuses,
 } from "../hero-stats.js";
 import { npcStats } from "../combat-damage.js";
 import {
+  infiniteDamageBonus,
   infiniteDepthBonus,
   npcMaxHitPoints,
 } from "../npc-stats.js";
@@ -592,12 +593,15 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       constant: resolved,
       level: npcLevel,
       // Persistent pets and rare moving BEAST rows need their levelled vector.
-      // Ordinary NPCs keep the existing lazy lookup, avoiding a 15-entry Map
-      // per prop.
+      // Pet offence follows the captured level^1.5 curve; a wild beast follows
+      // the same linear combat growth as an ordinary enemy. Ordinary NPCs keep
+      // the lazy lookup, avoiding a 15-entry Map per prop.
       stats:
-        options.petOwnerDoid || npc.CharType === "BEAST"
+        options.petOwnerDoid
           ? npcStats(gm, npc, petCombatLevel(npcLevel))
-          : undefined,
+          : npc.CharType === "BEAST"
+            ? npcStats(gm, npc, npcLevel)
+            : undefined,
       /**
        * Which side it is on, kept so a trap can be stopped from hitting it.
        *
@@ -1029,13 +1033,14 @@ export const rescaleNpcHealthForParty = (session, heroes) => {
   let changed = 0;
   for (const [doid, actor] of session.actors ?? []) {
     const maximum = actor?.partyHitPoints?.[partySize];
-    if (!(maximum > 0) || maximum === actor.maxHitPoints) continue;
+    if (!(maximum > 0)) continue;
+    actor.partySize = partySize;
+    if (maximum === actor.maxHitPoints) continue;
     const share = actor.maxHitPoints > 0 ? actor.hitPoints / actor.maxHitPoints : 1;
     actor.maxHitPoints = maximum;
     actor.hitPoints = actor.dead
       ? 0
       : Math.max(1, Math.min(maximum, Math.round(maximum * share)));
-    actor.partySize = partySize;
     session.send(hitPointsUpdate(doid, CLID.DistributedNPCGameObject, actor.hitPoints));
     changed += 1;
   }
@@ -2632,6 +2637,11 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
    * level column stops at 100 and every infinite tier starts there.
    */
   session.npcDepthBonus = infiniteDepthBonus(
+    await loadGameMaster(),
+    session.floorPlan?.tier,
+    (session.floorIndex ?? 0) + 1
+  );
+  session.npcDamageDepthBonus = infiniteDamageBonus(
     await loadGameMaster(),
     session.floorPlan?.tier,
     (session.floorIndex ?? 0) + 1

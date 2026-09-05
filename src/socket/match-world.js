@@ -41,6 +41,7 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "npcLevel",
   "floorGenerated",
   "npcDepthBonus",
+  "npcDamageDepthBonus",
   "tierConstant",
   "mapPage",
   "areaDoid",

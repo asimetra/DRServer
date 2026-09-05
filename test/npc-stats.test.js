@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadGameMaster, npcForConstant } from "../src/gamemaster.js";
 import {
+  infiniteDamageBonus,
   infiniteDepthBonus,
   npcMaxHitPoints,
   partyHealthMultiplier,
+  partyStatMultiplier,
 } from "../src/npc-stats.js";
 
 /**
@@ -85,6 +87,14 @@ test("everything off the player team keeps the exponent", async () => {
 test("a solo run is unscaled by party size", async () => {
   const gm = await loadGameMaster();
   assert.equal(partyHealthMultiplier(gm, 1), 1);
+});
+
+test("party attack scaling keeps each authored damage type separate", async () => {
+  const gm = await loadGameMaster();
+  assert.equal(partyStatMultiplier(gm, 4, "MELEE_ATK"), 2.5);
+  assert.equal(partyStatMultiplier(gm, 4, "SHOOT_ATK"), 1.75);
+  assert.equal(partyStatMultiplier(gm, 4, "MAGIC_ATK"), 1.75);
+  assert.equal(partyStatMultiplier(gm, 4, "MELEE_DEF"), 1);
 });
 
 /**
@@ -209,4 +219,15 @@ test("an ordinary run is untouched by the infinite growth", async () => {
       `level ${level}`
     );
   }
+});
+
+test("Infinite damage growth follows its own authored curve and ceiling", async () => {
+  const gm = await loadGameMaster();
+  const infinite = gm.raw.ColiseumTiers.find((row) => row.Constant === "ARENA_INFINITE");
+  const finite = gm.raw.ColiseumTiers.find((row) => row.Constant === "CASTLE_TIER1");
+
+  assert.equal(infiniteDamageBonus(gm, infinite, 1), 0.75);
+  assert.equal(infiniteDamageBonus(gm, infinite, 10), 7.5);
+  assert.equal(infiniteDamageBonus(gm, infinite, 10_000), 100, "DamageMax caps the growth");
+  assert.equal(infiniteDamageBonus(gm, finite, 10), 0);
 });

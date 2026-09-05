@@ -6,6 +6,8 @@ import { buffGenerate, objectDisable } from "./objects.js";
 import { PacketWriter } from "./packet.js";
 
 const FLID_HERO_REPORT_BUFF_EFFECT = 168;
+/** Official buff disables trail their authored duration by one ~100ms server turn. */
+const BUFF_EXPIRY_GRACE_MS = 100;
 
 const multiplier = (value) =>
   Number.isFinite(Number(value)) ? Number(value) : 1;
@@ -14,12 +16,17 @@ const expireBuff = (session, doid) => {
   const timer = session.buffTimers?.get(doid);
   if (timer) clearTimeout(timer);
   session.buffTimers?.delete(doid);
+  const damageTimer = session.damageOverTimeByBuff?.get(doid);
+  if (damageTimer) {
+    clearInterval(damageTimer);
+    session.damageOverTimeTimers?.delete(damageTimer);
+    session.damageOverTimeByBuff.delete(doid);
+  }
   session.activeBuffs?.delete(doid);
   if (!session.objects?.has(doid)) return;
   session.send(objectDisable(doid));
   session.objects.delete(doid);
 };
-
 
 /**
  * Everything a body was carrying, taken off with it.
@@ -37,12 +44,6 @@ export const clearBuffsOn = (session, actorDoid) => {
   let cleared = 0;
   for (const [doid, active] of [...(session.activeBuffs?.entries() ?? [])]) {
     if (active.affectedActor !== actorDoid) continue;
-    const damageTimer = session.damageOverTimeByBuff?.get(doid);
-    if (damageTimer) {
-      clearInterval(damageTimer);
-      session.damageOverTimeTimers?.delete(damageTimer);
-      session.damageOverTimeByBuff.delete(doid);
-    }
     expireBuff(session, doid);
     cleared += 1;
   }
@@ -87,16 +88,20 @@ const cookingBonus = async (session, buff) => {
   return trained * COOKING_SECONDS_PER_POINT;
 };
 
-export const grantBuff = async (session, constant, { affectedActor, attackerActor } = {}) => {
+export const grantBuffInstance = async (
+  session,
+  constant,
+  { affectedActor, attackerActor } = {}
+) => {
   const buff = await buffForConstant(constant);
   if (!buff) {
     warn(`buffs: no buff named "${constant}"`);
-    return null;
+    return { doid: null, buff: null, created: false };
   }
 
   const affected = affectedActor ?? session.heroDoid;
   const attacker = attackerActor ?? affected;
-  if (!session.floorDoid || !affected) return null;
+  if (!session.floorDoid || !affected) return { doid: null, buff, created: false };
   session.activeBuffs ??= new Map();
 
   /**
@@ -109,9 +114,10 @@ export const grantBuff = async (session, constant, { affectedActor, attackerActo
    * 2.2x, and three of a half-damage buff would turn aside seven eighths of a
    * hit rather than half. A player watching it read "3x" on his own bar.
    *
-   * Past the limit the oldest is refreshed instead of another being added,
-   * which is what re-applying a buff means: the effect does not grow, the clock
-   * starts again.
+   * At the limit a further grant is discarded. The official never extends a
+   * buff object beyond its authored duration: CHILL_L1 tops out at 2125ms for a
+   * two-second row and POISON_L2 at 8207ms for an eight-second row. Refreshing
+   * the oldest made both the effect and its DoT outlive the object on the wire.
    */
   const limit = Math.max(1, Number(buff.MaxStacks ?? 1));
   const held = [...session.activeBuffs.entries()].filter(
@@ -119,8 +125,7 @@ export const grantBuff = async (session, constant, { affectedActor, attackerActo
   );
   if (held.length >= limit) {
     const [oldest] = held;
-    refreshBuff(session, oldest[0], durationOf(buff, await cookingBonus(session, buff)));
-    return oldest[0];
+    return { doid: oldest[0], buff, created: false };
   }
 
   const doid = session.allocateDoid(CLID.DistributedBuffGameObject);
@@ -137,18 +142,21 @@ export const grantBuff = async (session, constant, { affectedActor, attackerActo
     })
   );
 
-  refreshBuff(session, doid, durationOf(buff, await cookingBonus(session, buff)));
-  return doid;
+  const durationMs = durationOf(buff, await cookingBonus(session, buff));
+  startBuffTimer(session, doid, durationMs > 0 ? durationMs + BUFF_EXPIRY_GRACE_MS : 0);
+  return { doid, buff, created: true };
 };
+
+/** Compatibility surface for callers that only need the distributed id. */
+export const grantBuff = async (session, constant, options) =>
+  (await grantBuffInstance(session, constant, options)).doid;
 
 /** The authored seconds plus whatever the caster's training adds, in ms. */
 const durationOf = (buff, bonusSeconds) =>
   Math.max(0, (Number(buff.Duration ?? 0) + bonusSeconds) * 1000);
 
-/** Starts, or restarts, the clock on one live buff. */
-const refreshBuff = (session, doid, durationMs) => {
-  const existing = session.buffTimers?.get(doid);
-  if (existing) clearTimeout(existing);
+/** Starts the one lifetime clock belonging to a distributed buff object. */
+const startBuffTimer = (session, doid, durationMs) => {
   if (!durationMs) return;
   const timer = setTimeout(() => expireBuff(session, doid), durationMs);
   timer.unref?.();

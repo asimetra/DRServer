@@ -264,8 +264,7 @@ test("poison stacks to six and stops, as the table says", async () => {
   /**
    * `MaxStacks` is 6 on every poison level, and the official reaches exactly
    * six concurrent poisons on one victim and never a seventh. Past the limit
-   * `grantBuff` refreshes the oldest instead of adding another, so the count
-   * holds rather than the effect compounding without end.
+   * the grant is discarded, so neither count nor lifetime grows without end.
    */
   const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: NOXIOUS_L1 });
 
@@ -535,10 +534,9 @@ test("a damage-over-time kill is credited and pays Buster Gen", async () => {
 
 test("repeated hits do not pile up poison clocks", async () => {
   /**
-   * `grantBuff` refreshes the oldest copy once `MaxStacks` is reached rather
-   * than adding another, and the damage-over-time used to start a fresh
-   * interval whatever it did — so a fast weapon accumulated timers without
-   * limit, each ticking for the whole authored duration.
+   * A grant refused at `MaxStacks` must not start another damage-over-time
+   * interval. Otherwise a fast weapon accumulates invisible poison clocks even
+   * after the visible stack count has stopped.
    */
   const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: NOXIOUS_L1 });
 

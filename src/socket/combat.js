@@ -1,15 +1,18 @@
 import { PacketWriter, PacketReader } from "./packet.js";
-import { CLID, OP } from "./opcodes.js";
+import { CLID, OP, TEAM } from "./opcodes.js";
 import { config } from "../config.js";
 import {
   attackById,
   FRAMES_PER_SECOND,
   heroById,
+  invulnerableForMs,
   npcForConstant,
   loadGameMaster,
   projectileForConstant,
+  suicideDelayMs,
 } from "../gamemaster.js";
 import { netAttackDamage, npcStats, statOffsetsFor } from "../combat-damage.js";
+import { partyStatMultiplier } from "../npc-stats.js";
 import {
   STAT_NAMES,
   legendaryShieldFor,
@@ -23,14 +26,15 @@ import {
   clearBuffsOn,
   damageReductionFor,
   grantBuff,
+  grantBuffInstance,
   hasAbility,
 } from "./buffs.js";
-import { buffForConstant } from "../gamemaster.js";
 import { beginFloorFailing, checkFloorCleared } from "./floorstate.js";
 import { objectDisable } from "./objects.js";
 import { grantMana, queueAccountSave } from "./rewards.js";
 import { collisionPointOf, hasLineOfSight, isPositionBlocked } from "./navigation.js";
 import { heroMembersOf, memberForHero } from "./match-world.js";
+import { npcAttackSpeed, npcAttackSpeedStat } from "./npc-attacks.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { RULE, noteViolation } from "./security-events.js";
@@ -326,6 +330,15 @@ export const triggerStateUpdate = (doid, value) =>
  * the bar it came off, and told the client an actor was dead before it knew
  * what had killed it.
  */
+const hasInvulnerabilityBuff = (session, doid) =>
+  hasAbility(session, doid, "INVULNERABLE_ALL");
+
+const hasTimelineInvulnerability = (session, doid) =>
+  Date.now() < (session.invulnerableUntil?.get(doid) ?? 0);
+
+const isInvulnerable = (session, doid) =>
+  hasInvulnerabilityBuff(session, doid) || hasTimelineInvulnerability(session, doid);
+
 export const applyDamage = (session, doid, damage, announce) => {
   const actor = session.actors?.get(doid);
   const clid = session.objects.get(doid);
@@ -344,7 +357,7 @@ export const applyDamage = (session, doid, damage, announce) => {
    * immunity, going down again, and reviving into the same trap: the reported
    * death that never ends.
    */
-  if (hasAbility(session, doid, "INVULNERABLE_ALL")) return false;
+  if (hasInvulnerabilityBuff(session, doid)) return false;
 
   /**
    * And the window an attack's own timeline opens while it plays.
@@ -359,7 +372,7 @@ export const applyDamage = (session, doid, damage, announce) => {
    * room had. It reads as the ultimate hurting him, which is what it looks like
    * from inside.
    */
-  if (Date.now() < (session.invulnerableUntil?.get(doid) ?? 0)) return false;
+  if (hasTimelineInvulnerability(session, doid)) return false;
 
   /**
    * An object we no longer track is not on the client's floor either.
@@ -1371,13 +1384,9 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
     : damage;
 
   /**
-   * One clock per buff, not one per hit.
-   *
-   * `grantBuff` refreshes the oldest copy once `MaxStacks` is reached rather
-   * than adding another, and this used to start a fresh interval whatever it
-   * did — so a weapon that hits four times a second piled up timers without
-   * limit, each ticking for the whole authored duration. Keyed by the buff's
-   * own doid, a refresh restarts one clock instead of racing a second.
+   * One clock per distributed buff object. New stacks get new clocks; a grant
+   * refused at `MaxStacks` starts nothing. This keeps DoT lifetime identical to
+   * the object lifetime the client sees.
    */
   const clocks = (session.damageOverTimeByBuff ??= new Map());
   const existing = clocks.get(buffDoid);
@@ -1426,29 +1435,26 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
 /**
  * What a hit leaves on whoever it caught.
  *
- * `TargetBuff1` is the debuff an attack applies, and it is most of what
- * separates these from one another: garlic stuns, the fire patch burns, the
- * poison cloud poisons. Not restacked while the same one is still running,
- * since an aura ticking every second would otherwise pile up copies of its own
- * burn — the captured buffs arrive once and are left to run.
+ * `TargetBuff1`/`TargetBuff2` are the debuffs an attack applies, and they are
+ * most of what separates these from one another: garlic stuns, the fire patch
+ * burns, the poison cloud poisons. `grantBuff` owns stacking: poison reaches
+ * six copies and fire two; a one-stack slow ignores more until it expires.
  */
 /**
  * The debuffs the weapon's own modifiers leave on what it hit.
  *
- * Deliberately not routed through `applyTargetBuff`: that one refuses to
- * re-apply a buff the victim already carries, which is right for an attack's
- * `TargetBuff1` and wrong here. Poison is authored to stack six deep and the
- * official reaches exactly six, so the decision belongs to `grantBuff` and its
- * `MaxStacks`, which already refreshes the oldest once the limit is reached.
+ * Kept separate because a weapon may contribute two modifier buffs in addition
+ * to the attack's own pair. Stacking remains `grantBuff`'s decision in both
+ * paths; its authored `MaxStacks` is the single source of truth.
  */
 const applyModifierBuffs = async (session, { weapon, victimDoid, attackerDoid, damage }) => {
   const constants = onHitBuffsFor(await loadGameMaster(), weapon);
   for (const constant of constants) {
-    const buffDoid = await grantBuff(session, constant, {
+    const { doid: buffDoid, buff, created } = await grantBuffInstance(session, constant, {
       affectedActor: victimDoid,
       attackerActor: attackerDoid,
     });
-    const buff = await buffForConstant(constant);
+    if (!created) continue;
     startDamageOverTime(session, {
       buffDoid,
       victimDoid,
@@ -1460,7 +1466,9 @@ const applyModifierBuffs = async (session, { weapon, victimDoid, attackerDoid, d
 };
 
 export const applyTargetBuff = async (session, { attack, victimDoid, attackerDoid, damage }) => {
-  if (!attack?.TargetBuff1) return;
+  const constants = [...new Set([attack?.TargetBuff1, attack?.TargetBuff2].filter(Boolean))];
+  if (!constants.length) return;
+  if (attack?.Team !== "FRIENDLY" && isInvulnerable(session, victimDoid)) return;
   // A friendly attack with a distinct SelfBuff has already covered its caster.
   // DBUSTER_BERSERK gives BERSERK_DB to the Berserker and BERSERK to allies;
   // the caster's impact result must not turn that into two simultaneous buffs.
@@ -1471,24 +1479,20 @@ export const applyTargetBuff = async (session, { attack, victimDoid, attackerDoi
   ) {
     return;
   }
-  const already = [...(session.activeBuffs?.values() ?? [])].some(
-    (active) =>
-      active.affectedActor === victimDoid && active.buff?.Constant === attack.TargetBuff1
-  );
-  if (already) return;
-
-  const buffDoid = await grantBuff(session, attack.TargetBuff1, {
-    affectedActor: victimDoid,
-    attackerActor: attackerDoid,
-  });
-  const buff = await buffForConstant(attack.TargetBuff1);
-  startDamageOverTime(session, {
-    buffDoid,
-    victimDoid,
-    buff,
-    damage,
-    colorType: await buffColorTypeFor(buff),
-  });
+  for (const constant of constants) {
+    const { doid: buffDoid, buff, created } = await grantBuffInstance(session, constant, {
+      affectedActor: victimDoid,
+      attackerActor: attackerDoid,
+    });
+    if (!created) continue;
+    startDamageOverTime(session, {
+      buffDoid,
+      victimDoid,
+      buff,
+      damage,
+      colorType: await buffColorTypeFor(buff),
+    });
+  }
 };
 
 /**
@@ -1732,23 +1736,42 @@ export const performPlaceableAttack = async (
  * hitting something. It never once proposes a monster hitting the hero, and the
  * 4469 results that do are all sent by the server.
  */
-const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPower, fallback }, victimDoid) => {
+const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPower }, victimDoid) => {
   const victim = session.actors?.get(victimDoid);
   const attacker = session.actors?.get(attackerDoid);
   const clid = session.objects?.get(victimDoid);
   if (!victim || victim.dead || !RECEIVE_FIELD_BY_CLID[clid]) return false;
 
-  const petResult = attacker?.isPet
+  const dealsDamage = Number(attack?.DamageMod ?? 0) < 0;
+  if (dealsDamage && isInvulnerable(session, victimDoid)) return false;
+  const petResult = dealsDamage && attacker?.isPet
     ? await computePetDamage(session, attackerDoid, victimDoid, attack, weaponPower)
     : null;
-  const damage = petResult?.damage ?? (
-    (await computeDamage(
-      session,
-      { attacker: attackerDoid, attackee: victimDoid },
-      attack,
-      weaponPower
-    )) || Math.max(1, fallback ?? 1)
-  );
+  const damage = dealsDamage
+    ? petResult?.damage ?? await computeDamage(
+        session,
+        { attacker: attackerDoid, attackee: victimDoid },
+        attack,
+        weaponPower
+      )
+    : 0;
+
+  /**
+   * Monster attacks use the same authored effects as every other hit. Official
+   * captures create POISON_L1 from EN_POISON_ARROW, both CHILL_L1 and FREEZE
+   * from EN_BABY_YETI_SUICIDE, and STUN_L0 from the juggernaut charge. The NPC
+   * path previously stopped at damage and discarded all of them.
+   */
+  await applyTargetBuff(session, {
+    attack,
+    victimDoid,
+    attackerDoid,
+    damage,
+  });
+
+  // Roars, taunts and self-buff moves author DamageMod zero. The official sends
+  // their choreography (and any buff generate), but no CombatResult at all.
+  if (!dealsDamage) return Boolean(attack?.TargetBuff1 || attack?.TargetBuff2);
 
   const reaction = receiveCombatResult(
     victimDoid,
@@ -1805,7 +1828,7 @@ const landNpcSwing = async (session, attackerDoid, ai, attack, shape, victimDoid
       if (await dealNpcHit(
         session,
         attackerDoid,
-        { attack, attackType: ai.attackType, weaponPower: ai.weaponPower, fallback: ai.damage },
+        { attack, attackType: ai.attackType, weaponPower: ai.weaponPower },
         caughtActor.doid
       )) hits += 1;
     }
@@ -1815,7 +1838,7 @@ const landNpcSwing = async (session, attackerDoid, ai, attack, shape, victimDoid
   return dealNpcHit(
     session,
     attackerDoid,
-    { attack, attackType: ai.attackType, weaponPower: ai.weaponPower, fallback: ai.damage },
+    { attack, attackType: ai.attackType, weaponPower: ai.weaponPower },
     victimDoid
   );
 };
@@ -1893,7 +1916,7 @@ const launchNpcProjectile = (session, attackerDoid, ai, attack, launch = {}) => 
       dealNpcHit(
         session,
         attackerDoid,
-        { attack, attackType: ai.attackType, weaponPower: ai.weaponPower, fallback: ai.damage },
+        { attack, attackType: ai.attackType, weaponPower: ai.weaponPower },
         victimDoid
       ),
   });
@@ -1940,6 +1963,34 @@ export const performNpcAttack = async (
   const victim = session.actors?.get(victimDoid);
   if (!victim || victim.dead || !ai?.attackType) return false;
   const attack = await attackById(ai.attackType);
+  // Snapshot the speed before this cast's own SelfBuff is granted. The official
+  // juggernaut stream sends its speed buff first but still plays that cast at 1;
+  // the new buff begins affecting the next attack.
+  const buffSpeed = buffMultiplierFor(
+    session,
+    attackerDoid,
+    ai.speedStat ?? npcAttackSpeedStat(attack?.AttackType)
+  );
+  const attackSpeed = npcAttackSpeed(ai.attackSpeed ?? attack?.AttackSpd) *
+    (buffSpeed > 0 ? buffSpeed : 1);
+
+  /**
+   * A self buff precedes the animation. In the official stream the two captured
+   * EN_JUGGERNAUT_SWING casts create SUPER_SPEED_BOOSTER_L3 one millisecond
+   * before ReceiveAttackChoreography; this server created nothing.
+   */
+  if (attack?.SelfBuff) {
+    await grantBuff(session, attack.SelfBuff, {
+      affectedActor: attackerDoid,
+      attackerActor: attackerDoid,
+    });
+  }
+
+  const untouchableMs = await invulnerableForMs(attack?.AttackTimeline);
+  if (untouchableMs > 0) {
+    session.invulnerableUntil ??= new Map();
+    session.invulnerableUntil.set(attackerDoid, Date.now() + untouchableMs / attackSpeed);
+  }
 
   /**
    * Announced once, on its own. `ReceiveAttackChoreography` restarts the
@@ -1961,13 +2012,12 @@ export const performNpcAttack = async (
    * full speed — so a muzzled monster hit less often and looked exactly as
    * quick, which is the opposite of what the modifier promises.
    */
-  const attackSpeed = buffMultiplierFor(session, attackerDoid, "MELEE_SPD");
   session.send(
     npcAttackChoreography({
       doid: attackerDoid,
       attackType: ai.attackType,
       targetActorDoid: victimDoid,
-      playSpeed: attackSpeed > 0 ? attackSpeed : 1,
+      playSpeed: attackSpeed,
     })
   );
 
@@ -1978,12 +2028,14 @@ export const performNpcAttack = async (
    */
   const shape = ai.attackColliders ?? [];
   const shots = ai.projectile ? ai.projectileLaunches ?? [] : [];
-  const frameMs = (frame) => Math.max(0, Number(frame ?? 0)) * (1000 / FRAMES_PER_SECOND);
+  const frameMs = (frame) =>
+    Math.max(0, Number(frame ?? 0)) * (1000 / FRAMES_PER_SECOND) / attackSpeed;
 
   // A swing with no collider and nothing to throw resolves where it stands;
   // two enemy attacks in the game are like that and both are measured in
   // dungeon.js.
   if (!shots.length && !shape.length) {
+    if (Number(attack?.DamageMod ?? 0) >= 0) return true;
     return landNpcSwing(session, attackerDoid, ai, attack, shape, victimDoid);
   }
 
@@ -2011,6 +2063,20 @@ export const performNpcAttack = async (
     later(frameMs(ai.impactFrame), () =>
       landNpcSwing(session, attackerDoid, ai, attack, shape, victimDoid)
     );
+  }
+
+  /**
+   * `suicide` is another server-owned timeline action. The official removes a
+   * SUICIDE_BABY_YETI a median 1075ms after its cast; its action is on frame 24,
+   * exactly one second at the authored 24fps before the server tick notices it.
+   */
+  const suicideMs = await suicideDelayMs(attack?.AttackTimeline);
+  if (suicideMs != null) {
+    later(suicideMs / attackSpeed, () => {
+      const attacker = session.actors?.get(attackerDoid);
+      if (!attacker || attacker.dead) return false;
+      return applyDamage(session, attackerDoid, Math.max(1, Number(attacker.hitPoints) || 1));
+    });
   }
 
   // Keyed by the attacker, so its next attack replaces this one and a floor
@@ -2060,7 +2126,9 @@ const statsFor = async (session, doid) => {
   // sessions in tests that predate the actor carrying them.
   if (doid === session.heroDoid) return session.heroStats;
   if (!actor?.constant) return undefined;
-  return npcStats(await loadGameMaster(), await npcForConstant(actor.constant));
+  const gm = await loadGameMaster();
+  const npc = await npcForConstant(actor.constant);
+  return npcStats(gm, npc, actor.level ?? npc?.Level ?? 0);
 };
 
 /**
@@ -2166,15 +2234,31 @@ const isHealing = (attack) =>
 
 const computeDamage = async (session, proposal, attack, weaponPower, weapon = null) => {
   const offsets = statOffsetsFor(attack);
+  const gm = await loadGameMaster();
+  const attacker = session.actors?.get(proposal.attacker);
+  // Zero-HP launchers are protocol NPCs but not damageable actors, so they have
+  // no actor.partySize. The live floor membership is their fallback.
+  const partySize = attacker?.partySize ?? Math.max(1, heroMembersOf(session).size);
+  const npcStatScale =
+    offsets &&
+    session.objects?.get(proposal.attacker) === CLID.DistributedNPCGameObject &&
+    attacker?.team !== TEAM.PLAYERS
+      ? partyStatMultiplier(gm, partySize, STAT_NAMES[offsets.offence]) *
+        (1 + Math.max(0, Number(session.npcDamageDepthBonus) || 0))
+      : 1;
   const defender = await statsFor(session, proposal.attackee);
   const signed = netAttackDamage({
-    gm: await loadGameMaster(),
+    gm,
     attack,
     // The slot that swung, which the result names. NPCs and placeables pass
     // their own weapon explicitly and never reach the fallback.
     weaponPower: weaponPower ?? 1,
     attacker: await statsFor(session, proposal.attacker),
     defender,
+    // PlayerScale multiplies the NPC's stat, not the weapon beside it. The
+    // four-player BRUTE_CAVE capture distinguishes 31 from the 32 produced by
+    // multiplying both.
+    attackerStatMultiplier: npcStatScale,
     /**
      * The buffs on the attacker and, alongside them, the `DAMAGE` modifiers on
      * the weapon that swung — see `attackMultiplierFor`. Both are multipliers on
@@ -2183,7 +2267,7 @@ const computeDamage = async (session, proposal, attack, weaponPower, weapon = nu
      */
     attackerBuff: offsets
       ? buffMultiplierFor(session, proposal.attacker, STAT_NAMES[offsets.offence]) *
-        attackMultiplierFor(await loadGameMaster(), weapon, STAT_NAMES[offsets.offence])
+        attackMultiplierFor(gm, weapon, STAT_NAMES[offsets.offence])
       : 1,
     /**
      * The defence *stat* is still a flat subtraction and still tiny; what a
@@ -2216,7 +2300,17 @@ const computeDamage = async (session, proposal, attack, weaponPower, weapon = nu
   // All of it is all of it. The floor of one exists so a hit that lands is felt,
   // and a hit that is entirely turned aside did not land.
   if (reduction >= 1) return 0;
-  return Math.max(1, Math.round(raw * (1 - reduction)));
+  /**
+   * NPC-authored damage rounds upward when it crosses the integer wire.
+   * Captured results pin the distinction repeatedly: BABY_YETI L59 computes
+   * to 4.36 and lands as 5 in 44/44 hits; KNIGHT_MARKSMAN L53 computes to 7.24
+   * and lands as 8 in 33/33. Hero proposals retain nearest-integer rounding,
+   * and persistent pets keep their separately measured rule below.
+   */
+  const round = session.objects?.get(proposal.attacker) === CLID.DistributedNPCGameObject
+    ? Math.ceil
+    : Math.round;
+  return Math.max(1, round(raw * (1 - reduction)));
 };
 
 const PET_DEFENCE_FIELD = {

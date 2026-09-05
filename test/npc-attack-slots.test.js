@@ -21,3 +21,18 @@ test("NPC charge attacks in later slots are included in the attack list", async 
   assert.ok(attackIds.has(berserk.Id), "Attack5/EN_DBUSTER_BERSERK is included");
   assert.equal(attacks.length, 5, "all authored attack slots are exposed");
 });
+
+test("NPC attack choices retain the authored animation speed", async () => {
+  const npc = await npcForConstant("SAVAGE_BOW");
+  assert.ok(npc, "the poison archer exists");
+  const weapon = npc.Weapon1 ? await weaponForConstant(npc.Weapon1) : null;
+
+  const attacks = await npcAttackChoices(npc, weapon);
+  const poisonArrow = await attackForConstant("EN_POISON_ARROW");
+  const choice = attacks.find((attack) => attack.attackType === poisonArrow?.Id);
+
+  assert.ok(choice, "the poison arrow is available to the archer");
+  assert.equal(poisonArrow.AttackSpd, 0.25, "the fixture still authors quarter speed");
+  assert.equal(choice.attackSpeed, 0.25, "runtime preserves that authored speed");
+  assert.equal(choice.speedStat, "SHOOT_SPD", "shooting buffs use the shooting speed column");
+});

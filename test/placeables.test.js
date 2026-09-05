@@ -710,24 +710,34 @@ test("a hit leaves the debuff its attack names, once", async () => {
   clearDungeonPlaceables(session);
 });
 
-test("an aura refreshes rather than stacking its burn", async () => {
+test("an aura stacks only to its authored burn limit", async () => {
   const session = sessionWith();
   knightAt(session, 700, 1060, 1000);
   session.actors.get(700).hitPoints = 900000;
   session.actors.get(700).maxHitPoints = 900000;
 
-  await spawnPlaceable(session, {
+  const fireDoid = await spawnPlaceable(session, {
     action: { spawnname: "BURNING_FIRE_PLACEABLE", offset: 60, timetolive: 10 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
   });
-  // Three beats of a fire that ticks once a second.
-  await new Promise((resolve) => setTimeout(resolve, 2400));
+  // FLAME_BURN authors AttackSpd 0.5. Official captures play it at 0.5 and its
+  // one-second AttackTimer therefore produces one beat every two seconds.
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const choreographies = session.sent.filter((packet) => {
+    const body = packet.subarray(2);
+    return body.readUInt16LE(0) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+      body.readUInt32LE(2) === fireDoid && body.readUInt16LE(6) === 143;
+  });
+  assert.equal(choreographies.length, 1, "the half-speed fire attacked again after one second");
+  assert.equal(choreographies[0].readFloatLE(21), 0.5, "the fire animation ignored AttackSpd");
+
+  await new Promise((resolve) => setTimeout(resolve, 1200));
 
   const fires = [...(session.activeBuffs?.values() ?? [])].filter(
     (active) => active.affectedActor === 700 && active.buff?.Constant === "FIRE_L5"
   );
-  assert.equal(fires.length, 1, "one burn, not one per tick");
+  assert.equal(fires.length, 2, "FIRE_L5 authors two stacks, not one and not one per tick");
   clearDungeonPlaceables(session);
 });
 

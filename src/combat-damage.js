@@ -61,6 +61,7 @@ export const netAttackDamage = ({
   attacker,
   defender,
   attackerBuff = 1,
+  attackerStatMultiplier = 1,
   defenderBuff = 1,
 }) => {
   const damageMod = Number(attack?.DamageMod ?? 0);
@@ -73,7 +74,8 @@ export const netAttackDamage = ({
   );
 
   const offence =
-    (weaponPower * bonus + statAt(attacker, offsets.offence)) * attackerBuff * damageMod;
+    (weaponPower * bonus + statAt(attacker, offsets.offence) * attackerStatMultiplier) *
+    attackerBuff * damageMod;
   const defence = statAt(defender, offsets.defence) * defenderBuff;
 
   return offence + defence;

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { attackForConstant } from "../src/gamemaster.js";
 import { tickNpcAi } from "../src/socket/ai.js";
+import { clearDungeonBuffs, grantBuff } from "../src/socket/buffs.js";
 import { performNpcAttack, tickTrapProjectiles } from "../src/socket/combat.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
@@ -58,6 +60,17 @@ const makeSession = () => {
       ]),
       send: (frame) => sent.push(frame),
     },
+  };
+};
+
+const enableBuffs = (session) => {
+  let nextDoid = 1000;
+  session.floorDoid = 99;
+  session.dungeonZone = 10;
+  session.allocateDoid = (clid) => {
+    const doid = nextDoid++;
+    session.objects.set(doid, clid);
+    return doid;
   };
 };
 
@@ -1026,4 +1039,245 @@ test("an attack that authors a backwards move takes the monster backwards", asyn
     `it should have hopped away from him, ended at x=${npc.position.x.toFixed(0)}`
   );
   assert.ok(Math.abs(npc.position.y) < 40, "and straight back, not off to one side");
+});
+
+test("an NPC attack's authored speed controls its cadence and choreography", async () => {
+  /**
+   * SAVAGE_BOW is the clean capture fixture: EN_POISON_ARROW authors AttackSpd
+   * 0.25. The official sends playSpeed 0.25 on all 100 recorded casts and its
+   * cadence starts around 6.2 seconds, while this server sent playSpeed 1 and
+   * started again around 1.5 seconds.
+   */
+  const { session, knightDoid, sent } = makeSession();
+  const npc = session.actors.get(knightDoid);
+  const poisonArrow = await attackForConstant("EN_POISON_ARROW");
+  npc.position = { x: 60, y: 0 };
+  npc.ai.engaged = true;
+  npc.ai.attackRange = 300;
+  npc.ai.attackTimerMs = 1500;
+  npc.ai.attackRandMs = 0;
+  npc.ai.attacks = [{
+    attackType: poisonArrow.Id,
+    attackSpeed: poisonArrow.AttackSpd,
+    range: 300,
+    minRange: 0,
+    rechargeMs: 0,
+    readyAt: 0,
+    damage: 1,
+    impactFrame: 0,
+  }];
+
+  await tickNpcAi(session, 1000, 0.1);
+
+  assert.equal(npc.ai.nextAttackAt, 7000, "1.5 seconds at quarter speed becomes 6 seconds");
+  const choreography = sent.map(readUpdate).find((packet) => packet.fieldId === 143);
+  assert.ok(choreography, "the poison arrow choreography was sent");
+  choreography.reader.u8();
+  choreography.reader.u8();
+  assert.equal(choreography.reader.u32(), poisonArrow.Id);
+  choreography.reader.u32();
+  choreography.reader.u8();
+  assert.equal(choreography.reader.f32(), 0.25, "the client plays the same quarter-speed cast");
+});
+
+test("zero-damage NPC skills buff their caster without injuring the target", async (t) => {
+  /**
+   * The official sends no CombatResult for monster roars or taunts. A captured
+   * EN_JUGGERNAUT_SWING instead creates SUPER_SPEED_BOOSTER_L3 on its caster
+   * immediately before the choreography. The old fallback turned its authored
+   * zero damage into one point and discarded the self buff.
+   */
+  const { session, heroDoid, knightDoid, sent } = makeSession();
+  enableBuffs(session);
+  t.after(() => clearDungeonBuffs(session));
+  const skill = await attackForConstant("EN_JUGGERNAUT_SWING");
+
+  await performNpcAttack(session, knightDoid, {
+    attackType: skill.Id,
+    attackSpeed: skill.AttackSpd,
+    weaponPower: 1,
+    damage: 0,
+    attackColliders: [],
+    impactFrame: 0,
+  }, heroDoid);
+
+  assert.equal(session.actors.get(heroDoid).hitPoints, 200, "the buff skill dealt damage");
+  assert.ok(
+    !sent
+      .filter((frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD)
+      .map(readUpdate)
+      .some((packet) => packet.fieldId === 160),
+    "a zero-damage skill sent a combat result"
+  );
+  assert.ok(
+    [...session.activeBuffs.values()].some(
+      (active) =>
+        active.affectedActor === knightDoid &&
+        active.buff?.Constant === "SUPER_SPEED_BOOSTER_L3"
+    ),
+    "the skill did not buff its caster"
+  );
+});
+
+test("NPC hits apply both authored target effects", async (t) => {
+  /**
+   * EN_BABY_YETI_SUICIDE authors CHILL_L1 and FREEZE. Official captures create
+   * both buffs from the yeti; the NPC damage path created neither.
+   */
+  const { session, heroDoid, knightDoid } = makeSession();
+  enableBuffs(session);
+  t.after(() => clearDungeonBuffs(session));
+  const skill = await attackForConstant("EN_BABY_YETI_SUICIDE");
+
+  await performNpcAttack(session, knightDoid, {
+    attackType: skill.Id,
+    attackSpeed: skill.AttackSpd,
+    weaponPower: 1,
+    damage: 1,
+    attackColliders: [],
+    impactFrame: 0,
+  }, heroDoid);
+
+  const effects = new Set(
+    [...session.activeBuffs.values()]
+      .filter((active) => active.affectedActor === heroDoid)
+      .map((active) => active.buff?.Constant)
+  );
+  assert.ok(effects.has("CHILL_L1"), "the primary target buff was lost");
+  assert.ok(effects.has("FREEZE"), "the secondary target buff was lost");
+});
+
+test("an invulnerable target receives neither NPC damage nor its debuff", async (t) => {
+  const { session, heroDoid, knightDoid } = makeSession();
+  enableBuffs(session);
+  t.after(() => clearDungeonBuffs(session));
+  await grantBuff(session, "INVULNERBILITY", {
+    affectedActor: heroDoid,
+    attackerActor: heroDoid,
+  });
+  const poisonArrow = await attackForConstant("EN_POISON_ARROW");
+
+  await performNpcAttack(session, knightDoid, {
+    attackType: poisonArrow.Id,
+    attackSpeed: poisonArrow.AttackSpd,
+    weaponPower: 1,
+    damage: 1,
+    attackColliders: [],
+    impactFrame: 0,
+  }, heroDoid);
+
+  assert.equal(session.actors.get(heroDoid).hitPoints, 200);
+  assert.ok(
+    ![...session.activeBuffs.values()].some(
+      (active) => active.affectedActor === heroDoid && active.buff?.Constant === "POISON_L1"
+    ),
+    "an attack rejected by invulnerability still applied poison"
+  );
+});
+
+test("freeze and disabled-controls debuffs stop NPC attacks", async (t) => {
+  for (const constant of ["FREEZE", "FROZEN"]) {
+    const { session, heroDoid, knightDoid } = makeSession();
+    enableBuffs(session);
+    t.after(() => clearDungeonBuffs(session));
+    const knight = session.actors.get(knightDoid);
+    knight.position = { x: 60, y: 0 };
+    knight.heading = 180;
+    knight.ai.engaged = true;
+    knight.ai.nextAttackAt = 0;
+    await grantBuff(session, constant, {
+      affectedActor: knightDoid,
+      attackerActor: heroDoid,
+    });
+
+    await tickNpcAi(session, 1000, 0.1);
+
+    assert.equal(
+      session.actors.get(heroDoid).hitPoints,
+      200,
+      `${constant} left the frozen NPC able to attack`
+    );
+  }
+});
+
+test("NPC damage that defence fully absorbs stays at zero", async () => {
+  /** The official corpus contains zero-damage EN_SWORD_SLASH results. */
+  const { session, heroDoid, knightDoid, sent } = makeSession();
+  const hero = session.actors.get(heroDoid);
+  hero.stats = new Map([["SHOOT_DEF", 100]]);
+  const slash = await attackForConstant("EN_SWORD_SLASH");
+
+  await performNpcAttack(session, knightDoid, {
+    attackType: slash.Id,
+    attackSpeed: slash.AttackSpd,
+    weaponPower: 1,
+    damage: 1,
+    attackColliders: [],
+    impactFrame: 0,
+  }, heroDoid);
+
+  assert.equal(hero.hitPoints, 200, "the fallback restored damage that defence absorbed");
+  const result = sent.map(readUpdate).find((packet) => packet.fieldId === 160);
+  assert.ok(result, "an absorbed hit is still reported");
+  result.reader.u32();
+  result.reader.u32();
+  assert.equal(result.reader.i32(), 0, "the combat result did not preserve zero damage");
+});
+
+test("authored attack speed also paces projectile release frames", async () => {
+  const { session } = shootingSession();
+  const poisonArrow = await attackForConstant("EN_POISON_ARROW");
+
+  await performNpcAttack(session, 20, {
+    ...arrowAi,
+    attackType: poisonArrow.Id,
+    attackSpeed: poisonArrow.AttackSpd,
+    projectileLaunches: [{ frame: 2, headingOffsetAngle: 0 }],
+  });
+
+  // Frame 2 is 83ms at normal speed and 333ms at the authored quarter speed.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(session.activeTrapProjectiles?.length ?? 0, 0, "the arrow left at full speed");
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  assert.equal(session.activeTrapProjectiles?.length, 1, "the slowed release frame never arrived");
+});
+
+test("NPC timeline invulnerability protects the caster for the authored window", async (t) => {
+  const { session, heroDoid, knightDoid } = makeSession();
+  enableBuffs(session);
+  t.after(() => clearDungeonBuffs(session));
+  const skill = await attackForConstant("EN_DBUSTER_BERSERK");
+  const startedAt = Date.now();
+
+  await performNpcAttack(session, knightDoid, {
+    attackType: skill.Id,
+    attackSpeed: skill.AttackSpd,
+    weaponPower: 1,
+    damage: 0,
+    attackColliders: [],
+    impactFrame: 0,
+  }, heroDoid);
+
+  assert.ok(
+    session.invulnerableUntil.get(knightDoid) >= startedAt + 2800,
+    "the server-owned invulnerability action was discarded"
+  );
+});
+
+test("an NPC suicide action retires its caster on the authored frame", async () => {
+  const { session, heroDoid, knightDoid } = makeSession();
+  const skill = await attackForConstant("EN_BABY_YETI_SUICIDE");
+
+  await performNpcAttack(session, knightDoid, {
+    attackType: skill.Id,
+    attackSpeed: skill.AttackSpd,
+    weaponPower: 1,
+    damage: 1,
+    attackColliders: [{ type: "circleCollider", radius: 150, xOffset: 0, frame: 15 }],
+    impactFrame: 15,
+  }, heroDoid);
+
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.ok(!session.actors.has(knightDoid), "the suicide skill left its caster alive");
+  assert.ok(!session.objects.has(knightDoid), "the retired caster stayed on the floor");
 });

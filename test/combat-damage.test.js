@@ -107,6 +107,144 @@ test("NPC rows produce a usable stat vector", async () => {
   assert.doesNotThrow(() => npcStats(gm, undefined), "a missing row is not fatal");
 });
 
+const capturedNpcDamage = async ({
+  attacker,
+  attackerLevel,
+  victim,
+  victimLevel,
+  attack,
+  partySize = 1,
+  damageDepthBonus = 0,
+}) => {
+  const { attackForConstant } = await import("../src/gamemaster.js");
+  const { performNpcAttack } = await import("../src/socket/combat.js");
+  const { CLID, OP, TEAM } = await import("../src/socket/opcodes.js");
+
+  const attackerDoid = 20;
+  const victimDoid = 30;
+  const sent = [];
+  const skill = await attackForConstant(attack);
+  const session = {
+    id: 901,
+    heroDoid: 10,
+    npcDamageDepthBonus: damageDepthBonus,
+    objects: new Map([
+      [attackerDoid, CLID.DistributedNPCGameObject],
+      [victimDoid, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      [attackerDoid, {
+        constant: attacker,
+        level: attackerLevel,
+        partySize,
+        team: TEAM.ENEMIES,
+        hitPoints: 10_000,
+        maxHitPoints: 10_000,
+        position: { x: 0, y: 0 },
+      }],
+      [victimDoid, {
+        constant: victim,
+        level: victimLevel,
+        partySize,
+        team: TEAM.ENVIRONMENT,
+        hitPoints: 10_000,
+        maxHitPoints: 10_000,
+        position: { x: 40, y: 0 },
+      }],
+    ]),
+    send: (frame) => sent.push(frame),
+  };
+
+  await performNpcAttack(session, attackerDoid, {
+    attackType: skill.Id,
+    attackSpeed: skill.AttackSpd,
+    weaponPower: 1,
+    attackColliders: [],
+    impactFrame: 0,
+  }, victimDoid);
+
+  const result = sent.find(
+    (frame) =>
+      frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+      frame.readUInt32LE(4) === victimDoid &&
+      frame.readUInt16LE(8) === 144
+  );
+  assert.ok(result, `${attack} produced no combat result`);
+  return -result.readInt32LE(18);
+};
+
+test("an ordinary NPC hit uses the level sent with its actor", async () => {
+  /**
+   * Official level-43 KNIGHT hits on a level-43 LION_WILD are 15 in all 23
+   * captured results: ceil(weapon 1 + base 5 + 0.2 * level 43). The actor kept
+   * level 43, but statsFor rebuilt its vector without that level and dealt 6.
+   */
+  assert.equal(
+    await capturedNpcDamage({
+      attacker: "KNIGHT",
+      attackerLevel: 43,
+      victim: "LION_WILD",
+      victimLevel: 43,
+      attack: "EN_SWORD_SLASH",
+    }),
+    15
+  );
+});
+
+test("NPC damage rounds a positive magnitude up like the official server", async () => {
+  /**
+   * BABY_YETI level 59 computes to 4.36 against a zero-defence target. Every
+   * one of 44 official hits on WOLF_PET is 5, ruling out nearest-integer 4.
+   */
+  assert.equal(
+    await capturedNpcDamage({
+      attacker: "BABY_YETI",
+      attackerLevel: 59,
+      victim: "WOLF_PET",
+      victimLevel: 74,
+      attack: "EN_BABY_YETI_SCRATCH",
+    }),
+    5
+  );
+});
+
+test("a larger party scales the NPC stat but not its weapon power", async () => {
+  /**
+   * BRUTE_CAVE L51 has 24.32 melee attack and a power-1 weapon. With the
+   * four-player MELEE_ATK multiplier 2.5 the official sends 31:
+   * ceil((1 + 24.32 * 2.5) * 0.5). Multiplying the weapon too would send 32.
+   */
+  assert.equal(
+    await capturedNpcDamage({
+      attacker: "BRUTE_CAVE",
+      attackerLevel: 51,
+      victim: "CASTLE_CATACOMB_TRAP_SPIKES",
+      victimLevel: 51,
+      attack: "EN_FART_ATTACK",
+      partySize: 4,
+    }),
+    31
+  );
+});
+
+test("an Infinite floor grows NPC damage through the authored stat multiplier", async () => {
+  /**
+   * InfiniteDungeons.DamageGrowth is 0.75. At depth one, BRUTE L100 therefore
+   * sends ceil(weapon 1 + melee stat 20 * 1.75) = 36 in the official corpus.
+   */
+  assert.equal(
+    await capturedNpcDamage({
+      attacker: "BRUTE",
+      attackerLevel: 100,
+      victim: "LION_WILD",
+      victimLevel: 100,
+      attack: "EN_MACE_CHOP",
+      damageDepthBonus: 0.75,
+    }),
+    36
+  );
+});
+
 test("a projectile's repeated hits are each worth half the last", async () => {
   const { handleProposeCombatResults } = await import("../src/socket/combat.js");
   const { PacketWriter, PacketReader } = await import("../src/socket/packet.js");
@@ -375,6 +513,81 @@ test("a burn spares every hero in the party, not only the session's own", async 
     200,
     "the other player does not burn either"
   );
+});
+
+const targetBuffSession = () => {
+  let nextDoid = 900;
+  return {
+    id: 8,
+    heroDoid: 10,
+    dungeonActive: true,
+    floorDoid: 55,
+    dungeonZone: 0,
+    objects: new Map(),
+    actors: new Map([[10, { hitPoints: 200, maxHitPoints: 200 }]]),
+    allocateDoid: () => ++nextDoid,
+    send: () => {},
+  };
+};
+
+test("an NPC poison stacks to the target buff's authored limit", async (t) => {
+  const { applyTargetBuff } = await import("../src/socket/combat.js");
+  const { clearDungeonBuffs } = await import("../src/socket/buffs.js");
+  const session = targetBuffSession();
+  t.after(() => clearDungeonBuffs(session));
+
+  for (let hit = 0; hit < 10; hit += 1) {
+    await applyTargetBuff(session, {
+      attack: { TargetBuff1: "POISON_L1" },
+      victimDoid: 10,
+      attackerDoid: 20,
+      damage: 5,
+    });
+  }
+
+  assert.equal(
+    [...session.activeBuffs.values()].filter(
+      (active) => active.affectedActor === 10 && active.buff?.Constant === "POISON_L1"
+    ).length,
+    6,
+    "the attack path collapsed a six-stack poison into one"
+  );
+});
+
+test("a capped NPC debuff does not outlive its authored duration", async (t) => {
+  const { applyTargetBuff } = await import("../src/socket/combat.js");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const session = targetBuffSession();
+  const slow = { TargetBuff1: "SLOW_L1" }; // three seconds, MaxStacks 1
+
+  await applyTargetBuff(session, {
+    attack: slow,
+    victimDoid: 10,
+    attackerDoid: 20,
+    damage: 5,
+  });
+  t.mock.timers.tick(2500);
+  await applyTargetBuff(session, {
+    attack: slow,
+    victimDoid: 10,
+    attackerDoid: 20,
+    damage: 5,
+  });
+  t.mock.timers.tick(1000);
+
+  assert.equal(session.activeBuffs.size, 0, "the repeated slow extended past its three seconds");
+});
+
+test("NPC debuff expiry leaves one server simulation grace after its duration", async (t) => {
+  const { grantBuff } = await import("../src/socket/buffs.js");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const session = targetBuffSession();
+
+  await grantBuff(session, "SLOW_L1", { affectedActor: 10, attackerActor: 20 });
+  t.mock.timers.tick(3000);
+  assert.equal(session.activeBuffs.size, 1, "the three-second slow expired before its last frame");
+  t.mock.timers.tick(100);
+  assert.equal(session.activeBuffs.size, 0, "the slow survived its server grace");
 });
 
 /**

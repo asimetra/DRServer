@@ -6,6 +6,7 @@ import { performNpcAttack } from "./combat.js";
 import { buffMultiplierFor, hasAbility } from "./buffs.js";
 import { heroMembersOf } from "./match-world.js";
 import { collectNearbyForPet } from "./pickups.js";
+import { npcAttackSpeed } from "./npc-attacks.js";
 import {
   findPath,
   hasLineOfSight,
@@ -798,15 +799,16 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * simply has no speed. Attacking is separate: a stun stops it, a root does
      * not, which is what the two abilities mean.
      *
-     * A shock is the third case and stops both. `SHOCK_L0` says so in its own
-     * words — "Unable to attack or move for 0.5 secs" — and carries `MOVEMENT`
-     * zero for the moving half; the swinging half is this ability, which
-     * nothing read. So `Zapping` held a monster still and let it go on hitting
-     * whoever was standing next to it.
+     * Shock, paralysis and disabled controls stop both. `SHOCK_L0` says so in
+     * its own words — "Unable to attack or move for 0.5 secs" — and carries
+     * `MOVEMENT` zero for the moving half; the swinging half is this ability,
+     * which nothing read. So `Zapping` held a monster still and let it go on
+     * hitting whoever was standing next to it. FREEZE and FROZEN have the same
+     * split through `PARALYZED` and `DISABLE_CONTROLS` respectively.
      */
     const mobility = buffMultiplierFor(session, doid, "MOVEMENT");
-    const cannotAttack =
-      hasAbility(session, doid, "STUN") || hasAbility(session, doid, "SHOCK");
+    const cannotAttack = ["STUN", "SHOCK", "PARALYZED", "DISABLE_CONTROLS"]
+      .some((ability) => hasAbility(session, doid, ability));
     const speed = ai.moveSpeed * mobility;
 
     const route = routeToTarget(session, actor, target, now);
@@ -992,14 +994,18 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     }
 
     /**
-     * Read off `MELEE_SPD` alone. Nineteen buffs touch the three speed columns
-     * and exactly one sets them differently from each other — `BERSERK_DB`,
-     * which is a hero's own ultimate and never reaches an NPC. Every debuff that
-     * does reach one sets all three alike, so which is read does not change the
-     * answer.
+     * Both authored speed layers pace the cast.
+     *
+     * `AttackSpd` belongs to the selected attack, while an active buff modifies
+     * the matching MELEE/SHOOT/MAGIC speed column. SAVAGE_BOW is the decisive
+     * capture: EN_POISON_ARROW authors 0.25, the official sends playSpeed 0.25,
+     * and its 1.5-second AttackTimer starts producing casts around six seconds.
+     * This server dropped AttackSpd and did both four times too quickly.
      */
-    const attackSpeed = buffMultiplierFor(session, doid, "MELEE_SPD");
-    ai.nextAttackAt = now + attackIntervalMs(ai, attackSpeed > 0 ? 1 / attackSpeed : 1);
+    const buffSpeed = buffMultiplierFor(session, doid, chosen.speedStat ?? "MELEE_SPD");
+    const authoredSpeed = npcAttackSpeed(chosen.attackSpeed);
+    const buffSlowness = buffSpeed > 0 ? 1 / buffSpeed : 1;
+    ai.nextAttackAt = now + Math.max(100, attackIntervalMs(ai, buffSlowness) / authoredSpeed);
     // Awaited so the hit lands before the tick moves on: damage is the
     // server's own bookkeeping and must not race the next frame.
     const victimSession = victim.member

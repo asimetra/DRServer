@@ -22,7 +22,7 @@ import { isPlausiblePosition } from "./coordinates.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { npcGenerate, objectDisable } from "./objects.js";
 import { npcHeadingUpdate } from "./ai.js";
-import { npcAttackChoices } from "./npc-attacks.js";
+import { npcAttackChoices, npcAttackSpeed } from "./npc-attacks.js";
 import { membersOf } from "./match-world.js";
 import {
   hitPointsUpdate,
@@ -153,7 +153,10 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
   const victims = placeableVictims(session, doid, colliders);
   if (!always && !victims.length) return 0;
 
-  session.send(npcAttackChoreography({ doid, attackType: attack.Id, targetActorDoid: 0 }));
+  const playSpeed = npcAttackSpeed(attack.AttackSpd);
+  session.send(
+    npcAttackChoreography({ doid, attackType: attack.Id, targetActorDoid: 0, playSpeed })
+  );
 
   /**
    * A fissure runs along the ground rather than landing on it.
@@ -173,7 +176,7 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
    */
   const byFrame = new Map();
   for (const collider of colliders) {
-    const at = Math.max(0, Number(collider.frame ?? 0)) * (1000 / FRAMES_PER_SECOND);
+    const at = timelineDelayMs(collider.frame, playSpeed);
     byFrame.set(at, [...(byFrame.get(at) ?? []), collider]);
   }
   const beats = [...byFrame.entries()].sort(([a], [b]) => a - b);
@@ -259,7 +262,7 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
       }).catch((error) =>
         warn(`[${session.id}] ${attack.Constant} spawn failed: ${error.message}`)
       );
-    }, (Number(action.frame ?? 0) / FRAMES_PER_SECOND) * 1000).unref?.();
+    }, timelineDelayMs(action.frame, playSpeed)).unref?.();
   }
   return hits;
 };
@@ -544,7 +547,11 @@ export const spawnPlaceable = async (
     ? PLACEABLE_ACTIVATION_DELAY_MS + animationMs + PLACEABLE_RETIRE_GRACE_MS
     : animationMs;
   const lifetimeMs = Math.max(authoredMs, lifecycleMs);
-  const beatMs = Math.max(100, Number(npc.AttackTimer ?? 1) * 1000);
+  const beatMs = Math.max(
+    100,
+    (Number(npc.AttackTimer ?? 1) * 1000) /
+      npcAttackSpeed(livingAttack?.AttackSpd)
+  );
 
   const live = {
     constant: npc.Constant,

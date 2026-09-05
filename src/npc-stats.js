@@ -61,13 +61,21 @@ const bonusFor = (gm, constant) =>
  * `PlayerScale` is indexed by party size and its `HP_BOOST` is a multiplier,
  * not a boost. One player is 1, so a solo run is unaffected either way.
  */
-export const partyHealthMultiplier = (gm, heroes = 1) => {
+const playerScaleFor = (gm, heroes = 1) => {
   const rows = gm?.raw?.PlayerScale ?? [];
-  const row =
-    rows.find((entry) => Number(entry.Players) === Math.max(1, heroes)) ?? rows[0];
+  return rows.find((entry) => Number(entry.Players) === Math.max(1, heroes)) ?? rows[0];
+};
+
+export const partyHealthMultiplier = (gm, heroes = 1) => {
+  const row = playerScaleFor(gm, heroes);
   return Number(row?.HP_BOOST ?? 1) || 1;
 };
 
+/** Party scaling for one authored NPC combat stat. */
+export const partyStatMultiplier = (gm, heroes = 1, stat) => {
+  const value = Number(playerScaleFor(gm, heroes)?.[stat] ?? 1);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+};
 
 /**
  * How much tougher an infinite dungeon's monsters are for having got this deep.
@@ -98,14 +106,21 @@ export const partyHealthMultiplier = (gm, heroes = 1) => {
  * feeding it; this is the reading the column name pairs with, and it only
  * starts to matter past floor 152.
  */
-export const infiniteDepthBonus = (gm, tier, depth = 1) => {
+const infiniteGrowthBonus = (gm, tier, depth, growthField, maximumField) => {
   if (!/_INFINITE$/.test(String(tier?.Constant ?? ""))) return 0;
   const row = (gm?.raw?.InfiniteDungeons ?? [])[0];
-  const growth = Number(row?.HealthGrowth ?? 0);
+  const growth = Number(row?.[growthField] ?? 0);
   if (!(growth > 0)) return 0;
-  const ceiling = Number(row?.HealthMax ?? 0) || Infinity;
+  const ceiling = Number(row?.[maximumField] ?? 0) || Infinity;
   return Math.min(ceiling, growth * Math.max(0, depth));
 };
+
+export const infiniteDepthBonus = (gm, tier, depth = 1) =>
+  infiniteGrowthBonus(gm, tier, depth, "HealthGrowth", "HealthMax");
+
+/** Extra NPC offence on an Infinite floor, separate from health growth. */
+export const infiniteDamageBonus = (gm, tier, depth = 1) =>
+  infiniteGrowthBonus(gm, tier, depth, "DamageGrowth", "DamageMax");
 
 /**
  * The health the official would have sent for this NPC at this level.
