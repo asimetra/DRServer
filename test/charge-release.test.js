@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleProposeAttackChoreography } from "../src/socket/buster.js";
+import { handleProposeCombatResults } from "../src/socket/combat.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
 import { CLID } from "../src/socket/opcodes.js";
 
@@ -48,7 +49,13 @@ const sessionWith = (overrides = {}) => {
 };
 
 /** One CombatResult, in the fixed 37-byte shape readProposals expects. */
-const result = ({ attacker = HERO, attackee, attackType = SOUL_BANG, weaponSlot = 0 }) =>
+const result = ({
+  attacker = HERO,
+  attackee,
+  attackType = SOUL_BANG,
+  weaponSlot = 0,
+  scaling = 0,
+}) =>
   new PacketWriter()
     .u32(attacker)
     .u32(attackee)
@@ -64,9 +71,24 @@ const result = ({ attacker = HERO, attackee, attackType = SOUL_BANG, weaponSlot 
     .u8(0) // criticalHit
     .u8(0) // effectiveness
     .u32(0) // selfDamage
-    .u32(0) // scalingMaxPowerMultiplier
+    .f32(scaling) // scalingMaxPowerMultiplier
     .u8(0) // generation
     .body();
+
+const attackWithEmbeddedHit = ({ attackType, attackee, scaling = 1 }) => {
+  const embedded = result({ attackee, attackType, scaling });
+  return new PacketWriter()
+    .u8(0) // weaponSlot
+    .u8(0) // isConsumableWeapon
+    .u32(attackType)
+    .u32(attackee ?? 0)
+    .u8(0) // choreography.loop
+    .f32(1) // playSpeed
+    .f32(1) // scalingMaxProjectiles
+    .u16(attackee ? embedded.length : 0)
+    .raw(attackee ? embedded : Buffer.alloc(0))
+    .body();
+};
 
 /** A Soul Bang cast with its victims written into the tail, as the client sends it. */
 const soulBang = (victims, { attackType = SOUL_BANG, weaponSlot = 0 } = {}) => {
@@ -191,4 +213,109 @@ test("an embedded result naming another attacker is refused", async () => {
     5000,
     "a result attributed to someone else was applied anyway"
   );
+});
+
+test("Artemis' Bow turns held draw time into bounded weapon power", async () => {
+  const LONG_BOW = 16003;
+  const HOLD = 910800; // SCALING_HOLDING_ATTACK
+  const PIERCING = 900507; // HERO_LONG_BOW.ChargeAttack
+
+  const shoot = async ({ heldMs = 0, claimedScale = 3.5 }) => {
+    const startedAt = Date.now();
+    const session = sessionWith({
+      heroWeapons: [{ type: LONG_BOW, power: 9 }],
+      heroStats: new Map([["SHOOT_ATK", 10]]),
+    });
+    const [enemy] = withEnemies(session, 1, 5000);
+    session.actors.get(enemy).stats = new Map();
+
+    if (heldMs > 0) {
+      await handleProposeAttackChoreography(
+        session,
+        new PacketReader(attackWithEmbeddedHit({ attackType: HOLD })),
+        { now: () => startedAt }
+      );
+    }
+    await handleProposeAttackChoreography(
+      session,
+      new PacketReader(attackWithEmbeddedHit({ attackType: PIERCING })),
+      { now: () => startedAt + heldMs }
+    );
+    const hit = result({ attackee: enemy, attackType: PIERCING, scaling: claimedScale });
+    await handleProposeCombatResults(
+      session,
+      new PacketReader(new PacketWriter().u16(hit.length).raw(hit).body())
+    );
+    return 5000 - session.actors.get(enemy).hitPoints;
+  };
+
+  const uncharged = await shoot({ heldMs: 0 });
+  const halfCharged = await shoot({ heldMs: 375, claimedScale: 99 });
+  const fullyCharged = await shoot({ heldMs: 750, claimedScale: 99 });
+
+  assert.equal(uncharged, 19);
+  assert.equal(halfCharged, Math.round(9 * 2.25 + 10));
+  assert.equal(fullyCharged, Math.round(9 * 3.5 + 10));
+});
+
+test("a charge attack without authored power scaling gains no damage multiplier", async () => {
+  const REGULAR_BOW = 16002;
+  const HOLD = 910800; // SCALING_HOLDING_ATTACK
+  const TIGHT_SPREAD = 900505; // ChargeAttack, but ScalingMaxPowerMultiplier is only 1
+  const startedAt = Date.now();
+  const session = sessionWith({
+    heroWeapons: [{ type: REGULAR_BOW, power: 9 }],
+    heroStats: new Map([["SHOOT_ATK", 10]]),
+  });
+  const [enemy] = withEnemies(session, 1, 5000);
+  session.actors.get(enemy).stats = new Map();
+
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(attackWithEmbeddedHit({ attackType: HOLD })),
+    { now: () => startedAt }
+  );
+  await handleProposeAttackChoreography(
+    session,
+    new PacketReader(
+      attackWithEmbeddedHit({ attackType: TIGHT_SPREAD, attackee: enemy, scaling: 99 })
+    ),
+    { now: () => startedAt + 500 }
+  );
+
+  assert.equal(5000 - session.actors.get(enemy).hitPoints, 19);
+});
+
+test("a later full draw is not capped by an earlier partial arrow still in flight", async () => {
+  const LONG_BOW = 16003;
+  const HOLD = 910800;
+  const PIERCING = 900507;
+  const startedAt = Date.now();
+  const session = sessionWith({
+    heroWeapons: [{ type: LONG_BOW, power: 9 }],
+    heroStats: new Map([["SHOOT_ATK", 10]]),
+  });
+  const [enemy] = withEnemies(session, 1, 5000);
+  session.actors.get(enemy).stats = new Map();
+
+  for (const [start, held] of [[startedAt, 375], [startedAt + 1000, 750]]) {
+    await handleProposeAttackChoreography(
+      session,
+      new PacketReader(attackWithEmbeddedHit({ attackType: HOLD })),
+      { now: () => start }
+    );
+    await handleProposeAttackChoreography(
+      session,
+      new PacketReader(attackWithEmbeddedHit({ attackType: PIERCING })),
+      { now: () => start + held }
+    );
+  }
+
+  const hit = result({ attackee: enemy, attackType: PIERCING, scaling: 3.5 });
+  await handleProposeCombatResults(
+    session,
+    new PacketReader(new PacketWriter().u16(hit.length).raw(hit).body())
+  );
+
+  assert.equal(5000 - session.actors.get(enemy).hitPoints, 42);
 });

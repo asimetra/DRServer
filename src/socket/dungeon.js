@@ -3117,6 +3117,7 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "activeBuffs",
     "powerupSpawnTimers",
     "powerupCooldownUntil",
+    "scalingChargeStarts",
     "dooberTimers",
     "activeTrapProjectiles",
     // Whatever else is added here, note that per-run state kept anywhere *but*

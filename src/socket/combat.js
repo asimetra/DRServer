@@ -244,7 +244,7 @@ const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
     head.u8(); // criticalHit
     head.u8(); // effectiveness
     head.u32(); // selfDamage
-    head.u32(); // scalingMaxPowerMultiplier
+    const scalingMaxPowerMultiplier = head.f32();
     /**
      * Which collision of the same projectile this is, counted from zero and
      * reset per cast. A thunderstorm cloud drifts through a crowd landing up to
@@ -253,7 +253,7 @@ const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
     const generation = head.u8();
     results.push({
       attacker, attackee, attackType, weaponSlot, isConsumable,
-      knockback, blocked, generation, bytes,
+      knockback, blocked, scalingMaxPowerMultiplier, generation, bytes,
     });
   }
 
@@ -2548,6 +2548,13 @@ const withCrit = (bytes, enabled = true) => {
   return copy;
 };
 
+/** Writes the server-bounded charge multiplier into the authoritative echo. */
+const withPowerMultiplier = (bytes, multiplier) => {
+  const copy = Buffer.from(bytes);
+  copy.writeFloatLE(multiplier, 32);
+  return copy;
+};
+
 /**
  * Applies each proposed result: computes the damage, tells the victim, and
  * publishes its new hit points. Returns true when handled so the caller does
@@ -2730,7 +2737,13 @@ const MAX_TARGET_TALLIES = 4096;
  * months by a guard that should never have caught it, and the meteors never
  * spawned and the bar never emptied — and the damage landed every time.
  */
-export const noteCast = (session, attack, weaponSlot = 0, now = Date.now()) => {
+export const noteCast = (
+  session,
+  attack,
+  weaponSlot = 0,
+  now = Date.now(),
+  maxPowerMultiplier = 1
+) => {
   if (!attack?.Id) return false;
   session.acceptedCasts ??= [];
 
@@ -2752,6 +2765,7 @@ export const noteCast = (session, attack, weaponSlot = 0, now = Date.now()) => {
     weaponSlot: Number(weaponSlot ?? 0),
     at: now,
     hits: 0,
+    maxPowerMultiplier: Math.max(1, Number(maxPowerMultiplier) || 1),
   });
   session.acceptedCasts = live.slice(-MAX_LIVE_CASTS);
   return true;
@@ -2875,37 +2889,55 @@ const spendOnTarget = (session, source, targetDoid, now) => {
  * Consuming rather than asking: the window and the budget only mean something
  * if landing a hit spends them.
  */
-export const castAccepted = async (
+const consumeAcceptedCast = (
   session,
   attack,
   attackType,
   weaponSlot = 0,
   targetDoid = 0,
-  now = Date.now()
+  now = Date.now(),
+  claimedPowerMultiplier = 1
 ) => {
-  if (CASTLESS_ATTACKS.has(attack?.Constant)) return bombWasCast(session, attack, targetDoid, now);
+  if (CASTLESS_ATTACKS.has(attack?.Constant)) {
+    return bombWasCast(session, attack, targetDoid, now)
+      ? { maxPowerMultiplier: 1 }
+      : null;
+  }
 
   // Oldest first: a hit belongs to the earliest cast still able to answer for
   // it, which is the one that was made first — and which still has room both
   // overall and for this particular body.
-  const record = (session.acceptedCasts ?? []).find(
+  const candidates = (session.acceptedCasts ?? []).filter(
     (candidate) =>
       candidate.attackId === Number(attackType) &&
       candidate.weaponSlot === Number(weaponSlot ?? 0) &&
       now - candidate.at <= CAST_WINDOW_MS &&
       candidate.hits < CAST_HIT_BUDGET
   );
-  if (!record) return false;
-  if (!spendOnTarget(session, `${attackType}|${weaponSlot ?? 0}`, targetDoid, now)) return false;
+  const claimed = Math.max(1, Number(claimedPowerMultiplier) || 1);
+  // Several arrows may still be flying. A full-charge result cannot belong to
+  // an earlier half-charge cast whose server-timed ceiling is lower; choose the
+  // oldest live cast capable of producing the claimed value, then retain the
+  // old oldest-first fallback so an excessive claim is bounded rather than
+  // turned into a way to choose a later record.
+  const record = candidates.find(
+    (candidate) => (candidate.maxPowerMultiplier ?? 1) + 0.01 >= claimed
+  ) ?? candidates[0];
+  if (!record) return null;
+  if (!spendOnTarget(session, `${attackType}|${weaponSlot ?? 0}`, targetDoid, now)) return null;
 
   record.hits += 1;
-  return true;
+  return record;
 };
+
+/** Public boolean form retained for callers that only need authorization. */
+export const castAccepted = async (...args) => Boolean(consumeAcceptedCast(...args));
 
 /** Nothing authorises anything across a floor or a dungeon. */
 export const clearAcceptedCasts = (session) => {
   session.acceptedCasts = [];
   session.targetTally?.clear();
+  session.scalingChargeStarts?.clear();
 };
 
 export const reachExcess = async (session, proposal, attack) => {
@@ -3027,15 +3059,16 @@ const applyProposals = async (session, proposals) => {
       warn(`[${session.id}] reach check failed, letting the hit through: ${error.message}`);
       return null;
     });
-    if (
-      !(await castAccepted(
-        session,
-        attack,
-        proposal.attackType,
-        proposal.weaponSlot,
-        proposal.attackee
-      ))
-    ) {
+    const acceptedCast = consumeAcceptedCast(
+      session,
+      attack,
+      proposal.attackType,
+      proposal.weaponSlot,
+      proposal.attackee,
+      Date.now(),
+      proposal.scalingMaxPowerMultiplier
+    );
+    if (!acceptedCast) {
       noteViolation(
         session,
         RULE.noCast,
@@ -3069,9 +3102,26 @@ const applyProposals = async (session, proposals) => {
     const swung = proposal.isConsumable ? null : session.heroWeapons?.[proposal.weaponSlot];
     const weaponPower = Number(swung?.power) || 1;
 
+    /**
+     * A scaling weapon charges its power, not every attack with "charge" in
+     * its name. CombatResult carries the exact fractional multiplier the client
+     * rendered, while the accepted cast carries the maximum justified by the
+     * observed hold time and the equipped WeaponItem row. Taking the lower is
+     * both faithful and bounded: Artemis' Bow sends 2.556 and 3.25 in the
+     * official capture, but a forged 99 can never exceed its authored 3.5.
+     */
+    const claimedPowerMultiplier = Number(proposal.scalingMaxPowerMultiplier);
+    const maxPowerMultiplier = Math.max(
+      1,
+      Number(acceptedCast?.maxPowerMultiplier) || 1
+    );
+    const powerMultiplier = Number.isFinite(claimedPowerMultiplier) && claimedPowerMultiplier > 1
+      ? Math.min(claimedPowerMultiplier, maxPowerMultiplier)
+      : 1;
+
     const plain = proposal.blocked
       ? 0
-      : await computeDamage(session, proposal, attack, weaponPower, swung);
+      : await computeDamage(session, proposal, attack, weaponPower * powerMultiplier, swung);
 
     /**
      * And whether the weapon's own modifiers turned it into a crit, which is
@@ -3110,7 +3160,8 @@ const applyProposals = async (session, proposals) => {
     // Both flags are server decisions. Always overwrite the proposal so a
     // modified client cannot preserve a forged critical/knockback marker in
     // the authoritative echo when the corresponding effect was refused.
-    let bytes = withCrit(proposal.bytes, critical);
+    let bytes = withPowerMultiplier(proposal.bytes, powerMultiplier);
+    bytes = withCrit(bytes, critical);
     if (proposal.blocked) bytes = withKnockback(bytes, false);
     else if (shove) bytes = withKnockback(bytes);
     const echo = receiveCombatResult(proposal.attackee, fieldId, withDamage(bytes, -damage));

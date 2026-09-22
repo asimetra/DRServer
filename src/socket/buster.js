@@ -241,6 +241,7 @@ const PLAYER_ATTACK_COLUMNS = /^(Attack\d|ChargeAttack|HoldingAttack|AltAttack\d
 let playerAttacks = null;
 let attacksByWeapon = null;
 let weaponClassById = null;
+let weaponItemById = null;
 
 const buildGrants = async () => {
   if (playerAttacks) return;
@@ -248,6 +249,7 @@ const buildGrants = async () => {
   playerAttacks = new Set();
   attacksByWeapon = new Map();
   weaponClassById = new Map();
+  weaponItemById = new Map();
   for (const item of raw.WeaponItem) {
     const granted = new Set();
     for (const [column, value] of Object.entries(item)) {
@@ -258,6 +260,7 @@ const buildGrants = async () => {
     }
     attacksByWeapon.set(Number(item.Id), granted);
     weaponClassById.set(Number(item.Id), item.ClassType);
+    weaponItemById.set(Number(item.Id), item);
   }
   // A Dungeon Buster comes from the hero rather than from anything equipped.
   for (const hero of raw.Hero) if (hero.DBuster1) playerAttacks.add(hero.DBuster1);
@@ -345,6 +348,64 @@ const slotGrantsAttack = async (session, attack, weaponSlot) => {
     return true;
   }
   return Boolean(attacksByWeapon.get(type)?.has(attack.Constant));
+};
+
+/**
+ * Maximum power this accepted cast earned by being held down.
+ *
+ * Only three shipped weapon rows scale damage: Long Bow (the base item behind
+ * Artemis' Bow), Woodcutter's Bow and Heavy Throwing Rocks. The rest may still
+ * have a ChargeAttack, but their hold changes projectile count, attack choice
+ * or movement rather than power, so they remain at one.
+ *
+ * The client starts SCALING_HOLDING_ATTACK after its 200 ms input threshold and
+ * sends the release separately. Timing those two accepted choreographies gives
+ * the same fraction the client writes into each CombatResult, without trusting
+ * a client to grant itself an instant full charge. The result's own value is
+ * still used later for the exact fractional frame, capped by this bound.
+ */
+const chargedCastState = async (session, attack, weaponSlot, now) => {
+  await buildGrants();
+  const item = session.heroWeapons?.[weaponSlot];
+  const type = Number(item?.type ?? 0);
+  const weapon = weaponItemById.get(type);
+  const idle = { maxPowerMultiplier: 1 };
+  if (!weapon) return idle;
+
+  let fullChargeMs = Number(weapon.ControllerTimeTillEnd) * 1000;
+  if (!(fullChargeMs > 0)) fullChargeMs = Number(attack.ChargeTime) * 1000;
+  if (weapon.WeaponController === "CHARGE_UP") {
+    const { modifiersById } = await loadGameMaster();
+    for (const modifierId of [item?.modifier1, item?.modifier2]) {
+      if (!modifierId) continue;
+      fullChargeMs *= Math.max(
+        0,
+        Number(modifiersById.get(Number(modifierId))?.CHARGE_UP_REDUC ?? 1)
+      );
+    }
+  }
+
+  session.scalingChargeStarts ??= new Map();
+  if (attack.Constant === weapon.HoldingAttack) {
+    session.scalingChargeStarts.set(weaponSlot, { at: now, weaponType: type });
+    return idle;
+  }
+
+  if (attack.Constant !== weapon.ChargeAttack) {
+    session.scalingChargeStarts.delete(weaponSlot);
+    return idle;
+  }
+
+  const started = session.scalingChargeStarts.get(weaponSlot);
+  session.scalingChargeStarts.delete(weaponSlot);
+  if (!started || started.weaponType !== type || !(fullChargeMs > 0)) return idle;
+
+  const elapsed = Math.max(0, now - started.at);
+  const fraction = Math.min(1, elapsed / fullChargeMs);
+  const bonus = Number(weapon?.ScalingMaxPowerMultiplier ?? 1);
+  return {
+    maxPowerMultiplier: bonus > 1 ? 1 + fraction * bonus : 1,
+  };
 };
 
 /** A client may propose an attack id, but only the equipped buff pot may cook soup. */
@@ -497,7 +558,7 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
 export const handleProposeAttackChoreography = async (
   session,
   reader,
-  { onAccepted } = {}
+  { onAccepted, now = Date.now } = {}
 ) => {
   const weaponSlot = reader.u8();
   const isConsumableWeapon = reader.u8();
@@ -506,6 +567,7 @@ export const handleProposeAttackChoreography = async (
   reader.u8(); // choreography.loop
   const playSpeed = reader.f32();
   reader.f32(); // choreography.scalingMaxProjectiles
+  const castAt = Number(now());
   const attack = await attackById(attackType);
   if (!attack) {
     warn(`buster: unknown proposed attack ${attackType}`);
@@ -623,7 +685,8 @@ export const handleProposeAttackChoreography = async (
    * And the cast itself, because the hits that follow have to point at
    * something. See `castAccepted` in combat.js.
    */
-  noteCast(session, attack, weaponSlot);
+  const charged = await chargedCastState(session, attack, weaponSlot, castAt);
+  noteCast(session, attack, weaponSlot, castAt, charged.maxPowerMultiplier);
   /**
    * And whatever untouchable time the attack's own timeline authors. Every
    * hero's Dungeon Buster opens one at frame zero, which is what makes it safe
