@@ -11,6 +11,7 @@
  *   node tools/grant.js --powerups            # 99 of every powerup
  *   node tools/grant.js --powerups 5          # 5 of every powerup
  *   node tools/grant.js --weapons 8           # 8 rolled weapons, unequipped, to trade
+ *   node tools/grant.js --offer 55572          # grant an exact shop offer for free
  *   node tools/grant.js --placeables          # one of every weapon that places something
  *   node tools/grant.js --equip HERO_MONSTER_AXE   # and hold one of them
  *   node tools/grant.js --bombs               # 10 health and 10 party revive bombs
@@ -28,6 +29,7 @@ import { loadGameMaster } from "../src/gamemaster.js";
 import { generateWeapon } from "../src/chests.js";
 import { experienceForLevel, statPointsEarned, maxLevel } from "../src/progression.js";
 import { config } from "../src/config.js";
+import { purchaseOffer } from "../src/store.js";
 
 const argument = (name, fallback) => {
   const index = process.argv.indexOf(`--${name}`);
@@ -53,7 +55,7 @@ const main = async () => {
   account.account_chests ??= [];
 
   const askedForSomethingElse =
-    ["coins", "gems", "keys", "level"].some((name) => argument(name)) ||
+    ["coins", "gems", "keys", "level", "offer"].some((name) => argument(name)) ||
     process.argv.includes("--daily-reset") ||
     process.argv.includes("--powerups") ||
     process.argv.includes("--bombs") ||
@@ -319,6 +321,35 @@ const main = async () => {
       console.log(`+ ${weapon.Constant}`);
     }
     console.log(`${granted} placing weapons granted, unequipped`);
+  }
+
+  /**
+   * An exact authored offer, without charging its shop price.
+   *
+   * This is the generic way to grant named legendary variants. A Polaris Staff
+   * is not a second WeaponItem: offer 55572 grants base item 18503 with the
+   * authored legendary rarity, power, level and three modifiers. Rebuilding
+   * that tuple here would be another store implementation, so the real free
+   * purchase path remains the single source of truth.
+   */
+  const offerRequest = argument("offer");
+  if (offerRequest !== undefined) {
+    const offerId = Number(offerRequest);
+    if (!Number.isInteger(offerId) || offerId <= 0) {
+      throw new Error(`offer must be a positive integer, not "${offerRequest}"`);
+    }
+    const before = new Set((account.account_items ?? []).map((item) => Number(item.id)));
+    const granted = await purchaseOffer({
+      account,
+      offerId,
+      nextId: () => nextObjectId(account),
+      free: true,
+    });
+    const items = (account.account_items ?? []).filter((item) => !before.has(Number(item.id)));
+    console.log(
+      `+ offer ${offerId} ${granted.offer.Name}` +
+        (items.length ? ` — item instance(s) ${items.map((item) => item.id).join(", ")}` : "")
+    );
   }
 
   /**
