@@ -1,6 +1,7 @@
 import { isOnline, dungeonOf } from "./socket/presence.js";
 import { listAccountIds, loadAccount, saveAccount, saveAccounts } from "./accounts.js";
 import { warn } from "./log.js";
+import { infiniteEpoch } from "./infinite.js";
 
 /**
  * Friends, gifts and the two leaderboards.
@@ -96,6 +97,8 @@ export const accountIdFromCode = (code) => {
 
 export const friendIdsOf = (account) => parseIdList(account?.ingame_friends);
 export const ignoredIdsOf = (account) => parseIdList(account?.ignore_friends);
+export const pendingFriendRequestsOf = (account) =>
+  Array.isArray(account?.friend_requests) ? account.friend_requests : [];
 
 /** The skin the account is currently showing, which is its active avatar's. */
 export const activeSkinOf = (account) => {
@@ -233,30 +236,122 @@ export const ignoredDataFor = async (account) =>
 /**
  * The two boards.
  *
- * Both are empty here, and that is a statement rather than a stub: these are
- * Infinite Island's boards, and Infinite Island is not implemented.
- *
  * The whole client stack behind them is namespaced for it — II_UIMapBattlePopup
  * asks for the top twenty, II_AccountTopScoreInfo reads `top_scores` keyed by
  * account, II_AvatarMapnodeScore reads `avatar_scores` — and every map node id
  * in the captured rows is one of the nine INFINITE_* nodes: 50158 is
  * INFINITE_TEMPLE, 50150 INFINITE_ARENA, 50162 INFINITE_TRIBAL. So the `score`
- * a row carries is that mode's score, and there is no scoring rule to be found
- * anywhere else because it does not belong anywhere else.
- *
- * Which makes filling these in the last step of building that mode, not a gap
- * in this file. The shape is exact so the UI has something well-formed to read;
- * the content arrives when Infinite Island does, and these are the two
- * functions that change:
+ * a row carries is that mode's deepest room reached in the current weekly
+ * epoch. The selection popup also uses `avatar_scores` to decide which four
+ * milestone chests are already earned, so an empty but well-shaped response is
+ * not cosmetic: it hides both the score and the chest the run just reached.
  *
  *   championsboard  {top_scores:[{account_id, mapnode_id, score, active_skin,
  *                    name, weapon1..3}], avatar_scores:[{avatar_id, mapnode_id,
  *                    score}]}
  *   top twenty      [{account_id, active_skin, name, score, weapon1..3}]
  */
-export const mapNodeScoresFor = async () => ({ top_scores: [], avatar_scores: [] });
+const infiniteScoreEntries = (account, epoch = infiniteEpoch()) => {
+  const root = account?.infinite_progress;
+  if (!root || typeof root !== "object" || Array.isArray(root)) return [];
 
-export const topTwentyFor = async () => [];
+  const ownedAvatars = new Set((account.account_avatars ?? []).map((row) => Number(row.id)));
+  const scores = [];
+  for (const [nodeKey, avatars] of Object.entries(root)) {
+    const mapNodeId = Number(nodeKey);
+    if (!Number.isSafeInteger(mapNodeId) || !avatars || typeof avatars !== "object") continue;
+    for (const [avatarKey, progress] of Object.entries(avatars)) {
+      const avatarId = Number(avatarKey);
+      const score = Math.max(0, Math.trunc(Number(progress?.score ?? 0)));
+      if (
+        !ownedAvatars.has(avatarId) ||
+        Number(progress?.epoch) !== Number(epoch) ||
+        score <= 0
+      ) continue;
+      scores.push({ avatar_id: avatarId, mapnode_id: mapNodeId, score });
+    }
+  }
+  return scores;
+};
+
+const weaponJson = (item) => JSON.stringify(item ? {
+  type: Number(item.item_id ?? 0),
+  power: Number(item.power ?? 0),
+  rarity: Number(item.rarity ?? 0),
+  requiredLevel: Number(item.requiredlevel ?? 1),
+  modifier1: Number(item.modifier1 ?? 0),
+  modifier2: Number(item.modifier2 ?? 0),
+  legendaryModifier: Number(item.legendarymodifier ?? 0),
+} : null);
+
+const boardRow = (account, score) => {
+  const avatar = (account.account_avatars ?? []).find(
+    (row) => Number(row.id) === Number(score.avatar_id)
+  );
+  const equipped = new Map(
+    (account.account_items ?? [])
+      .filter((item) => Number(item.avatar_id) === Number(score.avatar_id))
+      .map((item) => [Number(item.avatar_slot), item])
+  );
+  return {
+    account_id: Number(account.id),
+    mapnode_id: score.mapnode_id,
+    score: score.score,
+    active_skin: Number(avatar?.skin_type ?? activeSkinOf(account)),
+    name: account.name ?? `Player${account.id}`,
+    weapon1: weaponJson(equipped.get(0)),
+    weapon2: weaponJson(equipped.get(1)),
+    weapon3: weaponJson(equipped.get(2)),
+  };
+};
+
+const bestScoresByNode = (account, epoch = infiniteEpoch()) => {
+  const best = new Map();
+  for (const score of infiniteScoreEntries(account, epoch)) {
+    const previous = best.get(score.mapnode_id);
+    if (!previous || score.score > previous.score) best.set(score.mapnode_id, score);
+  }
+  return best;
+};
+
+export const mapNodeScoresFor = async (
+  requesterId,
+  friendAccountIds = [],
+  avatarIds = [],
+  { epoch = infiniteEpoch() } = {}
+) => {
+  const requestedAccounts = new Set(
+    (Array.isArray(friendAccountIds) ? friendAccountIds : []).map(Number)
+  );
+  requestedAccounts.add(Number(requesterId));
+  const accounts = await loadKnown([...requestedAccounts]);
+  const requester = accounts.find((account) => Number(account.id) === Number(requesterId));
+  const requestedAvatars = Array.isArray(avatarIds) && avatarIds.length
+    ? new Set(avatarIds.map(Number))
+    : null;
+
+  const top_scores = accounts.flatMap((account) =>
+    [...bestScoresByNode(account, epoch).values()].map((score) => boardRow(account, score))
+  );
+  const avatar_scores = requester
+    ? infiniteScoreEntries(requester, epoch).filter(
+        (score) => !requestedAvatars || requestedAvatars.has(score.avatar_id)
+      )
+    : [];
+  return { top_scores, avatar_scores };
+};
+
+export const topTwentyFor = async (_requesterId, mapNodeId, { epoch = infiniteEpoch() } = {}) => {
+  const node = Number(mapNodeId);
+  const accounts = await loadKnown(await listAccountIds());
+  return accounts
+    .flatMap((account) => {
+      const score = bestScoresByNode(account, epoch).get(node);
+      return score ? [boardRow(account, score)] : [];
+    })
+    .sort((a, b) => b.score - a.score || a.account_id - b.account_id)
+    .slice(0, 20);
+};
 
 /**
  * The gift inbox lives in `gifts.js`.

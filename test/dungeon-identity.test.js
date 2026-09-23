@@ -53,3 +53,22 @@ test("the owner hero generate uses the production dungeon zone", () => {
   assert.equal(generated.parent, 1234);
   assert.equal(generated.zone, 10);
 });
+
+test("a regenerated hero carries dungeon-wide bomb usage into the next floor", () => {
+  const generated = decodeGenerate(
+    heroOwnerGenerate({
+      doid: 1_101_000_055,
+      parent: 1235,
+      heroType: 104,
+      skinType: 154,
+      playerId: 1_000_000_005,
+      screenName: "Player1000000005",
+      healthBombsUsed: 2,
+      partyBombsUsed: 1,
+    }).subarray(2)
+  );
+
+  assert.equal(generated.error, undefined, generated.error);
+  assert.equal(generated.fields.healthBombsUsed, 2);
+  assert.equal(generated.fields.partyBombsUsed, 1);
+});

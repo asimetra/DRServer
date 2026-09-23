@@ -90,8 +90,17 @@ export const walkThrough = async (
       return false;
     }
 
-    connection.send(buildEntryResponse(connection.matchMakerDoid, 0, result.match.mapNodeId));
-    await join(connection, result, request);
+    let accepted = false;
+    await join(connection, result, request, {
+      onPlayerReady: () => {
+        if (accepted) return;
+        accepted = true;
+        connection.send(
+          buildEntryResponse(connection.matchMakerDoid, 0, result.match.mapNodeId)
+        );
+      },
+    });
+    if (!accepted) throw new Error(`match ${result.match.id} did not create the owner player`);
     rememberMatchMakerGroup(connection, result.match);
     info(`[${session.id}] walked through to ${node}`);
     return true;

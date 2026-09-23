@@ -113,7 +113,15 @@ export const spawnNpcRewards = (
   session,
   { floorDoid, npc, rewardData, origin, random = Math.random }
 ) => {
-  const rewards = rollNpcRewardDoobers(npc, rewardData, random);
+  const active = session.infiniteActiveModifiers ?? [];
+  const noHealth = active.some((modifier) => modifier.NoHealthDrop);
+  const noMana = active.some((modifier) => modifier.NoManaDrop);
+  const noBuster = active.some((modifier) => modifier.NoBusterDrop);
+  const rewards = rollNpcRewardDoobers(npc, rewardData, random).filter((doober) =>
+    !(noHealth && Number(doober.HP_PERCENTAGE ?? 0) > 0) &&
+    !(noMana && Number(doober.MP_PERCENTAGE ?? 0) > 0) &&
+    !(noBuster && Number(doober.Crowd ?? 0) > 0)
+  );
   if (!rewards.length || !floorDoid || !origin) return [];
 
   const baseAngle = unitRandom(random) * Math.PI * 2;

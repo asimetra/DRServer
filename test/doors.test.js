@@ -45,7 +45,7 @@ test("a crossing asks once, for the place the door names", async () => {
       asked.push(request.mapNodeId);
       return { match: { mapNodeId: request.mapNodeId } };
     },
-    join: async () => {},
+    join: async (_session, _result, _request, options) => options.onPlayerReady(),
   });
 
   assert.equal(crossed, true);

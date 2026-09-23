@@ -27,6 +27,7 @@ import { ACCOUNT_OBJECT_ID_FLOOR } from "../account-object-ids.js";
 pg.types.setTypeParser(20, Number);
 
 let pool = null;
+let processLockClient = null;
 
 const connect = () => {
   pool ??= new pg.Pool({ connectionString: config.databaseUrl, max: 8 });
@@ -36,6 +37,44 @@ const connect = () => {
 export const close = async () => {
   await pool?.end();
   pool = null;
+};
+
+/**
+ * Holds one dedicated advisory-lock connection for the process lifetime.
+ * Account locks and match state are process-local, so a second server sharing
+ * this database would make their guarantees false even though SQL itself is
+ * transactional.
+ */
+export const acquireServerProcessLock = async () => {
+  if (processLockClient) throw new Error("Postgres process lock is already held here");
+  const client = await connect().connect();
+  try {
+    const { rows } = await client.query(
+      "SELECT pg_try_advisory_lock($1, $2) AS acquired",
+      [0x0d55_3e7, 0x5345_5256]
+    );
+    if (!rows[0]?.acquired) {
+      throw new Error("storage is already in use by another server or maintenance tool");
+    }
+    processLockClient = client;
+  } catch (problem) {
+    client.release();
+    throw problem;
+  }
+
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    const held = processLockClient;
+    processLockClient = null;
+    if (!held) return;
+    try {
+      await held.query("SELECT pg_advisory_unlock($1, $2)", [0x0d55_3e7, 0x5345_5256]);
+    } finally {
+      held.release();
+    }
+  };
 };
 
 /**
@@ -83,6 +122,7 @@ const ACCOUNT_COLUMNS = [
   "completed_mapnode_mask", "basic_currency", "premium_currency", "basic_keys",
   "uncommon_keys", "rare_keys", "legendary_keys", "highest_avatar",
   "buckets_weapon", "buckets_other", "active_avatar", "admin_flags",
+  "ingame_friends", "ignore_friends", "friend_requests", "infinite_progress",
   "account_flags", "market_barred", "completed_dungeons", "matchmaker_group", "concurrent_days",
   "last_reward_date", "last_login", "created",
 ];
@@ -186,7 +226,16 @@ export const writeAccount = async (client, account) => {
    * then said was "confirm your email address first" to somebody who had
    * confirmed it days before.
    */
-  await upsert(client, "accounts", ACCOUNT_COLUMNS, account);
+  await upsert(client, "accounts", ACCOUNT_COLUMNS, {
+    ...account,
+    ingame_friends: account.ingame_friends ?? "[]",
+    ignore_friends: account.ignore_friends ?? "[]",
+    friend_requests: Array.isArray(account.friend_requests) ? account.friend_requests : [],
+    infinite_progress:
+      account.infinite_progress && typeof account.infinite_progress === "object"
+        ? account.infinite_progress
+        : {},
+  });
 
   /**
    * The children are cleared, which the account row cannot be: they are lists

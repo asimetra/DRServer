@@ -156,6 +156,14 @@ or on a private network, never on the public interface. A non-loopback
 cleartext bind is refused unless `ODS_ALLOW_INSECURE_INTERNAL=1` explicitly
 acknowledges a trusted private network.
 
+The server is deliberately single-process. Its live-account registry, match
+state, and transaction queues are local memory, so startup claims an exclusive
+storage lock: `.server.lock` in file mode and a PostgreSQL advisory lock in
+database mode. A second server, `tools/grant.js`, an account-ID repair, or a
+write import refuses to run against the same live store. Use the internal API
+for account changes while players are connected; stop the server before using
+maintenance tools.
+
 ## Configuration
 
 `ODS_*` is the public-facing environment prefix. Existing `DR_*` deployments
@@ -214,6 +222,13 @@ node tools/combat-matrix.js --attack EN_POISON_ARROW --json
 Its JSON form is intended for agents and automation. See
 [docs/combat-conformance.md](docs/combat-conformance.md) for the checks and the
 remaining client-side boundary.
+
+Persistent inventory/avatar row IDs can be checked without loading, repairing,
+or rewriting accounts:
+
+```bash
+npm run audit:account-ids
+```
 
 Without that data a large part of the suite cannot run, so a fresh clone should
 use:

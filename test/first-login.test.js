@@ -62,7 +62,7 @@ let nextId = 970000001;
 const anId = () => nextId++;
 
 test("this template gives the repairs nothing to do", async () => {
-  const fresh = createAccount(anId());
+  const fresh = await createAccount(anId());
   assert.equal(
     await repairAccountAttributes(fresh),
     false,

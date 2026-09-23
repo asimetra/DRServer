@@ -24,6 +24,10 @@
   "buckets_other": 15,
   "active_avatar": "${AVATAR_ID}",
   "highest_avatar": 1,
+  "ingame_friends": "[]",
+  "ignore_friends": "[]",
+  "friend_requests": [],
+  "infinite_progress": {},
   "account_avatars": [
     {
       "id": "${AVATAR_ID}",

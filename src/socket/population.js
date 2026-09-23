@@ -69,7 +69,12 @@ const between = (random, low, high) => {
  * that carried 31 fodder spread them over four constants at 8/8/8/7, which is
  * a deal rather than a dice roll.
  */
-export const populationFor = (gm, tier, random = Math.random) => {
+export const populationFor = (
+  gm,
+  tier,
+  random = Math.random,
+  { infiniteDefinition = null, floorNumber = 1, allMinibosses = false } = {}
+) => {
   if (!tier) return [];
   const pool = enemyPoolFor(gm, tier.Constant);
   const wanted = {
@@ -77,13 +82,29 @@ export const populationFor = (gm, tier, random = Math.random) => {
     bruiser: between(random, Number(tier.MinBruiser), Number(tier.MaxBruiser)),
     miniboss: between(random, Number(tier.MinMiniboss), Number(tier.MaxMiniboss)),
   };
+  if (infiniteDefinition) {
+    const floorsPastFirst = Math.max(0, Number(floorNumber) - 1);
+    const scale = (role, dropField, minimumField) => {
+      const multiplier = Math.max(
+        Number(infiniteDefinition[minimumField] ?? 0),
+        1 + Number(infiniteDefinition[dropField] ?? 0) * floorsPastFirst
+      );
+      wanted[role] = Math.max(0, Math.round(wanted[role] * multiplier));
+    };
+    scale("fodder", "FodderCountDropPerFloor", "FodderMultiplierMin");
+    scale("bruiser", "BruiserCountDropPerFloor", "BruiserMultiplierMin");
+    scale("miniboss", "MinibossCountDropPerFloor", "MinibossMultiplierMin");
+  }
 
   const chosen = [];
   for (const [role, count] of Object.entries(wanted)) {
     const constants = pool[role];
     if (!constants.length) continue;
     for (let i = 0; i < count; i += 1) {
-      chosen.push({ constant: constants[i % constants.length], role });
+      const poolForConstant = allMinibosses && pool.miniboss.length
+        ? pool.miniboss
+        : constants;
+      chosen.push({ constant: poolForConstant[i % poolForConstant.length], role });
     }
   }
   return chosen;
@@ -166,8 +187,23 @@ const placeAround = (markers, count, navigation, random, radius) => {
  * A floor with no markers stocks nothing rather than inventing places, which is
  * what an authored boss map wants — it brings its own cast and its own layout.
  */
-export const stockFloor = (gm, { floor, navigation, tier, random = Math.random }) => {
-  const wanted = populationFor(gm, tier, random);
+export const stockFloor = (
+  gm,
+  {
+    floor,
+    navigation,
+    tier,
+    random = Math.random,
+    infiniteDefinition = null,
+    floorNumber = 1,
+    allMinibosses = false,
+  }
+) => {
+  const wanted = populationFor(gm, tier, random, {
+    infiniteDefinition,
+    floorNumber,
+    allMinibosses,
+  });
   if (!wanted.length) return [];
 
   const markers = markersFor(floor);

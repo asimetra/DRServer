@@ -11,12 +11,17 @@ import os from "node:os";
  * answered by nothing here — and the one that was registered decoded the wrong
  * kind of value, so adding somebody from the dungeon summary quietly failed.
  */
-process.env.DR_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "dr-friends-"));
+process.env.ODS_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "dr-friends-"));
 
 const { dispatch, hasHandler } = await import("../src/rpc.js");
 await import("../src/rpc-handlers.js");
 const { loadAccount, saveAccount } = await import("../src/accounts.js");
-const { friendCodeOf, friendIdsOf, ignoredIdsOf } = await import("../src/social.js");
+const {
+  friendCodeOf,
+  friendIdsOf,
+  ignoredIdsOf,
+  pendingFriendRequestsOf,
+} = await import("../src/social.js");
 
 const ME = 1000000005;
 const THEM = 1000000006;
@@ -27,12 +32,25 @@ const reset = async () => {
     const account = await loadAccount(id);
     account.ingame_friends = "[]";
     account.ignore_friends = "[]";
+    account.friend_requests = [];
     await saveAccount(account);
   }
 };
 
 const addFriend = (value) =>
   dispatch("friendrequests", "DRFriendRequest", ["Me", 0, 0, null, ME, value, {}, "token"]);
+
+const acceptRequest = async () => {
+  const [request] = await dispatch("friendrequests", "DRFriendRequestPending", [THEM, "token"]);
+  assert.ok(request, "the recipient has no pending request to accept");
+  return dispatch("friendrequests", "DRFriendRequestUpdate", [
+    THEM,
+    [request.id],
+    [request.account_id],
+    1,
+    "token",
+  ]);
+};
 
 test("every endpoint the friend and report screens call is registered", () => {
   for (const [service, method] of [
@@ -50,17 +68,20 @@ test("every endpoint the friend and report screens call is registered", () => {
   }
 });
 
-test("a friend code typed into the invite box adds that player", async () => {
+test("a friend code typed into the invite box creates an approval request", async () => {
   await reset();
   const answer = await addFriend(friendCodeOf(THEM));
 
   assert.equal(answer.to_account_id, THEM, "the panel is told who it reached");
   assert.equal(answer.friend_code, friendCodeOf(THEM));
-  assert.deepEqual(friendIdsOf(await loadAccount(ME)), [THEM]);
-  assert.deepEqual(friendIdsOf(await loadAccount(THEM)), [ME], "and both sides have it");
+  assert.deepEqual(friendIdsOf(await loadAccount(ME)), []);
+  assert.deepEqual(friendIdsOf(await loadAccount(THEM)), [], "a request is not a friendship");
+  const [pending] = pendingFriendRequestsOf(await loadAccount(THEM));
+  assert.equal(pending.account_id, ME);
+  assert.equal(pending.name, `Player${ME}`);
 });
 
-test("an account id from the dungeon summary adds that player too", async () => {
+test("an account id from the dungeon summary creates the same request", async () => {
   await reset();
   /**
    * `DistributedDungeonSummary.addFriend` sends `personId` as a number. Read as
@@ -71,7 +92,7 @@ test("an account id from the dungeon summary adds that player too", async () => 
 
   assert.notDeepEqual(answer, [], "a number is an account, not a code");
   assert.equal(answer.to_account_id, THEM);
-  assert.deepEqual(friendIdsOf(await loadAccount(ME)), [THEM]);
+  assert.equal(pendingFriendRequestsOf(await loadAccount(THEM))[0].account_id, ME);
 });
 
 test("the ten-digit account id is what a player can actually type", async () => {
@@ -86,7 +107,7 @@ test("the ten-digit account id is what a player can actually type", async () => 
 
   const answer = await addFriend(String(THEM));
   assert.equal(answer.to_account_id, THEM);
-  assert.deepEqual(friendIdsOf(await loadAccount(ME)), [THEM]);
+  assert.equal(pendingFriendRequestsOf(await loadAccount(THEM)).length, 1);
 });
 
 test("the outcomes the invite panel distinguishes", async () => {
@@ -95,12 +116,13 @@ test("the outcomes the invite panel distinguishes", async () => {
   assert.equal(await addFriend(friendCodeOf(ME)), null, "your own code is not an invitation");
 
   await addFriend(friendCodeOf(THEM));
-  assert.equal(await addFriend(friendCodeOf(THEM)), null, "and twice is already a friend");
+  assert.equal(await addFriend(friendCodeOf(THEM)), null, "and the same request is not duplicated");
 });
 
 test("removing a friend removes it from both sides", async () => {
   await reset();
   await addFriend(friendCodeOf(THEM));
+  await acceptRequest();
 
   const answer = await dispatch("friendrequests", "DRFriendRemove", [ME, [THEM], "token"]);
 
@@ -112,6 +134,7 @@ test("removing a friend removes it from both sides", async () => {
 test("blocking drops the friendship and is not visible to the blocked", async () => {
   await reset();
   await addFriend(friendCodeOf(THEM));
+  await acceptRequest();
 
   const answer = await dispatch("friendrequests", "IgnoreFriend", [ME, THEM, "token"]);
 
@@ -138,26 +161,40 @@ test("blocking yourself does nothing", async () => {
 
 test("accepting a pending request befriends, declining does not", async () => {
   await reset();
-  // State 2 is the decline: `UIPending` logs DRFriendDecline against it.
+  await addFriend(THEM);
+  let [request] = pendingFriendRequestsOf(await loadAccount(THEM));
+  // A forged id cannot decline somebody else's request.
   const declined = await dispatch("friendrequests", "DRFriendRequestUpdate", [
-    ME,
-    [1],
-    [THEM],
+    THEM,
+    [request.id + 1],
+    [ME],
     2,
     "token",
   ]);
   assert.equal(declined.accepted, 0);
+  assert.equal(declined.declined, 0);
   assert.deepEqual(friendIdsOf(await loadAccount(ME)), []);
 
+  // State 2 is the real decline: `UIPending` logs DRFriendDecline against it.
+  const realDecline = await dispatch("friendrequests", "DRFriendRequestUpdate", [
+    THEM, [request.id], [ME], 2, "token",
+  ]);
+  assert.equal(realDecline.declined, 1);
+  assert.deepEqual(pendingFriendRequestsOf(await loadAccount(THEM)), []);
+
+  await addFriend(THEM);
+  [request] = pendingFriendRequestsOf(await loadAccount(THEM));
   const accepted = await dispatch("friendrequests", "DRFriendRequestUpdate", [
-    ME,
-    [1],
-    [THEM],
+    THEM,
+    [request.id],
+    [ME],
     1,
     "token",
   ]);
   assert.equal(accepted.accepted, 1);
   assert.deepEqual(friendIdsOf(await loadAccount(ME)), [THEM]);
+  assert.deepEqual(friendIdsOf(await loadAccount(THEM)), [ME]);
+  assert.deepEqual(pendingFriendRequestsOf(await loadAccount(THEM)), []);
 });
 
 test("a report is taken and answered", async () => {

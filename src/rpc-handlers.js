@@ -25,6 +25,7 @@ import {
   ignore,
   ignoredDataFor,
   mapNodeScoresFor,
+  pendingFriendRequestsOf,
   topTwentyFor,
   unfriend,
   unignore,
@@ -811,7 +812,9 @@ register("leaderboard/getIgnoreFriendData", async ([accountId]) =>
  * request flow here yet, and an invented pending request would show a stranger
  * in the player's social panel.
  */
-register("friendrequests/DRFriendRequestPending", async () => [], { account: null });
+register("friendrequests/DRFriendRequestPending", async ([accountId]) =>
+  pendingFriendRequestsOf(await loadAccount(Number(accountId)))
+);
 
 /**
  * Who the sixth parameter names, which is not always the same kind of thing.
@@ -871,34 +874,48 @@ const namedAccountId = async (value) => {
  * address — a worse thing to do to somebody who has just mistyped their own
  * code. The short inline prompt is the right size for the mistake.
  *
- * The friendship is made both ways at once. This server has no pending-request
- * flow — `DRFriendRequestPending` is empty and honestly so — and a one-sided
- * friend would sit in one panel and not the other, which is worse than either
- * having it or not.
+ * This creates a request only. The recipient's pending panel accepts or
+ * declines it through DRFriendRequestUpdate; only acceptance makes the
+ * friendship. Keeping that boundary server-side prevents knowing somebody's
+ * name/account id from granting their presence and dungeon location.
  */
 register("friendrequests/DRFriendRequest", async (params) => {
   const accountId = Number(params[4]);
   const typed = params[5];
-
-  const account = await loadAccount(accountId);
   const wantedId = await namedAccountId(typed);
   // `namedAccountId` already answered null for anything this server does not
   // hold, so "not found" and "unreadable" arrive here as the same thing.
   if (!wantedId || wantedId === accountId) return wantedId === accountId ? null : [];
 
-  const friends = friendIdsOf(account);
-  if (friends.includes(wantedId)) return null;
+  return withTwoAccountLocks(accountId, wantedId, async () => {
+    const [account, recipient] = await Promise.all([
+      loadAccount(accountId),
+      loadAccount(wantedId),
+    ]);
+    if (friendIdsOf(account).includes(wantedId)) return null;
+    const pending = pendingFriendRequestsOf(recipient);
+    const existing = pending.find((row) => Number(row.account_id) === accountId);
+    if (existing) return null;
 
-  const friend = await loadAccount(wantedId);
-  await befriend(account, friend);
-
-  return {
-    to_account_id: friend.id,
-    active_skin: activeSkinOf(friend),
-    name: friend.name,
-    friend_code: friendCodeOf(friend),
-  };
-}, { account: 4 });
+    const request = {
+      id: await nextObjectId(recipient),
+      account_id: account.id,
+      active_skin: activeSkinOf(account),
+      name: account.name,
+      trophies: account.trophies ?? 0,
+      identifier: `3_${account.id}`,
+      friend_code: friendCodeOf(account),
+    };
+    recipient.friend_requests = [...pending, request];
+    await saveAccount(recipient);
+    return {
+      to_account_id: recipient.id,
+      active_skin: activeSkinOf(recipient),
+      name: recipient.name,
+      friend_code: friendCodeOf(recipient),
+    };
+  });
+}, { account: 4, locks: false });
 
 /**
  * params: [accountId, [friendIds], token]
@@ -939,25 +956,42 @@ register("friendrequests/UnblockFriend", async ([accountId, friendIds]) => {
  * State 1 accepts and state 2 declines — `UIPending` logs `DRFriendDecline`
  * against the second one, which is the only place either number is named.
  *
- * Accepting makes the friendship, because this server has no pending requests
- * to consume: `DRFriendRequestPending` answers empty, so nothing can reach this
- * except a client holding a list from somewhere else. Declining has nothing to
- * remove and says so quietly rather than failing, which is what the panel wants
- * either way — it refreshes itself from the friend list afterwards.
+ * Only a request actually held by this account may be accepted. Both accepting
+ * and declining consume it; forged request/to-account pairs change nothing.
  */
 const REQUEST_ACCEPTED = 1;
 
-register("friendrequests/DRFriendRequestUpdate", async ([accountId, , toIds, state]) => {
-  if (Number(state) !== REQUEST_ACCEPTED) return { accepted: 0 };
-  const account = await loadAccount(Number(accountId));
+register("friendrequests/DRFriendRequestUpdate", async ([accountId, requestIds, toIds, state]) => {
+  const ownerId = Number(accountId);
   let accepted = 0;
-  for (const id of toIds ?? []) {
-    const friendId = await namedAccountId(Number(id));
-    if (!friendId || friendId === account.id) continue;
-    if (await befriend(account, await loadAccount(friendId))) accepted++;
+  let declined = 0;
+  for (let index = 0; index < (toIds ?? []).length; index++) {
+    const requesterId = Number(toIds[index]);
+    const requestId = Number(requestIds?.[index]);
+    if (!Number.isSafeInteger(requesterId) || requesterId === ownerId) continue;
+    await withTwoAccountLocks(ownerId, requesterId, async () => {
+      const [account, requester] = await Promise.all([
+        loadAccount(ownerId),
+        loadAccount(requesterId),
+      ]);
+      const pending = pendingFriendRequestsOf(account);
+      const request = pending.find(
+        (row) => Number(row.id) === requestId && Number(row.account_id) === requesterId
+      );
+      if (!request) return;
+      account.friend_requests = pending.filter((row) => Number(row.id) !== requestId);
+      if (Number(state) === REQUEST_ACCEPTED) {
+        const made = await befriend(account, requester);
+        if (!made) await saveAccount(account);
+        accepted += 1;
+      } else {
+        await saveAccount(account);
+        declined += 1;
+      }
+    });
   }
-  return { accepted };
-});
+  return { accepted, declined };
+}, { locks: false });
 
 /**
  * params: [{reportingPlayerId, reportingPlayerName, reportedPlayerId,
@@ -1123,11 +1157,13 @@ register("store/DeclineGift", async ([accountId, requestId]) => {
   return true;
 });
 
-/** params: [accountId, [friendAccountIds], token] */
-register("championsboard/getAllMapnodeScores", async () => mapNodeScoresFor(), { account: null });
+/** params: [accountId, [friendAccountIds], [avatarInstanceIds], token] */
+register("championsboard/getAllMapnodeScores", async ([accountId, friendIds, avatarIds]) =>
+  mapNodeScoresFor(Number(accountId), friendIds, avatarIds), { account: null });
 
 /** params: [accountId, mapNodeId, token] */
-register("championsboard/getTopTwenty", async () => topTwentyFor(), { account: null });
+register("championsboard/getTopTwenty", async ([accountId, mapNodeId]) =>
+  topTwentyFor(Number(accountId), Number(mapNodeId)), { account: null });
 
 /**
  * params: [networkId] — moderation rules. The live server answers with an empty

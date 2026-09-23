@@ -198,7 +198,10 @@ test("the old experience board's standings are swept at startup", async () => {
 
   const swept = JSON.parse(fs.readFileSync(bestsFile, "utf8"));
   assert.ok(!("experience" in swept), "the accumulated total is gone");
-  assert.ok("speedrun" in swept, "and the boards that still mean what they meant do not");
+  assert.ok(
+    Object.keys(swept).some((key) => key.startsWith("speedrun:")),
+    "and the scoped speedrun boards that still mean what they meant do not"
+  );
 });
 
 /**
@@ -398,4 +401,47 @@ test("a day's runs are counted however the file is ordered", async () => {
   const counted = await runsSince(since);
 
   assert.ok(counted >= 2, `two runs are inside the window, counted ${counted}`);
+});
+
+test("simultaneous finishes cannot overwrite each other's standings", async () => {
+  const map_node_id = aNode();
+  const accounts = Array.from({ length: 24 }, (_, index) => 700 + index);
+
+  await Promise.all(
+    accounts.map((account_id, index) =>
+      recordRuns([run({
+        account_id,
+        map_node_id,
+        duration_ms: 20_000 + index,
+      })])
+    )
+  );
+
+  const board = await boardFor("speedrun", {
+    node: map_node_id,
+    hero: 101,
+    party: 1,
+    limit: accounts.length,
+  });
+  assert.deepEqual(
+    new Set(board.map((entry) => entry.account_id)),
+    new Set(accounts)
+  );
+});
+
+test("invalid leaderboard JSON is never treated as an empty board", async () => {
+  const bestsFile = path.join(scratch, "dungeon-bests.json");
+  const original = fs.readFileSync(bestsFile, "utf8");
+  const corrupt = original.slice(0, -2);
+  fs.writeFileSync(bestsFile, corrupt);
+
+  try {
+    await assert.rejects(
+      () => recordRuns([run({ account_id: 999, map_node_id: aNode() })]),
+      /invalid JSON.*refusing to replace/
+    );
+    assert.equal(fs.readFileSync(bestsFile, "utf8"), corrupt);
+  } finally {
+    fs.writeFileSync(bestsFile, original);
+  }
 });

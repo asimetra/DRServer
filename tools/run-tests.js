@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Runs the test suite against a throwaway account directory.
@@ -28,21 +28,28 @@ import path from "node:path";
  * point the suite somewhere deliberate.
  */
 
-const borrowed = process.env.ODS_DATA_DIR;
-const scratch = borrowed ?? mkdtempSync(path.join(tmpdir(), "ods-test-data-"));
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const testFiles = readdirSync(path.join(root, "test"))
+  .filter((name) => name.endsWith(".test.js"))
+  .sort()
+  .map((name) => path.join("test", name));
+const forwarded = process.argv.slice(2);
+const explicitTarget = forwarded.some((argument) => !argument.startsWith("-"));
 
 const child = spawn(
   process.execPath,
-  ["--test", "--test-concurrency=1", ...process.argv.slice(2)],
-  { stdio: "inherit", env: { ...process.env, ODS_DATA_DIR: scratch } }
+  [
+    "--import",
+    path.join(root, "tools", "test-environment.js"),
+    "--test",
+    "--test-concurrency=1",
+    ...forwarded,
+    ...(explicitTarget ? [] : testFiles),
+  ],
+  { stdio: "inherit", cwd: root, env: process.env }
 );
 
-const cleanUp = () => {
-  if (!borrowed) rmSync(scratch, { recursive: true, force: true });
-};
-
 child.on("exit", (code, signal) => {
-  cleanUp();
   if (signal) process.kill(process.pid, signal);
   else process.exit(code ?? 1);
 });

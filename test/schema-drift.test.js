@@ -133,9 +133,26 @@ test("the shipped schema is one this server may run itself", () => {
  * parse is caught here rather than by reporting a database as fine.
  */
 test("the shipped schema parses into something", () => {
-  const expected = schemaExpects(readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8"));
+  const sql = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8");
+  const expected = schemaExpects(sql);
 
   assert.ok(Object.keys(expected).length > 8, "the tables were not found");
   assert.ok(expected.accounts?.includes("basic_currency"), "accounts is not described");
   assert.ok(expected.account_items?.includes("modifier1"), "nor are its children");
+
+  for (const column of [
+    "ingame_friends",
+    "ignore_friends",
+    "friend_requests",
+    "infinite_progress",
+  ]) {
+    assert.match(
+      sql,
+      new RegExp(
+        `ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS ${column}\\b`,
+        "i"
+      ),
+      `${column} must reach existing accounts tables, not only new ones`
+    );
+  }
 });

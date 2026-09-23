@@ -63,8 +63,13 @@ const fakeSocket = () => {
   return socket;
 };
 
-const settle = async () => {
-  for (let index = 0; index < 40; index++) await new Promise((resolve) => setImmediate(resolve));
+const settle = async (session) => {
+  const turns = session ? 1000 : 40;
+  for (let index = 0; index < turns; index++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (session && !session.draining) return;
+  }
+  if (session) throw new Error(`session ${session.id} did not finish draining`);
 };
 
 const login = (accountId, version = "1.0.0") =>
@@ -82,7 +87,7 @@ const connect = async (accountId) => {
   const socket = fakeSocket();
   const session = onConnection(socket);
   socket.emit("data", login(accountId));
-  await settle();
+  await settle(session);
   return { socket, session };
 };
 
@@ -127,7 +132,7 @@ test("a second login on the same socket cannot replace its authenticated identit
   assert.equal(sessionHolding(1000000005), connection.session);
 
   connection.socket.emit("data", login(1000000006));
-  await settle();
+  await settle(connection.session);
 
   assert.equal(connection.socket.destroyed, true, "the protocol-violating connection is closed");
   assert.equal(connection.session.accountId, 1000000005, "its proven identity was never replaced");

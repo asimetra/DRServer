@@ -50,14 +50,34 @@ const makeSession = ({ healthBombs = 3, partyBombs = 2 } = {}) => {
   return { sent, saves, session, heroDoid, npcDoid, stock };
 };
 
-test("hero enters the recoverable down state before any defeat", async () => {
-  const { sent, session, heroDoid, npcDoid } = makeSession();
-
+const landLethalSwing = async (session, npcDoid) => {
+  const scheduled = [];
+  session.combatClock = {
+    setTimeout: (callback) => {
+      scheduled.push(callback);
+      return callback;
+    },
+    clearTimeout: () => {},
+  };
   await performNpcAttack(session, npcDoid, {
     attackType: 920050,
     damage: 1,
-    impactFrame: 11,
+    attackColliders: [{
+      type: "circleCollider",
+      radius: 100,
+      xOffset: 0,
+      frame: 11,
+    }],
   });
+  assert.equal(session.actors.get(session.heroDoid).dead, undefined, "windup dealt damage early");
+  for (const callback of scheduled) callback();
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+};
+
+test("hero enters the recoverable down state before any defeat", async () => {
+  const { sent, session, heroDoid, npcDoid } = makeSession();
+
+  await landLethalSwing(session, npcDoid);
 
   assert.equal(session.actors.get(heroDoid).dead, true);
   assert.equal(session.floorCleared, undefined);
@@ -178,11 +198,7 @@ test("a bomb used while up tops the health bar back and still goes off", async (
 test("a bomb inside the window calls the defeat off", async () => {
   const { sent, session, heroDoid, npcDoid } = makeSession();
 
-  await performNpcAttack(session, npcDoid, {
-    attackType: 920050,
-    damage: 1,
-    impactFrame: 11,
-  });
+  await landLethalSwing(session, npcDoid);
   assert.ok(session.floorFailingTimer, "the hero is down and the clock is running");
 
   sent.length = 0;
@@ -229,6 +245,39 @@ test("a hero with no bombs left stays down", async () => {
   assert.equal(hero.dead, true, "nothing to spend, so nothing happens");
   assert.equal(stock(60001), 0, "and the count cannot go negative");
   assert.equal(sent.length, 1, "only the refusal");
+  const response = readUpdate(sent[0]);
+  assert.equal(response.fieldId, 175);
+  assert.equal(response.reader.u8(), 0);
+});
+
+test("Infinite bomb usage is capped across regenerated floors, not reset per floor", async () => {
+  const { sent, session, stock } = makeSession({ healthBombs: 5 });
+  session.mapPage = { NodeType: "INFINITE" };
+
+  for (let use = 1; use <= 3; use++) {
+    const previous = session.actors.get(session.heroDoid);
+    // A floor transition destroys and regenerates the hero actor. The session
+    // is the run-scoped owner of the counter and the new actor receives it.
+    session.actors.set(session.heroDoid, {
+      hitPoints: 0,
+      maxHitPoints: previous.maxHitPoints,
+      dead: true,
+      position: previous.position,
+      healthBombsUsed: session.healthBombsUsed ?? 0,
+    });
+    await handleProposeSelfRevive(session, new PacketReader(Buffer.from([0])));
+    assert.equal(session.healthBombsUsed, use);
+  }
+
+  const hero = session.actors.get(session.heroDoid);
+  hero.hitPoints = 0;
+  hero.dead = true;
+  sent.length = 0;
+  await handleProposeSelfRevive(session, new PacketReader(Buffer.from([0])));
+
+  assert.equal(hero.dead, true, "a fourth bomb in the same Infinite run was accepted");
+  assert.equal(session.healthBombsUsed, 3);
+  assert.equal(stock(60001), 2, "the refused fourth attempt still spent inventory");
   const response = readUpdate(sent[0]);
   assert.equal(response.fieldId, 175);
   assert.equal(response.reader.u8(), 0);

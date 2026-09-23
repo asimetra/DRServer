@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { openChest, ChestError, NOTHING_AWARDED } from "../src/chests.js";
+import {
+  openChest,
+  ChestError,
+  PERMANENT_CHEST_REFUSAL,
+} from "../src/chests.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 
 const LEGENDARY_CHEST = 60004; // its drop table is a weapon with probability 1
@@ -100,7 +104,7 @@ test("refuses when weapon storage is full", async () => {
 
   await assert.rejects(() => open(account), (error) => {
     assert.ok(error instanceof ChestError);
-    assert.equal(error.code, NOTHING_AWARDED, "the live server's code for a refused award");
+    assert.equal(error.code, PERMANENT_CHEST_REFUSAL);
     return true;
   });
 
@@ -109,7 +113,7 @@ test("refuses when weapon storage is full", async () => {
 
 test("refuses a chest the account does not hold", async () => {
   const account = accountWith(BERSERKER, { account_chests: [] });
-  await assert.rejects(() => open(account), { code: NOTHING_AWARDED });
+  await assert.rejects(() => open(account), { code: PERMANENT_CHEST_REFUSAL });
 });
 
 test("spends a key of the chest's rarity, and only on success", async () => {
@@ -118,7 +122,7 @@ test("spends a key of the chest's rarity, and only on success", async () => {
   assert.equal(account.legendary_keys, 1, "the key is spent with the chest");
 
   const broke = accountWith(BERSERKER, { legendary_keys: 0 });
-  await assert.rejects(() => open(broke), { code: NOTHING_AWARDED });
+  await assert.rejects(() => open(broke), { code: PERMANENT_CHEST_REFUSAL });
   assert.equal(broke.legendary_keys, 0, "a refused open costs nothing");
   assert.equal(broke.account_chests.length, 1, "and keeps the chest");
 });
@@ -305,7 +309,7 @@ test("an offer cannot be won without the key the chest costs", async () => {
 
   await assert.rejects(
     () => open(account, { random: () => 0.97 }),
-    (error) => error.code === NOTHING_AWARDED
+    (error) => error.code === PERMANENT_CHEST_REFUSAL
   );
   assert.equal(account.uncommon_keys, 99, "nothing was granted");
   assert.equal(account.account_chests.length, 1, "and the chest is still there");

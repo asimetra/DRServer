@@ -14,6 +14,7 @@ const FLID_HERO_EXPERIENCE_POINTS = 164;
 const FLID_HERO_DUNGEON_BUSTER_POINTS = 166;
 const FLID_HERO_HIT_POINTS = 151;
 const FLID_HERO_MANA_POINTS = 163;
+const FLID_HERO_TOO_FULL_FOR_DOOBER = 170;
 
 test("the authored FOOD placeholder resolves to a concrete healing doober", async () => {
   const doober = await dooberForConstant("FOOD", () => 0);
@@ -42,7 +43,7 @@ test("a nearby doober is collected and announced exactly once", () => {
   assert.equal(session.doobers.has(100), false);
   assert.equal(session.doobers.has(101), true);
   assert.equal(session.objects.has(100), false);
-  assert.equal(sent.length, 1);
+  assert.equal(sent.length, 2);
 
   const reader = new PacketReader(sent[0].subarray(2));
   assert.equal(reader.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
@@ -50,6 +51,11 @@ test("a nearby doober is collected and announced exactly once", () => {
   assert.equal(reader.u16(), FLID_DOOBER_COLLECTED_BY);
   assert.equal(reader.u32(), session.heroDoid);
   assert.equal(reader.eof(), true);
+
+  const disabled = new PacketReader(sent[1].subarray(2));
+  assert.equal(disabled.u16(), OP.CLIENT_OBJECT_DISABLE_RESP);
+  assert.equal(disabled.u32(), 100);
+  assert.equal(disabled.eof(), true);
 });
 
 test("a collecting pet takes progression stars for its owner but leaves food alone", async () => {
@@ -144,37 +150,37 @@ test("GameMaster pickup rewards update live state and persist exactly once", asy
   assert.deepEqual(saved, [
     { id: 42, basic_currency: 1010, account_avatars: [{ experience: 95 }] },
   ]);
-  assert.equal(sent.length, 6);
+  assert.equal(sent.length, 7);
 
-  const currency = new PacketReader(sent[1].subarray(2));
+  const currency = new PacketReader(sent[2].subarray(2));
   assert.equal(currency.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
   assert.equal(currency.u32(), session.playerDoid);
   assert.equal(currency.u16(), FLID_PLAYER_BASIC_CURRENCY);
   assert.equal(currency.u32(), 1010);
   assert.equal(currency.eof(), true);
 
-  const experience = new PacketReader(sent[2].subarray(2));
+  const experience = new PacketReader(sent[3].subarray(2));
   assert.equal(experience.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
   assert.equal(experience.u32(), session.heroDoid);
   assert.equal(experience.u16(), FLID_HERO_EXPERIENCE_POINTS);
   assert.equal(experience.u32(), 95);
   assert.equal(experience.eof(), true);
 
-  const buster = new PacketReader(sent[3].subarray(2));
+  const buster = new PacketReader(sent[4].subarray(2));
   assert.equal(buster.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
   assert.equal(buster.u32(), session.heroDoid);
   assert.equal(buster.u16(), FLID_HERO_DUNGEON_BUSTER_POINTS);
   assert.equal(buster.u32(), 8);
   assert.equal(buster.eof(), true);
 
-  const health = new PacketReader(sent[4].subarray(2));
+  const health = new PacketReader(sent[5].subarray(2));
   assert.equal(health.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
   assert.equal(health.u32(), session.heroDoid);
   assert.equal(health.u16(), FLID_HERO_HIT_POINTS);
   assert.equal(health.u16(), 140);
   assert.equal(health.eof(), true);
 
-  const mana = new PacketReader(sent[5].subarray(2));
+  const mana = new PacketReader(sent[6].subarray(2));
   assert.equal(mana.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
   assert.equal(mana.u32(), session.heroDoid);
   assert.equal(mana.u16(), FLID_HERO_MANA_POINTS);
@@ -258,6 +264,13 @@ test("one shared pickup disappears and pays Gold/XP/Crowd to the party", async (
     );
     assert.ok(collected, `member ${member.id} saw the shared pickup disappear`);
     assert.equal(collected.readUInt32LE(10), collector.heroDoid);
+    assert.ok(
+      member.sent.some(
+        (frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_DISABLE_RESP &&
+          frame.readUInt32LE(4) === 100
+      ),
+      `member ${member.id} saw the collected pickup disabled`
+    );
     for (const owner of [host, collector]) {
       assert.ok(
         member.sent.some(
@@ -335,6 +348,58 @@ test("a healthy hero leaves the big food for whoever needs it", async () => {
   const wounded = atHealth(0.6);
   floorFood(wounded, 904, 0.75);
   assert.equal(collectNearby(wounded, { x: 1000, y: 1000 }), 1, "and goes once it is worth it");
+});
+
+test("a full bar refusal tells the owner once and identifies health or mana", () => {
+  const sent = [];
+  const session = {
+    id: 75,
+    heroDoid: 500,
+    heroManaPoints: 100,
+    maxHeroManaPoints: 100,
+    objects: new Map(),
+    doobers: new Map([
+      [930, { x: 10, y: 10, constant: "FULL_HEALTH", hpPercentage: 0.2 }],
+      [931, { x: 10, y: 10, constant: "FULL_MANA", mpPercentage: 0.2 }],
+    ]),
+    actors: new Map([[500, { hitPoints: 1000, maxHitPoints: 1000 }]]),
+    send: (frame) => sent.push(frame),
+  };
+
+  assert.equal(collectNearby(session, { x: 10, y: 10 }), 0);
+  assert.equal(collectNearby(session, { x: 10, y: 10 }), 0, "standing still repeated the notice");
+  assert.equal(sent.length, 2);
+
+  const flags = sent.map((frame) => {
+    const reader = new PacketReader(frame.subarray(2));
+    assert.equal(reader.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
+    assert.equal(reader.u32(), session.heroDoid);
+    assert.equal(reader.u16(), FLID_HERO_TOO_FULL_FOR_DOOBER);
+    return reader.u8();
+  });
+  assert.deepEqual(flags, [1, 0]);
+
+  collectNearby(session, { x: 1000, y: 1000 });
+  collectNearby(session, { x: 10, y: 10 });
+  assert.equal(sent.length, 4, "leaving and returning may explain the refusal again");
+});
+
+test("partial-waste policy stays silent because the bar is not full", () => {
+  const sent = [];
+  const session = {
+    id: 76,
+    heroDoid: 500,
+    heroManaPoints: 100,
+    maxHeroManaPoints: 100,
+    doobers: new Map([
+      [932, { x: 10, y: 10, constant: "BIG_STEAK", hpPercentage: 0.75 }],
+    ]),
+    actors: new Map([[500, { hitPoints: 800, maxHitPoints: 1000 }]]),
+    send: (frame) => sent.push(frame),
+  };
+
+  assert.equal(collectNearby(session, { x: 10, y: 10 }), 0);
+  assert.deepEqual(sent, []);
 });
 
 test("a pickup that restores nothing is never refused", async () => {

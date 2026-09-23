@@ -180,7 +180,10 @@ test("Aptitude raises the authoritative mana ceiling while the wire stays base",
   const session = member(account.id, 0);
   session.dungeonZone = 1;
 
-  await prepareDungeonMember(session, { account, sendPlayerOwner: false });
+  await prepareDungeonMember(session, {
+    acquireAccountById: async () => account,
+    sendPlayerOwner: false,
+  });
 
   assert.equal(session.heroSpawn.manaPoints, 80, "the wire value counted Aptitude twice");
   assert.equal(session.heroManaPoints, 80, "the current mana no longer matches the wire");

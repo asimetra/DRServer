@@ -26,12 +26,20 @@ import {
   heroGenerate,
   heroOwnerGenerate,
   objectDisable,
+  infiniteRewardDataUpdate,
   playerGenerate,
   playerOwnerGenerate,
 } from "./objects.js";
 import { CLID, TEAM } from "./opcodes.js";
 import { setPresenceLocation } from "./presence.js";
 import { startManaRegen } from "./regen.js";
+import {
+  PLAYER_REQUEST_ENTRY,
+  PLAYER_REQUEST_HERO,
+  waitForEntryHandshake,
+} from "./entry-handshake.js";
+import { infiniteFloorGold, infiniteRewards } from "../infinite.js";
+import { noteInfiniteFloorReached } from "./rewards.js";
 
 const directSend = (member, frame) => {
   if (!member || member.closed || member.socket?.destroyed || typeof member.send !== "function") {
@@ -60,8 +68,8 @@ const requireJoinableWorld = (match, world, member) => {
   }
 };
 
-const waitForFloorAssets = () =>
-  new Promise((resolve) => setTimeout(resolve, config.floorDelayMs));
+const waitForPlayerSignal = (session, fieldId) =>
+  waitForEntryHandshake(session, fieldId, config.floorDelayMs);
 
 const memberPosition = (member, fallback = { x: 0, y: 0 }) =>
   member?.heroPosition ?? member?.actors?.get(member?.heroDoid)?.position ?? fallback;
@@ -87,6 +95,8 @@ const heroFrame = (member, owner, floorDoid, position) => {
     zone: member.dungeonZone ?? 10,
     position,
     dungeonBusterPoints: member.dungeonBusterPoints ?? 0,
+    healthBombsUsed: member.healthBombsUsed ?? 0,
+    partyBombsUsed: member.partyBombsUsed ?? 0,
   };
   return owner ? heroOwnerGenerate(details) : heroGenerate(details);
 };
@@ -121,6 +131,8 @@ const installHeroActor = (member, world, position) => {
     stats: member.heroStats,
     position: { ...position },
     team: TEAM.PLAYERS,
+    healthBombsUsed: member.healthBombsUsed ?? 0,
+    partyBombsUsed: member.partyBombsUsed ?? 0,
   });
   member.heroPosition = { ...position };
   member.reportedHeroPosition = { ...position };
@@ -144,8 +156,8 @@ const sendRemoteHeroState = (recipient, peer, world) => {
 
 /**
  * Builds the first member or replays the current world to a late joiner.
- * The successful MatchMaker response is sent by the caller immediately before
- * this function, matching the captured wire order.
+ * The successful MatchMaker response is emitted through `onPlayerReady`, after
+ * the owner player exists and before the area is sent.
  */
 const joinDungeonMatchLocked = async (
   session,
@@ -153,14 +165,24 @@ const joinDungeonMatchLocked = async (
   request,
   world,
   buildHost,
-  {
+  options = {}
+) => {
+  const {
     buildFirstMember = enterDungeon,
     prepareMember = prepareDungeonMember,
     beginManaRegen = startManaRegen,
     grantArrivalBuff = grantBuff,
-    waitForAssets = waitForFloorAssets,
-  } = {}
-) => {
+  } = options;
+  const handshakeRequired = typeof options.onPlayerReady === "function";
+  const onPlayerReady = options.onPlayerReady ?? (() => {});
+  const waitForAssets = options.waitForAssets ??
+    (handshakeRequired
+      ? (member) => waitForPlayerSignal(member, PLAYER_REQUEST_ENTRY)
+      : async () => true);
+  const waitForHero = options.waitForHero ??
+    (!handshakeRequired || options.waitForAssets
+      ? async () => true
+      : (member) => waitForPlayerSignal(member, PLAYER_REQUEST_HERO));
   const match = result?.match;
   if (!match) throw new Error("joinDungeonMatch needs an admitted match");
   requireOpenMember(session);
@@ -168,7 +190,8 @@ const joinDungeonMatchLocked = async (
   if (buildHost) {
     const context = world.contextFor(session);
     const built = await buildFirstMember(context, match.mapNodeId, {
-      account: result.account,
+      onPlayerReady,
+      waitForHandshake: handshakeRequired ? waitForEntryHandshake : async () => true,
     });
     requireOpenMember(session);
     if (world.destroyed) throw new Error(`match ${match.id} world closed during build`);
@@ -191,10 +214,7 @@ const joinDungeonMatchLocked = async (
   requireJoinableWorld(match, world, session);
   requireOpenMember(session);
 
-  const prepared = await prepareMember(session, {
-    sendPlayerOwner: false,
-    account: result.account,
-  });
+  const prepared = await prepareMember(session, { sendPlayerOwner: false });
   requireOpenMember(session);
   requireJoinableWorld(match, world, session);
   if (!prepared) throw new Error(`member ${session.accountId} preparation was cancelled`);
@@ -223,6 +243,9 @@ const joinDungeonMatchLocked = async (
   // Captured order: local player, area, remote players, floor, local hero,
   // remote heroes, current floor children/state, interest closure.
   directSend(session, playerFrame(session, true, world.areaDoid));
+  await onPlayerReady();
+  requireOpenMember(session);
+  requireJoinableWorld(match, world, session);
   world.sendSnapshot(session, "area");
   for (const peer of liveExisting()) {
     directSend(session, playerFrame(peer, false, world.areaDoid));
@@ -230,7 +253,7 @@ const joinDungeonMatchLocked = async (
   // DistributedDungionArea starts asynchronous tile-library/cache loading.
   // The ordinary first-member path waits before creating its floor; replay must
   // preserve that gap or TileFactory reads a library that is not in cache yet.
-  await waitForAssets();
+  await waitForAssets(session);
   requireOpenMember(session);
   requireJoinableWorld(match, world, session);
   // Bring every live NPC to the party size that will exist when this member is
@@ -238,6 +261,9 @@ const joinDungeonMatchLocked = async (
   // the compact snapshot, but not the joiner before its floor exists.
   rescaleNpcHealthForParty(context, membersOf(world).size + 1);
   world.sendSnapshot(session, "floor");
+  await waitForHero(session);
+  requireOpenMember(session);
+  requireJoinableWorld(match, world, session);
   directSend(session, heroFrame(session, true, world.floorDoid, position));
   const peers = liveExisting();
   for (const peer of peers) {
@@ -262,6 +288,19 @@ const joinDungeonMatchLocked = async (
   requireOpenMember(session);
   requireJoinableWorld(match, world, session);
   world.sendSnapshot(session, "children");
+  if (world.infiniteDefinition && world.areaDoid) {
+    noteInfiniteFloorReached(context);
+    const floorNumber = (world.floorIndex ?? 0) + 1;
+    directSend(session, infiniteRewardDataUpdate(world.areaDoid, {
+      avatarDoid: session.dungeonAvatar?.id ?? session.heroDoid,
+      startScore: session.infiniteStartScore ?? 0,
+      goldReward: infiniteFloorGold(world.infiniteDefinition, floorNumber),
+      rewards: infiniteRewards(world.infiniteDefinition, floorNumber, {
+        alreadyClaimed: [...(session.infiniteClaimedBeforeRun ?? [])],
+        claimedThisRun: [...(session.infiniteClaimedThisRun ?? [])],
+      }),
+    }));
+  }
 
   // Existing clients already have the world; they receive only the new member.
   for (const peer of peers) {

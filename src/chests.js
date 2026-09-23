@@ -27,6 +27,8 @@ export class ChestError extends Error {
 
 /** The live server's code for "rolled something but could not hand it over". */
 export const NOTHING_AWARDED = -537;
+/** The same request cannot succeed after a retry without player action. */
+export const PERMANENT_CHEST_REFUSAL = -538;
 
 export const pickWeighted = (weights, random = Math.random) => {
   const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
@@ -297,7 +299,12 @@ export const openChest = async ({ account, chestInstanceId, heroInstanceId, next
   const gm = await loadGameMaster();
 
   const chest = (account.account_chests ?? []).find((entry) => entry.id === chestInstanceId);
-  if (!chest) throw new ChestError(NOTHING_AWARDED, `no chest ${chestInstanceId} on this account`);
+  if (!chest) {
+    throw new ChestError(
+      PERMANENT_CHEST_REFUSAL,
+      `no chest ${chestInstanceId} on this account`
+    );
+  }
 
   const gmChest = gm.raw.Chests.find((entry) => entry.Id === chest.chest_id);
   if (!gmChest) throw new ChestError(NOTHING_AWARDED, `unknown chest type ${chest.chest_id}`);
@@ -334,7 +341,10 @@ export const openChest = async ({ account, chestInstanceId, heroInstanceId, next
   if (!WEAPON_SENTINELS.has(picked)) {
     const offerId = Number(picked);
     if (keyColumn && (account[keyColumn] ?? 0) < 1) {
-      throw new ChestError(NOTHING_AWARDED, `no ${keyColumn.replace("_keys", "")} key`);
+      throw new ChestError(
+        PERMANENT_CHEST_REFUSAL,
+        `no ${keyColumn.replace("_keys", "")} key`
+      );
     }
 
     try {
@@ -370,11 +380,14 @@ export const openChest = async ({ account, chestInstanceId, heroInstanceId, next
    */
   if (unequippedWeapons(account) >= storageLimit(account)) {
     // What the -537 in every early capture actually meant: a full account.
-    throw new ChestError(NOTHING_AWARDED, "weapon storage is full");
+    throw new ChestError(PERMANENT_CHEST_REFUSAL, "weapon storage is full");
   }
 
   if (keyColumn && (account[keyColumn] ?? 0) < 1) {
-    throw new ChestError(NOTHING_AWARDED, `no ${keyColumn.replace("_keys", "")} key`);
+    throw new ChestError(
+      PERMANENT_CHEST_REFUSAL,
+      `no ${keyColumn.replace("_keys", "")} key`
+    );
   }
 
   const level = heroLevel(gm, hero, avatar.experience ?? 0);

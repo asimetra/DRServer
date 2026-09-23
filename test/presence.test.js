@@ -39,8 +39,12 @@ const fakeSocket = () => {
   return socket;
 };
 
-const settle = async () => {
-  for (let i = 0; i < 40; i++) await new Promise((resolve) => setImmediate(resolve));
+const settle = async (session) => {
+  for (let i = 0; i < 1000; i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (!session?.draining) return;
+  }
+  throw new Error(`session ${session?.id} did not finish draining its packet queue`);
 };
 
 const login = (accountId) =>
@@ -74,7 +78,7 @@ const connect = async (accountId) => {
   const socket = fakeSocket();
   const session = onConnection(socket);
   socket.emit("data", login(accountId));
-  await settle();
+  await settle(session);
   return { socket, session };
 };
 
@@ -92,7 +96,7 @@ const watch = async (socket, session, ids) => {
       .raw(blob)
       .frame()
   );
-  await settle();
+  await settle(session);
 };
 
 test("a friend's panel is told who is online and where", async (t) => {
@@ -153,7 +157,7 @@ test("a friend's panel is told who is online and where", async (t) => {
   // He leaves.
   me.socket.written.length = 0;
   friend.socket.destroy();
-  await settle();
+  await settle(friend.session);
   assert.deepEqual(presenceUpdates(me.socket).at(-1), {
     online: false,
     account: 1000000002,
@@ -192,7 +196,7 @@ test("a second socket on one account does not report a departure", async (t) => 
 
   watcher.socket.written.length = 0;
   first.socket.destroy();
-  await settle();
+  await settle(first.session);
 
   const updates = presenceUpdates(watcher.socket);
   assert.ok(

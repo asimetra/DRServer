@@ -1,8 +1,9 @@
 import "./rpc-handlers.js";
 import { start as startWebServices } from "./http.js";
-import { start as startGameSocket } from "./socket/index.js";
+import { activeSocketSessions, start as startGameSocket } from "./socket/index.js";
 import { start as startInternalApi } from "./internal.js";
 import { config } from "./config.js";
+import { closeAccountStorage, waitForAccountWrites } from "./accounts.js";
 import { purgeLegacyExperienceBoard, seedStandings } from "./leaderboard.js";
 import {
   checkCompatibilityData,
@@ -12,7 +13,9 @@ import {
   reportAuth,
   reportContentOverride,
 } from "./preflight.js";
-import { info } from "./log.js";
+import { error, info } from "./log.js";
+import { createGracefulShutdown, installProcessHandlers } from "./shutdown.js";
+import { acquireProcessLock } from "./process-lock.js";
 
 info("Open Dungeon Server — web services + game socket");
 if (config.permissive) {
@@ -21,9 +24,10 @@ if (config.permissive) {
 
 checkCompatibilityData();
 reportContentOverride();
+await checkDatabaseSchema();
+const releaseProcessLock = await acquireProcessLock();
 ensureTokenSecret();
 reportAuth();
-await checkDatabaseSchema();
 /**
  * Before anything records a run: the experience board changed what it ranks,
  * so the standings kept under its old meaning go, and the figure the board
@@ -34,6 +38,21 @@ await purgeLegacyExperienceBoard();
 await seedStandings();
 ensureSafeTransport();
 
-startWebServices();
-startInternalApi();
-startGameSocket();
+const listeners = [startWebServices(), startInternalApi(), startGameSocket()];
+const shutdown = createGracefulShutdown({
+  servers: () => listeners,
+  sessions: activeSocketSessions,
+  waitForWrites: waitForAccountWrites,
+  releaseProcessLock,
+  closeStorage: closeAccountStorage,
+});
+installProcessHandlers({ shutdown });
+for (const listener of listeners.filter(Boolean)) {
+  listener.on("error", (problem) => {
+    error(`listener failed: ${problem.stack ?? problem}`);
+    process.exitCode = 1;
+    void shutdown("listener failure").catch((shutdownProblem) => {
+      error(`shutdown failed: ${shutdownProblem.stack ?? shutdownProblem}`);
+    });
+  });
+}

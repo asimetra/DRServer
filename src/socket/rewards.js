@@ -6,6 +6,7 @@ import { hitPointsUpdate } from "./combat.js";
 import { CLID, OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 import { buffMultiplierFor } from "./buffs.js";
+import { infiniteFloorGold, infiniteProgressFor } from "../infinite.js";
 
 export { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 
@@ -198,6 +199,95 @@ export const applyDooberReward = (session, doober) => {
   restoreMana(session, mpPercentage);
 
   return true;
+};
+
+/**
+ * Records the deepest Infinite room the hero actually entered.
+ *
+ * The score is depth reached, not floors cleared. In an official run whose
+ * last generated floor was 55009, losing on that floor made the next
+ * championsboard response report score 10. Recording only from
+ * `awardInfiniteFloor` left that same run at 9 and also kept the floor-three
+ * chest grey on the map after the player had reached floor four.
+ *
+ * Called after the hero is installed on a floor, including late joins. The
+ * queued write matters for the one room that is not subsequently cleared: a
+ * normal floor award already saves the preceding rooms, while defeat or a
+ * disconnect must not lose the room that was reached.
+ */
+export const noteInfiniteFloorReached = (session) => {
+  const definition = session.infiniteDefinition;
+  const account = session.dungeonAccount;
+  if (!definition || !account) return null;
+
+  const floorNumber = Math.max(1, Math.trunc(Number(session.floorIndex ?? 0)) + 1);
+  const progress = infiniteProgressFor(account, {
+    nodeId: session.mapNodeId,
+    avatarDoid: session.dungeonAvatar?.id ?? session.heroDoid,
+    epoch: session.infiniteEpoch,
+    create: true,
+  });
+  if (floorNumber <= progress.score) return progress.score;
+
+  progress.score = floorNumber;
+  queueAccountSave(session);
+  info(`[${session.id}] Infinite room ${floorNumber} reached — score ${progress.score}`);
+  return progress.score;
+};
+
+/** Pays the data-authored Infinite floor coin and milestone rewards once. */
+export const awardInfiniteFloor = (session) => {
+  const definition = session.infiniteDefinition;
+  const account = session.dungeonAccount;
+  if (!definition || !account) return null;
+  const floorNumber = (session.floorIndex ?? 0) + 1;
+  session.infiniteAwardedFloors ??= new Set();
+  if (session.infiniteAwardedFloors.has(floorNumber)) return null;
+  session.infiniteAwardedFloors.add(floorNumber);
+
+  const gold = infiniteFloorGold(definition, floorNumber);
+  const gems = floorNumber === Number(definition.GemFloor)
+    ? rewardAmount(definition.GemRewardAmount)
+    : 0;
+  const trophy = floorNumber === Number(definition.TrophyFloor) ? 1 : 0;
+  const reward = [1, 2, 3, 4]
+    .map((slot) => ({
+      dooberId: Number(definition[`Reward${slot}`] ?? 0),
+      floor: Number(definition[`Reward${slot}Floor`] ?? 0),
+    }))
+    .find((entry) => entry.floor === floorNumber && entry.dooberId > 0);
+
+  account.basic_currency = rewardAmount(account.basic_currency) + gold;
+  account.premium_currency = rewardAmount(account.premium_currency) + gems;
+  account.trophies = rewardAmount(account.trophies) + trophy;
+  const progress = infiniteProgressFor(account, {
+    nodeId: session.mapNodeId,
+    avatarDoid: session.dungeonAvatar?.id ?? session.heroDoid,
+    epoch: session.infiniteEpoch,
+    create: true,
+  });
+  // Reaching a room, rather than clearing it, owns the score. Keep this max as
+  // a compatibility guard for callers that award a synthetic floor without
+  // first building its world; production records it in noteInfiniteFloorReached.
+  progress.score = Math.max(progress.score, floorNumber);
+  if (reward && !progress.claimed.includes(reward.dooberId)) {
+    progress.claimed.push(reward.dooberId);
+    session.infiniteClaimedThisRun ??= new Set();
+    session.infiniteClaimedThisRun.add(reward.dooberId);
+  }
+  session.dungeonRewards ??= { gold: 0, gems: 0, xp: 0 };
+  session.dungeonRewards.gold += gold;
+  session.dungeonRewards.gems += gems;
+  if (session.playerDoid && gold) {
+    session.send(playerBasicCurrencyUpdate(session.playerDoid, account.basic_currency));
+  }
+  if (reward) awardTreasureChest(session, reward.dooberId).catch(() => {});
+  if (gold || gems || trophy || reward) queueAccountSave(session);
+  info(
+    `[${session.id}] Infinite floor ${floorNumber} — +${gold} gold, +${gems} gems, ` +
+      `+${trophy} trophy${reward ? `, treasure ${reward.dooberId}` : ""}`
+  );
+  return { floorNumber, gold, gems, trophy, reward: reward?.dooberId ?? 0 };
 };
 
 /**

@@ -121,12 +121,33 @@ const RUNS_FILE = "dungeon-runs.jsonl";
 const BESTS_FILE = "dungeon-bests.json";
 
 const readJson = async (name, fallback) => {
+  let raw;
   try {
-    return JSON.parse(await fs.readFile(file(name), "utf8"));
+    raw = await fs.readFile(file(name), "utf8");
   } catch (problem) {
-    if (problem.code !== "ENOENT") warn(`leaderboard: could not read ${name}: ${problem.message}`);
-    return fallback;
+    if (problem.code === "ENOENT") return fallback;
+    throw new Error(`leaderboard: could not read ${name}: ${problem.message}`, {
+      cause: problem,
+    });
   }
+  try {
+    return JSON.parse(raw);
+  } catch (problem) {
+    throw new SyntaxError(`leaderboard: invalid JSON in ${name}; refusing to replace it`, {
+      cause: problem,
+    });
+  }
+};
+
+/** One file-store mutation at a time, including its read/modify/write cycle. */
+let fileStoreTail = Promise.resolve();
+const withFileStoreLock = async (work) => {
+  const mine = fileStoreTail.then(work, work);
+  fileStoreTail = mine.then(
+    () => {},
+    () => {}
+  );
+  return mine;
 };
 
 /**
@@ -139,12 +160,36 @@ const writeJson = async (name, value) => {
   await fs.mkdir(config.dataDir, { recursive: true });
   const target = file(name);
   const temporary = `${target}.${process.pid}.${++temporaryId}.tmp`;
+  let handle;
   try {
-    await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    handle = await fs.open(temporary, "wx");
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
     await fs.rename(temporary, target);
+    const directory = await fs.open(config.dataDir, "r");
+    try {
+      await directory.sync();
+    } catch (problem) {
+      if (!["EINVAL", "ENOTSUP", "EBADF"].includes(problem.code)) throw problem;
+    } finally {
+      await directory.close();
+    }
   } catch (problem) {
+    await handle?.close();
     await fs.rm(temporary, { force: true });
     throw problem;
+  }
+};
+
+const appendRuns = async (runs) => {
+  const handle = await fs.open(file(RUNS_FILE), "a");
+  try {
+    await handle.writeFile(`${runs.map((run) => JSON.stringify(run)).join("\n")}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 };
 
@@ -245,7 +290,7 @@ const foldRun = (bests, run) => {
  */
 const LEGACY_EXPERIENCE_KEY = "experience";
 
-export const purgeLegacyExperienceBoard = async () => {
+const purgeLegacyExperienceBoardUnlocked = async () => {
   if (usingDatabase()) {
     await (await db()).purgeBoard(LEGACY_EXPERIENCE_KEY);
     return;
@@ -256,6 +301,11 @@ export const purgeLegacyExperienceBoard = async () => {
     await writeJson(BESTS_FILE, bests);
   }
 };
+
+export const purgeLegacyExperienceBoard = () =>
+  usingDatabase()
+    ? purgeLegacyExperienceBoardUnlocked()
+    : withFileStoreLock(purgeLegacyExperienceBoardUnlocked);
 
 /**
  * Seeds the player-scoped boards from the accounts themselves.
@@ -275,7 +325,7 @@ export const purgeLegacyExperienceBoard = async () => {
  * The file store loads each account once a boot; that is the price of the
  * boards living in their own small file, and it is paid once, at startup.
  */
-export const seedStandings = async () => {
+const seedStandingsUnlocked = async () => {
   const { listAccountIds, loadAccount } = await import("./accounts.js");
   const { loadGameMaster } = await import("./gamemaster.js");
   const gm = await loadGameMaster();
@@ -332,6 +382,9 @@ export const seedStandings = async () => {
   }
 };
 
+export const seedStandings = () =>
+  usingDatabase() ? seedStandingsUnlocked() : withFileStoreLock(seedStandingsUnlocked);
+
 /**
  * Records finished runs and folds them into the boards.
  *
@@ -347,16 +400,16 @@ export const recordRuns = async (runs) => {
     return rankableRuns.length;
   }
 
-  await fs.mkdir(config.dataDir, { recursive: true });
-  await fs.appendFile(
-    file(RUNS_FILE),
-    `${rankableRuns.map((run) => JSON.stringify(run)).join("\n")}\n`,
-    "utf8"
-  );
-  const bests = await readJson(BESTS_FILE, {});
-  for (const run of rankableRuns) foldRun(bests, run);
-  await writeJson(BESTS_FILE, bests);
-  return rankableRuns.length;
+  return withFileStoreLock(async () => {
+    await fs.mkdir(config.dataDir, { recursive: true });
+    // Validate/read the board before appending history. A corrupt board must
+    // fail without partially accepting a run or replacing the file with `{}`.
+    const bests = await readJson(BESTS_FILE, {});
+    await appendRuns(rankableRuns);
+    for (const run of rankableRuns) foldRun(bests, run);
+    await writeJson(BESTS_FILE, bests);
+    return rankableRuns.length;
+  });
 };
 
 /**

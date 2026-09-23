@@ -100,7 +100,10 @@ const constantsIn = (tileLibrary) => {
  * art needs, so the placeholders are left to fall through here and the whole
  * pool is added below instead.
  */
-export const preloadFor = async (tileLibraries, { gm, tierConstant } = {}) => {
+export const preloadFor = async (
+  tileLibraries,
+  { gm, tierConstant, extraNpcIds = [], extraBuffIds = [] } = {}
+) => {
   const npcIds = new Set();
   const swfs = new Set();
 
@@ -134,6 +137,15 @@ export const preloadFor = async (tileLibraries, { gm, tierConstant } = {}) => {
    */
   for (const pet of gm?.raw?.Npc ?? []) {
     if (pet.CharType === "PET" && pet.UsePetUI) await add(pet.Constant);
+  }
+
+  for (const id of extraNpcIds) {
+    const npc = (gm?.raw?.Npc ?? []).find((row) => Number(row.Id) === Number(id));
+    if (npc) await add(npc.Constant);
+  }
+  for (const id of extraBuffIds) {
+    const buff = (gm?.raw?.Buff ?? []).find((row) => Number(row.Id) === Number(id));
+    if (buff?.VFXFilepath) swfs.add(buff.VFXFilepath);
   }
 
   return { cacheNpcs: [...npcIds], cacheSwfs: [...swfs] };

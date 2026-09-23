@@ -38,7 +38,11 @@ test("normal public matching loads the server-owned role once per session", asyn
 
   assert.equal(result.match.mapNodeId, 50002);
   assert.equal(result.source, "public");
-  assert.equal(result.account, account, "the admission read is reusable by dungeon setup");
+  assert.equal(
+    result.account,
+    undefined,
+    "an unlocked admission snapshot must not escape into dungeon setup"
+  );
   const repeated = await resolveMatchEntry(session, request({ mapNodeId: 50002 }), {
     registry,
     loadAccountById: async () => {

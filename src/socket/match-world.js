@@ -109,6 +109,11 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "powerupCooldownUntil",
   "dooberTimers",
   "activeTrapProjectiles",
+  "infiniteEpoch",
+  "infiniteDefinition",
+  "infiniteModifierIds",
+  "infiniteActiveModifiers",
+  "infiniteModifierTimers",
   "stopTrapProjectiles",
   "stopTriggers",
   "stopAi",
@@ -556,6 +561,8 @@ export const createMatchWorld = (match, seedSession) => {
       }
       for (const timer of this.damageOverTimeTimers ?? []) clearInterval(timer);
       this.damageOverTimeTimers?.clear?.();
+      for (const timer of this.infiniteModifierTimers ?? []) clearTimeout(timer);
+      this.infiniteModifierTimers?.clear?.();
       this.damageOverTimeByBuff?.clear?.();
       for (const live of this.placeables?.values?.() ?? []) {
         clearInterval(live.ticker);

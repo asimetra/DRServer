@@ -101,8 +101,11 @@ export const buffGenerate = ({
  * MatchMakerNetworkComponent.netFactory -> MatchMaker.postGenerate ->
  * MatchMakerLoadedEvent -> LoadingState.mMatchMakerLoaded = true.
  */
-export const matchMakerGenerate = (doid) => {
-  const fields = new PacketWriter().u16(0).body();
+export const matchMakerGenerate = (doid, infiniteDetails = []) => {
+  const fields = byteList(infiniteDetails, (writer, detail) => {
+    writer.u32(detail.epoch).u32(detail.nodeId);
+    for (const modifier of detail.modifiers ?? []) writer.u32(modifier);
+  });
   return generateVisible({ clid: CLID.MatchMaker, doid, fields });
 };
 
@@ -188,11 +191,19 @@ const FLID_AREA_FLOOR_ENDING = 215;
 /**
  * Floor numbers are not 1, 2, 3.
  *
- * Captured runs — one in Ice Caverns, one in the tutorial — both number their
- * first floor 2000 and their second 2001. Sending 1 puts a number in the field
- * that the game never produces.
+ * The client decodes this as `totalFloors * 1000 + zeroBasedFloor`: its
+ * getMaxFloorNum divides by 1000 and getCurrentFloorNum takes the remainder.
+ * Captured two-floor runs therefore use 2000/2001, while an official Ultimate
+ * Rampage capture uses 55000, 55001, ... for its 55 rooms. Hard-coding 2000
+ * made every long run announce itself as "1 OF 2" despite building 55 floors.
  */
 export const FIRST_FLOOR_NUMBER = 2000;
+
+export const dungeonFloorNumber = (floorCount, floorIndex = 0) => {
+  const total = Math.max(1, Math.trunc(Number(floorCount) || 1));
+  const index = Math.min(total - 1, Math.max(0, Math.trunc(Number(floorIndex) || 0)));
+  return total * 1000 + index;
+};
 
 export const dungeonFloorGenerate = ({
   doid,
@@ -202,6 +213,7 @@ export const dungeonFloorGenerate = ({
   floorNumber = FIRST_FLOOR_NUMBER,
   tierConstant = "",
   tiles = floor.tiles,
+  activeDungeonModifiers = [],
 }) => {
   const fields = new PacketWriter()
     .u32(mapNodeId)
@@ -219,11 +231,27 @@ export const dungeonFloorGenerate = ({
     .utf("") // introMovieSwfFilePath
     .utf("") // introMovieAssetClassName
     .u16(floorNumber)
-    .raw(byteList([], () => {})) // activeDungeonModifiers
+    .raw(byteList(activeDungeonModifiers, (writer, modifier) =>
+      writer.u32(modifier.id ?? modifier.Id).u8(modifier.newThisFloor ?? 0)))
     .body();
 
   return generateVisible({ clid: CLID.DistributedDungeonFloor, doid, parent, fields });
 };
+
+/** Infinite per-floor score, coin payout and four milestone reward states. */
+export const infiniteRewardDataUpdate = (
+  areaDoid,
+  { avatarDoid, startScore = 0, goldReward = 0, rewards = [] }
+) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(areaDoid)
+    .u16(218)
+    .u32(avatarDoid)
+    .u16(startScore)
+    .u32(goldReward)
+    .raw(byteList(rewards, (writer, reward) =>
+      writer.u32(reward.dooberId).u16(reward.floorNumber).u8(reward.status)))
+    .frame();
 
 /**
  * Field updates a floor gets after it is generated.
@@ -477,6 +505,8 @@ const heroFields = ({
   manaPoints = 100,
   experiencePoints = 0,
   dungeonBusterPoints = 0,
+  healthBombsUsed = 0,
+  partyBombsUsed = 0,
   weapons = [EMPTY_WEAPON, EMPTY_WEAPON, EMPTY_WEAPON, EMPTY_WEAPON],
   consumables = [EMPTY_CONSUMABLE, EMPTY_CONSUMABLE],
   slotPoints = [0, 0, 0, 0],
@@ -510,8 +540,8 @@ const heroFields = ({
   for (let i = 0; i < 2; i++) writeConsumable(fields, consumables[i] ?? EMPTY_CONSUMABLE);
 
   fields
-    .u8(0) // healthBombsUsed
-    .u8(0) // partyBombsUsed
+    .u8(Math.min(255, Math.max(0, Number(healthBombsUsed) || 0)))
+    .u8(Math.min(255, Math.max(0, Number(partyBombsUsed) || 0)))
     .u32(playerId)
     .utf("") // state — empty leaves the actor state machine at its default
     .u8(team)

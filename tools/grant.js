@@ -24,12 +24,18 @@
  */
 // Must be first: it fills the environment config.js reads as it is evaluated.
 import "../src/load-env.js";
-import { loadAccount, saveAccount, nextObjectId } from "../src/accounts.js";
+import {
+  closeAccountStorage,
+  loadAccount,
+  saveAccount,
+  nextObjectId,
+} from "../src/accounts.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { generateWeapon } from "../src/chests.js";
 import { experienceForLevel, statPointsEarned, maxLevel } from "../src/progression.js";
 import { config } from "../src/config.js";
 import { purchaseOffer } from "../src/store.js";
+import { acquireProcessLock } from "../src/process-lock.js";
 
 const argument = (name, fallback) => {
   const index = process.argv.indexOf(`--${name}`);
@@ -48,7 +54,7 @@ const parseRequest = (text) =>
 /** Only granted when --chests is given, or when nothing else was asked for. */
 const DEFAULT = "60001:2,60002:2,60003:2,60004:2";
 
-const main = async () => {
+const grant = async () => {
   const gm = await loadGameMaster();
   const chestsById = new Map(gm.raw.Chests.map((chest) => [chest.Id, chest]));
   const account = await loadAccount(accountId);
@@ -424,6 +430,16 @@ const main = async () => {
     `account ${account.id} now holds ${account.account_chests.length} chest(s) ` +
       `[storage: ${config.storage}]`
   );
+};
+
+const main = async () => {
+  const releaseProcessLock = await acquireProcessLock();
+  try {
+    await grant();
+  } finally {
+    await releaseProcessLock();
+    await closeAccountStorage();
+  }
 };
 
 main().then(

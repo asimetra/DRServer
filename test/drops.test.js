@@ -109,3 +109,48 @@ test("death rewards generate at landing positions and animate from the victim", 
   assert.equal(spawnFrom.f32(), 600);
   assert.equal(spawnFrom.eof(), true);
 });
+
+test("Infinite drop bans remove only their authored resource categories", () => {
+  const health = {
+    Id: 30020,
+    Constant: "FOOD_TEST",
+    DooberType: "FOOD",
+    HP_PERCENTAGE: 0.2,
+    Rarity: "COMMON",
+  };
+  const mana = {
+    Id: 30021,
+    Constant: "MANA_TEST",
+    DooberType: "MANA",
+    MP_PERCENTAGE: 0.2,
+    Rarity: "COMMON",
+  };
+  let nextDoid = 200;
+  const session = {
+    id: 8,
+    dungeonZone: 10,
+    infiniteActiveModifiers: [{ NoHealthDrop: true, NoManaDrop: true, NoBusterDrop: true }],
+    objects: new Map(),
+    doobers: new Map(),
+    allocateDoid: () => nextDoid++,
+    send: () => {},
+  };
+  const filtered = spawnNpcRewards(session, {
+    floorDoid: 50,
+    npc,
+    rewardData: {
+      allDoobers: [EXP_SMALL, GOLD_SMALL, health, mana, CROWD_SMALL],
+      candidates: [health, mana, CROWD_SMALL],
+      categoryProb: { CROWD: 1 },
+      rarityProb: { COMMON: 1 },
+    },
+    origin: { x: 0, y: 0 },
+    random: () => 0,
+  });
+
+  assert.deepEqual(
+    filtered.map(({ doober }) => doober.Constant),
+    ["EXP_SMALL"],
+    "the modifier removed XP or left a banned resource"
+  );
+});

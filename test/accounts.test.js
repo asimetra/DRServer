@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
@@ -105,10 +105,10 @@ test("new account object ids are allocated outside the client-local range", asyn
   assert.ok((await nextObjectId()) > 1_099_999);
 });
 
-test("account JSON template hydrates ids and timestamps without sharing state", () => {
+test("account JSON template hydrates allocated ids and timestamps without sharing state", async () => {
   const created = "2026-08-15T00:00:00.000Z";
-  const first = createAccount(42, created);
-  const second = createAccount(43, created);
+  const first = await createAccount(42, created);
+  const second = await createAccount(43, created);
 
   assert.equal(first.name, "Player42");
   assert.equal(first.created, created);
@@ -119,4 +119,55 @@ test("account JSON template hydrates ids and timestamps without sharing state", 
   assert.notEqual(first.active_avatar, second.active_avatar);
   assert.notEqual(first.account_items[0].id, second.account_items[0].id);
   assert.equal(first.account_items[0].avatar_id, first.active_avatar);
+});
+
+test("starter rows never collide with allocator output or modulo-related accounts", async () => {
+  const { nextObjectId } = await import("../src/accounts.js");
+  const first = await createAccount(1_000_000_005);
+  const allocatedBetween = await nextObjectId(first);
+  const second = await createAccount(1_400_000_005);
+  const ids = [
+    first.active_avatar,
+    first.account_items[0].id,
+    allocatedBetween,
+    second.active_avatar,
+    second.account_items[0].id,
+  ];
+
+  assert.equal(new Set(ids).size, ids.length, `persistent ID collision: ${ids}`);
+});
+
+test("invalid account JSON is preserved and never replaced with a fresh account", async () => {
+  const id = 12348;
+  const account = await loadAccount(id);
+  account.basic_currency = 999_999;
+  await saveAccount(account);
+
+  const file = path.join(dataDir, `${id}.json`);
+  const valid = await readFile(file, "utf8");
+  const corrupt = valid.slice(0, -2);
+  await writeFile(file, corrupt, "utf8");
+
+  await assert.rejects(() => loadAccount(id), /invalid JSON; refusing to recreate/);
+
+  assert.equal(await readFile(file, "utf8"), corrupt, "the broken source was overwritten");
+  const preserved = (await readdir(dataDir)).filter((name) =>
+    name.startsWith(`${id}.json.corrupt-`)
+  );
+  assert.equal(preserved.length, 1, "the corrupt payload was not quarantined exactly once");
+  assert.equal(await readFile(path.join(dataDir, preserved[0]), "utf8"), corrupt);
+});
+
+test("a non-ENOENT account read failure is propagated without writing", async () => {
+  const id = 12349;
+  await loadAccount(id);
+  const file = path.join(dataDir, `${id}.json`);
+  await rm(file);
+  await mkdir(file);
+
+  await assert.rejects(
+    () => loadAccount(id),
+    (error) => error?.code === "EISDIR"
+  );
+  assert.equal((await stat(file)).isDirectory(), true, "the failed read path was replaced");
 });

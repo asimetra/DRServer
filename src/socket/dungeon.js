@@ -1,6 +1,6 @@
 import {
   buildFloorEnding,
-  FIRST_FLOOR_NUMBER,
+  dungeonFloorNumber,
   floorTilesUpdate,
   floorBaseLining,
   dungeonAreaGenerate,
@@ -12,6 +12,7 @@ import {
   interestClosure,
   LAYER_SORTED,
   dooberGenerate,
+  infiniteRewardDataUpdate,
   objectDisable,
   playerOwnerGenerate,
 } from "./objects.js";
@@ -66,7 +67,16 @@ import {
 } from "../pets.js";
 import { stockFloor } from "./population.js";
 import { preloadFor } from "./precache.js";
-import { loadAccount } from "../accounts.js";
+import { acquireAccount } from "../accounts.js";
+import {
+  activeInfiniteModifiers,
+  infiniteDefinitionForNode,
+  infiniteEpoch,
+  infiniteFloorGold,
+  infiniteModifierIdsForNode,
+  infiniteProgressFor,
+  infiniteRewards,
+} from "../infinite.js";
 import {
   CLIENT_PERSISTENT_OBJECT_ID_MAX,
   isClientLocalObjectId,
@@ -124,13 +134,19 @@ import { envFlag, envSetting } from "../env.js";
 import { info, warn } from "../log.js";
 import { cancelDungeonSummary, removeHeroFromFloor } from "./summary.js";
 import { settleDungeonAccount } from "./settle-account.js";
-import { holdAccount, releaseAccount } from "../account-registry.js";
+import { releaseAccount } from "../account-registry.js";
 import { spawnNpcRewards, spawnBossReward } from "./drops.js";
 import { clearDungeonBuffs, grantBuff } from "./buffs.js";
 import { clearDungeonPowerups, scheduleTimelineDoobers } from "./powerups.js";
 import { clearDungeonPlaceables, clearPlacementPermits } from "./placeables.js";
 import { setPresenceLocation } from "./presence.js";
 import { clearCooldowns } from "./cooldowns.js";
+import {
+  PLAYER_REQUEST_ENTRY,
+  PLAYER_REQUEST_HERO,
+  clearEntryHandshake,
+  waitForEntryHandshake,
+} from "./entry-handshake.js";
 import {
   clearAcceptedCasts,
   clearBombCasts,
@@ -140,6 +156,7 @@ import {
   npcAttackChoreography,
 } from "./combat.js";
 import { isLiveMember, membersOf, worldOf } from "./match-world.js";
+import { noteInfiniteFloorReached } from "./rewards.js";
 
 /**
  * Everything a client earned the right to do, forgotten together.
@@ -539,6 +556,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       npcType: npc.Id,
       masterId: generatedMasterId,
       level: npcLevel,
+      modifierGeneration: Math.max(0, Number(options.modifierGeneration ?? 0)),
       position,
       heading,
       scale: generatedScale,
@@ -660,7 +678,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
           : null,
       // Only real enemies gate floor completion; smashing every barrel is not
       // what finishes a dungeon.
-      isEnemy: npc.CharType === "ENEMY",
+      isEnemy: npc.CharType === "ENEMY" && options.countsForFloor !== false,
       // A moving BEAST is a neutral third-party combatant. Static BEAST rows
       // are traps/placeables and must never enter NPC target selection.
       isBeast: npc.CharType === "BEAST" && Boolean(npc.IsMover),
@@ -751,6 +769,12 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       onDamage: (doid) => {
         if (!context.isActive()) return;
         if (!options.suppressTriggerReporting) reportNpcDamage(session, position.id);
+        spawnInfiniteModifierActors(context, {
+          event: "hit",
+          npc,
+          origin: session.actors.get(doid)?.position ?? at,
+          generation: Math.max(0, Number(options.modifierGeneration ?? 0)),
+        });
       },
       onDeath: (doid) => {
         if (context.isActive() && rewardData) {
@@ -773,6 +797,12 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
         // trigger report, and a wall does not stop being a door because the
         // spawn that placed it asked for quiet.
         session.revealSecretRoom?.(position.id);
+        spawnInfiniteModifierActors(context, {
+          event: "death",
+          npc,
+          origin: session.actors.get(doid)?.position ?? at,
+          generation: Math.max(0, Number(options.modifierGeneration ?? 0)),
+        });
         options.onDeath?.(doid);
       },
       /** Once the body has actually been taken away — see combat.js. */
@@ -829,6 +859,11 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
               postTeleportAttackMs: Math.max(0, Number(npc.PostTeleportAttack ?? 0) * 1000),
               teleportInTimeline: npc.TeleportInTimeline || "TELEPORT_IN",
               teleportOutTimeline: npc.TeleportOutTimeline || "TELEPORT_OUT",
+              // The out animation plays before the object is disabled. Rows
+              // author the pre-teleport pace; its reciprocal gives the client
+              // roughly one animation beat without naming either specter.
+              teleportOutDelayMs:
+                1000 / Math.max(1, Number(npc.PreTeleportAttack ?? 1)),
               teleportPhase: "visible",
               // The furthest any of its attacks reaches. This is the "may it
               // swing from here at all" bar; which attack it then uses is
@@ -925,12 +960,28 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
      * See checkFloorCleared, which needs to tell "everything is dead" apart
      * from "there was never anything here".
      */
-    if (npc.CharType === "ENEMY") session.enemiesSeen = (session.enemiesSeen ?? 0) + 1;
+    if (npc.CharType === "ENEMY" && options.countsForFloor !== false) {
+      session.enemiesSeen = (session.enemiesSeen ?? 0) + 1;
+    }
   }
 
   addNavigationObstacle(session.navigation, npcDoid, navigationColliders);
 
   session.send(npcCreateFrame(at, spawnHeading));
+  if (npc.CharType === "ENEMY") {
+    const buffsById = new Map(
+      (context.gm.raw.Buff ?? []).map((row) => [Number(row.Id), row.Constant])
+    );
+    for (const modifier of session.infiniteActiveModifiers ?? []) {
+      const constant = buffsById.get(Number(modifier.EnemyBuffId));
+      if (constant) {
+        await grantBuff(session, constant, {
+          affectedActor: npcDoid,
+          attackerActor: npcDoid,
+        });
+      }
+    }
+  }
   if (npc.Aggro_AI_Type === "TELEPORT_AI") {
     session.send(npcTimelineAction(npcDoid, npc.TeleportInTimeline || "TELEPORT_IN"));
   }
@@ -957,6 +1008,119 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
     );
   }
   return options.returnDoid ? npcDoid : 1;
+};
+
+const rememberInfiniteTimer = (session, timer) => {
+  session.infiniteModifierTimers ??= new Set();
+  session.infiniteModifierTimers.add(timer);
+  timer.unref?.();
+  return timer;
+};
+
+const scheduleInfiniteTimeout = (session, callback, delay) => {
+  let timer;
+  timer = setTimeout(() => {
+    session.infiniteModifierTimers?.delete(timer);
+    Promise.resolve(callback()).catch((error) =>
+      warn(`Infinite timer failed: ${error.message}`)
+    );
+  }, delay);
+  return rememberInfiniteTimer(session, timer);
+};
+
+const clearInfiniteModifierTimers = (session) => {
+  for (const timer of session.infiniteModifierTimers ?? []) clearTimeout(timer);
+  session.infiniteModifierTimers?.clear();
+};
+
+/** Spawns the NPC authored by an Infinite hit/death/periodic modifier. */
+async function spawnInfiniteModifierNpc(context, modifier, origin, generation = 1) {
+  const { session } = context;
+  const npcId = Number(
+    modifier.NPCSpawnId ?? modifier.NPCDeathSpawnId ?? modifier.NPCHitSpawnId ?? 0
+  );
+  const spawnedNpc = (context.gm.raw.Npc ?? []).find((row) => Number(row.Id) === npcId);
+  if (!spawnedNpc || !context.isActive()) return null;
+  const random = session.random ?? Math.random;
+  const angle = random() * Math.PI * 2;
+  const desired = {
+    x: Number(origin?.x ?? 0) + Math.cos(angle) * 45,
+    y: Number(origin?.y ?? 0) + Math.sin(angle) * 45,
+  };
+  const position = nearestClearPosition(session.navigation, desired, 20, {
+    reach: 140,
+    towards: origin,
+  }) ?? desired;
+  const doid = await spawnNpc(context, spawnedNpc.Constant, position, spawnedNpc.Scale, {
+    returnDoid: true,
+    engaged: true,
+    suppressRewards: true,
+    suppressTriggerReporting: true,
+    modifierGeneration: generation,
+    countsForFloor: false,
+  });
+  if (!doid || spawnedNpc.IsMover || !spawnedNpc.Attack1) return doid;
+
+  // Infinite bombs are stationary one-shot actors. Arm for the row's own
+  // AttackTimer, play its authored attack, then retire after the timeline.
+  scheduleInfiniteTimeout(session, async () => {
+    if (!context.isActive() || !session.actors?.has(doid)) return;
+    const attack = await attackForConstant(spawnedNpc.Attack1);
+    const colliders = attack ? await attackColliders(attack.AttackTimeline) : [];
+    const weaponPower =
+      (spawnedNpc.Weapon1 && (await weaponForConstant(spawnedNpc.Weapon1))?.Power) || 1;
+    await playDeathAttack(
+      session,
+      doid,
+      attack,
+      position,
+      worldColliders(position, 0, colliders),
+      { npc: spawnedNpc, weaponPower }
+    );
+    const frames = attack ? await attackTimelineFrames(attack.AttackTimeline) : 0;
+    scheduleInfiniteTimeout(session, () => {
+      session.send(objectDisable(doid));
+      session.objects?.delete(doid);
+      session.actors?.delete(doid);
+    }, Math.max(1, frames) * (1000 / FRAMES_PER_SECOND));
+  }, Math.max(0, Number(spawnedNpc.AttackTimer ?? 1) * 1000));
+  return doid;
+}
+
+function spawnInfiniteModifierActors(context, { event, npc, origin, generation }) {
+  const random = context.session.random ?? Math.random;
+  for (const modifier of context.session.infiniteActiveModifiers ?? []) {
+    const prefix = event === "death" ? "NPCDeathSpawn" : "NPCHitSpawn";
+    if (!modifier[`${prefix}Id`]) continue;
+    if (modifier[`${prefix}CharType`] && modifier[`${prefix}CharType`] !== npc.CharType) continue;
+    if (generation >= Math.max(0, Number(modifier[`${prefix}MaxGeneration`] ?? 0))) continue;
+    if (random() >= Math.max(0, Number(modifier[`${prefix}Chance`] ?? 0))) continue;
+    const min = Math.max(0, Math.trunc(Number(modifier[`${prefix}MinCount`] ?? 0)));
+    const max = Math.max(min, Math.trunc(Number(modifier[`${prefix}MaxCount`] ?? min)));
+    const count = min + Math.floor(random() * (max - min + 1));
+    for (let index = 0; index < count; index++) {
+      spawnInfiniteModifierNpc(context, modifier, origin, generation + 1).catch((error) =>
+        warn(`Infinite ${event} spawn failed: ${error.message}`)
+      );
+    }
+  }
+}
+
+const startInfiniteModifierSpawns = (context) => {
+  const { session } = context;
+  clearInfiniteModifierTimers(session);
+  for (const modifier of session.infiniteActiveModifiers ?? []) {
+    const everyMs = Math.max(0, Number(modifier.NPCSpawnTime ?? 0) * 1000);
+    if (!modifier.NPCSpawnId || !everyMs) continue;
+    const timer = setInterval(() => {
+      const hero = session.actors?.get(session.heroDoid);
+      if (!context.isActive() || !hero?.position) return;
+      spawnInfiniteModifierNpc(context, modifier, hero.position).catch((error) =>
+        warn(`Infinite periodic spawn failed: ${error.message}`)
+      );
+    }, everyMs);
+    rememberInfiniteTimer(session, timer);
+  }
 };
 
 const npcTimelineAction = (doid, timeline) =>
@@ -2222,6 +2386,8 @@ const heroFrameForFloor = (member, floorDoid, position, owner) => {
     zone: member.dungeonZone ?? 10,
     position,
     dungeonBusterPoints: member.dungeonBusterPoints ?? 0,
+    healthBombsUsed: member.healthBombsUsed ?? 0,
+    partyBombsUsed: member.partyBombsUsed ?? 0,
   };
   return owner ? heroOwnerGenerate(details) : heroGenerate(details);
 };
@@ -2229,6 +2395,8 @@ const heroFrameForFloor = (member, floorDoid, position, owner) => {
 /** Installs every live member on a new floor and emits recipient-correct heroes. */
 const buildPartyHeroes = async (session, floor, floorDoid) => {
   const members = dungeonMembers(session);
+  const gm = await loadGameMaster();
+  const buffsById = new Map((gm.raw.Buff ?? []).map((row) => [Number(row.Id), row.Constant]));
   session.playerActors = new Set();
 
   for (const member of members) {
@@ -2247,6 +2415,8 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
       stats: member.heroStats,
       position: { ...at },
       team: TEAM.PLAYERS,
+      healthBombsUsed: member.healthBombsUsed ?? 0,
+      partyBombsUsed: member.partyBombsUsed ?? 0,
     });
     session.objects.set(member.heroDoid, CLID.HeroGameObject);
     member.objects?.set(member.heroDoid, CLID.HeroGameObject);
@@ -2273,6 +2443,12 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
   for (const member of members) {
     const context = contextForMember(member);
     await grantBuff(context, "SPAWN_INVULNERBILITY", { affectedActor: member.heroDoid });
+    for (const modifier of session.infiniteActiveModifiers ?? []) {
+      const constant = buffsById.get(Number(modifier.PlayerBuffId));
+      if (constant) {
+        await grantBuff(context, constant, { affectedActor: member.heroDoid });
+      }
+    }
     for (const constant of (envSetting("HERO_BUFFS") ?? "").split(",").filter(Boolean)) {
       const granted = await grantBuff(context, constant.trim(), {
         affectedActor: member.heroDoid,
@@ -2297,18 +2473,28 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
  */
 export const prepareDungeonMember = async (
   session,
-  { isActive = () => true, sendPlayerOwner = true, account: providedAccount } = {}
+  {
+    isActive = () => true,
+    sendPlayerOwner = true,
+    acquireAccountById = acquireAccount,
+  } = {}
 ) => {
-  const account = providedAccount ?? await loadAccount(session.accountId);
-  if (!isActive()) return false;
+  const account = await acquireAccountById(session.accountId);
+  session.dungeonAccount = account;
+  if (!isActive()) {
+    releaseAccount(account.id);
+    delete session.dungeonAccount;
+    return false;
+  }
   const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
   if (!avatar) {
+    releaseAccount(account.id);
+    delete session.dungeonAccount;
     throw new Error(
       `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
     );
   }
 
-  session.dungeonAccount = holdAccount(account);
   session.dungeonAvatar = avatar;
   session.dungeonStart = {
     basicCurrency: account.basic_currency ?? 0,
@@ -2320,6 +2506,8 @@ export const prepareDungeonMember = async (
   session.dungeonRewards = { gold: 0, gems: 0, xp: 0 };
   session.dungeonContribution = { kills: 0, damage: 0 };
   session.dungeonTreasures = [];
+  session.healthBombsUsed = 0;
+  session.partyBombsUsed = 0;
   session.completionAwarded = false;
   session.receivedTrophy = 0;
   session.playerDoid = session.accountId;
@@ -2390,6 +2578,20 @@ export const prepareDungeonMember = async (
   };
   session.npcLevel = Math.max(1, Number(session.floorPlan?.npcLevel ?? 1));
   session.heroStats = hero ? statTotals(gm, hero, avatar) : undefined;
+  const infiniteDefinition = session.infiniteDefinition ?? session.world?.infiniteDefinition;
+  if (infiniteDefinition) {
+    const nodeId = session.mapNodeId ?? session.world?.mapNodeId ?? session.world?.match?.mapNodeId;
+    const epoch = session.infiniteEpoch ?? session.world?.infiniteEpoch ?? infiniteEpoch();
+    const progress = infiniteProgressFor(account, {
+      nodeId,
+      avatarDoid: avatar.id,
+      epoch,
+      create: true,
+    });
+    session.infiniteStartScore = progress.score;
+    session.infiniteClaimedBeforeRun = new Set(progress.claimed);
+    session.infiniteClaimedThisRun = new Set();
+  }
   return true;
 };
 
@@ -2405,9 +2607,34 @@ export const prepareDungeonMember = async (
 export const enterDungeon = async (
   session,
   mapNodeId,
-  { account: providedAccount } = {}
+  {
+    acquireAccountById = acquireAccount,
+    onPlayerReady = () => {},
+    waitForHandshake = waitForEntryHandshake,
+  } = {}
 ) => {
-  leaveDungeon(session, { notifyClient: true });
+  // A same-session transition may still be persisting the run it just left.
+  // Reacquiring before that save lands would read the old disk snapshot and
+  // create exactly the divergent object this entry path is meant to prevent.
+  await leaveDungeon(session, { notifyClient: true });
+  // Take the hold before floor/cache loading. Besides closing the stale-read
+  // race, this makes all RPCs during the loading screen share the run's object.
+  const account = await acquireAccountById(session.accountId);
+  session.dungeonAccount = account;
+  const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
+  if (!avatar) {
+    releaseAccount(account.id);
+    delete session.dungeonAccount;
+    throw new Error(
+      `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
+    );
+  }
+  session.dungeonAvatar = avatar;
+  session.dungeonStart = {
+    basicCurrency: account.basic_currency ?? 0,
+    experience: avatar.experience ?? 0,
+    at: Date.now(),
+  };
   const dungeonEpoch = session.dungeonEpoch;
   const isActive = () => session.dungeonActive && session.dungeonEpoch === dungeonEpoch;
   session.dungeonActive = true;
@@ -2421,6 +2648,8 @@ export const enterDungeon = async (
   session.dungeonRewards = { gold: 0, gems: 0, xp: 0 };
   session.dungeonContribution = { kills: 0, damage: 0 };
   session.dungeonTreasures = [];
+  session.healthBombsUsed = 0;
+  session.partyBombsUsed = 0;
   session.completionAwarded = false;
   session.receivedTrophy = 0;
   /**
@@ -2445,6 +2674,33 @@ export const enterDungeon = async (
   const floor = await loadFloorAt(session.floorPlan, session.floorIndex);
   if (!isActive()) return false;
 
+  const gm = await loadGameMaster();
+  const node = await mapNode(mapNodeId);
+  session.tierConstant = node?.TierRank ?? "";
+  session.mapPage = node;
+  session.infiniteEpoch ??= infiniteEpoch();
+  session.infiniteDefinition = infiniteDefinitionForNode(gm, node);
+  session.infiniteModifierIds = session.infiniteDefinition
+    ? infiniteModifierIdsForNode(gm, node, session.infiniteEpoch)
+    : [];
+  session.infiniteActiveModifiers = activeInfiniteModifiers(
+    gm,
+    session.infiniteDefinition,
+    session.infiniteModifierIds,
+    session.floorIndex + 1
+  );
+  if (session.infiniteDefinition) {
+    const progress = infiniteProgressFor(account, {
+      nodeId: node.Id,
+      avatarDoid: avatar.id,
+      epoch: session.infiniteEpoch,
+      create: true,
+    });
+    session.infiniteStartScore = progress.score;
+    session.infiniteClaimedBeforeRun = new Set(progress.claimed);
+    session.infiniteClaimedThisRun = new Set();
+  }
+
   const areaDoid = session.allocateDoid(CLID.DistributedDungionArea);
   // The area preloads once, for the whole run — see tileLibrariesFor.
   const tileLibraries = await tileLibrariesFor(session.floorPlan);
@@ -2453,75 +2709,24 @@ export const enterDungeon = async (
    * clip whose SWF was never loaded and draws nothing without failing — which
    * is what made the fire and mine placeables invisible. See precache.js.
    */
+  const selectedModifierRows = (gm.raw.DungeonModifier ?? []).filter((row) =>
+    session.infiniteModifierIds.includes(Number(row.Id))
+  );
   const { cacheNpcs, cacheSwfs } = await preloadFor(tileLibraries, {
-    gm: await loadGameMaster(),
-    tierConstant: (await mapNode(mapNodeId))?.TierRank ?? "",
+    gm,
+    tierConstant: session.tierConstant,
+    extraNpcIds: selectedModifierRows.flatMap((row) =>
+      [row.NPCSpawnId, row.NPCDeathSpawnId, row.NPCHitSpawnId].filter(Boolean)
+    ),
+    extraBuffIds: selectedModifierRows.flatMap((row) =>
+      [row.PlayerBuffId, row.EnemyBuffId].filter(Boolean)
+    ),
   });
   if (!isActive()) return false;
-  session.send(dungeonAreaGenerate({ doid: areaDoid, tileLibraries, cacheNpcs, cacheSwfs }));
-  info(
-    `[${session.id}] generated DungionArea doid=${areaDoid} — ` +
-      `${tileLibraries.length} tile librar${tileLibraries.length === 1 ? "y" : "ies"}, ` +
-      `${cacheNpcs.length} npcs and ${cacheSwfs.length} swfs to preload`
-  );
 
-  await sleep(config.floorDelayMs);
-  if (!isActive()) return false;
-
-  const floorDoid = session.allocateDoid(CLID.DistributedDungeonFloor);
-  // The floor has to be generated as a child of the area: DcSocket calls
-  // InformParentOfNewObject, which is what sets Area.mActiveFloor. Without that
-  // link every floor-ending message the area receives is silently dropped.
-  const node = await mapNode(mapNodeId);
-  session.tierConstant = node?.TierRank ?? "";
-  // What finishing this node is worth, and which bit it sets on the world map.
-  session.mapPage = node;
-  session.send(
-    dungeonFloorGenerate({
-      doid: floorDoid,
-      parent: areaDoid,
-      mapNodeId,
-      floor,
-      // Numbered from the floor actually entered, so DR_START_FLOOR does not
-      // put the client on 2000 while it stands on the eighth floor.
-      floorNumber: FIRST_FLOOR_NUMBER + session.floorIndex,
-      tierConstant: session.tierConstant,
-    })
-  );
-  session.areaDoid = areaDoid;
-  session.floorDoid = floorDoid;
-  info(`[${session.id}] generated DungeonFloor doid=${floorDoid} (${floor.tiles.length} tiles)`);
-
-  const account = providedAccount ?? await loadAccount(session.accountId);
-  if (!isActive()) return false;
-  /**
-   * Which hero enters is not the client's call. `requesthero` and `requestentry`
-   * are argument-less signals — eight bytes, opcode and field and nothing else —
-   * so the server picks, and it picks the avatar the account has active. A
-   * capture settles it: the account's active_avatar was 1100334245 and the hero
-   * object generated back carried that same doid, hero 106, skin 156 and the
-   * avatar's own experience and stat points.
-   *
-   * Falling back to a different avatar is unsafe: the account payload has
-   * already told the client which instance is active, and Infinite revive/exit
-   * UI resolves the owner hero by that exact id.
-   */
-  const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
-  if (!avatar) {
-    throw new Error(
-      `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
-    );
-  }
-  session.dungeonAccount = holdAccount(account);
-  session.dungeonAvatar = avatar;
-  session.dungeonStart = {
-    basicCurrency: account.basic_currency ?? 0,
-    experience: avatar?.experience ?? 0,
-    at: Date.now(),
-  };
-  // Production uses the account id as the owner player doid. The summary UI
-  // resolves DungeonReport.id through GameObjectManager and reads currency
-  // from this object, so omitting it leaves a native null reference.
+  // The owner player is the loading-screen handshake endpoint. Production
+  // creates it before accepting entry, then creates the area; sending it after
+  // the floor loses requestentry because there was no object listening yet.
   const playerDoid = session.accountId;
   session.playerDoid = playerDoid;
   session.objects.set(playerDoid, CLID.PlayerGameObject);
@@ -2534,6 +2739,68 @@ export const enterDungeon = async (
     })
   );
   info(`[${session.id}] generated PlayerGameObjectOwner doid=${playerDoid}`);
+  await onPlayerReady();
+  if (!isActive()) return false;
+
+  session.send(dungeonAreaGenerate({ doid: areaDoid, tileLibraries, cacheNpcs, cacheSwfs }));
+  info(
+    `[${session.id}] generated DungionArea doid=${areaDoid} — ` +
+      `${tileLibraries.length} tile librar${tileLibraries.length === 1 ? "y" : "ies"}, ` +
+      `${cacheNpcs.length} npcs and ${cacheSwfs.length} swfs to preload`
+  );
+
+  const entryReady = await waitForHandshake(
+    session,
+    PLAYER_REQUEST_ENTRY,
+    config.floorDelayMs
+  );
+  if (!entryReady) warn(`[${session.id}] requestentry timed out; using compatibility fallback`);
+  if (!isActive()) return false;
+
+  const floorDoid = session.allocateDoid(CLID.DistributedDungeonFloor);
+  // The floor has to be generated as a child of the area: DcSocket calls
+  // InformParentOfNewObject, which is what sets Area.mActiveFloor. Without that
+  // link every floor-ending message the area receives is silently dropped.
+  session.send(
+    dungeonFloorGenerate({
+      doid: floorDoid,
+      parent: areaDoid,
+      mapNodeId,
+      floor,
+      // Carries both the run length and the floor actually entered. The client
+      // splits 55003 into "room 4" and "55 rooms".
+      floorNumber: dungeonFloorNumber(session.floorCount, session.floorIndex),
+      tierConstant: session.tierConstant,
+      activeDungeonModifiers: session.infiniteActiveModifiers.map((row) => ({
+        id: row.Id,
+        newThisFloor: row.newThisFloor,
+      })),
+    })
+  );
+  session.areaDoid = areaDoid;
+  session.floorDoid = floorDoid;
+  info(`[${session.id}] generated DungeonFloor doid=${floorDoid} (${floor.tiles.length} tiles)`);
+
+  const heroReady = await waitForHandshake(
+    session,
+    PLAYER_REQUEST_HERO,
+    config.floorDelayMs
+  );
+  if (!heroReady) warn(`[${session.id}] requesthero timed out; using compatibility fallback`);
+  if (!isActive()) return false;
+
+  /**
+   * Which hero enters is not the client's call. `requesthero` and `requestentry`
+   * are argument-less signals — eight bytes, opcode and field and nothing else —
+   * so the server picks, and it picks the avatar the account has active. A
+   * capture settles it: the account's active_avatar was 1100334245 and the hero
+   * object generated back carried that same doid, hero 106, skin 156 and the
+   * avatar's own experience and stat points.
+   *
+   * Falling back to a different avatar is unsafe: the account payload has
+   * already told the client which instance is active, and Infinite revive/exit
+   * UI resolves the owner hero by that exact id.
+   */
   const hero = await heroById(avatar?.avatar_id ?? 101);
   if (!isActive()) return false;
   const dungeonBusterAttack = hero?.DBuster1
@@ -2556,7 +2823,6 @@ export const enterDungeon = async (
   );
   // Health and mana are earned, not flat: the hero's base plus its LV_ growth
   // across levels plus whatever training put into a health slot — if it has one.
-  const gm = await loadGameMaster();
   const weapons = weaponsForAvatar(account, avatar);
   session.heroWeapons = weapons;
   session.petSpawn = equippedPetSpawn(gm, account, avatar, hero);
@@ -2682,6 +2948,9 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
   );
 
   const party = await buildPartyHeroes(session, floor, floorDoid);
+  for (const member of party) {
+    noteInfiniteFloorReached(contextForMember(member));
+  }
 
   session.navigation = createNavigationState(floor.navigation);
   // The trigger graph reaches these by name; wiring them here keeps triggers.js
@@ -2759,7 +3028,16 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
    */
   const tier = session.floorPlan?.tier;
   if (tier && isActive()) {
-    const stock = stockFloor(context.gm, { floor, navigation: session.navigation, tier });
+    const stock = stockFloor(context.gm, {
+      floor,
+      navigation: session.navigation,
+      tier,
+      infiniteDefinition: session.infiniteDefinition,
+      floorNumber: (session.floorIndex ?? 0) + 1,
+      allMinibosses: (session.infiniteActiveModifiers ?? []).some(
+        (modifier) => modifier.AllEnemiesAreMinibosses
+      ),
+    });
     let stocked = 0;
     for (const entry of stock) {
       if (!isActive()) break;
@@ -2794,6 +3072,22 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
    * them: floor at line 14, its 144 children through line 162, closure at 163.
    */
   session.send(interestClosure(floorDoid));
+  if (session.infiniteDefinition && session.areaDoid) {
+    const floorNumber = (session.floorIndex ?? 0) + 1;
+    for (const member of party) {
+      session.send(
+        infiniteRewardDataUpdate(session.areaDoid, {
+          avatarDoid: member.dungeonAvatar?.id ?? member.heroDoid,
+          startScore: member.infiniteStartScore ?? 0,
+          goldReward: infiniteFloorGold(session.infiniteDefinition, floorNumber),
+          rewards: infiniteRewards(session.infiniteDefinition, floorNumber, {
+            alreadyClaimed: [...(member.infiniteClaimedBeforeRun ?? [])],
+            claimedThisRun: [...(member.infiniteClaimedThisRun ?? [])],
+          }),
+        })
+      );
+    }
+  }
 
   info(
     `[${session.id}] world built — ${summary.join(", ")}` +
@@ -2830,6 +3124,7 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
   session.stopTriggers = startTimerTriggers(session);
   session.stopAi?.();
   session.stopAi = startNpcAi(session);
+  startInfiniteModifierSpawns(context);
   for (const member of party) {
     const context = contextForMember(member);
     context.stopManaRegen?.();
@@ -2934,6 +3229,7 @@ const advanceFloorUnlocked = async (session) => {
   session.stopTriggers = null;
   session.stopTrapProjectiles?.();
   session.stopTrapProjectiles = null;
+  clearInfiniteModifierTimers(session);
   clearFloorFailing(session);
   clearHazardBeats(session);
   forgetVoices(session);
@@ -2984,6 +3280,12 @@ const advanceFloorUnlocked = async (session) => {
   session.floorIndex = next;
   session.floorCleared = false;
   session.enemiesSeen = 0;
+  session.infiniteActiveModifiers = activeInfiniteModifiers(
+    await loadGameMaster(),
+    session.infiniteDefinition,
+    session.infiniteModifierIds ?? [],
+    next + 1
+  );
 
   const floorDoid = session.allocateDoid(CLID.DistributedDungeonFloor);
   session.floorDoid = floorDoid;
@@ -2993,8 +3295,12 @@ const advanceFloorUnlocked = async (session) => {
       parent: session.areaDoid,
       mapNodeId: session.mapNodeId,
       floor,
-      floorNumber: FIRST_FLOOR_NUMBER + next,
+      floorNumber: dungeonFloorNumber(session.floorCount, next),
       tierConstant: session.tierConstant ?? "",
+      activeDungeonModifiers: (session.infiniteActiveModifiers ?? []).map((row) => ({
+        id: row.Id,
+        newThisFloor: row.newThisFloor,
+      })),
       // Later floors are generated bare and told their layout straight after.
       tiles: [],
     })
@@ -3036,6 +3342,8 @@ const disablePriority = (clid) => {
  */
 export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   const settled = settleDungeonAccount(session);
+  clearEntryHandshake(session);
+  clearInfiniteModifierTimers(session);
   cancelPetRespawn(session);
 
   // Back in town, which the client reads as online and not in a dungeon.
@@ -3117,6 +3425,8 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "dungeonRewards",
     "dungeonContribution",
     "dungeonTreasures",
+    "healthBombsUsed",
+    "partyBombsUsed",
     // The run's remaining chest allowance, rolled once from the node.
     "treasuresOwed",
     "accountSettled",
@@ -3154,6 +3464,16 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "scalingChargeStarts",
     "dooberTimers",
     "activeTrapProjectiles",
+    "fullDooberNotices",
+    "infiniteStartScore",
+    "infiniteClaimedBeforeRun",
+    "infiniteClaimedThisRun",
+    "infiniteEpoch",
+    "infiniteDefinition",
+    "infiniteModifierIds",
+    "infiniteActiveModifiers",
+    "infiniteAwardedFloors",
+    "infiniteModifierTimers",
     // Whatever else is added here, note that per-run state kept anywhere *but*
     // this list survives into the next dungeon — see removeHeroFromFloor, where
     // a flag that did exactly that crashed the client on the second run.

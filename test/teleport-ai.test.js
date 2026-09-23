@@ -66,6 +66,7 @@ test("TELEPORT_AI disables, relocates, regenerates, and observes its authored wa
       postTeleportAttackMs: 3000,
       teleportInTimeline: "TELEPORT_IN",
       teleportOutTimeline: "TELEPORT_OUT",
+      teleportOutDelayMs: 500,
       teleportPhase: "visible",
     },
   };
@@ -95,6 +96,19 @@ test("TELEPORT_AI disables, relocates, regenerates, and observes its authored wa
   assert.equal(specter.teleportHidden, undefined, "specter vanished before PostTeleportAttack");
 
   await tickNpcAi(session, 5500, 0.25);
+  assert.equal(specter.teleportHidden, undefined, "TELEPORT_OUT disabled the object immediately");
+  assert.equal(specter.ai.teleportPhase, "teleport-out");
+  assert.ok(
+    sent.some((frame) => field(frame) === 145 && frame.includes(Buffer.from("TELEPORT_OUT"))),
+    "TELEPORT_OUT was not sent"
+  );
+  assert.equal(
+    sent.some((frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_DISABLE_RESP),
+    false,
+    "disable arrived before the out animation"
+  );
+
+  await tickNpcAi(session, 6000, 0.25);
   assert.equal(specter.teleportHidden, true);
   assert.ok(sent.some((frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_DISABLE_RESP));
 
@@ -104,10 +118,10 @@ test("TELEPORT_AI disables, relocates, regenerates, and observes its authored wa
   assert.equal(specter.hitPoints, before, "a hidden specter took damage");
   assert.equal(announced, false, "a hidden specter emitted a visible combat result");
 
-  await tickNpcAi(session, 7750, 0.25);
+  await tickNpcAi(session, 8250, 0.25);
   assert.equal(regenerations.length, 0, "TeleportRecurT/Rand ended early");
 
-  await tickNpcAi(session, 8000, 0.25);
+  await tickNpcAi(session, 8500, 0.25);
   assert.equal(regenerations.length, 1, "specter was not regenerated with the same doid");
   assert.equal(specter.teleportHidden, false);
   assert.notDeepEqual(regenerations[0].position, { x: 100, y: 0 });
@@ -117,9 +131,9 @@ test("TELEPORT_AI disables, relocates, regenerates, and observes its authored wa
   );
   assert.ok(sent.some((frame) => field(frame) === 145), "TELEPORT_IN was not sent");
 
-  await tickNpcAi(session, 9250, 0.25);
+  await tickNpcAi(session, 9750, 0.25);
   assert.equal(sent.filter((frame) => field(frame) === 143).length, 1);
-  await tickNpcAi(session, 9500, 0.25);
+  await tickNpcAi(session, 10000, 0.25);
   assert.equal(
     sent.filter((frame) => field(frame) === 143).length,
     2,

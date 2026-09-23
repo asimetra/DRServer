@@ -30,6 +30,10 @@ import { envFlag, envSetting } from "../src/env.js";
 import { PacketWriter, PacketReader, drainFrames } from "../src/socket/packet.js";
 import { OP, CLID, DC_HASH, opcodeName } from "../src/socket/opcodes.js";
 import { FLID } from "../src/socket/matchmaker.js";
+import {
+  PLAYER_REQUEST_ENTRY,
+  PLAYER_REQUEST_HERO,
+} from "../src/socket/entry-handshake.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 
 const HOST = envSetting("PUBLIC_HOST") ?? "127.0.0.1";
@@ -428,6 +432,8 @@ const state = {
   areaDoid: null,
   floorDoid: null,
   playerDoid: null,
+  sentRequestEntryReady: false,
+  sentRequestHeroReady: false,
   basicCurrency: null,
   heroDoid: null,
   experiencePoints: null,
@@ -543,6 +549,9 @@ const requestExitPacket = (doid) =>
     .u16(FLID.RequestExit)
     .u32(0)
     .frame();
+
+const playerReadyPacket = (doid, fieldId) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD).u32(doid).u16(fieldId).frame();
 
 /** MatchMaker's only required field is a byte-length-prefixed detail list. */
 const decodeMatchMaker = (reader) => {
@@ -1859,6 +1868,16 @@ socket.on("data", (chunk) => {
   for (const body of packets) {
     capture(body);
     console.log(`<- ${describeIncoming(body)}`);
+    if (state.playerDoid && state.areaDoid && !state.sentRequestEntryReady) {
+      state.sentRequestEntryReady = true;
+      console.log(`-> requestentry on player ${state.playerDoid}`);
+      socket.write(playerReadyPacket(state.playerDoid, PLAYER_REQUEST_ENTRY));
+    }
+    if (state.playerDoid && state.floorDoid && !state.sentRequestHeroReady) {
+      state.sentRequestHeroReady = true;
+      console.log(`-> requesthero on player ${state.playerDoid}`);
+      socket.write(playerReadyPacket(state.playerDoid, PLAYER_REQUEST_HERO));
+    }
     if (mode === "tour" && state.heroDoid && !state.touring && state.floorTraps?.length) {
       state.touring = true;
       /**

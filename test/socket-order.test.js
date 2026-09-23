@@ -8,6 +8,10 @@ import { PacketWriter } from "../src/socket/packet.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { attackForConstant } from "../src/gamemaster.js";
 import { createMatchWorld } from "../src/socket/match-world.js";
+import {
+  PLAYER_REQUEST_ENTRY,
+  waitForEntryHandshake,
+} from "../src/socket/entry-handshake.js";
 
 /**
  * A socket, as far as the dispatcher is concerned. Nothing here needs a real
@@ -43,6 +47,21 @@ const settle = async () => {
 
 const fieldUpdate = (doid, field, body) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD).u32(doid).u16(field).raw(body).frame();
+
+test("a pending late join may complete the loading handshake before activation", async () => {
+  const socket = fakeSocket();
+  const session = onConnection(socket);
+  session.playerDoid = 700;
+  session.world = { isActiveMember: () => false };
+  const ready = waitForEntryHandshake(session, PLAYER_REQUEST_ENTRY, 1000);
+
+  socket.emit("data", fieldUpdate(session.playerDoid, PLAYER_REQUEST_ENTRY, Buffer.alloc(0)));
+  await settle();
+
+  assert.equal(await ready, true, "the pre-activation field was dropped");
+  session.world = null;
+  socket.destroy();
+});
 
 /**
  * TCP delivers bytes in order and this server threw that away: a handler was

@@ -56,6 +56,10 @@ import {
   isOnAuthoredTile,
   segmentStaysOnAuthoredTiles,
 } from "./navigation.js";
+import { createDistributedObjectIdAllocator } from "./doids.js";
+import { noteEntryHandshake } from "./entry-handshake.js";
+import { loadGameMaster } from "../gamemaster.js";
+import { infiniteMapDetails } from "../infinite.js";
 
 const FLID_HERO_HEADING = 148;
 /** Bounds attacker-selected sampling work while covering every authored hero move. */
@@ -72,7 +76,10 @@ const MAX_UNGRANTED_MOVEMENT_STEP = 1000;
 const MAX_LOGIN_VERSION_LENGTH = 128;
 
 /** doids handed out to distributed objects; 0 means "no parent". */
-let nextDoid = 1000;
+const allocateDistributedObjectId = createDistributedObjectIdAllocator({
+  onLocalRangeSkipped: ({ from, to }) =>
+    warn(`distributed object ids reached ${from}; skipped client-local range to ${to}`),
+});
 
 const describe = (session) =>
   `[${session.id}${session.accountId ? ` acct=${session.accountId}` : ""}]`;
@@ -82,7 +89,7 @@ const describe = (session) =>
  *   utf token, utf version, u32 dcHash, u32 4, u32 accountId,
  *   u32 networkId, u32 nodeRules
  */
-const handleLogin = (session, reader) => {
+const handleLogin = async (session, reader) => {
   if (session.authenticated) {
     warn(`${describe(session)} refused a second login on the same connection`);
     session.close?.("duplicate login", { flush: true });
@@ -130,6 +137,17 @@ const handleLogin = (session, reader) => {
 
   const displaced = sessionHolding(login.accountId);
   session.completeAuthentication(login.accountId, login.token);
+  // Claim the account before the first awaited content load. Otherwise two
+  // sockets logging in together both observe "nobody here", then both become
+  // present after GameMaster resolves and neither displaces the other.
+  enterPresence(session);
+  // The newcomer enters presence first, so closing the old socket cannot flash
+  // the shared account offline between the two connections.
+  if (displaced && displaced !== session) {
+    info(`${describe(session)} displacing session ${displaced.id} on account ${login.accountId}`);
+    displaced.send(logoutResponse(60, "Signed in from somewhere else."));
+    displaced.close("signed in from somewhere else", { flush: true });
+  }
 
   info(
     `${describe(session)} login version=${singleLine(login.version)} account=${login.accountId} ` +
@@ -146,7 +164,15 @@ const handleLogin = (session, reader) => {
   // The client cannot finish loading until the MatchMaker object exists.
   const doid = session.allocateDoid(CLID.MatchMaker);
   session.matchMakerDoid = doid;
-  session.send(matchMakerGenerate(doid));
+  let infiniteDetails = [];
+  try {
+    infiniteDetails = infiniteMapDetails(await loadGameMaster());
+    session.infiniteEpoch = infiniteDetails[0]?.epoch;
+  } catch (problem) {
+    warn(`${describe(session)} could not load Infinite details: ${problem.message}`);
+  }
+  if (session.closed) return;
+  session.send(matchMakerGenerate(doid, infiniteDetails));
   info(`${describe(session)} generated MatchMaker doid=${doid}`);
 
   /**
@@ -157,32 +183,6 @@ const handleLogin = (session, reader) => {
   const presenceDoid = session.allocateDoid(CLID.PresenceManager);
   session.presenceDoid = presenceDoid;
   session.send(presenceGenerate(presenceDoid));
-  enterPresence(session);
-
-  /**
-   * And only now is whoever was on this account put off it.
-   *
-   * After rather than before, and the order is the whole point. Closing him
-   * first takes the account off the roll, so every friend watching is told he
-   * went offline and then, a moment later, that he came back — the blink a
-   * friends list shows when somebody reconnects. Letting the newcomer take the
-   * account first means `leavePresence` finds it still held and says nothing.
-   *
-   * The newcomer wins rather than being refused, because the common case is a
-   * reconnect: a client that crashed or lost its network leaves a socket this
-   * server cannot tell is dead, and refusing would lock the player out of his
-   * own account until it timed out.
-   *
-   * Code 60 is the one the client acts on. `Process_CLIENT_LOGOUT_RESP` calls
-   * `unconfigureListeners` and enters the socket error state with the text, so
-   * the displaced player is told what happened instead of watching a screen
-   * that has quietly stopped. Every other code it merely logs.
-   */
-  if (displaced && displaced !== session) {
-    info(`${describe(session)} displacing session ${displaced.id} on account ${login.accountId}`);
-    displaced.send(logoutResponse(60, "Signed in from somewhere else."));
-    displaced.close("signed in from somewhere else", { flush: true });
-  }
 
   /**
    * And then his friends, unasked. Last, because it is the only part that waits
@@ -238,6 +238,13 @@ const handleFieldUpdate = (member, reader) => {
   const fieldId = reader.u16();
 
   if (doid === member.matchMakerDoid && matchMaker.handleField(member, fieldId, reader)) {
+    return;
+  }
+
+  // These two fields are the loading handshake itself, so a pending late join
+  // must be allowed to send them before it becomes an active world member.
+  if (doid === member.playerDoid && noteEntryHandshake(member, fieldId)) {
+    reader.rest();
     return;
   }
 
@@ -555,6 +562,10 @@ const MAX_QUEUED_BYTES = 1 << 20;
 
 let activeSocketCount = 0;
 const activeSocketsByAddress = new Map();
+const connectedSessions = new Set();
+
+/** Every admitted game connection, including sockets still on the login screen. */
+export const activeSocketSessions = () => [...connectedSessions];
 
 const handlePacket = (session, body) => {
   const reader = new PacketReader(body);
@@ -642,7 +653,7 @@ export const onConnection = (socket) => {
     pausedForQueue: false,
     pausedForWrite: false,
     allocateDoid(clid) {
-      const doid = nextDoid++;
+      const doid = allocateDistributedObjectId();
       if (clid !== undefined) this.objects.set(doid, clid);
       return doid;
     },
@@ -721,6 +732,8 @@ export const onConnection = (socket) => {
 
   /** So one session can end another — a second login on the same account. */
   session.close = closeSession;
+  connectedSessions.add(session);
+  socket.once("close", () => connectedSessions.delete(session));
 
   session.completeAuthentication = (accountId, token) => {
     session.accountId = accountId;

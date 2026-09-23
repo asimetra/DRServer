@@ -29,6 +29,8 @@ logs-fresh/
 # forgetting a rule, only by deliberately overriding one. The cost of that trade
 # is that a genuinely public document is invisible until it is listed here.
 /docs/*
+# Local official-server capture analysis; never publish the evidence report.
+/docs/official-vs-local-behavior-diff.md
 !/docs/client-setup.md
 !/docs/combat-conformance.md
 !/docs/dc-schema.json

@@ -10,7 +10,12 @@ import {
   holdAccount,
   releaseAccount,
 } from "../src/account-registry.js";
-import { loadAccount } from "../src/accounts.js";
+import {
+  acquireAccount,
+  loadAccount,
+  saveAccount,
+  withAccountLock,
+} from "../src/accounts.js";
 import { openChest } from "../src/chests.js";
 import { purchaseOffer } from "../src/store.js";
 import { config } from "../src/config.js";
@@ -80,6 +85,50 @@ test("a second holder gets the object already in play", () => {
 
   assert.equal(second, first);
   assert.equal(second.name, "in play", "the copy that arrived second is discarded");
+});
+
+test("acquiring an account waits for an in-flight transaction and holds its result", async () => {
+  const id = anId();
+  const initial = await loadAccount(id);
+  initial.name = "before transaction";
+  await saveAccount(initial);
+
+  let letWriterFinish;
+  const writerGate = new Promise((resolve) => {
+    letWriterFinish = resolve;
+  });
+  let writerStarted;
+  const started = new Promise((resolve) => {
+    writerStarted = resolve;
+  });
+  const writer = withAccountLock(id, async () => {
+    const account = await loadAccount(id);
+    account.name = "after transaction";
+    writerStarted();
+    await writerGate;
+    await saveAccount(account);
+  });
+  await started;
+
+  const acquiring = acquireAccount(id);
+  letWriterFinish();
+  await writer;
+  const acquired = await acquiring;
+
+  assert.equal(acquired.name, "after transaction");
+  assert.equal(heldAccount(id), acquired, "the fresh object was registered before return");
+  assert.equal(releaseAccount(id), true);
+});
+
+test("acquiring an already live account adds a holder to the shared object", async () => {
+  const id = anId();
+  const playing = holdAccount({ id, name: "shared" });
+
+  const acquired = await acquireAccount(id);
+
+  assert.equal(acquired, playing);
+  assert.equal(releaseAccount(id), false, "the original gameplay hold remains");
+  assert.equal(releaseAccount(id), true);
 });
 
 test("the account stays until the last holder lets go", () => {

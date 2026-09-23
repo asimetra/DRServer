@@ -24,6 +24,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { config } from "../src/config.js";
 import * as postgres from "../src/storage/postgres.js";
+import { acquireFileProcessLock } from "../src/process-lock.js";
 
 const argument = (name) => {
   const at = process.argv.indexOf(`--${name}`);
@@ -32,6 +33,12 @@ const argument = (name) => {
 
 const write = process.argv.includes("--write");
 const only = argument("only");
+const sourceRelease = write ? await acquireFileProcessLock(config.dataDir) : null;
+const targetRelease = write ? await postgres.acquireServerProcessLock() : null;
+const releaseLocks = async () => {
+  await targetRelease?.();
+  await sourceRelease?.();
+};
 
 /** What is worth counting when deciding which copy of an account is the real one. */
 const weigh = (account) => ({
@@ -106,6 +113,8 @@ const readFileAccounts = async () => {
 const accounts = await readFileAccounts();
 if (!accounts.length) {
   console.log(`No account documents under ${config.dataDir}.`);
+  await releaseLocks();
+  await postgres.close();
   process.exit(0);
 }
 
@@ -179,6 +188,8 @@ for (const account of accounts) {
     console.error(`\nCould not read account ${account.id} from Postgres: ${err.message}`);
     console.error("Nothing was written. Fix the database first — `npm run db:up`, and");
     console.error("apply db/schema.sql if the server has gained tables since it was made.");
+    await releaseLocks();
+    await postgres.close();
     process.exit(1);
   }
   if (!existing) continue;
@@ -209,6 +220,7 @@ if (!write) {
 }
 
 await postgres.saveAccounts(accounts);
+await releaseLocks();
 await postgres.close();
 console.log(`\nCopied ${accounts.length} account(s) into Postgres.`);
 console.log("The JSON documents are untouched; ODS_STORAGE=file still reads them.");

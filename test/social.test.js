@@ -11,7 +11,8 @@ import os from "node:os";
  * and three of them are supposed to answer with an object — so the client was
  * indexing fields on an array.
  */
-process.env.DR_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "dr-social-"));
+const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "dr-social-"));
+process.env.ODS_DATA_DIR = dataDir;
 
 const { dispatch, hasHandler } = await import("../src/rpc.js");
 await import("../src/rpc-handlers.js");
@@ -20,6 +21,10 @@ const { loadAccount, saveAccount } = await import("../src/accounts.js");
 const ACCOUNT = 1000000005;
 const FRIEND = 1000000006;
 const IGNORED = 1000000007;
+
+test.after(async () => {
+  await fs.rm(dataDir, { recursive: true, force: true });
+});
 
 const withAccount = async (id, overrides = {}) => {
   const account = await loadAccount(id);
@@ -71,7 +76,16 @@ test("the friend record carries the five fields the live one carries", async () 
 });
 
 test("friend data resolves against the accounts this server actually holds", async () => {
-  await withAccount(FRIEND, { name: "Harrow", trophies: 126 });
+  const { setMapNodeBit } = await import("../src/map-progress.js");
+  let completed = "";
+  for (const bit of [0, 3, 7, 12, 18, 24, 33, 41, 49, 54, 67, 81]) {
+    completed = setMapNodeBit(completed, bit);
+  }
+  await withAccount(FRIEND, {
+    name: "Harrow",
+    trophies: 126,
+    completed_mapnode_mask: completed,
+  });
   await withAccount(ACCOUNT, {
     // The second id is nobody: the official server answers about a population
     // this one does not have, so unknown ids are dropped rather than faked.
@@ -103,7 +117,7 @@ test("friend data resolves against the accounts this server actually holds", asy
   ]);
   assert.equal(result[0].account_id, FRIEND);
   assert.equal(result[0].name, "Harrow");
-  assert.equal(result[0].trophies, 126);
+  assert.equal(result[0].trophies, 12, "the stale stored count is derived from boss clears");
   assert.equal(result[0].is_ingame_friend, true);
   assert.equal(result[0].identifier, `3_${FRIEND}`, "network and account joined");
   assert.equal(result[0].is_online, false, "nobody is connected in a test");
@@ -158,13 +172,66 @@ test("a missing or malformed friend list is an empty one, not a crash", async ()
 test("the boards answer with their objects rather than a bare array", async () => {
   await withAccount(ACCOUNT, { ingame_friends: "[]" });
 
-  const scores = await dispatch("championsboard", "getAllMapnodeScores", [ACCOUNT, [], "token"]);
+  const scores = await dispatch("championsboard", "getAllMapnodeScores", [ACCOUNT, [], [], "token"]);
   // parseScoreResponse reads both of these; a bare [] gave it neither.
   assert.ok(Array.isArray(scores.top_scores), "II_AccountTopScoreInfo reads top_scores");
   assert.ok(Array.isArray(scores.avatar_scores), "and the player's own avatar_scores");
 
   const top = await dispatch("championsboard", "getTopTwenty", [ACCOUNT, 50162, "token"]);
   assert.ok(Array.isArray(top), "the top twenty is a bare array");
+});
+
+test("Infinite scores expose the deepest room reached to the map and leaderboard", async () => {
+  const { infiniteEpoch } = await import("../src/infinite.js");
+  const epoch = infiniteEpoch();
+  const local = await withAccount(ACCOUNT, { name: "Runner" });
+  const friend = await withAccount(FRIEND, { name: "Deeper Runner" });
+  const localAvatar = local.account_avatars[0];
+  const friendAvatar = friend.account_avatars[0];
+
+  await withAccount(ACCOUNT, {
+    infinite_progress: {
+      50150: {
+        [localAvatar.id]: { epoch, score: 4, claimed: [30104] },
+      },
+    },
+  });
+  await withAccount(FRIEND, {
+    infinite_progress: {
+      50150: {
+        [friendAvatar.id]: { epoch, score: 7, claimed: [30104] },
+      },
+    },
+  });
+
+  const scores = await dispatch("championsboard", "getAllMapnodeScores", [
+    ACCOUNT,
+    [ACCOUNT, FRIEND],
+    [localAvatar.id],
+    "token",
+  ]);
+  assert.deepEqual(scores.avatar_scores, [{
+    avatar_id: localAvatar.id,
+    mapnode_id: 50150,
+    score: 4,
+  }]);
+  assert.deepEqual(
+    scores.top_scores.map(({ account_id, score }) => ({ account_id, score })),
+    [
+      { account_id: ACCOUNT, score: 4 },
+      { account_id: FRIEND, score: 7 },
+    ]
+  );
+  assert.equal(JSON.parse(scores.top_scores[0].weapon1).type > 0, true);
+
+  const top = await dispatch("championsboard", "getTopTwenty", [ACCOUNT, 50150, "token"]);
+  assert.deepEqual(
+    top.slice(0, 2).map(({ account_id, score }) => ({ account_id, score })),
+    [
+      { account_id: FRIEND, score: 7 },
+      { account_id: ACCOUNT, score: 4 },
+    ]
+  );
 });
 
 test("the gift inbox answers with both fields the client reads", async () => {
@@ -177,6 +244,7 @@ test("the gift inbox answers with both fields the client reads", async () => {
 });
 
 test("moderation and limited offers answer empty, which is what the live server does", async () => {
+  await withAccount(ACCOUNT, { friend_requests: [] });
   assert.deepEqual(await dispatch("modrpc", "getmod", [3]), []);
   assert.deepEqual(await dispatch("store", "GetLimitedOfferStatus", [ACCOUNT]), []);
   assert.deepEqual(
@@ -191,11 +259,20 @@ test("moderation and limited offers answer empty, which is what the live server 
  * offers an email instead, false is "invite sent", and an object is "request
  * sent to X". So every edge case has somewhere to go without inventing a fifth.
  */
-test("a friend code adds the person it names, and only them", async () => {
-  const { friendCodeOf, accountIdFromCode, friendIdsOf } = await import("../src/social.js");
+test("a friend code creates one pending request and needs recipient approval", async () => {
+  const {
+    friendCodeOf,
+    accountIdFromCode,
+    friendIdsOf,
+    pendingFriendRequestsOf,
+  } = await import("../src/social.js");
 
-  await withAccount(FRIEND, { name: "Harrow", ingame_friends: "[]", ignore_friends: "[]" });
-  await withAccount(ACCOUNT, { name: "Me", ingame_friends: "[]", ignore_friends: "[]" });
+  await withAccount(FRIEND, {
+    name: "Harrow", ingame_friends: "[]", ignore_friends: "[]", friend_requests: [],
+  });
+  await withAccount(ACCOUNT, {
+    name: "Me", ingame_friends: "[]", ignore_friends: "[]", friend_requests: [],
+  });
 
   // The code is derived from the id, so it round-trips and nothing allocates.
   const code = friendCodeOf({ id: FRIEND });
@@ -218,18 +295,26 @@ test("a friend code adds the person it names, and only them", async () => {
    */
   assert.equal(await invite(friendCodeOf({ id: ACCOUNT })), null, "you cannot add yourself");
 
-  // And the real thing, both ways at once.
+  // And the real thing: still no friendship until the recipient accepts it.
   const sent = await invite(code);
   assert.equal(sent.to_account_id, FRIEND, "the request names who it reached");
   assert.equal(sent.name, "Harrow");
 
   const { loadAccount } = await import("../src/accounts.js");
-  assert.deepEqual(friendIdsOf(await loadAccount(ACCOUNT)), [FRIEND], "mine has him");
-  assert.deepEqual(friendIdsOf(await loadAccount(FRIEND)), [ACCOUNT], "and his has me");
+  assert.deepEqual(friendIdsOf(await loadAccount(ACCOUNT)), []);
+  const [pending] = pendingFriendRequestsOf(await loadAccount(FRIEND));
+  assert.equal(pending.account_id, ACCOUNT);
 
-  // Twice is not twice.
-  assert.equal(await invite(code), null, "already a friend");
-  assert.deepEqual(friendIdsOf(await loadAccount(ACCOUNT)), [FRIEND], "and not listed twice");
+  // Twice is not two requests.
+  assert.equal(await invite(code), null, "already pending");
+  assert.equal(pendingFriendRequestsOf(await loadAccount(FRIEND)).length, 1);
+
+  const accepted = await dispatch("friendrequests", "DRFriendRequestUpdate", [
+    FRIEND, [pending.id], [ACCOUNT], 1, "token",
+  ]);
+  assert.equal(accepted.accepted, 1);
+  assert.deepEqual(friendIdsOf(await loadAccount(ACCOUNT)), [FRIEND]);
+  assert.deepEqual(friendIdsOf(await loadAccount(FRIEND)), [ACCOUNT]);
 });
 
 /**

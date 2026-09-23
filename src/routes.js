@@ -105,7 +105,10 @@ const rpcCall = async (req, [service, method]) => {
     return json({
       jsonrpc: "2.0",
       id,
-      error: { code: -1, message: err.message },
+      error: {
+        code: Number.isSafeInteger(Number(err.code)) ? Number(err.code) : -1,
+        message: err.message,
+      },
     });
   }
 };

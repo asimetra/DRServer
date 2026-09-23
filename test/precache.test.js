@@ -82,6 +82,20 @@ test("the area preload covers any persistent pet a late joiner may bring", async
   }
 });
 
+test("Infinite modifier NPCs and buff art are included before the area loads", async () => {
+  const gm = await loadGameMaster();
+  const { cacheNpcs, cacheSwfs } = await preloadFor([CAVES], {
+    gm,
+    tierConstant: "ICE_CAVES_INFINITE",
+    extraNpcIds: [1752, 1754],
+    extraBuffIds: [35707],
+  });
+
+  assert.ok(cacheNpcs.includes(1752));
+  assert.ok(cacheNpcs.includes(1754));
+  assert.ok(cacheSwfs.includes("Resources/Art2D/FX/db_fx_library.swf"));
+});
+
 test("the area generate carries all three lists, and nothing after them", async () => {
   /**
    * The fields are byte-length-prefixed, so a miscounted list does not fail —

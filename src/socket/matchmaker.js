@@ -150,9 +150,17 @@ export const handleField = (session, fieldId, reader) => {
           return;
         }
 
-        // Production answers before generating the local player/area objects.
-        session.send(buildEntryResponse(session.matchMakerDoid, 0, result.match.mapNodeId));
-        await joinDungeonMatch(session, result, request);
+        let accepted = false;
+        await joinDungeonMatch(session, result, request, {
+          onPlayerReady: () => {
+            if (accepted) return;
+            accepted = true;
+            session.send(buildEntryResponse(session.matchMakerDoid, 0, result.match.mapNodeId));
+          },
+        });
+        if (!accepted) {
+          throw new Error(`match ${result.match.id} did not create the owner player`);
+        }
         rememberMatchMakerGroup(session, result.match);
       })()
         .catch((err) => {

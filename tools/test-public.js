@@ -59,13 +59,9 @@ const testFiles = fs
 
 if (hasData()) {
   console.log("Compatibility data present; running the full suite.");
-  /**
-   * Deliberately without a file list, so this is the same discovery `npm test`
-   * performs. Passing an explicit glob let the two commands disagree about what
-   * the suite even is, which is the kind of difference that is only noticed
-   * when the smaller one is the one being trusted.
-   */
-  const full = spawnSync(process.execPath, ["--test", "--test-concurrency=1"], {
+  // Delegate to the ordinary runner so full and public use the same explicit
+  // test-file discovery and per-file storage isolation.
+  const full = spawnSync(process.execPath, [path.join(root, "tools", "run-tests.js")], {
     cwd: root,
     stdio: "inherit",
   });

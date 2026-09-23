@@ -265,9 +265,21 @@ export const handleProposeSelfRevive = async (session, reader) => {
   const reviveAll = reader.u8() !== 0;
   const hero = session.actors?.get(session.heroDoid);
   const usable = Boolean(hero && hero.maxHitPoints > 0);
-  const success = usable && (await spendBomb(session, reviveAll));
+  const usageKey = reviveAll ? "partyBombsUsed" : "healthBombsUsed";
+  const usageField = reviveAll ? FLID.partyBombsUsed : FLID.healthBombsUsed;
+  const used = Math.max(0, Number(session[usageKey] ?? hero?.[usageKey] ?? 0));
+  // The native client permits three of each bomb for the whole Infinite run.
+  // It derives that decision from the counter regenerated with every floor, so
+  // the server both preserves the counter and enforces the same cap itself.
+  const withinRunLimit = session.mapPage?.NodeType !== "INFINITE" || used < 3;
+  const success = usable && withinRunLimit && (await spendBomb(session, reviveAll));
   if (usable && !success) {
-    warn(`[${session.id}] revive refused: no ${reviveAll ? "party" : "health"} bomb left`);
+    warn(
+      `[${session.id}] revive refused: ` +
+        (!withinRunLimit
+          ? `${reviveAll ? "party" : "health"} bomb run limit reached`
+          : `no ${reviveAll ? "party" : "health"} bomb left`)
+    );
   }
 
   // Whoever set it off is named to the whole floor before anything else.
@@ -276,11 +288,10 @@ export const handleProposeSelfRevive = async (session, reader) => {
   sendOwner(selfReviveResponse(session.heroDoid, success, reviveAll));
   if (!success) return true;
 
-  const usageKey = reviveAll ? "partyBombsUsed" : "healthBombsUsed";
-  const usageField = reviveAll ? FLID.partyBombsUsed : FLID.healthBombsUsed;
-  hero[usageKey] = Math.min(255, (hero[usageKey] ?? 0) + 1);
+  session[usageKey] = Math.min(255, used + 1);
+  hero[usageKey] = session[usageKey];
 
-  session.send(bombUsageUpdate(session.heroDoid, usageField, hero[usageKey]));
+  session.send(bombUsageUpdate(session.heroDoid, usageField, session[usageKey]));
   /**
    * This is the bomb's cast. It sends no choreography of its own, which is why
    * its attack is exempt from the cast rule — but the exemption was

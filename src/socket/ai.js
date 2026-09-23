@@ -943,9 +943,18 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         ai.state = "teleport-wait";
         continue;
       }
+      ai.teleportPhase = "teleport-out";
+      ai.teleportDisableAt = now + Math.max(0, Number(ai.teleportOutDelayMs ?? 1000));
+      ai.state = "teleport-out";
+      session.send(npcTimelineAction(doid, ai.teleportOutTimeline ?? "TELEPORT_OUT"));
+      continue;
+    }
+    if (recurringTeleport && ai.teleportPhase === "teleport-out") {
+      if (now < (ai.teleportDisableAt ?? Infinity)) continue;
       const random = session.random ?? Math.random;
       actor.teleportHidden = true;
       ai.teleportPhase = "hidden";
+      ai.teleportDisableAt = 0;
       ai.teleportReturnAt =
         now +
         (ai.teleportRecurMs ?? 0) +

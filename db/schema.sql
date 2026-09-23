@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     buckets_weapon         INTEGER     NOT NULL DEFAULT 50,
     buckets_other          INTEGER     NOT NULL DEFAULT 15,
     active_avatar          BIGINT,
+    ingame_friends         TEXT        NOT NULL DEFAULT '[]',
+    ignore_friends         TEXT        NOT NULL DEFAULT '[]',
+    friend_requests        JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    infinite_progress      JSONB       NOT NULL DEFAULT '{}'::jsonb,
     admin_flags            BIGINT      NOT NULL DEFAULT 0,
     account_flags          BIGINT      NOT NULL DEFAULT 0,
     completed_dungeons     INTEGER     NOT NULL DEFAULT 0,
@@ -310,6 +314,14 @@ CREATE TABLE IF NOT EXISTS dungeon_bests (
 ALTER TABLE IF EXISTS dungeon_bests ADD COLUMN IF NOT EXISTS hero_id INTEGER;
 ALTER TABLE IF EXISTS market_listings ADD COLUMN IF NOT EXISTS tax BIGINT;
 ALTER TABLE IF EXISTS market_listings ADD COLUMN IF NOT EXISTS proceeds BIGINT;
+-- Social requests and Infinite progress were added after the first Postgres
+-- schema shipped. Keeping these beside the other idempotent upgrades makes
+-- re-running this file update an existing database as well as describe a new
+-- one.
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS ingame_friends TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS ignore_friends TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS friend_requests JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS infinite_progress JSONB NOT NULL DEFAULT '{}'::jsonb;
 -- Barred from the market. Its own column rather than a bit in `account_flags`,
 -- which is transcribed from captures and goes to the client: this server does
 -- not know which bits that field means to it, and guessing at somebody else's

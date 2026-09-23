@@ -5,6 +5,7 @@ import { info } from "../log.js";
 import { grantBuff, hasBuff } from "./buffs.js";
 import { applyDooberReward, applyProgressReward } from "./rewards.js";
 import { membersOf, worldOf } from "./match-world.js";
+import { objectDisable } from "./objects.js";
 
 /**
  * Doober pickup.
@@ -19,6 +20,7 @@ import { membersOf, worldOf } from "./match-world.js";
  */
 
 const FLID_DOOBER_COLLECTED_BY = 291;
+const FLID_HERO_TOO_FULL_FOR_DOOBER = 170;
 
 /** Field 147: send_position on HeroGameObjectOwner — f32 x, f32 y. */
 export const FLID_HERO_POSITION = 147;
@@ -28,6 +30,13 @@ const collectedBy = (dooberDoid, heroDoid) =>
     .u32(dooberDoid)
     .u16(FLID_DOOBER_COLLECTED_BY)
     .u32(heroDoid)
+    .frame();
+
+const tooFullForDoober = (heroDoid, isHealthDoober) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(heroDoid)
+    .u16(FLID_HERO_TOO_FULL_FOR_DOOBER)
+    .u8(isHealthDoober ? 1 : 0)
     .frame();
 
 /**
@@ -115,6 +124,30 @@ const worthTaking = (session, doober) => {
   });
 };
 
+/** A definitive full-bar refusal, distinct from the partial-waste policy. */
+const fullResourceFor = (session, doober) => {
+  const hero = session.actors?.get(session.heroDoid);
+  const resources = [];
+  if (Number(doober.hpPercentage ?? 0) > 0) {
+    resources.push({ health: true, missing: shareMissing(hero?.hitPoints, hero?.maxHitPoints) });
+  }
+  if (Number(doober.mpPercentage ?? 0) > 0) {
+    resources.push({ health: false, missing: shareMissing(
+      session.heroManaPoints,
+      session.maxHeroManaPoints
+    ) });
+  }
+  if (!resources.length || resources.some(({ missing }) => missing > 0)) return null;
+  // A sandwich can only carry one flag; health is the primary half when both
+  // bars are full, matching the client's health-first pickup presentation.
+  return resources.some(({ health }) => health);
+};
+
+const sendDirect = (session, frame) => {
+  if (typeof session.sendDirect === "function") return session.sendDirect(frame);
+  return session.send(frame);
+};
+
 /**
  * Called on every hero position update. Collects anything in range and reports
  * how many were taken.
@@ -124,10 +157,22 @@ export const collectNearby = (session, position) => {
 
   const radius = config.pickupRadius;
   const taken = [];
+  session.fullDooberNotices ??= new Set();
 
   for (const [doid, doober] of session.doobers) {
-    if (!withinReach(position, doober, radius)) continue;
-    if (!worthTaking(session, doober)) continue;
+    if (!withinReach(position, doober, radius)) {
+      session.fullDooberNotices.delete(doid);
+      continue;
+    }
+    if (!worthTaking(session, doober)) {
+      const health = fullResourceFor(session, doober);
+      if (health !== null && !session.fullDooberNotices.has(doid)) {
+        sendDirect(session, tooFullForDoober(session.heroDoid, health));
+        session.fullDooberNotices.add(doid);
+      }
+      continue;
+    }
+    session.fullDooberNotices.delete(doid);
     taken.push([doid, doober]);
   }
 
@@ -148,7 +193,13 @@ const collectTracked = (
     // first downgraded it to a collector-only direct send and left a ghost loot
     // object on every peer.
     session.send(collectedBy(doid, collectorDoid));
+    // `collectedBy` plays the fly-to-collector effect but does not retire the
+    // distributed wrapper. Production disables it immediately afterwards;
+    // without this, the client and late-join snapshot retain every pickup for
+    // the rest of the floor.
+    session.send(objectDisable(doid));
     session.world?.forgetObject?.(doid);
+    session.fullDooberNotices?.delete(doid);
     session.doobers.delete(doid);
     session.objects.delete(doid);
 

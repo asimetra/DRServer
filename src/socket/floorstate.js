@@ -3,7 +3,7 @@ import { OP } from "./opcodes.js";
 import { config } from "../config.js";
 import { info, warn } from "../log.js";
 import { scheduleDungeonSummary } from "./summary.js";
-import { awardDungeonCompletion } from "./rewards.js";
+import { awardDungeonCompletion, awardInfiniteFloor } from "./rewards.js";
 import { membersOf } from "./match-world.js";
 import { dungeonMatches } from "./matches.js";
 
@@ -245,6 +245,9 @@ export const playFloorSound = (session, triggerable) => {
 export const completeFloor = (session, { immediate = false } = {}) => {
   if (session.floorFinished) return false;
   session.floorFinished = true;
+  for (const member of membersOf(session)) {
+    awardInfiniteFloor(member.world?.contextFor(member) ?? member);
+  }
   /**
    * A floor that says IMMEDIATE has already done the waiting.
    *

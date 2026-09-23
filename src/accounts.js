@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
-import { heldAccount } from "./account-registry.js";
+import { heldAccount, holdAccount } from "./account-registry.js";
 import { NameRefused, checkName, nameTaken } from "./account-names.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { modifierIdFor } from "./store.js";
@@ -35,35 +35,61 @@ const hydrate = (value, replacements) => {
   );
 };
 
-const accountScopedIds = (accountId) => {
-  const id = Number(accountId);
-  if (!Number.isSafeInteger(id) || id <= 0 || id > 0xffffffff) {
-    throw new RangeError(`account ${accountId} cannot supply persistent object ids`);
-  }
-  const offset = id % 400_000_000;
-  return {
-    avatarId: ACCOUNT_OBJECT_ID_FLOOR + offset,
-    starterItemId: ACCOUNT_OBJECT_ID_FLOOR + 400_000_000 + offset,
-  };
-};
-
 /**
- * Builds a fresh account with IDs unique to that account.
+ * Builds a fresh account with globally allocated persistent object IDs.
  *
- * The old template used avatar id 1 for everybody. Session-owned dungeons hid
- * the collision; a shared world cannot. XOR keeps a one-to-one mapping across
- * u32 account ids without a file-storage scan or a process-local counter.
+ * Deriving these IDs from the account number put them in the same range used by
+ * `nextObjectId`, so a chest award could take tomorrow's starter weapon ID.
+ * Modulo derivation also mapped account ids 400 million apart onto the same
+ * avatar. Both backends already have one allocator; creation must use it too.
  */
-export const createAccount = (id, now = new Date().toISOString()) =>
-  hydrate(accountTemplate, {
+export const createAccount = async (id, now = new Date().toISOString()) => {
+  const numeric = Number(id);
+  if (!Number.isSafeInteger(numeric) || numeric <= 0 || numeric > 0xffffffff) {
+    throw new RangeError(`invalid account id ${id}`);
+  }
+  const avatarId = await nextObjectId();
+  const starterItemId = await nextObjectId();
+  return hydrate(accountTemplate, {
     ACCOUNT_ID: id,
     NOW: now,
-    AVATAR_ID: accountScopedIds(id).avatarId,
-    STARTER_ITEM_ID: accountScopedIds(id).starterItemId,
+    AVATAR_ID: avatarId,
+    STARTER_ITEM_ID: starterItemId,
   });
+};
 
 const filePathFor = (id) => path.join(config.dataDir, `${id}.json`);
 let temporaryFileId = 0;
+
+const durableWrite = async (file, contents, { exclusive = false } = {}) => {
+  const handle = await fs.open(file, exclusive ? "wx" : "w");
+  try {
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+};
+
+const syncDirectory = async (directory) => {
+  const handle = await fs.open(directory, "r");
+  try {
+    await handle.sync();
+  } catch (error) {
+    // Some non-POSIX filesystems cannot fsync a directory. File contents were
+    // still synced before rename; only ignore the platform capability gap.
+    if (!["EINVAL", "ENOTSUP", "EBADF"].includes(error.code)) throw error;
+  } finally {
+    await handle.close();
+  }
+};
+
+const preserveCorruptAccount = async (file, raw) => {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const preserved = `${file}.corrupt-${stamp}-${process.pid}-${++temporaryFileId}`;
+  await durableWrite(preserved, raw, { exclusive: true });
+  return preserved;
+};
 
 /**
  * Accounts live either in one JSON file each or in Postgres. Both backends
@@ -409,6 +435,7 @@ export const withAccountLock = (id, work) => serialise(accountChains, id, work);
  * holding this one, so the pair cannot cycle.
  */
 const writeChains = new Map();
+const pendingAccountWrites = new Set();
 
 /**
  * Both of them, smallest id first.
@@ -441,6 +468,22 @@ export const loadAccount = async (id) => {
 };
 
 /**
+ * Loads an account and takes a gameplay hold as one account transaction.
+ *
+ * Match admission may inspect progression before a dungeon starts, but that
+ * read is only a snapshot. A store/RPC write can land while the client spends
+ * several seconds loading floor assets. Reading and registering the gameplay
+ * object under the same lock ensures entry sees that write and every later RPC
+ * receives this exact object instead of a second copy.
+ */
+export const acquireAccount = (id) =>
+  withAccountLock(id, async () => {
+    const live = heldAccount(id);
+    if (live) return holdAccount(live);
+    return holdAccount(await readAccount(id));
+  });
+
+/**
  * A first login, written down because it happened rather than by accident.
  *
  * There is no registration on this server: an operator signs a token for an id
@@ -458,7 +501,7 @@ export const loadAccount = async (id) => {
  */
 const createAndPersist = async (id) => {
   info(`accounts: creating new account ${id}`);
-  const account = await repairLoadedAccount(createAccount(id));
+  const account = await repairLoadedAccount(await createAccount(id));
   await saveAccount(account);
   return account;
 };
@@ -471,15 +514,27 @@ const readAccount = async (id) => {
   }
 
   const file = filePathFor(id);
+  let raw;
   try {
-    const raw = await fs.readFile(file, "utf8");
-    return repairLoadedAccount(JSON.parse(raw));
+    raw = await fs.readFile(file, "utf8");
   } catch (err) {
-    if (err.code !== "ENOENT") {
-      warn(`accounts: could not read ${file}: ${err.message} — recreating`);
-    }
-    return createAndPersist(id);
+    if (err.code === "ENOENT") return createAndPersist(id);
+    throw err;
   }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const preserved = await preserveCorruptAccount(file, raw);
+    warn(`accounts: invalid JSON in ${file}; preserved at ${preserved}`);
+    throw new SyntaxError(`Account ${id} contains invalid JSON; refusing to recreate it`, {
+      cause: error,
+    });
+  }
+  // Deliberately outside both catches: a failed migration is not a missing or
+  // corrupt account and must never trigger replacement.
+  return repairLoadedAccount(parsed);
 };
 
 /**
@@ -533,7 +588,7 @@ export const saveAccounts = async (accounts) => {
     }
   }
 
-  return withWriteChains(
+  const pending = withWriteChains(
     unique.map((account) => account.id),
     async () => {
       if (usingDatabase()) {
@@ -543,6 +598,25 @@ export const saveAccounts = async (accounts) => {
       return saveAccountsToFiles(unique);
     }
   );
+  pendingAccountWrites.add(pending);
+  try {
+    return await pending;
+  } finally {
+    pendingAccountWrites.delete(pending);
+  }
+};
+
+/** Waits until every account write already in flight (and any it queues) settles. */
+export const waitForAccountWrites = async () => {
+  while (pendingAccountWrites.size) {
+    await Promise.allSettled([...pendingAccountWrites]);
+  }
+};
+
+/** Releases backend resources after every listener and write has stopped. */
+export const closeAccountStorage = async () => {
+  if (usingDatabase() && database) await database.close();
+  database = null;
 };
 
 export const saveAccount = async (account) => {
@@ -660,7 +734,7 @@ export const createNewAccount = async ({ name } = {}) => {
       throw new RangeError("account id space exhausted");
     }
 
-    const account = createAccount(id);
+    const account = await createAccount(id);
     /*
      * Checked and claimed inside the allocation chain, which is what makes it
      * one decision rather than two racing ones: two registrations arriving at
@@ -741,11 +815,12 @@ const saveAccountsToFiles = async (accounts) => {
   await fs.mkdir(config.dataDir, { recursive: true });
   try {
     for (const { temporary, contents } of staged) {
-      await fs.writeFile(temporary, contents, "utf8");
+      await durableWrite(temporary, contents, { exclusive: true });
     }
     for (const { temporary, file } of staged) {
       await fs.rename(temporary, file);
     }
+    await syncDirectory(config.dataDir);
   } catch (error) {
     await Promise.all(staged.map(({ temporary }) => fs.rm(temporary, { force: true })));
     throw error;

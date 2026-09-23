@@ -48,6 +48,26 @@ test("the count lands inside the tier's quota", async () => {
   }
 });
 
+test("Infinite population shrinks to its authored role floors without crossing minima", async () => {
+  const gm = await loadGameMaster();
+  const tier = gm.raw.ColiseumTiers.find((row) => row.Constant === "ARENA_INFINITE");
+  const definition = gm.raw.InfiniteDungeons[0];
+  const first = populationFor(gm, tier, () => 0, {
+    infiniteDefinition: definition,
+    floorNumber: 1,
+  });
+  const deep = populationFor(gm, tier, () => 0, {
+    infiniteDefinition: definition,
+    floorNumber: 55,
+  });
+  const count = (rows, role) => rows.filter((row) => row.role === role).length;
+
+  assert.ok(count(deep, "fodder") <= count(first, "fodder"));
+  assert.ok(count(deep, "bruiser") <= count(first, "bruiser"));
+  assert.ok(count(deep, "fodder") >= Math.round(count(first, "fodder") * 0.35));
+  assert.ok(count(deep, "bruiser") >= Math.round(count(first, "bruiser") * 0.75));
+});
+
 test("fodder is dealt across the pool rather than piled on one constant", async () => {
   const gm = await loadGameMaster();
   const stock = populationFor(gm, tierOf(gm, "ARENA_INFINITE"), () => 0.5);

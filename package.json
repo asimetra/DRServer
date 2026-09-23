@@ -12,6 +12,7 @@
     "start": "node --env-file-if-exists=.env src/index.js",
     "test": "node tools/run-tests.js",
     "test:combat-matrix": "node tools/combat-matrix.js",
+    "audit:account-ids": "node tools/account-id-audit.js",
     "check:public": "node tools/check-public-release.js",
     "check:data": "node tools/sync-game-data.js --check",
     "sync:data": "node tools/sync-game-data.js",

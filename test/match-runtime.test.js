@@ -16,6 +16,7 @@ import {
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
 import { applyDamage, hitPointsUpdate } from "../src/socket/combat.js";
+import { buildEntryResponse, FLID } from "../src/socket/matchmaker.js";
 import { readNpc } from "./helpers/floor.js";
 
 let nextDoid = 9000;
@@ -88,8 +89,9 @@ const prepareFixture = async (session, { sendPlayerOwner = false } = {}) => {
   return true;
 };
 
-const buildFixtureWorld = async (context, mapNodeId) => {
+const buildFixtureWorld = async (context, mapNodeId, { onPlayerReady = () => {} } = {}) => {
   await prepareFixture(context, { sendPlayerOwner: true });
+  await onPlayerReady();
   context.dungeonActive = true;
   context.dungeonZone = 10;
   context.mapNodeId = mapNodeId;
@@ -225,28 +227,50 @@ test("late join replays one shared world in captured parent/owner order", async 
   assert.equal(host.world.playerActors.has(joiner.heroDoid), true);
 });
 
-test("match admission account data is reused for host and late-join preparation", async () => {
+test("the owner player precedes acceptance, area, floor, and hero", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(1041, 1101041);
+  const result = registry.resolve({ session: host, mapNodeId: 50082 });
+
+  await joinDungeonMatch(host, result, { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+    onPlayerReady: () =>
+      host.send(buildEntryResponse(host.matchMakerDoid, 0, result.match.mapNodeId)),
+  });
+
+  const first = frameHead(host.sent[0]);
+  assert.equal(first.opcode, OP.CLIENT_CREATE_OBJECT_REQUIRED_OTHER_OWNER_RESP);
+  assert.equal(first.clid, CLID.PlayerGameObject);
+
+  const accepted = new PacketReader(host.sent[1].subarray(2));
+  assert.equal(accepted.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
+  assert.equal(accepted.u32(), host.matchMakerDoid);
+  assert.equal(accepted.u16(), FLID.ClientRequestEntryResponce);
+  assert.equal(accepted.u16(), 0);
+
+  assert.equal(frameHead(host.sent[2]).clid, CLID.DistributedDungionArea);
+  assert.equal(frameHead(host.sent[3]).clid, CLID.DistributedDungeonFloor);
+  assert.equal(frameHead(host.sent[4]).clid, CLID.HeroGameObject);
+});
+
+test("match admission snapshots are not passed into host or late-join preparation", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(1051, 1101051);
-  const hostAccount = { marker: "host account" };
   const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
-  hosted.account = hostAccount;
   let hostPreparedWith;
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: async (context, mapNodeId, options) => {
-      hostPreparedWith = options.account;
+      hostPreparedWith = options;
       return buildFixtureWorld(context, mapNodeId);
     },
   });
 
   const joiner = member(1052, 1101052);
-  const joinerAccount = { marker: "joiner account" };
   const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
-  joined.account = joinerAccount;
   let joinerPreparedWith;
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: async (session, options) => {
-      joinerPreparedWith = options.account;
+      joinerPreparedWith = options;
       return prepareFixture(session, options);
     },
     beginManaRegen: async () => () => {},
@@ -254,8 +278,10 @@ test("match admission account data is reused for host and late-join preparation"
     waitForAssets: async () => {},
   });
 
-  assert.equal(hostPreparedWith, hostAccount);
-  assert.equal(joinerPreparedWith, joinerAccount);
+  assert.equal(hostPreparedWith.account, undefined);
+  assert.equal(typeof hostPreparedWith.onPlayerReady, "function");
+  assert.equal(typeof hostPreparedWith.waitForHandshake, "function");
+  assert.equal(joinerPreparedWith.account, undefined);
 });
 
 test("a late joiner's equipped pet is snapshotted for itself and owned by the shared world", async () => {
@@ -335,7 +361,7 @@ test("member preparation starts each dungeon with fresh completion and summary s
   };
 
   await prepareDungeonMember(session, {
-    account,
+    acquireAccountById: async () => account,
     sendPlayerOwner: false,
   });
 
