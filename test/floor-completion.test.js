@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadFloor } from "../src/socket/floors.js";
-import { trackTriggers, reportNpcDeath } from "../src/socket/triggers.js";
+import {
+  floorPlanForMapNode,
+  loadFloor,
+  loadFloorAt,
+  rewardGeneratorIds,
+} from "../src/socket/floors.js";
+import {
+  emitGeneratorRelease,
+  reportNpcDeath,
+  trackTriggers,
+} from "../src/socket/triggers.js";
 
 /**
  * How a floor actually ends.
@@ -77,4 +86,51 @@ test("an unrelated death fires nothing", async () => {
   const { session } = await bossSession();
   assert.equal(reportNpcDeath(session, "not-a-placement"), false);
   assert.equal(reportNpcDeath(session, undefined), false);
+});
+
+test("every trophy dungeon waits on its terminal reward chest generator", async () => {
+  const trophyNodes = [
+    50002, 50005, 50009, 50014, 50020, 50026,
+    50035, 50043, 50051, 50056, 50069, 50083,
+  ];
+
+  for (const nodeId of trophyNodes) {
+    const plan = await floorPlanForMapNode(nodeId, { seed: 1 });
+    const floor = await loadFloorAt(plan, plan.floors.length - 1);
+    const rewardIds = rewardGeneratorIds(floor);
+    const rewards = floor.placements.generator
+      .filter((generator) => rewardIds.has(generator.id))
+      .map((generator) => generator.spawnConstant);
+
+    assert.deepEqual(
+      rewards,
+      ["REWARD_CHEST_A"],
+      `node ${nodeId} classified the wrong generator(s) as its reward: ${rewards}`
+    );
+  }
+});
+
+test("a COMPLETE-style reward chest does not start its countdown when it appears", () => {
+  const floor = {
+    placements: {
+      trigger: [],
+      generator: [{ id: "chest", spawnConstant: "REWARD_CHEST_A", clearsOnAllDead: true }],
+      logicGate: [{ id: "countdown", constant: "RESET_TIMER_GATE", startDelay: 3 }],
+      triggerable: [{ id: "complete", constant: "FLOOR_COMPLETE_TRIGGERABLE" }],
+    },
+    wiring: new Map([
+      ["chest", ["countdown"]],
+      ["countdown", ["complete"]],
+    ]),
+  };
+  const session = {
+    id: 2,
+    send: () => {},
+    rewardGenerators: rewardGeneratorIds(floor),
+  };
+
+  trackTriggers(session, floor);
+  assert.equal(emitGeneratorRelease(session, floor.placements.generator[0]), false);
+  assert.equal(session.logicGateTimers.size, 0, "the countdown started before the chest cleared");
+  assert.equal(session.signalValues.get("chest"), false, "appearing was mistaken for clearing");
 });

@@ -116,24 +116,40 @@ export const EXIT_TRIGGER = "JASONS_DUNGEON_EXIT";
  * reward.
  *
  * Found by following the wiring rather than by matching a constant: a reward
- * generator is simply one whose signal reaches a FLOOR_COMPLETION_IMMEDIATE.
- * That holds whatever the tile calls its chest, which is the point, since the
- * nine theme libraries do not agree on names.
+ * generator is the final generator whose signal reaches either of the two
+ * floor-completion triggerables without passing through another generator.
+ *
+ * Both details matter. Nine trophy maps end on FLOOR_COMPLETE_TRIGGERABLE,
+ * while three use FLOOR_COMPLETION_IMMEDIATE; recognizing only the latter let
+ * the former start their countdown as soon as the chest appeared. And a boss
+ * generator naturally reaches completion *through* the reward generator, so
+ * accepting every upstream generator paid the Dino rivals and Ice Dragon as
+ * though they themselves were treasure chests.
  */
 export const rewardGeneratorIds = (floor) => {
+  const completionConstants = new Set([
+    "FLOOR_COMPLETION_IMMEDIATE",
+    "FLOOR_COMPLETE_TRIGGERABLE",
+  ]);
   const completions = new Set(
     (floor.placements?.triggerable ?? [])
-      .filter((triggerable) => triggerable.constant === "FLOOR_COMPLETION_IMMEDIATE")
+      .filter((triggerable) => completionConstants.has(triggerable.constant))
       .map((triggerable) => triggerable.id)
   );
   if (!completions.size) return new Set();
 
+  const generators = new Set(
+    (floor.placements?.generator ?? []).map((generator) => generator.id)
+  );
   const reaches = (id, depth = 0, seen = new Set()) => {
     if (depth > 8 || seen.has(id)) return false;
-    seen.add(id);
+    const visited = new Set(seen).add(id);
     for (const target of floor.wiring.get(id) ?? []) {
       if (completions.has(target)) return true;
-      if (reaches(target, depth + 1, seen)) return true;
+      // This generator only starts another one. The downstream generator owns
+      // the eventual completion and is the one whose spawn must be collected.
+      if (generators.has(target)) continue;
+      if (reaches(target, depth + 1, visited)) return true;
     }
     return false;
   };

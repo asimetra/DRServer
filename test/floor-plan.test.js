@@ -66,16 +66,25 @@ test("two nodes on the same theme get their own map", async () => {
 });
 
 test("every boss node ends on its own authored map", async () => {
-  const bosses = [50002, 50005, 50009, 50014, 50020, 50026, 50035, 50043, 50051, 50056, 50069, 50083];
+  // ColiseumTiers.MinFloors is the generated approach and
+  // CustomMaps.NumFloors the authored ending. The deliberate zeroes on 50005
+  // and 50035 are why those two open directly on their authored encounter.
+  const bosses = new Map([
+    [50002, "AA"], [50005, "A"], [50009, "GA"], [50014, "GA"],
+    [50020, "GAA"], [50026, "GA"], [50035, "A"], [50043, "GA"],
+    [50051, "GGA"], [50056, "GA"], [50069, "GGA"], [50083, "GGAA"],
+  ]);
 
   const finals = [];
-  for (const id of bosses) {
+  for (const [id, expectedShape] of bosses) {
     const plan = await floorPlanForMapNode(id, { seed: 1 });
+    const shape = kinds(plan).map((kind) => kind[0].toUpperCase()).join("");
+    assert.equal(shape, expectedShape, `${id} has the wrong generated/authored floor sequence`);
     const last = plan.floors.at(-1);
     assert.ok(last.authored, `${id} does not end on an authored map`);
     finals.push(last.authored);
   }
-  assert.equal(new Set(finals).size, bosses.length, "and no two of them share one");
+  assert.equal(new Set(finals).size, bosses.size, "and no two of them share one");
 });
 
 test("an ordinary dungeon is laid out throughout", async () => {
