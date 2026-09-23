@@ -35,6 +35,9 @@ logs-fresh/
 !/docs/combat-conformance.md
 !/docs/dc-schema.json
 
+# Local audit reports are built from private capture evidence.
+/reports/
+
 # Client patch material, whole. The directory only ever holds work derived from
 # a decompiled binary.
 /tools/client-patches/
