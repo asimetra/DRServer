@@ -370,6 +370,22 @@ export const deathEffectMsFor = (gm, attack) => {
   return (last / FRAMES_PER_SECOND) * 1000;
 };
 
+/** The awareness and leash authored by one NPC row, without a global minimum. */
+export const npcAwarenessProfile = (
+  npc,
+  { fallbackAggroRadius = config.npcAggroRadius, ownedPet = false } = {}
+) => {
+  const aggroRadius = Math.max(0, Number(npc?.AggroRadius ?? fallbackAggroRadius));
+  const keepsAuthoredLeash = ownedPet || npc?.CharType === "BEAST";
+  const authoredDisengage = Number(
+    npc?.DisengageDist ?? (keepsAuthoredLeash ? aggroRadius : 1600)
+  );
+  const disengageDistance = keepsAuthoredLeash
+    ? Math.max(aggroRadius, authoredDisengage)
+    : Math.max(authoredDisengage, aggroRadius + 400);
+  return { aggroRadius, disengageDistance };
+};
+
 const spawnNpc = async (context, constant, position, scale, options = {}) => {
   const { session, floorDoid, heroDoid, mapNodeId, gm } = context;
   const emptyResult = options.returnDoid ? null : 0;
@@ -511,6 +527,28 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
     }
   }
   const hitPoints = partyHitPoints[Math.min(5, partySize)];
+  const generatedMasterId = npc.CharType === "PET" ? Number(options.masterId ?? heroDoid) : 0;
+  const generatedScale = scale ?? npc.Scale ?? 1;
+  const generatedFlip = at.flip ?? 0;
+  const generatedLayer = layerFor(npc, at.layer);
+  const generatedTriggerState = options.triggerState ?? 1;
+  const npcCreateFrame = (position, heading, currentHitPoints = hitPoints) =>
+    npcGenerate({
+      doid: npcDoid,
+      parent: floorDoid,
+      npcType: npc.Id,
+      masterId: generatedMasterId,
+      level: npcLevel,
+      position,
+      heading,
+      scale: generatedScale,
+      flip: generatedFlip,
+      weapons,
+      team,
+      hitPoints: currentHitPoints,
+      layer: generatedLayer,
+      triggerState: generatedTriggerState,
+    });
   /**
    * The body the client actually collides with, which is not the one in the
    * NPC table.
@@ -559,20 +597,17 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
         }))
       : [];
   /**
-   * The global floor widens hostile NPC awareness, not companion or wild-beast
-   * awareness.
-   * Applying its default 1800 to a 600-range wolf/dragon and an 800-range
-   * rhino made pets run three rooms ahead of their owners. Their own rows are
-   * already explicit and match the capture corpus, so those actors keep the
-   * authored radius.
+   * The row's awareness wins; the configured value is only a fallback.
+   *
+   * Treating `npcAggroRadius` as a minimum replaced 91 of the 98 moving enemy
+   * rows: a 600-radius brute became 900 (2.25x the awareness area), a
+   * 300-radius enemy became 900 (9x), and the deliberately passive
+   * WARTHOG_WHITE_FAT was raised from zero. Every shipped NPC row authors this
+   * field, so none of those values needs a server-wide correction.
    */
-  const authoredAwareness = options.petOwnerDoid || npc.CharType === "BEAST";
-  const aggroRadius = authoredAwareness
-    ? Math.max(0, Number(npc.AggroRadius ?? 600))
-    : Math.max(npc.AggroRadius ?? 600, config.npcAggroRadius);
-  const disengageDistance = authoredAwareness
-    ? Math.max(aggroRadius, Number(npc.DisengageDist ?? aggroRadius))
-    : Math.max(npc.DisengageDist ?? 1600, aggroRadius + 400);
+  const { aggroRadius, disengageDistance } = npcAwarenessProfile(npc, {
+    ownedPet: Boolean(options.petOwnerDoid),
+  });
   // Twenty-seven rows author DeathAttack — the exploding barrels in every
   // theme among them — and it is what the thing does as it breaks.
   const deathAttack = npc.DeathAttack ? await attackForConstant(npc.DeathAttack) : null;
@@ -591,6 +626,9 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       partyHitPoints,
       partySize,
       constant: resolved,
+      abilities: new Set(
+        [npc.Ability1, npc.Ability2, npc.Ability3, npc.Ability4, npc.Ability5].filter(Boolean)
+      ),
       level: npcLevel,
       // Persistent pets and rare moving BEAST rows need their levelled vector.
       // Pet offence follows the captured level^1.5 curve; a wild beast follows
@@ -613,6 +651,13 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
        * was laid. That is the reported "there are no mines on the map".
        */
       team: TEAM_BY_CHAR_TYPE[npc.CharType] ?? TEAM.ENEMIES,
+      teleportRegenerate:
+        npc.Aggro_AI_Type === "TELEPORT_AI"
+          ? (position, heading) => {
+              const current = session.actors.get(npcDoid);
+              session.send(npcCreateFrame(position, heading, current?.hitPoints ?? hitPoints));
+            }
+          : null,
       // Only real enemies gate floor completion; smashing every barrel is not
       // what finishes a dungeon.
       isEnemy: npc.CharType === "ENEMY",
@@ -757,6 +802,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
                 crowd: Boolean(npc.CollectsCrowd),
               },
               state: "idle",
+              attackLockedUntil: 0,
               /**
                * A monster let out of a cage is already coming for you. Waiting
                * for it to notice, when it was released precisely because you
@@ -765,14 +811,25 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
                * way.
                */
               engaged: Boolean(options.engaged),
-              // Hostiles may use the server's wider configured floor; pets
-              // retain their authored awareness radius (see the calculation
-              // above) so they do not run rooms ahead of their owner.
+              // Hostiles, wild beasts and pets all keep their authored
+              // awareness radius (see the calculation above).
               aggroRadius,
               // A pursuer must not disengage immediately after it aggroes.
               disengageDistance,
               moveSpeed: npc.BaseMove ?? 180,
               collisionRadius,
+              behavior: npc.Aggro_AI_Type ?? "CHASE_AI",
+              fleeTimerMs: Math.max(0, Number(npc.FleeTimer ?? 0) * 1000),
+              fleeRandMs: Math.max(0, Number(npc.FleeTimerRand ?? 0) * 1000),
+              fleeArmed: true,
+              teleportRange: Math.max(0, Number(npc.TeleportRange ?? 0)),
+              teleportRecurMs: Math.max(0, Number(npc.TeleportRecurT ?? 0) * 1000),
+              teleportRecurRandMs: Math.max(0, Number(npc.TeleportRecurRand ?? 0) * 1000),
+              preTeleportAttackMs: Math.max(0, Number(npc.PreTeleportAttack ?? 0) * 1000),
+              postTeleportAttackMs: Math.max(0, Number(npc.PostTeleportAttack ?? 0) * 1000),
+              teleportInTimeline: npc.TeleportInTimeline || "TELEPORT_IN",
+              teleportOutTimeline: npc.TeleportOutTimeline || "TELEPORT_OUT",
+              teleportPhase: "visible",
               // The furthest any of its attacks reaches. This is the "may it
               // swing from here at all" bar; which attack it then uses is
               // decided per swing against that attack's own band.
@@ -798,11 +855,10 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
                * archers above, 350 for KNIGHT_THROWING against a measured p25
                * of 305, 70 for KNIGHT_HALBERD against a measured p05 of 69.
                *
-               * This is a standoff and not kiting. A real kiter backs away when
-               * you close and `FleeTimer`/`FleeTimerRand` say for how long;
-               * none of that is here. It only stops a marksman walking into
-               * your face, which is what walking to contact would otherwise
-               * make it do.
+               * The standoff is also the threshold for the authored flee
+               * state. `ai.js` backs KITE_AI away when a target crosses it and
+               * holds attacks for FleeTimer/FleeTimerRand; rows authoring zero
+               * retain this stationary standoff without inventing a pause.
                */
               keepDistance:
                 petRangedStandoff > 0
@@ -874,32 +930,10 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
 
   addNavigationObstacle(session.navigation, npcDoid, navigationColliders);
 
-  session.send(
-    npcGenerate({
-      doid: npcDoid,
-      parent: floorDoid,
-      npcType: npc.Id,
-      /**
-       * Only a pet has a master. The official sends zero for every trap and
-       * monster in the corpus; this server sent the hero's doid for all of
-       * them, which the client feeds to `checkIfMasterIsUser` and then gates
-       * behind `CharType == "PET"` — harmless, but it is not what a monster is.
-       */
-      masterId: npc.CharType === "PET" ? Number(options.masterId ?? heroDoid) : 0,
-      level: npcLevel,
-      position: at,
-      heading: spawnHeading,
-      scale: scale ?? npc.Scale ?? 1,
-      flip: at.flip ?? 0,
-      weapons,
-      team,
-      hitPoints,
-      // Spikes and pressure plates are authored under the hero, not beside it,
-      // and the tile that placed one overrides whatever its row asks for.
-      layer: layerFor(npc, at.layer),
-      triggerState: options.triggerState ?? 1,
-    })
-  );
+  session.send(npcCreateFrame(at, spawnHeading));
+  if (npc.Aggro_AI_Type === "TELEPORT_AI") {
+    session.send(npcTimelineAction(npcDoid, npc.TeleportInTimeline || "TELEPORT_IN"));
+  }
 
   /**
    * The animation an arrival is, for the one thing whose attack is only that.
@@ -925,7 +959,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
   return options.returnDoid ? npcDoid : 1;
 };
 
-const petTimelineAction = (doid, timeline) =>
+const npcTimelineAction = (doid, timeline) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
     .u32(doid)
     .u16(145) // DistributedNPCGameObject.ReceiveTimelineAction
@@ -1018,8 +1052,8 @@ export const spawnEquippedPet = async (context, member = context?.session?.membe
   if (!doid) return null;
 
   owner.petDoid = doid;
-  if (respawn) {
-    context.session.send(petTimelineAction(doid, npc.TeleportInTimeline || "TELEPORT_IN"));
+  if (respawn && npc.Aggro_AI_Type !== "TELEPORT_AI") {
+    context.session.send(npcTimelineAction(doid, npc.TeleportInTimeline || "TELEPORT_IN"));
   }
   return doid;
 };

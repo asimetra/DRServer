@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { FRAMES_PER_SECOND } from "../gamemaster.js";
 import { info, warn } from "../log.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
@@ -12,7 +13,9 @@ import {
   hasLineOfSight,
   isPositionBlocked,
   moveWithNavigation,
+  nearestClearPosition,
 } from "./navigation.js";
+import { objectDisable } from "./objects.js";
 
 const npcPositionUpdate = (doid, position) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
@@ -29,10 +32,18 @@ export const npcHeadingUpdate = (doid, heading) =>
     .f32(heading)
     .frame();
 
+const npcTimelineAction = (doid, timeline) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(doid)
+    .u16(145) // DistributedNPCGameObject.ReceiveTimelineAction
+    .utf(timeline)
+    .frame();
+
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 const ROUTE_REFRESH_MS = 1000;
 const FAILED_PATH_RETRY_MS = 2000;
 const ATTACK_RANGE_EPSILON = 2;
+const NPC_WALK_ACCELERATION_SECONDS = 0.9;
 /** Only this many enemies may deliberately choose one pet over a live hero. */
 export const MAX_PET_AGGRESSORS = 2;
 /** A pet must be materially ahead of the hero before it is an aggro candidate. */
@@ -42,6 +53,30 @@ const squaredDistanceTo = (from, to) => {
   const x = to.x - from.x;
   const y = to.y - from.y;
   return x * x + y * y;
+};
+
+/**
+ * Ramps an NPC's ordinary walk up to its authored movement speed.
+ *
+ * Official captures still reach each NPC row's `BaseMove`, but cover about
+ * 0.67 of that distance during the first second of a run. Starting at full
+ * speed covered 0.90 locally and made every re-engaging pack snap onto the
+ * player. Four 250 ms server turns with a 0.9-second ramp cover two thirds of
+ * the authored first-second distance, matching the official 0.67 envelope and
+ * its transform cadence. Attack lunges and player-owned pets have their own
+ * movement rules and deliberately do not use this ramp.
+ */
+export const npcWalkingSpeed = (ai, targetSpeed, deltaSeconds) => {
+  const target = Math.max(0, Number(targetSpeed) || 0);
+  if (!(target > 0)) {
+    ai.walkSpeed = 0;
+    return 0;
+  }
+  const current = Math.max(0, Math.min(target, Number(ai.walkSpeed) || 0));
+  const step = target * Math.max(0, Number(deltaSeconds) || 0) /
+    NPC_WALK_ACCELERATION_SECONDS;
+  ai.walkSpeed = Math.min(target, current + step);
+  return ai.walkSpeed;
 };
 
 const collisionRadius = (actor) =>
@@ -115,6 +150,38 @@ const heroStandoff = (actor, hero) => {
  */
 const heroReach = (actor, hero) => Math.max(actor.ai?.attackRange ?? 0, heroContact(actor, hero));
 
+/** A clear authored-range point around the target for one teleport cycle. */
+const teleportDestinationFor = (session, actor, target, victim, random) => {
+  const ai = actor.ai;
+  const contact = heroContact(actor, victim);
+  const attackReach = Math.max(contact, Number(ai.attackRange ?? contact) - 8);
+  const maximum = Math.max(contact, Math.min(Number(ai.teleportRange ?? 0), attackReach));
+  const minimum = Math.min(maximum, Math.max(contact, maximum * 0.5));
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const angle = random() * Math.PI * 2;
+    const distance = minimum + (maximum - minimum) * random();
+    const desired = {
+      x: target.x + Math.cos(angle) * distance,
+      y: target.y + Math.sin(angle) * distance,
+    };
+    if (!session.navigation) return desired;
+    const clear = nearestClearPosition(
+      session.navigation,
+      desired,
+      collisionRadius(actor),
+      {
+        reach: Math.max(60, maximum * 0.5),
+        towards: target,
+        accept: (candidate) =>
+          hasLineOfSight(session.navigation, candidate, target, collisionRadius(actor)),
+      }
+    );
+    if (clear) return clear;
+  }
+  return { ...actor.position };
+};
+
 /**
  * The one position this server must never send: a body inside the player's.
  *
@@ -138,27 +205,51 @@ const heroReach = (actor, hero) => Math.max(actor.ai?.attackRange ?? 0, heroCont
  * 43. Walking is worse for the obvious reason, that the chase aims at where the
  * player was last heard from and the player is no longer there.
  *
- * Clamping the destination rather than the step, and before navigation rather
- * than after, so a wall still wins the argument.
+ * The whole step is swept, not merely its destination. A fast attack lunge can
+ * begin on one side of the hero and end outside the body on the other side; an
+ * endpoint-only check called both ends safe and sent a 100-200 unit apparent
+ * teleport straight through the player. The first circle intersection is the
+ * furthest legal destination on that step. This still runs before navigation,
+ * so a wall wins the argument afterward.
  */
 const keptOutOfHeroes = (target, actor, heroes) => {
+  const start = actor.position;
   let { x, y } = target;
   for (const hero of heroes) {
     if (!hero.position || !hero.actor) continue;
     const contact = heroContact(actor, hero.actor);
-    let dx = x - hero.position.x;
-    let dy = y - hero.position.y;
-    let distance = Math.hypot(dx, dy);
-    if (distance >= contact) continue;
-    // Exactly on top of the player has no direction to be pushed out along;
-    // any fixed one will do, and the chase will correct it next tick.
-    if (distance < 0.001) {
-      dx = 1;
-      dy = 0;
-      distance = 1;
+    const fromX = start.x - hero.position.x;
+    const fromY = start.y - hero.position.y;
+    const fromDistance = Math.hypot(fromX, fromY);
+    const stepX = x - start.x;
+    const stepY = y - start.y;
+    const stepLengthSquared = stepX * stepX + stepY * stepY;
+    if (stepLengthSquared < 1e-9) continue;
+
+    const towards = fromX * stepX + fromY * stepY;
+    if (fromDistance < contact - 0.001) {
+      const targetX = x - hero.position.x;
+      const targetY = y - hero.position.y;
+      const targetDistance = Math.hypot(targetX, targetY);
+      if (targetDistance >= contact) continue;
+      // Separation and backwards attack movement must still be able to lift an
+      // already-overlapping spawn out. An inward/crossing step, however, keeps
+      // the existing visible position instead of choosing the opposite side.
+      if (towards <= 0 || targetDistance < 0.001) return { ...start };
+      x = hero.position.x + (targetX / targetDistance) * contact;
+      y = hero.position.y + (targetY / targetDistance) * contact;
+      continue;
     }
-    x = hero.position.x + (dx / distance) * contact;
-    y = hero.position.y + (dy / distance) * contact;
+
+    if (fromDistance <= contact + 0.001 && towards >= 0) continue;
+
+    const c = fromX * fromX + fromY * fromY - contact * contact;
+    const discriminant = 4 * towards * towards - 4 * stepLengthSquared * c;
+    if (discriminant < 0) continue;
+    const root = (-2 * towards - Math.sqrt(discriminant)) / (2 * stepLengthSquared);
+    if (root < 0 || root > 1) continue;
+    x = start.x + stepX * root;
+    y = start.y + stepY * root;
   }
   return { x, y };
 };
@@ -194,6 +285,20 @@ const usableAttacks = (ai, distance, contact, now) => {
   );
 };
 
+/** Chooses uniformly from the authored attacks usable in this range/cooldown band. */
+export const chooseNpcAttack = (
+  ai,
+  distance,
+  contact,
+  now,
+  random = Math.random
+) => {
+  const choices = usableAttacks(ai, distance, contact, now);
+  if (!choices.length) return null;
+  const roll = Math.min(1 - Number.EPSILON, Math.max(0, Number(random()) || 0));
+  return choices[Math.floor(roll * choices.length)];
+};
+
 const clearNpcTarget = (actor) => {
   const { ai } = actor;
   if (!ai) return;
@@ -207,6 +312,11 @@ const clearNpcTarget = (actor) => {
   ai.navigationRevision = undefined;
   ai.targetDoid = null;
   ai.nextTargetAt = 0;
+  ai.walkSpeed = 0;
+  ai.attackLockedUntil = 0;
+  ai.fleeUntil = 0;
+  ai.fleeTargetDoid = null;
+  ai.fleeArmed = true;
 };
 
 /** Indexes active NPCs so local separation only considers nearby neighbours. */
@@ -613,7 +723,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   const enemies = [];
   const beasts = [];
   for (const [doid, actor] of actors) {
-    if (actor.dead || !(actor.hitPoints > 0) || !actor.position) continue;
+    if (actor.dead || actor.teleportHidden || !(actor.hitPoints > 0) || !actor.position) continue;
     const candidate = { doid, actor, position: actor.position, member: null };
     if (actor.isPet) pets.push(candidate);
     else if (actor.isEnemy) enemies.push(candidate);
@@ -764,6 +874,36 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     }
     if (!victim) continue;
     const target = victim.position;
+    const recurringTeleport =
+      ai.behavior === "TELEPORT_AI" &&
+      (ai.teleportRecurMs ?? 0) > 0 &&
+      typeof actor.teleportRegenerate === "function";
+
+    if (actor.teleportHidden) {
+      if (!recurringTeleport || now < (ai.teleportReturnAt ?? Infinity)) continue;
+      const random = session.random ?? Math.random;
+      const destination = teleportDestinationFor(session, actor, target, victim.actor, random);
+      actor.position.x = destination.x;
+      actor.position.y = destination.y;
+      actor.heading =
+        (Math.atan2(target.y - destination.y, target.x - destination.x) * 180) / Math.PI;
+      actor.teleportHidden = false;
+      ai.teleportPhase = "visible";
+      ai.teleportHideAt = 0;
+      ai.teleportReturnAt = 0;
+      ai.teleportCycleStarted = true;
+      ai.nextAttackAt = now + (ai.preTeleportAttackMs ?? 0);
+      ai.path = null;
+      ai.pathIndex = 0;
+      ai.pathTarget = null;
+      ai.nextPathAt = 0;
+      ai.walkSpeed = 0;
+      actor.teleportRegenerate(destination, actor.heading);
+      session.send(npcTimelineAction(doid, ai.teleportInTimeline ?? "TELEPORT_IN"));
+      ai.state = "teleport-in";
+      continue;
+    }
+
     if (ai.wave && now >= ai.wave.group.expiresAt) ai.wave = null;
     if (
       advanceNpcRelease(
@@ -791,6 +931,30 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       }
     }
 
+    if (recurringTeleport && !ai.teleportCycleStarted) {
+      ai.teleportCycleStarted = true;
+      ai.nextAttackAt = Math.max(
+        ai.nextAttackAt ?? 0,
+        now + (ai.preTeleportAttackMs ?? 0)
+      );
+    }
+    if (recurringTeleport && ai.teleportPhase === "post-attack") {
+      if (now < (ai.teleportHideAt ?? 0)) {
+        ai.state = "teleport-wait";
+        continue;
+      }
+      const random = session.random ?? Math.random;
+      actor.teleportHidden = true;
+      ai.teleportPhase = "hidden";
+      ai.teleportReturnAt =
+        now +
+        (ai.teleportRecurMs ?? 0) +
+        random() * (ai.teleportRecurRandMs ?? 0);
+      ai.state = "teleport-hidden";
+      session.send(objectDisable(doid));
+      continue;
+    }
+
     /**
      * What a debuff on it lets it still do.
      *
@@ -809,7 +973,8 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const mobility = buffMultiplierFor(session, doid, "MOVEMENT");
     const cannotAttack = ["STUN", "SHOCK", "PARALYZED", "DISABLE_CONTROLS"]
       .some((ability) => hasAbility(session, doid, ability));
-    const speed = ai.moveSpeed * mobility;
+    const topSpeed = ai.moveSpeed * mobility;
+    const attackLocked = now < (ai.attackLockedUntil ?? 0);
 
     const route = routeToTarget(session, actor, target, now);
 
@@ -857,8 +1022,60 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const standoff = followingOwner
       ? Math.max(heroContact(actor, victim.actor), ai.returnDistance ?? 0)
       : heroStandoff(actor, victim.actor);
+    /**
+     * A kiter does not merely stop at range. When its target crosses the
+     * authored MinFleeDistMult threshold it enters one flee window, backs out
+     * to that threshold while still facing the target, and withholds attacks
+     * until the window ends. The official cadence exposes the pause: a
+     * KNIGHT_THROWING frequently has about four authored flee seconds between
+     * throws, while a prison thrower left at range can keep its one-second
+     * cadence.
+     */
+    if (ai.fleeTargetDoid !== victim.doid) {
+      ai.fleeUntil = 0;
+      ai.fleeTargetDoid = victim.doid;
+      ai.fleeArmed = true;
+    }
+    const canFlee =
+      !followingOwner &&
+      ai.behavior === "KITE_AI" &&
+      (ai.fleeTimerMs ?? 0) > 0 &&
+      standoff > heroContact(actor, victim.actor) &&
+      route.direct;
+    const fleeWindowActive = canFlee && now < (ai.fleeUntil ?? 0);
+    /**
+     * Crossing the standoff starts one flee window, not an infinite loop.
+     *
+     * The old condition started another full window on the exact tick the
+     * previous one expired whenever the player was still close. A cornered or
+     * equally fast kiter therefore withheld attacks forever. It is re-armed
+     * only after a completed window and after it has actually regained its
+     * authored standoff. If the player keeps it pinned, the window ends and it
+     * fights at close range; moving clear lets a later approach trigger a new
+     * retreat.
+     */
+    if (
+      canFlee &&
+      !fleeWindowActive &&
+      ai.fleeArmed === false &&
+      distance >= standoff
+    ) {
+      ai.fleeArmed = true;
+    }
+    if (
+      canFlee &&
+      !fleeWindowActive &&
+      ai.fleeArmed !== false &&
+      distance < standoff
+    ) {
+      const random = session.random ?? Math.random;
+      ai.fleeUntil = now + (ai.fleeTimerMs ?? 0) + random() * (ai.fleeRandMs ?? 0);
+      ai.fleeArmed = false;
+    }
+    const fleeing = canFlee && now < (ai.fleeUntil ?? 0);
     let chaseX = 0;
     let chaseY = 0;
+    let usedOrdinaryWalk = false;
     /**
      * A lunge overrides the walk for as long as it lasts.
      *
@@ -871,6 +1088,15 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     if (ai.lunge && now < ai.lunge.until) {
       chaseX = ai.lunge.x * mobility * deltaSeconds;
       chaseY = ai.lunge.y * mobility * deltaSeconds;
+    } else if (attackLocked) {
+      // The swing owns this window. Ordinary chase here turns a dodgeable
+      // melee windup into a homing hit; only authored lunge movement may run.
+    } else if (fleeing && distance < standoff) {
+      const retreat = Math.min(topSpeed * deltaSeconds, standoff - distance);
+      if (distance > 0.001) {
+        chaseX = ((actor.position.x - target.x) / distance) * retreat;
+        chaseY = ((actor.position.y - target.y) / distance) * retreat;
+      }
     } else if (
       ai.kind === "pet" &&
       (ai.keepDistance ?? 0) > 0 &&
@@ -891,7 +1117,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
        * at 100-199 units left Dragon with neither bite nor fireball available,
        * so both actors could stand still forever.
        */
-      const retreat = Math.min(speed * deltaSeconds, standoff - distance);
+      const retreat = Math.min(topSpeed * deltaSeconds, standoff - distance);
       if (distance > 0.001) {
         chaseX = ((actor.position.x - target.x) / distance) * retreat;
         chaseY = ((actor.position.y - target.y) / distance) * retreat;
@@ -899,12 +1125,17 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     } else if (route.waypoint && (distance > standoff || !route.direct)) {
       const waypointDistance = distanceTo(actor.position, route.waypoint);
       const remaining = route.direct ? Math.max(0, distance - standoff) : waypointDistance;
+      const speed = ai.kind === "pet"
+        ? topSpeed
+        : npcWalkingSpeed(ai, topSpeed, deltaSeconds);
       const chaseTravel = Math.min(speed * deltaSeconds, remaining);
+      usedOrdinaryWalk = ai.kind !== "pet";
       if (waypointDistance > 0.001) {
         chaseX = ((route.waypoint.x - actor.position.x) / waypointDistance) * chaseTravel;
         chaseY = ((route.waypoint.y - actor.position.y) / waypointDistance) * chaseTravel;
       }
     }
+    if (ai.kind !== "pet" && !usedOrdinaryWalk) ai.walkSpeed = 0;
 
     const walk = withoutDrivingIntoContacts({ x: chaseX, y: chaseY }, crowding.contacts);
     const moveX = walk.x + separation.x;
@@ -941,6 +1172,16 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       continue;
     }
 
+    if (fleeing) {
+      ai.state = "flee";
+      continue;
+    }
+
+    if (attackLocked) {
+      ai.state = "attack";
+      continue;
+    }
+
     const clearAttack = hasLineOfSight(
       session.navigation,
       actor.position,
@@ -969,9 +1210,15 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * the next tick rather than burning the interval on a swing it could not
      * make.
      */
-    const choices = usableAttacks(ai, distance, heroContact(actor, victim.actor), now);
-    if (!choices.length) continue;
-    const chosen = choices[Math.floor(Math.random() * choices.length)];
+    const random = session.random ?? Math.random;
+    const chosen = chooseNpcAttack(
+      ai,
+      distance,
+      heroContact(actor, victim.actor),
+      now,
+      random
+    );
+    if (!chosen) continue;
     chosen.readyAt = now + (chosen.rechargeMs ?? 0);
 
     /**
@@ -1004,14 +1251,29 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      */
     const buffSpeed = buffMultiplierFor(session, doid, chosen.speedStat ?? "MELEE_SPD");
     const authoredSpeed = npcAttackSpeed(chosen.attackSpeed);
+    const castSpeed = authoredSpeed * (buffSpeed > 0 ? buffSpeed : 1);
     const buffSlowness = buffSpeed > 0 ? 1 / buffSpeed : 1;
+    ai.attackLockedUntil = now +
+      Math.max(0, Number(chosen.attackLockFrame ?? chosen.impactFrame ?? 0)) *
+        (1000 / FRAMES_PER_SECOND) /
+        castSpeed;
     ai.nextAttackAt = now + Math.max(100, attackIntervalMs(ai, buffSlowness) / authoredSpeed);
     // Awaited so the hit lands before the tick moves on: damage is the
     // server's own bookkeeping and must not race the next frame.
     const victimSession = victim.member
       ? victim.member.world?.contextFor(victim.member) ?? victim.member
       : session;
-    await performNpcAttack(victimSession, doid, { ...ai, ...chosen }, victim.doid);
+    ai.attackHeading = actor.heading;
+    await performNpcAttack(
+      victimSession,
+      doid,
+      { ...ai, ...chosen, attackHeading: actor.heading },
+      victim.doid
+    );
+    if (recurringTeleport) {
+      ai.teleportPhase = "post-attack";
+      ai.teleportHideAt = now + (ai.postTeleportAttackMs ?? 0);
+    }
   }
 };
 

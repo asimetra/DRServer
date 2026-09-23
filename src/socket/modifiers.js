@@ -154,16 +154,36 @@ export const critRollFor = (gm, weapon, random = Math.random) => {
  * exactly 6 concurrent poisons and stops, which is what the column says. Fire
  * authors 2, and everything else 1.
  */
-export const onHitBuffsFor = (gm, weapon) => {
+const EFFECT_BY_MODIFIER_TYPE = {
+  STUN: "STUN",
+  SLOW: "SLOW",
+  CRIPPLE: "CRIPPLE",
+  ROOT: "ROOT",
+  CHILLING: "CHILL",
+  BURNING: "FIRE",
+  SHOCKING: "SHOCK",
+  POISON: "POISON",
+};
+
+/** The buff plus the semantic effect its modifier row names. */
+export const onHitBuffEffectsFor = (gm, weapon) => {
   if (!weapon) return [];
-  const buffs = [];
+  const effects = [];
   for (const id of [weapon.modifier1, weapon.modifier2]) {
     if (!id) continue;
-    const named = gm?.modifiersById?.get(Number(id))?.BUFF_1;
-    if (named) buffs.push(named);
+    const modifier = gm?.modifiersById?.get(Number(id));
+    if (modifier?.BUFF_1) {
+      effects.push({
+        constant: modifier.BUFF_1,
+        effectAbility: EFFECT_BY_MODIFIER_TYPE[modifier.MODIFIER_TYPE] ?? null,
+      });
+    }
   }
-  return buffs;
+  return effects;
 };
+
+export const onHitBuffsFor = (gm, weapon) =>
+  onHitBuffEffectsFor(gm, weapon).map(({ constant }) => constant);
 
 /**
  * What the weapon's own `DAMAGE` modifiers multiply a hit by.

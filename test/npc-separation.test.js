@@ -249,6 +249,86 @@ test("a kiter holds its standoff instead of walking into the hero", async () => 
   );
 });
 
+test("a KITE_AI flees for its authored window before attacking again", async () => {
+  const { session, first, second } = makeSession();
+  session.actors.delete(second);
+  session.objects.delete(second);
+  const archer = session.actors.get(first);
+  archer.ai.behavior = "KITE_AI";
+  archer.ai.attackRange = 600;
+  archer.ai.keepDistance = 300;
+  archer.ai.fleeTimerMs = 4000;
+  archer.ai.fleeRandMs = 0;
+  archer.ai.moveSpeed = 100;
+  archer.ai.nextAttackAt = 0;
+  archer.position = { x: 100, y: 0 };
+  const sent = [];
+  session.send = (frame) => sent.push(frame);
+
+  for (let tick = 0; tick < 16; tick++) {
+    await tickNpcAi(session, 1000 + tick * 250, 0.25);
+  }
+
+  assert.equal(archer.ai.state, "flee");
+  assert.ok(
+    Math.abs(archer.position.x - 300) <= 1,
+    `it should retreat to its authored standoff, stopped at ${archer.position.x}`
+  );
+  assert.equal(
+    sent.filter((frame) => frame.readUInt16LE(8) === 143).length,
+    0,
+    "a kiter attacked during its flee window"
+  );
+
+  await tickNpcAi(session, 5000, 0.25);
+  assert.notEqual(archer.ai.state, "flee", "the authored flee window never ended");
+  assert.equal(
+    sent.filter((frame) => frame.readUInt16LE(8) === 143).length,
+    1,
+    "the kiter did not resume attacks when its flee window ended"
+  );
+});
+
+test("a cornered KITE_AI fights instead of chaining flee windows forever", async () => {
+  const { session, first, second } = makeSession();
+  session.actors.delete(second);
+  session.objects.delete(second);
+  const archer = session.actors.get(first);
+  archer.ai.behavior = "KITE_AI";
+  archer.ai.attackRange = 600;
+  archer.ai.keepDistance = 300;
+  archer.ai.fleeTimerMs = 4000;
+  archer.ai.fleeRandMs = 0;
+  archer.ai.moveSpeed = 0;
+  archer.ai.nextAttackAt = 0;
+  archer.position = { x: 100, y: 0 };
+  const sent = [];
+  session.send = (frame) => sent.push(frame);
+
+  await tickNpcAi(session, 1000, 0.25);
+  await tickNpcAi(session, 4750, 0.25);
+  assert.equal(archer.ai.state, "flee");
+
+  await tickNpcAi(session, 5000, 0.25);
+  assert.equal(archer.ai.state, "attack", "the expired flee window immediately restarted");
+  assert.equal(
+    sent.filter((frame) => frame.readUInt16LE(8) === 143).length,
+    1,
+    "a cornered kiter never fought back"
+  );
+
+  await tickNpcAi(session, 5250, 0.25);
+  assert.notEqual(archer.ai.state, "flee", "remaining close re-triggered the same flee");
+
+  archer.position = { x: 300, y: 0 };
+  await tickNpcAi(session, 5500, 0.25);
+  assert.equal(archer.ai.fleeArmed, true, "regaining standoff did not re-arm retreat");
+
+  archer.position = { x: 100, y: 0 };
+  await tickNpcAi(session, 5750, 0.25);
+  assert.equal(archer.ai.state, "flee", "a later approach did not start a new flee window");
+});
+
 test("a standoff never puts a monster outside its own reach", async () => {
   const { session, first, second } = makeSession();
   session.actors.delete(second);

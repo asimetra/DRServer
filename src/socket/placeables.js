@@ -465,6 +465,9 @@ export const spawnPlaceable = async (
     partyHitPoints,
     partySize,
     constant: npc.Constant,
+    abilities: new Set(
+      [npc.Ability1, npc.Ability2, npc.Ability3, npc.Ability4, npc.Ability5].filter(Boolean)
+    ),
     isEnemy: false,
     isPet: mobileSummon,
     masterId: mobileSummon ? session.heroDoid : 0,

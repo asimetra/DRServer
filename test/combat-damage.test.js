@@ -159,7 +159,9 @@ const capturedNpcDamage = async ({
     attackType: skill.Id,
     attackSpeed: skill.AttackSpd,
     weaponPower: 1,
-    attackColliders: [],
+    // This helper isolates damage arithmetic; geometry is covered by ai.test
+    // and the generated combat matrix.
+    attackColliders: [{ type: "circleCollider", radius: 1000, xOffset: 0, frame: 0 }],
     impactFrame: 0,
   }, victimDoid);
 

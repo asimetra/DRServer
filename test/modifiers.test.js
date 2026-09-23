@@ -137,7 +137,7 @@ test("a crit reaches the client as double damage, flagged", async () => {
       .body();
   };
 
-  const run = async (random) => {
+  const run = async (random, abilities = []) => {
     const sent = [];
     let nextDoid = 900;
     const session = {
@@ -157,6 +157,7 @@ test("a crit reaches the client as double damage, flagged", async () => {
       actors: new Map([[ENEMY, {
         hitPoints: 500000, maxHitPoints: 500000, collisionRadius: 25,
         constant: "BRUTE", isEnemy: true, position: { x: 1050, y: 1000 },
+        abilities: new Set(abilities),
       }]]),
       allocateDoid: () => ++nextDoid,
       sent,
@@ -168,10 +169,12 @@ test("a crit reaches the client as double damage, flagged", async () => {
 
   const always = await run(() => 0); // under every chance
   const never = await run(() => 1); // over every chance
+  const immune = await run(() => 0, ["CRIT_IMMUNE"]);
 
   const dealt = (r) => 500000 - r.session.actors.get(ENEMY).hitPoints;
   assert.ok(dealt(never) > 0, "the ordinary hit landed at all");
   assert.equal(dealt(always), dealt(never) * 2, "a Critical hit is twice an ordinary one");
+  assert.equal(dealt(immune), dealt(never), "CRIT_IMMUNE still received critical damage");
 
   // Field 144 is DistributedNPCGameObject.ReceiveCombatResult; the enemy also
   // gets a hit-point update on the same doid, which is a much shorter packet.
@@ -184,16 +187,27 @@ test("a crit reaches the client as double damage, flagged", async () => {
   assert.ok(echo, "the result was echoed to the client");
   // op(2) doid(4) field(2) then the record; criticalHit is byte 26 of it.
   assert.equal(echo.readUInt8(2 + 8 + 26), 1, "the echo does not say it was a crit");
+  const immuneEcho = immune.sent.find(
+    (packet) =>
+      packet.readUInt16LE(2) === 124 &&
+      packet.readUInt32LE(4) === ENEMY &&
+      packet.readUInt16LE(8) === 144
+  );
+  assert.equal(immuneEcho.readUInt8(2 + 8 + 26), 0, "immune result was still flagged critical");
 });
 
 const NOXIOUS_L1 = 70101; // POISON, BUFF_1 = POISON_L1
 const SLOWING_L1 = 70021; // SLOW, whose SLOW_L0 authors MaxStacks 1
 
 test("a weapon's modifiers name the debuffs it leaves", async () => {
-  const { onHitBuffsFor } = await import("../src/socket/modifiers.js");
+  const { onHitBuffEffectsFor, onHitBuffsFor } = await import("../src/socket/modifiers.js");
   const gm = await loadGameMaster();
 
   assert.deepEqual(onHitBuffsFor(gm, { modifier1: NOXIOUS_L1 }), ["POISON_L1"]);
+  assert.deepEqual(
+    onHitBuffEffectsFor(gm, { modifier1: NOXIOUS_L1 }),
+    [{ constant: "POISON_L1", effectAbility: "POISON" }]
+  );
   assert.deepEqual(onHitBuffsFor(gm, { modifier1: CRITICAL_L1 }), [], "crit leaves nothing behind");
   assert.deepEqual(onHitBuffsFor(gm, null), []);
 });
@@ -282,6 +296,72 @@ test("a buff authored MaxStacks 1 never doubles", async () => {
   for (let swings = 0; swings < 5; swings += 1) await swing(session, ENEMY);
 
   assert.equal(held(session, ENEMY, buff), 1, `${buff} stacked past its limit`);
+});
+
+test("an immune NPC still receives the modifier buff object but ignores its effect", async () => {
+  /**
+   * The official does exactly this: ROOT_IMMUNE Raptors receive visible
+   * STOP_L4 objects and continue sending movement throughout all six seconds.
+   * Immunity suppresses gameplay, not the distributed buff/VFX.
+   */
+  const ROOTING_L5 = 70045;
+  const { buffMultiplierFor } = await import("../src/socket/buffs.js");
+  const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: ROOTING_L5 });
+  session.actors.get(ENEMY).abilities = new Set(["ROOT_IMMUNE"]);
+
+  await swing(session, ENEMY);
+
+  const roots = [...session.activeBuffs.values()].filter(
+    (active) => active.affectedActor === ENEMY && active.buff?.Constant === "STOP_L4"
+  );
+  assert.equal(roots.length, 1, "the official-visible root object was suppressed entirely");
+  assert.equal(roots[0].effectAbility, "ROOT");
+  assert.equal(buffMultiplierFor(session, ENEMY, "MOVEMENT"), 1, "ROOT_IMMUNE stopped moving");
+});
+
+test("an Infinite immunity buff suppresses a later weapon debuff", async () => {
+  const { buffMultiplierFor, grantBuff } = await import("../src/socket/buffs.js");
+  const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: MUZZLING });
+
+  await grantBuff(session, "INFINITE_CRIPPLE_IMMUNITY", { affectedActor: ENEMY });
+  await swing(session, ENEMY);
+
+  assert.equal(held(session, ENEMY, "CRIPPLE_L4"), 1, "the debuff should remain visible");
+  assert.equal(buffMultiplierFor(session, ENEMY, "MELEE_SPD"), 1, "immunity did not suppress it");
+});
+
+test("fire resistance keeps a modifier burn visible but suppresses its damage ticks", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  const BURNING_L5 = 70085;
+  const { grantBuff } = await import("../src/socket/buffs.js");
+  const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: BURNING_L5 });
+
+  await grantBuff(session, "INFINITE_BURN_RESIST", { affectedActor: ENEMY });
+  await swing(session, ENEMY);
+  const afterImpact = session.actors.get(ENEMY).hitPoints;
+
+  assert.equal(held(session, ENEMY, "FIRE_L5"), 1, "the burn VFX object should still exist");
+  t.mock.timers.tick(6000);
+  assert.equal(session.actors.get(ENEMY).hitPoints, afterImpact, "resisted fire kept ticking damage");
+});
+
+test("a BUSTER buff multiplies Crowd rewards while it is active", async () => {
+  const { applyProgressReward } = await import("../src/socket/rewards.js");
+  const gm = await loadGameMaster();
+  const buff = gm.raw.Buff.find((row) => row.Constant === "CONSUMABLE_BUSTER_BUFF");
+  const HERO = 500;
+  const session = {
+    heroDoid: HERO,
+    dungeonBusterPoints: 0,
+    maxDungeonBusterPoints: 120,
+    activeBuffs: new Map([[1, { affectedActor: HERO, buff }]]),
+    send: () => {},
+  };
+
+  applyProgressReward(session, { crowd: 10 });
+
+  assert.equal(buff.BUSTER, 2);
+  assert.equal(session.dungeonBusterPoints, 20);
 });
 
 const STURDY_L1 = 70001; // DAMAGE, MELEE_ATK/SHOOT_ATK/MAGIC_ATK 1.1
@@ -816,8 +896,15 @@ test("the movement debuffs move a monster as far as they say", async () => {
       [...session.actors].find(([, candidate]) => candidate.ai && candidate.isEnemy) ?? [];
     assert.ok(actor, "the floor produced an enemy with AI");
 
-    // Far enough that it wants to walk rather than stand and swing.
-    session.heroPosition = { x: actor.position.x + 500, y: actor.position.y };
+    // Far enough that it wants to walk, but still inside this row's authored
+    // awareness. A fixed 500 silently depended on the old global 900 override
+    // when the tutorial knight itself authors 350.
+    const chaseDistance = Math.min(500, actor.ai.aggroRadius - 1);
+    assert.ok(
+      chaseDistance > actor.ai.attackRange,
+      "the fixture needs room between its attack and awareness ranges"
+    );
+    session.heroPosition = { x: actor.position.x + chaseDistance, y: actor.position.y };
     const hero = session.actors.get(session.heroDoid);
     if (hero) hero.position = { ...session.heroPosition };
     if (buff) session.activeBuffs = new Map([[1, { affectedActor: doid, buff }]]);
@@ -1259,19 +1346,20 @@ test("a knocked-back monster is actually moved, and a Trapper pulls it in", asyn
   const { CLID } = await import("../src/socket/opcodes.js");
   const gm = await loadGameMaster();
 
-  const shoved = (distance) => {
+  const shoved = (distance, abilities = []) => {
     const HERO = 500;
     const ENEMY = 9900;
     const victim = {
       hitPoints: 100, maxHitPoints: 100, collisionRadius: 25,
       constant: "BRUTE", isEnemy: true, position: { x: 1200, y: 1000 },
+      abilities: new Set(abilities),
     };
     const session = {
       id: 50, heroDoid: HERO, floorDoid: 400, dungeonActive: true,
       heroPosition: { x: 1000, y: 1000 },
       objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
       actors: new Map([
-        [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
+      [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
         [ENEMY, victim],
       ]),
       navigation: null,
@@ -1284,6 +1372,8 @@ test("a knocked-back monster is actually moved, and a Trapper pulls it in", asyn
   // The monster stands 200 to the hero's right, so away is +x and toward is -x.
   assert.equal(shoved(knockbackFor(gm, { modifier1: BLASTBACK })), 250, "Blastback throws it away");
   assert.equal(shoved(knockbackFor(gm, { modifier1: TRAPPER })), -300, "Trapper pulls it in");
+  assert.equal(shoved(250, ["KNOCKBACK_IMMUNE"]), 0, "knockback immunity moved anyway");
+  assert.equal(shoved(-300, ["PULL_IMMUNE"]), 0, "pull immunity moved anyway");
   assert.equal(shoved(0), 0, "nothing moves without a distance");
 });
 

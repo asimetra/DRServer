@@ -28,6 +28,7 @@ import {
   grantBuff,
   grantBuffInstance,
   hasAbility,
+  isBuffEffectSuppressed,
 } from "./buffs.js";
 import { beginFloorFailing, checkFloorCleared } from "./floorstate.js";
 import { objectDisable } from "./objects.js";
@@ -42,7 +43,7 @@ import { moveWithNavigation } from "./navigation.js";
 import { spawnFoodDoober } from "./drops.js";
 import {
   critRollFor,
-  onHitBuffsFor,
+  onHitBuffEffectsFor,
   attackMultiplierFor,
   knockbackFor,
   foodChanceFor,
@@ -390,6 +391,11 @@ export const applyDamage = (session, doid, damage, announce) => {
    */
   if (!session.objects?.has(doid)) return false;
 
+  // TELEPORT_AI remains authoritative while hidden but is absent from every
+  // client's floor between disable and regenerate. Nothing can hit an actor
+  // that does not currently exist on the visible floor.
+  if (actor?.teleportHidden) return false;
+
   if (!actor || actor.dead || damage <= 0 || !HITPOINTS_FIELD_BY_CLID[clid]) {
     announce?.();
     return false;
@@ -605,6 +611,7 @@ const teamAllowsHit = (attack, attackerTeam, victimTeam) => {
 const trapVictims = (session, { attack, attackerTeam, includeFallen = false } = {}) => {
   const victims = [];
   for (const [doid, actor] of session.actors ?? []) {
+    if (actor.teleportHidden) continue;
     // Only a fallen *hero* counts as still being there. Killing an NPC leaves
     // its entry in the map with `dead` set — nothing removes it on the ordinary
     // path — so admitting every corpse turned each dead monster into cover and
@@ -774,6 +781,8 @@ export const pushVictim = (session, victimDoid, attackerDoid, distance) => {
   const attacker = session.actors?.get(attackerDoid);
   const from = attacker?.position ?? session.heroPosition;
   if (!victim?.position || !from) return false;
+  const immunity = distance < 0 ? "PULL_IMMUNE" : "KNOCKBACK_IMMUNE";
+  if (hasAbility(session, victimDoid, immunity)) return false;
 
   const dx = victim.position.x - from.x;
   const dy = victim.position.y - from.y;
@@ -1406,6 +1415,10 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
       return;
     }
     remaining -= 1;
+    // The official still creates the debuff object on an immune enemy; only
+    // its gameplay effect is suppressed. Keep its lifetime/tick clock intact
+    // so expiring resistance can expose the remaining authored ticks.
+    if (isBuffEffectSuppressed(session, buffDoid)) return;
     const hitPointsBefore = actor.hitPoints ?? 0;
     // Hit points first, then the floater — the order every captured tick shows.
     if (!applyDamage(session, victimDoid, perTick)) return;
@@ -1448,11 +1461,12 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
  * paths; its authored `MaxStacks` is the single source of truth.
  */
 const applyModifierBuffs = async (session, { weapon, victimDoid, attackerDoid, damage }) => {
-  const constants = onHitBuffsFor(await loadGameMaster(), weapon);
-  for (const constant of constants) {
+  const effects = onHitBuffEffectsFor(await loadGameMaster(), weapon);
+  for (const { constant, effectAbility } of effects) {
     const { doid: buffDoid, buff, created } = await grantBuffInstance(session, constant, {
       affectedActor: victimDoid,
       attackerActor: attackerDoid,
+      effectAbility,
     });
     if (!created) continue;
     startDamageOverTime(session, {
@@ -1594,11 +1608,9 @@ export const performPlaceableAttack = async (
      * so the captures only ever show the impact critting; whether the cloud it
      * leaves does too is not separable from them.
      */
-    const { critical, multiplier } = critRollFor(
-      await loadGameMaster(),
-      weapon,
-      session.random ?? Math.random
-    );
+    const { critical, multiplier } = hasAbility(session, victim.doid, "CRIT_IMMUNE")
+      ? { critical: false, multiplier: 1 }
+      : critRollFor(await loadGameMaster(), weapon, session.random ?? Math.random);
     const damage = critical ? Math.round(plainDamage * multiplier) : plainDamage;
 
     const reaction = receiveCombatResult(
@@ -1800,19 +1812,32 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
   return true;
 };
 
-const landNpcSwing = async (session, attackerDoid, ai, attack, shape, victimDoid) => {
+const npcAttackDisabled = (session, doid) =>
+  ["STUN", "SHOCK", "PARALYZED", "DISABLE_CONTROLS"]
+    .some((ability) => hasAbility(session, doid, ability));
+
+const landNpcSwing = async (
+  session,
+  attackerDoid,
+  ai,
+  attack,
+  shape,
+  victimDoid,
+  alreadyHit = null
+) => {
   const attacker = session.actors?.get(attackerDoid);
   const victim = session.actors?.get(victimDoid);
   if (!attacker || attacker.dead || !victim || victim.dead) return false;
+  if (npcAttackDisabled(session, attackerDoid)) return false;
 
   if (shape?.length) {
     const reach = worldColliders(
       attacker.position,
-      attacker.heading ?? 0,
+      ai.attackHeading ?? attacker.heading ?? 0,
       shape
     );
     const caught = hazardVictims(session, reach, { attack, team: attacker.team })
-      .filter(({ doid }) => doid !== attackerDoid);
+      .filter(({ doid }) => doid !== attackerDoid && !alreadyHit?.has(doid));
     if (!caught.length) return false;
 
     /**
@@ -1825,12 +1850,17 @@ const landNpcSwing = async (session, attackerDoid, ai, attack, shape, victimDoid
      */
     let hits = 0;
     for (const caughtActor of caught) {
-      if (await dealNpcHit(
-        session,
-        attackerDoid,
-        { attack, attackType: ai.attackType, weaponPower: ai.weaponPower },
-        caughtActor.doid
-      )) hits += 1;
+      if (
+        await dealNpcHit(
+          session,
+          attackerDoid,
+          { attack, attackType: ai.attackType, weaponPower: ai.weaponPower },
+          caughtActor.doid
+        )
+      ) {
+        alreadyHit?.add(caughtActor.doid);
+        hits += 1;
+      }
     }
     return hits > 0;
   }
@@ -1861,6 +1891,7 @@ const launchNpcProjectile = (session, attackerDoid, ai, attack, launch = {}) => 
   const attacker = session.actors?.get(attackerDoid);
   const projectile = ai.projectile;
   if (!attacker || attacker.dead || !projectile || !attacker.position) return false;
+  if (npcAttackDisabled(session, attackerDoid)) return false;
 
   /**
    * The client's own transform, which keeps four things apart:
@@ -1882,10 +1913,11 @@ const launchNpcProjectile = (session, attackerDoid, ai, attack, launch = {}) => 
    * coordinate system.
    */
   const spread = Number(launch.headingRandomnessAngle ?? 0);
+  const random = session.random ?? Math.random;
   const angle =
-    Number(attacker.heading ?? 0) +
+    Number(ai.attackHeading ?? attacker.heading ?? 0) +
     Number(launch.headingOffsetAngle ?? 0) +
-    (spread ? (Math.random() * 2 - 1) * spread : 0);
+    (spread ? (random() * 2 - 1) * spread : 0);
   const radians = (angle * Math.PI) / 180;
   const centre = collisionPointOf(attacker, attacker.position) ?? attacker.position;
   const muzzle = Number(launch.headingOffset ?? 0);
@@ -2031,18 +2063,35 @@ export const performNpcAttack = async (
   const frameMs = (frame) =>
     Math.max(0, Number(frame ?? 0)) * (1000 / FRAMES_PER_SECOND) / attackSpeed;
 
-  // A swing with no collider and nothing to throw resolves where it stands;
-  // two enemy attacks in the game are like that and both are measured in
-  // dungeon.js.
+  /**
+   * No authored contact means no hit.
+   *
+   * The official corpus contains 2,043 casts of four negative-DamageMod NPC
+   * attacks with neither colliders nor projectile launches and zero combat
+   * results: the imp's showoff/backoff, its spawn, and Papa Yeti spawning
+   * babies. Their timeline animation or spawned actor is the effect. Turning
+   * the negative table value into a direct fallback hit made those actions
+   * damage their selected target at any distance, with nothing touching it.
+   */
   if (!shots.length && !shape.length) {
-    if (Number(attack?.DamageMod ?? 0) >= 0) return true;
-    return landNpcSwing(session, attackerDoid, ai, attack, shape, victimDoid);
+    return true;
   }
 
-  const timers = [];
+  const cancelTimers = [];
+  const immediate = [];
   const later = (delay, run) => {
-    if (!delay) return void Promise.resolve(run()).catch(report);
-    timers.push(setTimeout(() => Promise.resolve(run()).catch(report), delay));
+    if (!delay && !session.combatClock?.setTimeout) {
+      immediate.push(Promise.resolve(run()).catch(report));
+      return;
+    }
+    const invoke = () => Promise.resolve(run()).catch(report);
+    if (session.combatClock?.setTimeout) {
+      const handle = session.combatClock.setTimeout(invoke, delay);
+      cancelTimers.push(() => session.combatClock?.clearTimeout?.(handle));
+      return;
+    }
+    const handle = setTimeout(invoke, delay);
+    cancelTimers.push(() => clearTimeout(handle));
   };
   const report = (error) =>
     warn(`npc attack ${attackerDoid}: ${error.stack ?? error.message ?? error}`);
@@ -2060,9 +2109,37 @@ export const performNpcAttack = async (
       );
     }
   } else {
-    later(frameMs(ai.impactFrame), () =>
-      landNpcSwing(session, attackerDoid, ai, attack, shape, victimDoid)
-    );
+    /**
+     * A moving or persistent attack authors one collider set per active frame.
+     * Flattening those sets and resolving their union on the first frame made
+     * later zones hurt early, then left nothing able to hit a hero who entered
+     * while the animation was actually passing through that zone.
+     *
+     * The client permits one hit on a body for these NPC casts, so every frame
+     * gets its authored shape while `alreadyHit` keeps a stationary victim from
+     * being charged again by the later windows of the same cast.
+     */
+    const byFrame = new Map();
+    for (const collider of shape) {
+      const frame = Math.max(0, Number(collider.frame ?? 0));
+      const colliders = byFrame.get(frame) ?? [];
+      colliders.push(collider);
+      byFrame.set(frame, colliders);
+    }
+    const alreadyHit = new Set();
+    for (const [frame, colliders] of byFrame) {
+      later(frameMs(frame), () =>
+        landNpcSwing(
+          session,
+          attackerDoid,
+          ai,
+          attack,
+          colliders,
+          victimDoid,
+          alreadyHit
+        )
+      );
+    }
   }
 
   /**
@@ -2079,12 +2156,19 @@ export const performNpcAttack = async (
     });
   }
 
+  // The AI loop awaits this function. Frame-zero damage and buffs therefore
+  // finish their authoritative bookkeeping before that tick moves on, while
+  // later authored frames remain scheduled independently.
+  if (immediate.length) await Promise.all(immediate);
+
   // Keyed by the attacker, so its next attack replaces this one and a floor
   // change cancels every beat still in flight.
-  if (timers.length) {
+  if (cancelTimers.length) {
     session.hazardBeats ??= new Map();
     session.hazardBeats.get(`swing:${attackerDoid}`)?.();
-    session.hazardBeats.set(`swing:${attackerDoid}`, () => timers.forEach(clearTimeout));
+    session.hazardBeats.set(`swing:${attackerDoid}`, () =>
+      cancelTimers.forEach((cancel) => cancel())
+    );
   }
   return true;
 };
@@ -3132,12 +3216,17 @@ const applyProposals = async (session, proposals) => {
      * separates the two — the recordings hold no crit against a buffed defender
      * — but this is the order the rest of the pricing already runs in.
      */
-    const { critical, multiplier } = plain
+    const { critical, multiplier } = plain &&
+      !hasAbility(session, proposal.attackee, "CRIT_IMMUNE")
       ? critRollFor(await loadGameMaster(), swung, session.random ?? Math.random)
       : { critical: false, multiplier: 1 };
     const damage = critical ? Math.round(plain * multiplier) : plain;
 
-    const shove = proposal.blocked ? 0 : knockbackFor(await loadGameMaster(), swung);
+    const authoredShove = proposal.blocked ? 0 : knockbackFor(await loadGameMaster(), swung);
+    const shoveAbility = authoredShove < 0 ? "PULL_IMMUNE" : "KNOCKBACK_IMMUNE";
+    const shove = authoredShove && hasAbility(session, proposal.attackee, shoveAbility)
+      ? 0
+      : authoredShove;
     /**
      * Not gated on the client's flag, which is the mistake the first version
      * made: the client proposes that byte as 0 on 13624 of 13626 recorded

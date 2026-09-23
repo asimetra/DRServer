@@ -18,6 +18,7 @@ test("JSON defaults make the server independent from the client repository", () 
   assert.equal(loaded.accountTemplateFile, path.join(serverRoot, "config", "account-template.json"));
   assert.equal(loaded.floorCatalogFile, path.join(serverRoot, "config", "floors.json"));
   assert.equal(loaded.npcAggroRadius, 900);
+  assert.equal(loaded.npcAiTickMs, 250);
   assert.equal(loaded.projectileTickMs, 20);
   assert.equal(loaded.maxOutboundBufferBytes, 4 * 1024 * 1024);
   assert.equal(loaded.allowInsecureInternal, false);

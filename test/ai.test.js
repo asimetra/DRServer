@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { attackForConstant } from "../src/gamemaster.js";
-import { tickNpcAi } from "../src/socket/ai.js";
+import { npcWalkingSpeed, tickNpcAi } from "../src/socket/ai.js";
 import { clearDungeonBuffs, grantBuff } from "../src/socket/buffs.js";
 import { performNpcAttack, tickTrapProjectiles } from "../src/socket/combat.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
@@ -15,6 +15,9 @@ const readUpdate = (frame) => {
   assert.equal(reader.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
   return { reader, doid: reader.u32(), fieldId: reader.u16() };
 };
+
+/** A frame-zero contact shape for tests exercising the hit path directly. */
+const contactShape = [{ type: "circleCollider", radius: 1000, xOffset: 0, frame: 0 }];
 
 const makeSession = () => {
   const sent = [];
@@ -53,6 +56,7 @@ const makeSession = () => {
               nextAttackAt: 0,
               attackType: 920050,
               damage: 1,
+              attackColliders: contactShape,
               impactFrame: 11,
             },
           },
@@ -79,7 +83,7 @@ test("chase AI moves and faces an aggroed hero", async () => {
   await tickNpcAi(session, 1000, 0.5);
 
   assert.equal(session.actors.get(knightDoid).ai.state, "chase");
-  assert.equal(session.actors.get(knightDoid).position.x, 110);
+  assert.equal(session.actors.get(knightDoid).position.x, 150);
   assert.equal(sent.length, 2);
 
   const heading = readUpdate(sent[0]);
@@ -90,8 +94,46 @@ test("chase AI moves and faces an aggroed hero", async () => {
   const position = readUpdate(sent[1]);
   assert.equal(position.doid, knightDoid);
   assert.equal(position.fieldId, 132);
-  assert.equal(position.reader.f32(), 110);
+  assert.equal(position.reader.f32(), 150);
   assert.equal(position.reader.f32(), 0);
+});
+
+test("an enemy acquires and releases targets at its authored awareness boundaries", async () => {
+  const { session, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+
+  knight.position = { x: 351, y: 0 };
+  await tickNpcAi(session, 1000, 0.25);
+  assert.equal(knight.ai.engaged, false, "one unit outside AggroRadius acquired the hero");
+  assert.equal(knight.position.x, 351, "an idle enemy outside awareness started moving");
+
+  knight.position = { x: 350, y: 0 };
+  await tickNpcAi(session, 1250, 0.25);
+  assert.equal(knight.ai.engaged, true, "the authored AggroRadius boundary was excluded");
+  assert.equal(knight.ai.state, "chase");
+
+  knight.position = { x: 1600, y: 0 };
+  await tickNpcAi(session, 1500, 0.25);
+  assert.equal(knight.ai.engaged, true, "the authored DisengageDist boundary was excluded");
+
+  knight.position = { x: 1601, y: 0 };
+  await tickNpcAi(session, 1750, 0.25);
+  assert.equal(knight.ai.engaged, false, "a target beyond DisengageDist stayed locked");
+  assert.equal(knight.ai.state, "idle");
+  assert.equal(knight.ai.targetDoid, null);
+});
+
+test("a moving row with zero authored awareness stays passive", async () => {
+  const { session, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  knight.position = { x: 1, y: 0 };
+  knight.ai.aggroRadius = 0;
+
+  await tickNpcAi(session, 1000, 0.25);
+
+  assert.equal(knight.ai.engaged, false);
+  assert.equal(knight.ai.state, "idle");
+  assert.deepEqual(knight.position, { x: 1, y: 0 });
 });
 
 test("attack AI embeds a timed combat result and reduces hero hit points", async () => {
@@ -231,8 +273,9 @@ test("overlapping melee NPCs separate instead of stacking on the hero", async ()
    * the server no longer produces — nothing it sends may overlap the player, see
    * `keptOutOfHeroes`. So the first tick now spends part of its budget lifting
    * them out of him and gets 32.7 apart where it used to get 35. Where they end
-   * up is what this is about, and that is strictly better than it was: 78 apart,
-   * both exactly at contact, and completely still from the eighth tick on.
+   * up is what this is about: their bodies do not overlap, at least the front
+   * monster can attack, and the other remains engaged without being snapped
+   * through the player merely to put both on the same contact ring.
    */
   for (let tick = 0; tick < 10; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
 
@@ -245,8 +288,13 @@ test("overlapping melee NPCs separate instead of stacking on the hero", async ()
     const fromHero = Math.hypot(npc.position.x, npc.position.y);
     assert.ok(fromHero >= 70 - 0.01, `and neither left standing inside him: ${fromHero}`);
   }
-  assert.equal(first.ai.state, "attack");
-  assert.equal(second.ai.state, "attack");
+  const states = [first.ai.state, second.ai.state];
+  assert.ok(states.includes("attack"), `neither separated monster could attack: ${states}`);
+  assert.ok(
+    states.every((state) => state === "attack" || state === "chase"),
+    `a separated monster dropped combat: ${states}`
+  );
+  assert.ok(first.ai.engaged && second.ai.engaged);
 });
 
 test("members of one generator burst stay compact without overlapping", async () => {
@@ -1041,6 +1089,96 @@ test("an attack that authors a backwards move takes the monster backwards", asyn
   assert.ok(Math.abs(npc.position.y) < 40, "and straight back, not off to one side");
 });
 
+test("a forward attack lunge stops on the near side instead of teleporting through the hero", async () => {
+  const { session, knightDoid } = makeSession();
+  const monster = session.actors.get(knightDoid);
+  monster.position = { x: 80, y: 0 };
+  monster.ai.engaged = true;
+  monster.ai.nextAttackAt = Number.POSITIVE_INFINITY;
+  monster.ai.lunge = { until: 2000, x: -800, y: 0 };
+
+  await tickNpcAi(session, 1000, 0.25);
+
+  const contact = 70; // Both test actors use the 35-unit fallback body.
+  assert.ok(
+    monster.position.x >= contact - 0.01,
+    `the lunge crossed the hero in one update and landed at ${monster.position.x}`
+  );
+  assert.ok(
+    monster.position.x <= 80,
+    `the collision guard moved it away from the intended lunge: ${monster.position.x}`
+  );
+});
+
+test("a melee windup does not chase or turn after a retreating hero", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { session, heroDoid, knightDoid } = makeSession();
+  const hero = session.actors.get(heroDoid);
+  const monster = session.actors.get(knightDoid);
+  const slash = [{ type: "circleCollider", radius: 40, xOffset: 45, frame: 11 }];
+  monster.position = { x: 80, y: 0 };
+  monster.ai.engaged = true;
+  monster.ai.nextAttackAt = 0;
+  monster.ai.attackRange = 80;
+  monster.ai.attacks = [{
+    attackType: 920050,
+    attackSpeed: 1,
+    range: 80,
+    minRange: 0,
+    rechargeMs: 0,
+    readyAt: 0,
+    weaponPower: 1,
+    attackColliders: slash,
+    projectileLaunches: [],
+    impactFrame: 11,
+    attackLockFrame: 11,
+    moveAmount: 0,
+    moveDurationMs: 0,
+  }];
+
+  await tickNpcAi(session, 1000, 0.1);
+  const castPosition = { ...monster.position };
+  const castHeading = monster.heading;
+  assert.ok(monster.ai.attackLockedUntil > 1450, "the authored impact frame did not lock windup");
+
+  hero.position = { x: -200, y: 0 };
+  session.heroPosition = { ...hero.position };
+  await tickNpcAi(session, 1250, 0.25);
+
+  assert.deepEqual(monster.position, castPosition, "the monster chased during its swing");
+  assert.equal(monster.heading, castHeading, "the melee collider turned to follow the dodge");
+
+  t.mock.timers.tick(500);
+  await Promise.resolve();
+  assert.equal(hero.hitPoints, 200, "the retreat cleared the impact but still took damage");
+  session.hazardBeats?.get(`swing:${knightDoid}`)?.();
+});
+
+test("stunning a monster during windup cancels its pending melee impact", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { session, heroDoid, knightDoid } = makeSession();
+  const hero = session.actors.get(heroDoid);
+  session.actors.get(knightDoid).position = { x: 60, y: 0 };
+  const stun = (await import("../src/gamemaster.js")).buffForConstant;
+
+  await performNpcAttack(session, knightDoid, {
+    attackType: 920050,
+    attackSpeed: 1,
+    weaponPower: 1,
+    attackColliders: [{ type: "circleCollider", radius: 100, xOffset: 0, frame: 11 }],
+  }, heroDoid);
+  session.activeBuffs = new Map([[
+    999,
+    { affectedActor: knightDoid, buff: await stun("STUN_L1"), effectAbility: "STUN" },
+  ]]);
+
+  t.mock.timers.tick(500);
+  await Promise.resolve();
+
+  assert.equal(hero.hitPoints, 200, "the stunned monster's queued swing still landed");
+  session.hazardBeats?.get(`swing:${knightDoid}`)?.();
+});
+
 test("an NPC attack's authored speed controls its cadence and choreography", async () => {
   /**
    * SAVAGE_BOW is the clean capture fixture: EN_POISON_ARROW authors AttackSpd
@@ -1097,7 +1235,7 @@ test("zero-damage NPC skills buff their caster without injuring the target", asy
     attackSpeed: skill.AttackSpd,
     weaponPower: 1,
     damage: 0,
-    attackColliders: [],
+    attackColliders: contactShape,
     impactFrame: 0,
   }, heroDoid);
 
@@ -1134,7 +1272,7 @@ test("NPC hits apply both authored target effects", async (t) => {
     attackSpeed: skill.AttackSpd,
     weaponPower: 1,
     damage: 1,
-    attackColliders: [],
+    attackColliders: contactShape,
     impactFrame: 0,
   }, heroDoid);
 
@@ -1162,7 +1300,7 @@ test("an invulnerable target receives neither NPC damage nor its debuff", async 
     attackSpeed: poisonArrow.AttackSpd,
     weaponPower: 1,
     damage: 1,
-    attackColliders: [],
+    attackColliders: contactShape,
     impactFrame: 0,
   }, heroDoid);
 
@@ -1200,6 +1338,19 @@ test("freeze and disabled-controls debuffs stop NPC attacks", async (t) => {
   }
 });
 
+test("an enemy accelerates into its authored top speed instead of starting there", () => {
+  const ai = { moveSpeed: 180 };
+  const samples = Array.from({ length: 4 }, () => npcWalkingSpeed(ai, 180, 0.25));
+
+  assert.ok(samples[0] < 180, "the first chase tick already used top speed");
+  assert.equal(samples[3], 180, "the authored top speed was never reached");
+  const firstSecond = samples.reduce((sum, speed) => sum + speed * 0.25, 0);
+  assert.ok(
+    Math.abs(firstSecond / 180 - 2 / 3) < 1e-9,
+    `first-second movement ratio ${firstSecond / 180} does not match the capture ramp`
+  );
+});
+
 test("NPC damage that defence fully absorbs stays at zero", async () => {
   /** The official corpus contains zero-damage EN_SWORD_SLASH results. */
   const { session, heroDoid, knightDoid, sent } = makeSession();
@@ -1212,7 +1363,7 @@ test("NPC damage that defence fully absorbs stays at zero", async () => {
     attackSpeed: slash.AttackSpd,
     weaponPower: 1,
     damage: 1,
-    attackColliders: [],
+    attackColliders: contactShape,
     impactFrame: 0,
   }, heroDoid);
 

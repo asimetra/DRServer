@@ -26,7 +26,7 @@ const fightingAi = (kind) => ({
       rechargeMs: 0,
       readyAt: 0,
       damage: 1,
-      attackColliders: [],
+      attackColliders: [{ type: "circleCollider", radius: 100, xOffset: 0, frame: 0 }],
     },
   ],
 });
@@ -158,7 +158,7 @@ test("a normal lion and a wild lion can damage one another", async () => {
   assert.equal(actors.get(heroDoid).hitPoints, 200, "the distant hero was not chosen instead");
 });
 
-test("a moving BEAST placement is built as third-party AI, not an inert prop", async (t) => {
+test("moving BEAST and ENEMY placements retain their authored AI data", async (t) => {
   let nextDoid = 1000;
   const sent = [];
   const session = {
@@ -213,7 +213,12 @@ test("a moving BEAST placement is built as third-party AI, not an inert prop", a
     wiring: new Map(),
     tiles: [],
     placements: {
-      npc: [{ id: "wild", constant: "LION_WILD", x: 200, y: 0 }],
+      npc: [
+        { id: "wild", constant: "LION_WILD", x: 200, y: 0 },
+        { id: "brute", constant: "BRUTE", x: 1000, y: 0 },
+        { id: "tutorial-knight", constant: "KNIGHT_TUTORIAL", x: 1400, y: 0 },
+        { id: "passive-warthog", constant: "WARTHOG_WHITE_FAT", x: 1800, y: 0 },
+      ],
       collectable: [],
       generator: [],
       triggerable: [],
@@ -246,4 +251,17 @@ test("a moving BEAST placement is built as third-party AI, not an inert prop", a
     Math.abs(wild.stats.get("MELEE_ATK") - 13.6) < 1e-9,
     `level-43 wild lion offence should be linear, got ${wild.stats.get("MELEE_ATK")}`
   );
+
+  const brute = [...session.actors.values()].find((actor) => actor.constant === "BRUTE");
+  const knight = [...session.actors.values()].find(
+    (actor) => actor.constant === "KNIGHT_TUTORIAL"
+  );
+  const warthog = [...session.actors.values()].find(
+    (actor) => actor.constant === "WARTHOG_WHITE_FAT"
+  );
+  assert.equal(brute.ai.aggroRadius, 600, "the global default replaced BRUTE's authored range");
+  assert.equal(knight.ai.aggroRadius, 350, "the global default replaced KNIGHT_TUTORIAL's range");
+  assert.equal(warthog.ai.aggroRadius, 0, "an authored passive enemy was made aggressive");
+  assert.ok(warthog.abilities.has("ROOT_IMMUNE"), "the NPC lost its authored root immunity");
+  assert.ok(warthog.abilities.has("CHILL_IMMUNE"), "the NPC lost its authored chill immunity");
 });

@@ -9,6 +9,79 @@ const FLID_HERO_REPORT_BUFF_EFFECT = 168;
 /** Official buff disables trail their authored duration by one ~100ms server turn. */
 const BUFF_EXPIRY_GRACE_MS = 100;
 
+const HARMFUL_EFFECT_ABILITIES = new Set([
+  "STUN",
+  "SLOW",
+  "CRIPPLE",
+  "ROOT",
+  "CHILL",
+  "SHOCK",
+  "FIRE",
+  "POISON",
+  "PARALYZED",
+  "DISABLE_CONTROLS",
+]);
+
+/** Buff rows whose gameplay family is clearer than their missing/generic ability bit. */
+const EFFECT_BY_BUFF_CONSTANT = new Map([
+  ["ENSNARED", "ROOT"],
+  ["TAR_SLOW", "SLOW"],
+  ["SHADOW_SLOW", "SLOW"],
+  ["DARK_SHOCK_L1", "SHOCK"],
+  ["FREEZE", "CHILL"],
+  ["FROZEN", "CHILL"],
+]);
+
+/** The gameplay effect an immunity can suppress while leaving the buff visible. */
+export const buffEffectAbilityFor = (buff, hint = null) => {
+  if (hint) return hint;
+  const constant = String(buff?.Constant ?? "");
+  if (constant.startsWith("STOP_")) return "ROOT";
+  const named = EFFECT_BY_BUFF_CONSTANT.get(constant);
+  if (named) return named;
+  for (const ability of [buff?.Ability1, buff?.Ability2, buff?.Ability3]) {
+    if (HARMFUL_EFFECT_ABILITIES.has(ability)) return ability;
+  }
+  return null;
+};
+
+/** Reads innate NPC abilities and visible immunity buffs without applying suppression. */
+const rawHasAbility = (session, actorDoid, ability) => {
+  const authored = session.actors?.get(actorDoid)?.abilities;
+  if (authored?.has?.(ability) || (Array.isArray(authored) && authored.includes(ability))) return true;
+  for (const active of session.activeBuffs?.values() ?? []) {
+    if (active.affectedActor !== actorDoid) continue;
+    if (
+      active.buff?.Ability1 === ability ||
+      active.buff?.Ability2 === ability ||
+      active.buff?.Ability3 === ability
+    ) return true;
+  }
+  return false;
+};
+
+const IMMUNITIES_BY_EFFECT = {
+  FIRE: ["FIRE_IMMUNE", "RESIST_FIRE"],
+  POISON: ["POISON_IMMUNE", "RESIST_POISON"],
+  PARALYZED: ["PARALYZE_IMMUNITY"],
+};
+
+export const isEffectImmune = (session, actorDoid, effectAbility) => {
+  if (!effectAbility) return false;
+  const immunities = IMMUNITIES_BY_EFFECT[effectAbility] ?? [`${effectAbility}_IMMUNE`];
+  return immunities.some((ability) => rawHasAbility(session, actorDoid, ability));
+};
+
+/** Whether one visible buff should be ignored by authoritative gameplay. */
+export const isBuffEffectSuppressed = (session, activeOrDoid) => {
+  const active = typeof activeOrDoid === "object"
+    ? activeOrDoid
+    : session.activeBuffs?.get(activeOrDoid);
+  if (!active) return false;
+  const effect = active.effectAbility ?? buffEffectAbilityFor(active.buff);
+  return isEffectImmune(session, active.affectedActor, effect);
+};
+
 const multiplier = (value) =>
   Number.isFinite(Number(value)) ? Number(value) : 1;
 
@@ -91,7 +164,7 @@ const cookingBonus = async (session, buff) => {
 export const grantBuffInstance = async (
   session,
   constant,
-  { affectedActor, attackerActor } = {}
+  { affectedActor, attackerActor, effectAbility } = {}
 ) => {
   const buff = await buffForConstant(constant);
   if (!buff) {
@@ -130,7 +203,11 @@ export const grantBuffInstance = async (
 
   const doid = session.allocateDoid(CLID.DistributedBuffGameObject);
   session.objects?.set(doid, CLID.DistributedBuffGameObject);
-  session.activeBuffs.set(doid, { affectedActor: affected, buff });
+  session.activeBuffs.set(doid, {
+    affectedActor: affected,
+    buff,
+    effectAbility: buffEffectAbilityFor(buff, effectAbility),
+  });
   session.send(
     buffGenerate({
       doid,
@@ -221,7 +298,8 @@ export const buffColorTypeFor = async (buff) => {
 export const buffMultiplierFor = (session, actorDoid, stat) => {
   let result = 1;
   for (const active of session.activeBuffs?.values() ?? []) {
-    if (active.affectedActor === actorDoid) result *= multiplier(active.buff?.[stat]);
+    if (active.affectedActor !== actorDoid || isBuffEffectSuppressed(session, active)) continue;
+    result *= multiplier(active.buff?.[stat]);
   }
   return result;
 };
@@ -258,6 +336,7 @@ export const damageReductionFor = (session, actorDoid, stat) => {
   let remaining = 1;
   for (const active of session?.activeBuffs?.values() ?? []) {
     if (active.affectedActor !== actorDoid) continue;
+    if (isBuffEffectSuppressed(session, active)) continue;
     const authored = Number(active.buff?.[stat]);
     if (!Number.isFinite(authored) || authored <= 0) continue;
     // A value at or above 1 is the whole of it; the rest are fractions.
@@ -282,9 +361,16 @@ export const hasBuff = (session, actorDoid, constant) => {
  * monster can still swing.
  */
 export const hasAbility = (session, actorDoid, ability) => {
+  const authored = session.actors?.get(actorDoid)?.abilities;
+  if (authored?.has?.(ability) || (Array.isArray(authored) && authored.includes(ability))) return true;
   for (const active of session.activeBuffs?.values() ?? []) {
     if (active.affectedActor !== actorDoid) continue;
-    if (active.buff?.Ability1 === ability || active.buff?.Ability2 === ability) return true;
+    if (isBuffEffectSuppressed(session, active)) continue;
+    if (
+      active.buff?.Ability1 === ability ||
+      active.buff?.Ability2 === ability ||
+      active.buff?.Ability3 === ability
+    ) return true;
   }
   return false;
 };

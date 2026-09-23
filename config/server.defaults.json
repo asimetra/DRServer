@@ -29,7 +29,7 @@
   "npcFilter": "all",
   "npcAggroRadius": 900,
   "trapCycleMs": 2000,
-  "npcAiTickMs": 100,
+  "npcAiTickMs": 250,
   "startFloor": 1,
   "projectileTickMs": 20,
   "dungeonSummaryDelayMs": 5000,

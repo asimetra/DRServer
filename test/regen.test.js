@@ -84,6 +84,31 @@ test("a fractional trained rate is carried between ticks rather than rounded awa
   stop();
 });
 
+test("a live MP_REGEN buff multiplies the server's mana ticks", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const gm = await loadGameMaster();
+  const bacon = gm.raw.Buff.find((row) => row.Constant === "BACON_L1");
+  const HERO = 500;
+  const session = {
+    id: 82,
+    heroDoid: HERO,
+    dungeonActive: true,
+    heroManaPoints: 0,
+    maxHeroManaPoints: 200,
+    dungeonAvatar: { avatar_id: 101 }, // Berserker: 3 per tick.
+    actors: new Map([[HERO, { hitPoints: 400, maxHitPoints: 400 }]]),
+    activeBuffs: new Map([[1, { affectedActor: HERO, buff: bacon }]]),
+    send: () => {},
+  };
+
+  const stop = await startManaRegen(session);
+  t.mock.timers.tick(5000 * 5);
+
+  assert.equal(bacon.MP_REGEN, 1.2);
+  assert.equal(session.heroManaPoints, 18, "five 3.6-point ticks ignored the regen buff");
+  stop();
+});
+
 test("mana comes back on its own, and stops when the hero is down", async () => {
   const session = {
     id: 80,

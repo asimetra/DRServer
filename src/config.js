@@ -370,7 +370,7 @@ export const loadServerConfig = (environment = process.env) => {
       ? configuredPath({ environmentValue: setting(environment, "CAPTURE_DIR"), defaultValue: null, configDir })
       : null,
 
-    /** Minimum distance at which a moving enemy begins pursuing the hero. */
+    /** Fallback pursuit radius for custom NPC rows that omit AggroRadius. */
     npcAggroRadius: asInt(setting(environment, "NPC_AGGRO_RADIUS"), defaults.npcAggroRadius ?? 1800),
 
     /** Server-authoritative trap projectile simulation cadence. */

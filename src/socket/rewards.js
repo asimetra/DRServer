@@ -5,6 +5,7 @@ import { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 import { hitPointsUpdate } from "./combat.js";
 import { CLID, OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
+import { buffMultiplierFor } from "./buffs.js";
 
 export { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 
@@ -126,7 +127,9 @@ export const applyProgressReward = (
   const weapons = session.heroWeapons ?? [];
   const gold = rewardAmount(offeredGold * (1 + legendaryDropBonus(weapons, "gold")));
   const xp = rewardAmount(offeredXp * (1 + legendaryDropBonus(weapons, "xp")));
-  const crowd = rewardAmount(offeredCrowd);
+  const crowd = rewardAmount(
+    offeredCrowd * buffMultiplierFor(session, session.heroDoid, "BUSTER")
+  );
   if (!gold && !xp && !crowd) return false;
 
   if (gold || xp) {

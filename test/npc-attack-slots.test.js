@@ -36,3 +36,15 @@ test("NPC attack choices retain the authored animation speed", async () => {
   assert.equal(choice.attackSpeed, 0.25, "runtime preserves that authored speed");
   assert.equal(choice.speedStat, "SHOOT_SPD", "shooting buffs use the shooting speed column");
 });
+
+test("NPC attack choices retain the last authored damage frame as movement lock", async () => {
+  const npc = await npcForConstant("KNIGHT_TUTORIAL");
+  const weapon = npc.Weapon1 ? await weaponForConstant(npc.Weapon1) : null;
+  const attacks = await npcAttackChoices(npc, weapon);
+  const slash = await attackForConstant("EN_SWORD_SLASH");
+  const choice = attacks.find((attack) => attack.attackType === slash?.Id);
+
+  assert.ok(choice);
+  assert.equal(choice.impactFrame, 11);
+  assert.equal(choice.attackLockFrame, 11);
+});

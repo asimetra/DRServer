@@ -1,6 +1,7 @@
 import { heroById, loadGameMaster } from "../gamemaster.js";
 import { grantMana } from "./rewards.js";
 import { info } from "../log.js";
+import { buffMultiplierFor } from "./buffs.js";
 
 /**
  * Mana coming back on its own.
@@ -67,8 +68,11 @@ export const startManaRegen = async (session) => {
     const heroActor = session.actors?.get(session.heroDoid);
     if (heroActor?.dead) return;
 
-    carry += perTick;
-    const whole = Math.floor(carry);
+    carry += perTick * buffMultiplierFor(session, session.heroDoid, "MP_REGEN");
+    // Decimal multipliers such as Bacon's 1.2 make five 3.6-point ticks arrive
+    // as 17.999999999999996 in binary. Do not lose a whole authored point to
+    // floating representation.
+    const whole = Math.floor(carry + 1e-9);
     if (whole <= 0) return;
     carry -= whole;
     grantMana(session, whole);

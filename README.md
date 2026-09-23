@@ -201,6 +201,20 @@ The full conformance suite uses locally imported compatibility data:
 npm test
 ```
 
+The generated combat matrix executes every moving NPC attack authored by the
+imported GameMaster and audits every weapon/attack reference:
+
+```bash
+npm run test:combat-matrix
+node tools/combat-matrix.js --json
+node tools/combat-matrix.js --owner SAVAGE_BOW
+node tools/combat-matrix.js --attack EN_POISON_ARROW --json
+```
+
+Its JSON form is intended for agents and automation. See
+[docs/combat-conformance.md](docs/combat-conformance.md) for the checks and the
+remaining client-side boundary.
+
 Without that data a large part of the suite cannot run, so a fresh clone should
 use:
 

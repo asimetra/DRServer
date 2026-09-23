@@ -191,7 +191,14 @@ test("level 75 wolf damage matches the official resistant neutral and weak hits"
     await performNpcAttack(
       session,
       petDoid,
-      { ...pet.ai, ...bite, attackColliders: [], projectile: null },
+      {
+        ...pet.ai,
+        ...bite,
+        // This assertion isolates pet damage categories; timeline geometry is
+        // covered by the AI and generated matrix suites.
+        attackColliders: [{ type: "circleCollider", radius: 1000, xOffset: 0, frame: 0 }],
+        projectile: null,
+      },
       targetDoid
     );
     observed.push(2000 - session.actors.get(targetDoid).hitPoints);
@@ -402,7 +409,7 @@ test("an enemy may target a nearer pet without confusing it for the owner hero",
           nextAttackAt: 0,
           attackType: 920050,
           damage: 1,
-          attackColliders: [],
+          attackColliders: [{ type: "circleCollider", radius: 100, xOffset: 0, frame: 0 }],
         },
       }],
     ]),
@@ -459,7 +466,7 @@ test("a nearby hero keeps aggro even when the pet is slightly closer", async () 
           nextAttackAt: 0,
           attackType: 920050,
           damage: 1,
-          attackColliders: [],
+          attackColliders: [{ type: "circleCollider", radius: 0, xOffset: 90, frame: 0 }],
         },
       }],
     ]),

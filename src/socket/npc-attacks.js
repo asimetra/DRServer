@@ -39,6 +39,11 @@ export const npcAttackChoices = async (
     const projectile = attack.Projectile
       ? await projectileForConstant(attack.Projectile)
       : null;
+    const launches = await projectileLaunches(attack.AttackTimeline);
+    const actionFrames = [
+      ...shape.map((collider) => Number(collider.frame ?? 0)),
+      ...launches.map((launch) => Number(launch.frame ?? 0)),
+    ];
     attackSet.push({
       attackType: attack.Id,
       attackSpeed: npcAttackSpeed(attack.AttackSpd),
@@ -51,10 +56,13 @@ export const npcAttackChoices = async (
       damage: Math.max(0, Math.round(weaponPower * Math.abs(attack.DamageMod ?? 0))),
       attackColliders: shape,
       projectile: projectile || null,
-      projectileLaunches: await projectileLaunches(attack.AttackTimeline),
+      projectileLaunches: launches,
       impactFrame: shape.length
         ? Math.min(...shape.map((collider) => Number(collider.frame ?? 0)))
         : 0,
+      // Ordinary chase and target tracking pause through the last authored
+      // damaging action. Attack-specific MoveAmount remains active.
+      attackLockFrame: Math.max(0, ...actionFrames),
       moveAmount: Math.max(0, Number(attack.MoveAmount ?? 0)),
       moveAngle: Number(attack.MoveAngle ?? 0),
       moveDurationMs: Math.max(0, Number(attack.MoveDuration ?? 0) * 1000),

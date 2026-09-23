@@ -30,6 +30,7 @@ logs-fresh/
 # is that a genuinely public document is invisible until it is listed here.
 /docs/*
 !/docs/client-setup.md
+!/docs/combat-conformance.md
 !/docs/dc-schema.json
 
 # Client patch material, whole. The directory only ever holds work derived from
