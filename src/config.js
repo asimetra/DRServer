@@ -391,6 +391,9 @@ export const loadServerConfig = (environment = process.env) => {
     /** Truncation limit for logged request/response bodies. */
     logBodyLimit: asInt(setting(environment, "LOG_LIMIT"), defaults.logBodyLimit),
 
+    /** Minimum terminal log level: info, warn, error or silent. */
+    logLevel: String(setting(environment, "LOG_LEVEL") ?? defaults.logLevel ?? "info").toLowerCase(),
+
     /** Hard per-socket cap for multiplayer broadcasts waiting in Node memory. */
     maxOutboundBufferBytes: Math.max(
       64 * 1024,

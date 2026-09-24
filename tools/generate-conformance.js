@@ -40,7 +40,12 @@ import path from "node:path";
 import readline from "node:readline";
 import { loadGameMaster, npcForConstant } from "../src/gamemaster.js";
 import { layerFor } from "../src/socket/objects.js";
-import { captureFiles, decode, mapNodeOf } from "./capture-lib.js";
+import {
+  captureFiles,
+  decode,
+  isTruncatedCaptureRecord,
+  mapNodeOf,
+} from "./capture-lib.js";
 import { npcMaxHitPoints } from "../src/npc-stats.js";
 import { headingFor } from "../src/socket/dungeon.js";
 import { facingOf } from "../src/socket/floors.js";
@@ -234,6 +239,7 @@ const main = async () => {
       if (!line.trim()) continue;
       let record;
       try { record = JSON.parse(line); } catch { continue; }
+      if (isTruncatedCaptureRecord(record)) continue;
       if (record.op !== 134 && record.op !== 135) continue;
       let npc;
       try { npc = decodeNpc(record.hex); } catch { continue; }
@@ -319,6 +325,7 @@ const main = async () => {
       if (!line.trim()) continue;
       let record;
       try { record = JSON.parse(line); } catch { continue; }
+      if (isTruncatedCaptureRecord(record)) continue;
       const node = mapNodeOf(decode(record) ?? {});
       if (node) infinite ||= isInfiniteRun(gm, node);
       if (record.op !== 134 && record.op !== 135) continue;

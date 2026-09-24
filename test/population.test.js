@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { loadFloor } from "../src/socket/floors.js";
 import { createNavigationState, loadNavigationLibrary } from "../src/socket/navigation.js";
-import { enemyPoolFor, markersFor, populationFor, stockFloor } from "../src/socket/population.js";
+import {
+  enemyPoolFor,
+  isStockedRoleMarker,
+  markersFor,
+  populationFor,
+  stockFloor,
+} from "../src/socket/population.js";
 
 const tierOf = (gm, constant) =>
   gm.raw.ColiseumTiers.find((row) => row.Constant === constant);
@@ -28,6 +34,15 @@ test("a tier's enemies are sorted into the roles DungeonEnemy gives them", async
     bruiser: [],
     miniboss: [],
   });
+});
+
+test("stocked role markers are positions, while unstocked and named NPCs remain actors", async () => {
+  const gm = await loadGameMaster();
+
+  assert.equal(isStockedRoleMarker(gm, "CASTLE_TIER1", "FODDER"), true);
+  assert.equal(isStockedRoleMarker(gm, "CASTLE_TIER1", "BRUISER"), true);
+  assert.equal(isStockedRoleMarker(gm, "CASTLE_TIER1", "KNIGHT_TUTORIAL"), false);
+  assert.equal(isStockedRoleMarker(gm, "NO_SUCH_TIER", "FODDER"), false);
 });
 
 test("the count lands inside the tier's quota", async () => {

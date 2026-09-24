@@ -21,6 +21,14 @@ import path from "node:path";
 import readline from "node:readline";
 import { CLID, OP, opcodeName } from "../src/socket/opcodes.js";
 
+export const captureBodyOf = (record) =>
+  Buffer.from(String(record?.hex ?? "").replace(/[^0-9a-fA-F]/g, ""), "hex");
+
+export const isTruncatedCaptureRecord = (record, body = captureBodyOf(record)) => {
+  const declared = Number(record?.len);
+  return Number.isFinite(declared) && body.length < declared;
+};
+
 const clidName = (id) => Object.keys(CLID).find((key) => CLID[key] === id) ?? `CLID(${id})`;
 
 const GENERATE = new Set([
@@ -30,8 +38,7 @@ const GENERATE = new Set([
 
 /** A capture line, decoded. Returns null for anything too short to read. */
 export const decode = (record) => {
-  const hex = String(record.hex ?? "").replace(/[^0-9a-fA-F]/g, "");
-  const bytes = Buffer.from(hex, "hex");
+  const bytes = captureBodyOf(record);
   if (bytes.length < 2) return null;
 
   const op = bytes.readUInt16LE(0);
@@ -45,6 +52,7 @@ export const decode = (record) => {
     match: record.match ?? null,
     seq: record.seq ?? null,
     elapsedMs: record.elapsed_ms ?? null,
+    truncated: isTruncatedCaptureRecord(record, bytes),
   };
 
   if (op === OP.CLIENT_OBJECT_UPDATE_FIELD && bytes.length >= 8) {

@@ -35,5 +35,6 @@
   "dungeonSummaryDelayMs": 5000,
   "pickupRadius": 120,
   "logBodyLimit": 600,
+  "logLevel": "info",
   "maxOutboundBufferBytes": 4194304
 }

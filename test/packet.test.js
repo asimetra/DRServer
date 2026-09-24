@@ -6,6 +6,7 @@ import { PacketReader, PacketWriter, drainFrames } from "../src/socket/packet.js
 test("packet primitives round-trip in little-endian order", () => {
   const body = new PacketWriter(0x1234)
     .u8(0xfe)
+    .i8(-2)
     .u16(0xabcd)
     .i16(-123)
     .u32(0x89abcdef)
@@ -17,6 +18,7 @@ test("packet primitives round-trip in little-endian order", () => {
   const reader = new PacketReader(body);
   assert.equal(reader.u16(), 0x1234);
   assert.equal(reader.u8(), 0xfe);
+  assert.equal(reader.i8(), -2);
   assert.equal(reader.u16(), 0xabcd);
   assert.equal(reader.buf.readInt16LE(reader.pos), -123);
   reader.pos += 2;

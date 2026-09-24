@@ -195,10 +195,15 @@ const retireSpentBomb = (session, targetId, doid, hazard) => {
  * `touch`. Everything the blast catches is still worked out from the authored
  * collider once it has gone off.
  */
-const nearEnoughToTrip = (session, hazard) => {
+const nearEnoughToTrip = (session, hazard, now) => {
   const trip = Math.max(0, Number(hazard?.npc?.AggroRadius ?? 0));
   if (!(trip > 0) || !hazard.position) return [];
-  return hazardVictims(session, [{ type: "circle", x: hazard.position.x, y: hazard.position.y, radius: trip }], hazard);
+  return hazardVictims(
+    session,
+    [{ type: "circle", x: hazard.position.x, y: hazard.position.y, radius: trip }],
+    hazard,
+    now
+  );
 };
 
 const holdZone = (session, targetId, doid, hazard, colliders) => {
@@ -231,8 +236,7 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
    * Once per biting tick rather than once per victim, so a trap that catches
    * three monsters at once still plays one animation.
    */
-  const touch = () => {
-    const now = Date.now();
+  const touch = (now = Date.now()) => {
     let bit = false;
     if (hazard.spent) return;
     /**
@@ -269,8 +273,8 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
      * circle, which is what makes standing next to one with a monster
      * dangerous for both.
      */
-    if (hazard.contactBomb && !nearEnoughToTrip(session, hazard).length) return;
-    for (const victim of hazardVictims(session, colliders, hazard)) {
+    if (hazard.contactBomb && !nearEnoughToTrip(session, hazard, now).length) return;
+    for (const victim of hazardVictims(session, colliders, hazard, now)) {
       if (hazard.heroOnly && !isPartyHero(session, victim.doid)) continue;
       if (now - (lastHitAt.get(victim.doid) ?? -Infinity) < cooldownMs) continue;
       lastHitAt.set(victim.doid, now);
@@ -305,12 +309,23 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
    * One tick of latency is the whole cost, and 100ms is what the mode says it
    * should be.
    */
-  const timer = setInterval(() => {
-    if (!session.dungeonActive) return stopHazardBeat(session, targetId);
-    touch();
-  }, CONTACT_TICK_MS);
-  timer.unref?.();
-  remember(session, targetId, () => clearInterval(timer));
+  session.hazardContactZones ??= new Map();
+  session.hazardContactZones.set(targetId, touch);
+  if (!session.hazardContactTimer) {
+    session.hazardContactTimer = setInterval(() => {
+      if (!session.dungeonActive) return clearHazardBeats(session);
+      const now = Date.now();
+      for (const run of session.hazardContactZones?.values() ?? []) run(now);
+    }, CONTACT_TICK_MS);
+    session.hazardContactTimer.unref?.();
+  }
+  remember(session, targetId, () => {
+    session.hazardContactZones?.delete(targetId);
+    if (session.hazardContactZones?.size || !session.hazardContactTimer) return;
+    clearInterval(session.hazardContactTimer);
+    session.hazardContactTimer = null;
+    session.hazardVictimIndex = null;
+  });
 };
 
 /**
@@ -334,6 +349,10 @@ export const stopHazardBeat = (session, targetId) => {
 export const clearHazardBeats = (session) => {
   for (const stop of session.hazardBeats?.values() ?? []) stop();
   session.hazardBeats?.clear();
+  session.hazardContactZones?.clear();
+  if (session.hazardContactTimer) clearInterval(session.hazardContactTimer);
+  session.hazardContactTimer = null;
+  session.hazardVictimIndex = null;
   for (const stop of session.turretAims?.values() ?? []) stop();
   session.turretAims?.clear();
 };

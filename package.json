@@ -20,7 +20,8 @@
     "db:down": "./tools/db.sh down",
     "db:reset": "./tools/db.sh reset",
     "db:psql": "./tools/db.sh psql",
-    "test:public": "node tools/test-public.js"
+    "test:public": "node tools/test-public.js",
+    "load": "node tools/load-sim.js"
   },
   "dependencies": {
     "pg": "^8.23.0"

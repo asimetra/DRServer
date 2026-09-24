@@ -47,6 +47,7 @@ const summarise = async (file) => {
   let last = null;
 
   await readCapture(file, (decoded) => {
+    if (decoded.truncated) return;
     seen.records += 1;
     first ??= decoded.ts;
     last = decoded.ts;

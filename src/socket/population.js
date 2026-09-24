@@ -34,6 +34,17 @@ const ROLE_BY_LETTER = { F: "fodder", B: "bruiser", M: "miniboss" };
 
 const NOT_A_ROLE = new Set(["Id", "Constant", "Name", "Release"]);
 
+const enemyPopulationRow = (gm, tierConstant) =>
+  (gm?.raw?.DungeonEnemy ?? []).find((entry) => entry.Constant === tierConstant) ?? null;
+
+/** Whether this tier fills authored role markers from a population quota. */
+export const tierHasEnemyPopulation = (gm, tierConstant) =>
+  Boolean(enemyPopulationRow(gm, tierConstant));
+
+/** A role marker consumed by this tier's quota rather than spawned itself. */
+export const isStockedRoleMarker = (gm, tierConstant, npcConstant) =>
+  tierHasEnemyPopulation(gm, tierConstant) && Boolean(SPAWN_MARKERS[npcConstant]);
+
 /**
  * Which enemies a tier draws on, by role.
  *
@@ -43,7 +54,7 @@ const NOT_A_ROLE = new Set(["Id", "Constant", "Name", "Release"]);
  */
 export const enemyPoolFor = (gm, tierConstant) => {
   const pool = { fodder: [], bruiser: [], miniboss: [] };
-  const row = (gm?.raw?.DungeonEnemy ?? []).find((entry) => entry.Constant === tierConstant);
+  const row = enemyPopulationRow(gm, tierConstant);
   if (!row) return pool;
 
   for (const [constant, letter] of Object.entries(row)) {

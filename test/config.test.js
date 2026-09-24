@@ -22,6 +22,7 @@ test("JSON defaults make the server independent from the client repository", () 
   assert.equal(loaded.projectileTickMs, 20);
   assert.equal(loaded.maxOutboundBufferBytes, 4 * 1024 * 1024);
   assert.equal(loaded.allowInsecureInternal, false);
+  assert.equal(loaded.logLevel, "info");
 });
 
 test("environment values override JSON defaults", () => {
@@ -31,6 +32,7 @@ test("environment values override JSON defaults", () => {
     DR_STRICT: "1",
     DR_DUNGEON: "0",
     DR_NPC_AGGRO_RADIUS: "2400",
+    DR_LOG_LEVEL: "warn",
   });
 
   assert.equal(loaded.host, "0.0.0.0");
@@ -38,6 +40,7 @@ test("environment values override JSON defaults", () => {
   assert.equal(loaded.permissive, false);
   assert.equal(loaded.dungeonsEnabled, false);
   assert.equal(loaded.npcAggroRadius, 2400);
+  assert.equal(loaded.logLevel, "warn");
 });
 
 test("public ODS settings take precedence over legacy DR aliases", () => {

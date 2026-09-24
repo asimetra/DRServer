@@ -49,6 +49,7 @@ import { classifyHazard } from "../src/socket/hazards.js";
 import { config } from "../src/config.js";
 import fsp from "node:fs/promises";
 import nodePath from "node:path";
+import { captureBodyOf, isTruncatedCaptureRecord } from "./capture-lib.js";
 
 /**
  * Which props the triggerable path ever sees.
@@ -100,8 +101,8 @@ const tally = async (files) => {
       } catch {
         continue;
       }
-      const hex = String(record.hex ?? "").replace(/[^0-9a-fA-F]/g, "");
-      const bytes = Buffer.from(hex, "hex");
+      const bytes = captureBodyOf(record);
+      if (isTruncatedCaptureRecord(record, bytes)) continue;
 
       if (record.clidName === "DistributedNPCGameObject" && bytes.length >= 20) {
         doidType.set(record.doid, bytes.readUInt32LE(16));

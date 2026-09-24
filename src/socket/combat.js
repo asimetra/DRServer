@@ -3,6 +3,7 @@ import { CLID, OP, TEAM } from "./opcodes.js";
 import { config } from "../config.js";
 import {
   attackById,
+  attackTimelineFrames,
   FRAMES_PER_SECOND,
   heroById,
   invulnerableForMs,
@@ -89,7 +90,7 @@ const encodeCombatResults = ({
       .u32(result.attacker ?? doid)
       .u32(result.attackee ?? targetActorDoid)
       .i32(result.damage ?? 0)
-      .u8(result.weaponSlot ?? weaponSlot)
+      .i8(result.weaponSlot ?? weaponSlot)
       .u8(result.isConsumableWeapon ?? 0)
       .u32(result.attackType ?? attackType)
       .u32(result.targetActorDoid ?? targetActorDoid)
@@ -98,7 +99,7 @@ const encodeCombatResults = ({
       .u8(result.knockback ?? 0)
       .u8(result.blocked ?? 0)
       .u8(result.criticalHit ?? 0)
-      .u8(result.effectiveness ?? 0)
+      .i8(result.effectiveness ?? 0)
       .i32(result.selfDamage ?? 0)
       .f32(result.scalingMaxPowerMultiplier ?? 1)
       .u8(result.generation ?? 0);
@@ -127,7 +128,7 @@ export const npcAttackChoreography = ({
   return new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
     .u32(doid)
     .u16(143) // DistributedNPCGameObject.ReceiveAttackChoreography
-    .u8(weaponSlot) // Attack.weaponSlot (signed on the client; slot zero here)
+    .i8(weaponSlot)
     .u8(0) // Attack.isConsumableWeapon
     .u32(attackType)
     .u32(targetActorDoid)
@@ -234,16 +235,16 @@ const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
      * the choreography carries it too — so every hit was priced with the
      * strongest thing the hero owned regardless of what made it.
      */
-    const weaponSlot = head.u8();
+    const weaponSlot = head.i8();
     const isConsumable = head.u8() !== 0;
     const attackType = head.u32();
     head.u32(); // attack.targetActorDoid
-    head.u8(); // when
+    const when = head.u8();
     head.u8(); // suffer
     const knockback = head.u8();
     const blocked = head.u8();
     head.u8(); // criticalHit
-    head.u8(); // effectiveness
+    const effectiveness = head.i8();
     head.u32(); // selfDamage
     const scalingMaxPowerMultiplier = head.f32();
     /**
@@ -253,8 +254,8 @@ const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
      */
     const generation = head.u8();
     results.push({
-      attacker, attackee, attackType, weaponSlot, isConsumable,
-      knockback, blocked, scalingMaxPowerMultiplier, generation, bytes,
+      attacker, attackee, attackType, weaponSlot, isConsumable, when,
+      knockback, blocked, effectiveness, scalingMaxPowerMultiplier, generation, bytes,
     });
   }
 
@@ -608,9 +609,16 @@ const teamAllowsHit = (attack, attackerTeam, victimTeam) => {
  * It admits fallen *heroes* only — a dead monster is faded out and is not cover
  * — and everything else asks who can be hurt, which a corpse cannot be.
  */
-const trapVictims = (session, { attack, attackerTeam, includeFallen = false } = {}) => {
+const trapVictims = (
+  session,
+  { attack, attackerTeam, includeFallen = false, candidateDoids = null } = {}
+) => {
   const victims = [];
-  for (const [doid, actor] of session.actors ?? []) {
+  const entries = candidateDoids
+    ? [...candidateDoids].map((doid) => [doid, session.actors?.get(doid)])
+    : session.actors ?? [];
+  for (const [doid, actor] of entries) {
+    if (!actor) continue;
     if (actor.teleportHidden) continue;
     // Only a fallen *hero* counts as still being there. Killing an NPC leaves
     // its entry in the map with `dead` set — nothing removes it on the ordinary
@@ -636,6 +644,78 @@ const trapVictims = (session, { attack, attackerTeam, includeFallen = false } = 
     if (position) victims.push({ doid, actor, position });
   }
   return victims;
+};
+
+const HAZARD_ACTOR_CELL = 256;
+
+const hazardColliderBounds = (collider) => {
+  if (collider?.type === "circle") {
+    const radius = Math.max(0, Number(collider.radius ?? 0));
+    return {
+      minX: collider.x - radius,
+      maxX: collider.x + radius,
+      minY: collider.y - radius,
+      maxY: collider.y + radius,
+    };
+  }
+  if (collider?.type !== "rectangle") return null;
+  const cosine = Math.abs(Math.cos(Number(collider.angle ?? 0)));
+  const sine = Math.abs(Math.sin(Number(collider.angle ?? 0)));
+  const spanX = Number(collider.halfWidth ?? 0) * cosine +
+    Number(collider.halfHeight ?? 0) * sine;
+  const spanY = Number(collider.halfWidth ?? 0) * sine +
+    Number(collider.halfHeight ?? 0) * cosine;
+  return {
+    minX: collider.x - spanX,
+    maxX: collider.x + spanX,
+    minY: collider.y - spanY,
+    maxY: collider.y + spanY,
+  };
+};
+
+/** Builds one actor grid for every sustained hazard sharing this timestamp. */
+const hazardVictimIndex = (session, now) => {
+  const actors = session.actors;
+  const cached = session.hazardVictimIndex;
+  if (cached?.at === now && cached.actors === actors && cached.size === actors?.size) return cached;
+
+  const cells = new Map();
+  for (const { doid, actor, position } of trapVictims(session)) {
+    const center = collisionPointOf(actor, position);
+    const radius = Math.max(0, Number(actor?.collisionRadius ?? 30));
+    const fromX = Math.floor((center.x - radius) / HAZARD_ACTOR_CELL);
+    const toX = Math.floor((center.x + radius) / HAZARD_ACTOR_CELL);
+    const fromY = Math.floor((center.y - radius) / HAZARD_ACTOR_CELL);
+    const toY = Math.floor((center.y + radius) / HAZARD_ACTOR_CELL);
+    for (let x = fromX; x <= toX; x++) {
+      for (let y = fromY; y <= toY; y++) {
+        const key = `${x},${y}`;
+        const bucket = cells.get(key);
+        if (bucket) bucket.add(doid);
+        else cells.set(key, new Set([doid]));
+      }
+    }
+  }
+  const index = { at: now, actors, size: actors?.size ?? 0, cells };
+  session.hazardVictimIndex = index;
+  return index;
+};
+
+export const hazardCandidateDoids = (session, colliders = [], now = Date.now()) => {
+  const index = hazardVictimIndex(session, now);
+  const candidates = new Set();
+  for (const collider of colliders) {
+    const bounds = hazardColliderBounds(collider);
+    if (!bounds) return null; // Unknown shape: preserve correctness with the full scan.
+    for (let x = Math.floor(bounds.minX / HAZARD_ACTOR_CELL);
+      x <= Math.floor(bounds.maxX / HAZARD_ACTOR_CELL); x++) {
+      for (let y = Math.floor(bounds.minY / HAZARD_ACTOR_CELL);
+        y <= Math.floor(bounds.maxY / HAZARD_ACTOR_CELL); y++) {
+        for (const doid of index.cells.get(`${x},${y}`) ?? []) candidates.add(doid);
+      }
+    }
+  }
+  return candidates;
 };
 
 const segmentHitsCircle = (from, to, center, radius) => {
@@ -1197,8 +1277,12 @@ export const startTrapProjectiles = (session) => {
  * it a different one on each frame of the swing, and only the frame that is
  * playing should be able to catch anybody.
  */
-export const hazardVictims = (session, colliders = [], hazard = null) =>
-  trapVictims(session, { attack: hazard?.attack, attackerTeam: hazard?.team }).filter(
+export const hazardVictims = (session, colliders = [], hazard = null, now = Date.now()) =>
+  trapVictims(session, {
+    attack: hazard?.attack,
+    attackerTeam: hazard?.team,
+    candidateDoids: hazardCandidateDoids(session, colliders, now),
+  }).filter(
     ({ actor, position }) => areaTrapHits({ combatColliders: colliders }, position, actor)
   );
 
@@ -1305,7 +1389,7 @@ export const heroStateAndChoreography = ({
     .u32(doid)
     .u16(178)
     .utf(state)
-    .u8(weaponSlot)
+    .i8(weaponSlot)
     .u8(0)
     .u32(attackType)
     .u32(0)
@@ -2754,6 +2838,54 @@ const CASTLESS_ATTACKS = new Set(["HEALTH_BOMB_ATTACK", "PARTY_BOMB_ATTACK"]);
  * the socket's life.
  */
 const CAST_WINDOW_MS = 30_000;
+const WHEN_AUDIT_GRACE_MS = 500;
+
+/**
+ * Measures CombatResult.when without using an unproven bound to reject hits.
+ *
+ * Standalone results carry the authored timeline frame. Embedded choreography
+ * results carry 255 as "not frame-bound", so that sentinel is deliberately
+ * excluded. ODS_CAST_MODE=audit enables these observations; enforce currently
+ * keeps the same audit because neither finding changes gameplay yet.
+ */
+export const auditCombatResultWhen = async (
+  session,
+  proposal,
+  attack,
+  acceptedCast,
+  now = Date.now()
+) => {
+  if (config.castMode === "off" || proposal?.when === 255 || !attack) return false;
+
+  let found = false;
+  const when = Number(proposal?.when ?? 0);
+  const totalFrames = await attackTimelineFrames(attack.AttackTimeline);
+  if (totalFrames > 0 && when > totalFrames) {
+    noteViolation(
+      session,
+      RULE.whenPastTimeline,
+      `${attack.Constant ?? attack.Id} frame ${when} past timeline ${totalFrames}`,
+      now
+    );
+    found = true;
+  }
+
+  if (acceptedCast?.at != null) {
+    const elapsedMs = now - Number(acceptedCast.at);
+    const frameMs = when * (1000 / FRAMES_PER_SECOND);
+    if (elapsedMs > frameMs + WHEN_AUDIT_GRACE_MS) {
+      noteViolation(
+        session,
+        RULE.whenLate,
+        `${attack.Constant ?? attack.Id} frame ${when} arrived ${Math.round(elapsedMs)}ms ` +
+          `after cast (${Math.round(elapsedMs - frameMs)}ms past frame time)`,
+        now
+      );
+      found = true;
+    }
+  }
+  return found;
+};
 
 /**
  * How many results one accepted cast may answer for.
@@ -3143,14 +3275,18 @@ const applyProposals = async (session, proposals) => {
       warn(`[${session.id}] reach check failed, letting the hit through: ${error.message}`);
       return null;
     });
+    const proposalAt = Date.now();
     const acceptedCast = consumeAcceptedCast(
       session,
       attack,
       proposal.attackType,
       proposal.weaponSlot,
       proposal.attackee,
-      Date.now(),
+      proposalAt,
       proposal.scalingMaxPowerMultiplier
+    );
+    await auditCombatResultWhen(session, proposal, attack, acceptedCast, proposalAt).catch(
+      (error) => warn(`[${session.id}] CombatResult.when audit failed: ${error.message}`)
     );
     if (!acceptedCast) {
       noteViolation(

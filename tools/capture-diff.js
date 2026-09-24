@@ -73,6 +73,7 @@ const tally = async (file) => {
   let first = null;
   let last = null;
   await readCapture(file, (decoded) => {
+    if (decoded.truncated) return;
     if (!bothDirections && decoded.dir !== "in") return;
     if (decoded.opName === "CLIENT_HEART_BEAT") return;
     first ??= decoded.ts;

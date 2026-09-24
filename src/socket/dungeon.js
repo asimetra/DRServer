@@ -65,7 +65,7 @@ import {
   petSpawnPosition,
   scaledNpcWeaponPower,
 } from "../pets.js";
-import { stockFloor } from "./population.js";
+import { isStockedRoleMarker, stockFloor, tierHasEnemyPopulation } from "./population.js";
 import { preloadFor } from "./precache.js";
 import { acquireAccount } from "../accounts.js";
 import {
@@ -196,16 +196,6 @@ const generatorSleep = (runtime, ms) => {
     runtime.cancelWait = finish;
   });
 };
-
-/**
- * How long a jail stays open to let one out, measured off the real server:
- * 5.41s on the tutorial's first floor and 5.42/5.08/5.07 on its boss floor.
- */
-const RELEASE_WINDOW_MS = 5000;
-
-/** Original waves appear as a tight cluster instead of an exact stack. */
-const RELEASE_CLUSTER_STEP = 8;
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 /** Nearby spawns are one burst; a five-second jail spawn is intentionally not. */
 const WAVE_JOIN_WINDOW_MS = 500;
@@ -1260,6 +1250,21 @@ const buildNpcs = async (context, placements) => {
     if (!context.isActive()) break;
 
     /**
+     * A role placement is the centre of a stocked pack, not another member of
+     * that pack. `stockFloor` fills it from the tier quota below; resolving it
+     * here as well produced exactly marker + quota — tutorial became 53-67
+     * knights and 11 brutes instead of the authored 35-49 and 6.
+     *
+     * This flag is set only for the initial floor build. A role marker hidden
+     * inside a secret room was not available to the opening stock pass and is
+     * therefore still resolved when that room is revealed.
+     */
+    if (
+      context.skipStockedRoleMarkers &&
+      isStockedRoleMarker(gm, context.tierConstant, placement.constant)
+    ) continue;
+
+    /**
      * A speaker wearing a hero is that hero and not also a monster. The
      * placement is one character either way; `voiceHero` only says which body
      * it stands up in.
@@ -1503,48 +1508,6 @@ export const nearestPartyHeroPosition = (session, origin = { x: 0, y: 0 }) => {
 };
 
 /**
- * Keeps a burst visually compact while orienting its small variation to the
- * actual door direction. The golden-angle spiral stays inside an 18-unit
- * pocket for the normal six-to-eight member waves without a random source or
- * a map-specific formation.
- */
-const releaseClusterPosition = (origin, release, index, collisionRadius = 18) => {
-  if (!release || index === 0) return origin;
-
-  const exitX = release.target.x - origin.x;
-  const exitY = release.target.y - origin.y;
-  const exitLength = Math.hypot(exitX, exitY);
-  if (exitLength < 0.001) return origin;
-
-  /**
-   * A column marching out of the door, never a ring around the spawn.
-   *
-   * The ring was the mistake: laid out at the golden angle, half its members
-   * land behind the origin — inside the back of the cage — and have to walk
-   * backwards out of the wall before they can turn round. That is the odd
-   * shuffle before they engage, and on a tight cage it is also how they ended
-   * up stuck behind it.
-   *
-   * So the layout is derived from the exit rather than from a circle: two
-   * abreast, each row a body-width further along the way out. Everything is in
-   * front of the mouth, nobody overlaps, and the group leaves in the direction
-   * it is meant to.
-   */
-  const spacing = Math.max(RELEASE_CLUSTER_STEP, collisionRadius * 2.5);
-  const forwardX = exitX / exitLength;
-  const forwardY = exitY / exitLength;
-  const row = Math.floor(index / 2);
-  const side = index % 2 === 0 ? -1 : 1;
-  const forward = (row + 1) * spacing;
-  const sideways = side * (spacing / 2);
-
-  return {
-    x: origin.x + forwardX * forward - forwardY * sideways,
-    y: origin.y + forwardY * forward + forwardX * sideways,
-  };
-};
-
-/**
  * Reuses one tiny, in-memory group for the enemies emitted by a generator
  * burst. This is deliberately scoped to a single session and never reaches
  * the client; it lets local separation recognize nearby burst members without
@@ -1573,21 +1536,16 @@ const nextGeneratorWave = (runtime, now) => {
  * ignores the enclosing trigger collider; regular navigation starts after the
  * actor reaches the computed mouth.
  */
-const generatorSpawn = (session, runtime, npc) => {
+export const generatorSpawn = (session, runtime, npc) => {
   /**
    * The body the client draws, not the authored number — the same product used
    * where this spawn is announced, and it was missing here alone.
    *
-   * Everything that places a released monster reads this: the cluster spacing is
-   * `collisionRadius * 2.5`, and the clear-position search asks whether a body
-   * of this size fits. Understating it packs a wave tighter than its members
-   * actually are. 96 of the 109 NPC rows that author a `CollisionSize` also
-   * author a `Scale` other than 1, averaging 1.229, so the spacing came out
-   * 18.6% short of what it should be.
-   *
-   * Which is what a capture of this server shows against the official's: nearest
-   * neighbour 51 units at the median here against 61 there, 16.4% tighter, on
-   * comparable crowds. A predicted 18.6 and a measured 16.4 are the same number.
+   * Everything that releases a monster reads this: cage-mouth selection, the
+   * standability check at the authored origin and the later movement sweep all
+   * ask whether a body of this size fits. 96 of the 109 NPC rows that author a
+   * `CollisionSize` also author a `Scale` other than 1, so testing the unscaled
+   * radius can choose a mouth the rendered actor cannot actually pass through.
    */
   const collisionRadius = Math.max(12, (npc.CollisionSize ?? 35) * (npc.Scale ?? 1));
   const { placement } = runtime;
@@ -1643,41 +1601,17 @@ const generatorSpawn = (session, runtime, npc) => {
   let releaseState = null;
   let spawnPosition = placement;
   if (release) {
-    spawnPosition = releaseClusterPosition(placement, release, wave.index, collisionRadius);
     /**
-     * A doorway is only so wide, and the column is two abreast. Where the
-     * sideways half of a slot lands in the frame, that member falls back into
-     * single file rather than onto the origin — falling back onto the origin
-     * put every blocked member on the same spot, which is exactly the pile that
-     * could not fit through the door.
+     * A real cage wave is created at its authored generator point and walks
+     * through the mouth. The official tutorial creates all six members within
+     * sixteen units of (4080,3690), at the authored 100ms cadence. Pre-placing
+     * later members in a column outside the cage made that look like direct
+     * spawning and erased the authored release animation.
      *
-     * Nothing here assumes how wide the gap is: each candidate is tested, and
-     * the first that clears is taken.
+     * It is safe now because release movement owns the enclosing cage collider,
+     * crowd separation shares the movement budget, and a stalled release still
+     * has its bounded fallback. Static geometry is checked separately below.
      */
-    const usable = (candidate) =>
-      !isPositionBlocked(navigation, candidate, collisionRadius, release) &&
-      hasLineOfSight(navigation, candidate, release.target, collisionRadius, release);
-
-    if (!usable(spawnPosition)) {
-      const spacing = Math.max(RELEASE_CLUSTER_STEP, collisionRadius * 2.5);
-      const exitX = release.target.x - placement.x;
-      const exitY = release.target.y - placement.y;
-      const length = Math.hypot(exitX, exitY) || 1;
-      const forwardX = exitX / length;
-      const forwardY = exitY / length;
-
-      spawnPosition = placement;
-      for (let step = wave.index; step >= 1; step--) {
-        const single = {
-          x: placement.x + forwardX * step * spacing,
-          y: placement.y + forwardY * step * spacing,
-        };
-        if (usable(single)) {
-          spawnPosition = single;
-          break;
-        }
-      }
-    }
     releaseState = { ...release, startsAt: Date.now() };
   }
 
@@ -1689,12 +1623,17 @@ const generatorSpawn = (session, runtime, npc) => {
    * walk out of the wall it is in. That is the one left behind at the edge of a
    * room fighting from where it was put.
    */
-  if (isPositionBlocked(navigation, spawnPosition, collisionRadius)) {
+  if (isPositionBlocked(navigation, spawnPosition, collisionRadius, releaseState ?? undefined)) {
     const clear = nearestClearPosition(navigation, spawnPosition, collisionRadius, {
       towards: hero,
       reachableFrom: hero,
     });
-    if (clear) spawnPosition = clear;
+    if (clear) {
+      spawnPosition = clear;
+      // This is the deliberate direct-spawn fallback: static geometry, not the
+      // cage door, made the authored origin unusable.
+      releaseState = null;
+    }
   }
   return {
     position: spawnPosition,
@@ -1702,6 +1641,19 @@ const generatorSpawn = (session, runtime, npc) => {
     wave,
   };
 };
+
+export const generatorCadenceFor = (placement) => ({
+  intervalMs: Number.isFinite(placement?.spawnInterval)
+    ? Math.max(0, Math.round(placement.spawnInterval * 1000))
+    : 1000,
+  maxPopulation: Math.max(1, Number(placement?.maxPopulation ?? 1)),
+  maxSpawns: Math.max(
+    1,
+    Number.isFinite(placement?.maxSpawns)
+      ? Number(placement.maxSpawns)
+      : Number(placement?.maxPopulation ?? 1)
+  ),
+});
 
 export const completeGenerator = (session, runtime) => {
   /**
@@ -1727,10 +1679,7 @@ export const completeGenerator = (session, runtime) => {
 const spawnGeneratorWave = async (context, runtime) => {
   const { session } = context;
   const { placement, maxSpawns } = runtime;
-  const intervalMs = Number.isFinite(placement.spawnInterval)
-    ? Math.max(0, placement.spawnInterval * 1000)
-    : 1000;
-  const maxPopulation = Math.max(1, Number(placement.maxPopulation ?? 1));
+  const { intervalMs, maxPopulation } = generatorCadenceFor(placement);
 
   for (let index = 0; index < maxSpawns; index++) {
     if (index > 0 && intervalMs > 0) await generatorSleep(runtime, intervalMs);
@@ -1827,10 +1776,7 @@ const buildGenerators = async (context, placements) => {
 
   for (const placement of placements) {
     if (!context.isActive()) break;
-    const maxSpawns = Math.max(
-      1,
-      Number.isFinite(placement.maxSpawns) ? placement.maxSpawns : placement.maxPopulation
-    );
+    const { maxSpawns } = generatorCadenceFor(placement);
     const runtime = {
       placement,
       maxSpawns,
@@ -2362,7 +2308,12 @@ const revealSecretRoom = async (context, floor, floorDoid, placementId) => {
   for (const [kind, build] of Object.entries(BUILDERS)) {
     if (!isActive()) return;
     const placements = room.placements[kind] ?? [];
-    if (placements.length) await build(context, placements);
+    if (placements.length) {
+      const revealContext = kind === "npc"
+        ? { ...context, skipStockedRoleMarkers: false }
+        : context;
+      await build(revealContext, placements);
+    }
   }
   info(
     `[${session.id}] secret room revealed at ${room.tile.x},${room.tile.y} ` +
@@ -2968,6 +2919,8 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
   session.floorSettled = false;
   trackTriggers(session, floor);
 
+  const gm = await loadGameMaster();
+  const tier = session.floorPlan?.tier;
   const context = {
     session,
     floorDoid,
@@ -2976,7 +2929,9 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
     // Carried rather than reached for per NPC: spawnNpc prices an enemy's health
     // from the Stats table, and the load is cached but the await is not free
     // once per placement on a floor that has thousands.
-    gm: await loadGameMaster(),
+    gm,
+    tierConstant: tier?.Constant,
+    skipStockedRoleMarkers: tierHasEnemyPopulation(gm, tier?.Constant),
     isActive,
   };
   const summary = [];
@@ -3009,7 +2964,11 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
 
   for (const [kind, build] of Object.entries(BUILDERS)) {
     if (!isActive()) return false;
-    const placements = floor.placements[kind] ?? [];
+    const candidates = floor.placements[kind] ?? [];
+    const placements = kind === "npc" && context.skipStockedRoleMarkers
+      ? candidates.filter((placement) =>
+          !isStockedRoleMarker(gm, context.tierConstant, placement.constant))
+      : candidates;
     if (!placements.length) continue;
     const built = await build(context, placements);
     summary.push(`${kind} ${built}/${placements.length}`);
@@ -3026,7 +2985,6 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
    * After the placed builders, so the stocking sees their navigation obstacles
    * and does not drop a knight inside a spike bed.
    */
-  const tier = session.floorPlan?.tier;
   if (tier && isActive()) {
     const stock = stockFloor(context.gm, {
       floor,

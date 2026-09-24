@@ -6,7 +6,10 @@ import {
   stackableById,
 } from "../gamemaster.js";
 import { info, warn } from "../log.js";
-import { grantBuff, hasAbility } from "./buffs.js";
+import { buffMultiplierFor, grantBuff, hasAbility } from "./buffs.js";
+import { statOffsetsFor } from "../combat-damage.js";
+import { STAT_NAMES } from "../hero-stats.js";
+import { config } from "../config.js";
 import { heroMembersOf } from "./match-world.js";
 import {
   healHero,
@@ -44,6 +47,106 @@ export const remoteStopChoreography = (heroDoid) =>
     .frame();
 
 const STAT_ATTACK_TYPES = new Set(["MELEE", "SHOOTING", "MAGIC"]);
+const PLAY_SPEED_TOLERANCE = 0.02;
+
+/**
+ * The range the native weapon controller can honestly put in choreography.playSpeed.
+ *
+ * Most attacks have one exact answer. A repeater deliberately accelerates from
+ * 1x to its authored maximum, so it gets a range. Charge/scaling holding
+ * timelines use the controller's authored wind-up multiplier; the release goes
+ * back to the ordinary answer. Null means the session lacks enough state to
+ * audit safely, not that the claim is accepted as authoritative.
+ */
+export const expectedHeroPlaySpeedRange = async (
+  session,
+  attack,
+  weaponSlot,
+  { isConsumable = false } = {}
+) => {
+  if (!attack || isAllyReviveAttack(attack)) return null;
+
+  const authored = Number(attack.AttackSpd) > 0 ? Number(attack.AttackSpd) : 1;
+  if (attack.Constant === session.dungeonBusterAttack) {
+    return { min: authored, max: authored };
+  }
+
+  const gm = await loadGameMaster();
+  const details = isConsumable
+    ? { type: 40000, modifier1: 0, modifier2: 0 }
+    : session.heroWeapons?.[weaponSlot];
+  const weapon = gm.weaponById.get(Number(details?.type ?? 0));
+  if (!weapon) return null;
+
+  const offsets = statOffsetsFor(attack);
+  let base = 1;
+  if (offsets) {
+    if (!(session.heroStats instanceof Map)) return null;
+    const speedStat = STAT_NAMES[offsets.speed];
+    const actorSpeed = Number(session.heroStats.get(speedStat) ?? 1);
+    const buffSpeed = buffMultiplierFor(session, session.heroDoid, speedStat);
+    let modifierSpeed = 1;
+    for (const id of [details.modifier1, details.modifier2]) {
+      if (!id) continue;
+      modifierSpeed *= Math.max(0, Number(gm.modifiersById.get(Number(id))?.[speedStat] ?? 1));
+    }
+    base = authored * actorSpeed * buffSpeed * Number(weapon.Speed ?? 1) * modifierSpeed;
+  }
+
+  if (
+    attack.Constant === weapon.HoldingAttack &&
+    Number(weapon.ControllerTimeTillEnd) > 0
+  ) {
+    const holdingMultiplier = 1.2 / Number(weapon.ControllerTimeTillEnd);
+    return { min: base * holdingMultiplier, max: base * holdingMultiplier };
+  }
+
+  if (weapon.WeaponController === "REPEATER") {
+    const maximum = Math.max(1, Number(weapon.RepeaterMaxSpeedPercent ?? 1));
+    return { min: base, max: base * maximum };
+  }
+
+  return { min: base, max: base };
+};
+
+export const auditHeroPlaySpeed = async (
+  session,
+  attack,
+  weaponSlot,
+  playSpeed,
+  { isConsumable = false, now = Date.now() } = {}
+) => {
+  if (config.castMode === "off") return false;
+  const expected = await expectedHeroPlaySpeedRange(session, attack, weaponSlot, {
+    isConsumable,
+  });
+  if (!expected) return false;
+
+  const observed = Number(playSpeed);
+  const tolerance = Math.max(0.01, expected.max * PLAY_SPEED_TOLERANCE);
+  if (
+    Number.isFinite(observed) &&
+    observed > 0 &&
+    observed >= expected.min - tolerance &&
+    observed <= expected.max + tolerance
+  ) return false;
+
+  noteViolation(
+    session,
+    RULE.playSpeedMismatch,
+    `${attack.Constant ?? attack.Id} playSpeed ${observed} outside ` +
+      `${expected.min.toFixed(3)}..${expected.max.toFixed(3)}`,
+    now
+  );
+  return true;
+};
+
+const auditHeroPlaySpeedSafely = async (...args) =>
+  auditHeroPlaySpeed(...args).catch((error) => {
+    const [session] = args;
+    warn(`[${session?.id ?? "?"}] playSpeed audit failed: ${error.message}`);
+    return false;
+  });
 
 /**
  * What an attack does to the caster's Mana, signed.
@@ -560,7 +663,7 @@ export const handleProposeAttackChoreography = async (
   reader,
   { onAccepted, now = Date.now } = {}
 ) => {
-  const weaponSlot = reader.u8();
+  const weaponSlot = reader.i8();
   const isConsumableWeapon = reader.u8();
   const attackType = reader.u32();
   const targetActorDoid = reader.u32();
@@ -602,6 +705,9 @@ export const handleProposeAttackChoreography = async (
       noteViolation(session, RULE.unownedAttack, `powerup slot ${weaponSlot} is not one`);
       return true;
     }
+    await auditHeroPlaySpeedSafely(session, attack, weaponSlot, playSpeed, {
+      isConsumable: true,
+    });
     return useConsumable(session, attack, weaponSlot, { playSpeed });
   }
 
@@ -631,6 +737,8 @@ export const handleProposeAttackChoreography = async (
     warn(`[${session.id}] rejected ${attack.Constant}: wrong equipped weapon`);
     return true;
   }
+
+  await auditHeroPlaySpeedSafely(session, attack, weaponSlot, playSpeed);
 
   const manaCost = await attackManaCost(session, attack, weaponSlot);
   const manaPoints = Math.max(0, Math.trunc(session.heroManaPoints ?? 0));

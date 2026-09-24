@@ -54,3 +54,13 @@ test("friend joins learn their map node from successful response field 297", () 
     .body();
   assert.equal(mapNodeOf(decode({ dir: "out", len: request.length, hex: request.toString("hex") })), 50047);
 });
+
+test("a client-log hex cap is marked truncated instead of malformed protocol", () => {
+  const frame = playerGenerate({ doid: 1002, parent: 500, zone: 10, screenName: "Remote" });
+  const row = rowFor(frame);
+  row.len += 100;
+
+  const decoded = decode(row);
+  assert.equal(decoded.truncated, true);
+  assert.equal(decoded.clidName, "PlayerGameObject", "the readable prefix remains classified");
+});

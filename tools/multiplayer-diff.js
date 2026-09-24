@@ -106,8 +106,13 @@ export const semanticTrace = async (
   const events = [];
   let peakHeroes = 0;
   let unreadable = 0;
+  let truncated = 0;
 
   await readCapture(file, (decoded, record) => {
+    if (decoded.truncated) {
+      truncated += 1;
+      return;
+    }
     if (!bothDirections && decoded.dir !== "in") return;
     if (decoded.op === OP.CLIENT_HEART_BEAT) return;
     const node = mapNodeOf(decoded);
@@ -192,6 +197,7 @@ export const semanticTrace = async (
     nodes: [...nodes],
     peakHeroes,
     unreadable,
+    truncated,
   };
 };
 

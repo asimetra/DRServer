@@ -2,13 +2,28 @@ import { config } from "./config.js";
 
 const stamp = () => new Date().toISOString().slice(11, 23);
 
+const LEVEL = { info: 0, warn: 1, error: 2, silent: 3 };
+const threshold = () => LEVEL[config.logLevel] ?? LEVEL.info;
+
 const write = (level, message) => {
+  if ((LEVEL[level.trim().toLowerCase()] ?? LEVEL.info) < threshold()) return;
   process.stdout.write(`${stamp()} ${level} ${message}\n`);
 };
 
 export const info = (message) => write("INFO ", message);
 export const warn = (message) => write("WARN ", message);
 export const error = (message) => write("ERROR", message);
+
+const warnedOnce = new Set();
+
+/** High-volume data misses are useful once and noise after that. */
+export const warnOnce = (key, message) => {
+  const identity = String(key);
+  if (warnedOnce.has(identity)) return false;
+  warnedOnce.add(identity);
+  warn(message);
+  return true;
+};
 
 /**
  * Loud marker for a request the client made that we do not implement yet.

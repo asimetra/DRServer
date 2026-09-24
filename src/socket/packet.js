@@ -32,6 +32,13 @@ export class PacketWriter {
     return this;
   }
 
+  i8(value) {
+    const buf = Buffer.alloc(1);
+    buf.writeInt8(value, 0);
+    this.chunks.push(buf);
+    return this;
+  }
+
   u32(value) {
     const buf = Buffer.alloc(4);
     buf.writeUInt32LE(value >>> 0, 0);
@@ -120,6 +127,10 @@ export class PacketReader {
 
   u8() {
     return this.buf.readUInt8(this.take(1));
+  }
+
+  i8() {
+    return this.buf.readInt8(this.take(1));
   }
 
   u16() {

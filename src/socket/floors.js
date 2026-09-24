@@ -396,6 +396,52 @@ export const levelsFile = (relative) => {
 };
 
 /**
+ * Tile libraries are immutable deployment data, but generated floors used to
+ * read and parse the same multi-megabyte JSON twice per dungeon: once for the
+ * layout and once for its placements. A 200-dungeon entry burst therefore did
+ * hundreds of identical reads and rebuilt the trigger lookup every time on the
+ * one game-loop thread.
+ *
+ * Cache the in-flight promise as well as the completed value so concurrent
+ * entries coalesce. Placement output itself is deliberately not cached: it is
+ * derived from each generated layout and remains private to that floor.
+ */
+const levelLibraryCache = new Map();
+
+const loadLevelLibrary = (libraryPath) => {
+  const file = levelsFile(libraryPath);
+  if (levelLibraryCache.has(file)) return levelLibraryCache.get(file);
+
+  const loading = fs
+    .readFile(file, "utf8")
+    .then((raw) => {
+      const library = JSON.parse(raw);
+      const definitionsById = new Map(library.LETiles.map((tile) => [tile.id, tile]));
+      const linksByDefinition = new Map();
+      for (const link of library.LETriggers ?? []) {
+        for (const definition of library.LETiles) {
+          const ids = definition.LEObjects ?? [];
+          if (!ids.some(({ id }) => id === link.triggerId || id === link.triggerableId)) continue;
+          linksByDefinition.set(definition.id, [
+            ...(linksByDefinition.get(definition.id) ?? []),
+            link,
+          ]);
+          break;
+        }
+      }
+      return { library, definitionsById, linksByDefinition };
+    })
+    .catch((error) => {
+      // A transient read failure must not poison every later floor build.
+      levelLibraryCache.delete(file);
+      throw error;
+    });
+
+  levelLibraryCache.set(file, loading);
+  return loading;
+};
+
+/**
  * The tile list the floor opens with: everything except the rooms being held
  * back. Each withheld tile goes on the wire later, appended to this list, when
  * the wall in its doorway breaks — see revealSecretRoom in dungeon.js.
@@ -423,10 +469,7 @@ const emptyPlacements = () => ({
 const REVEALED_KINDS = new Set(["npc", "collectable", "generator", "triggerable"]);
 
 export const readPlacements = async (libraryPath, tiles) => {
-  const file = levelsFile(libraryPath);
-  const library = JSON.parse(await fs.readFile(file, "utf8"));
-
-  const definitionsById = new Map(library.LETiles.map((tile) => [tile.id, tile]));
+  const { definitionsById, linksByDefinition } = await loadLevelLibrary(libraryPath);
   const navigationDefinitions = await loadNavigationLibrary();
   /**
    * The rooms this floor will not admit to having yet — see secrets.js. Their
@@ -457,16 +500,6 @@ export const readPlacements = async (libraryPath, tiles) => {
    * each copy separately, with that copy's prefix on both ends.
    */
   const localId = (instance, id) => (id === undefined || id === null ? id : `${instance}:${id}`);
-  const linksByDefinition = new Map();
-  for (const link of library.LETriggers ?? []) {
-    for (const definition of library.LETiles) {
-      const ids = definition.LEObjects ?? [];
-      if (!ids.some(({ id }) => id === link.triggerId || id === link.triggerableId)) continue;
-      linksByDefinition.set(definition.id, [...(linksByDefinition.get(definition.id) ?? []), link]);
-      break;
-    }
-  }
-
   const wiring = new Map();
 
   for (const [instance, tile] of tiles.entries()) {
@@ -711,8 +744,7 @@ export const loadFloor = async (name = "arena_gauntlet") => {
  * layout came from.
  */
 export const buildFloor = async (tileLibrary, { tier = 1, tileCount = 9, seed = 1 } = {}) => {
-  const file = levelsFile(tileLibrary);
-  const library = JSON.parse(await fs.readFile(file, "utf8"));
+  const { library } = await loadLevelLibrary(tileLibrary);
 
   const layout = generateFloor(library, { tier, tileCount, seed });
   const placements = await readPlacements(tileLibrary, layout.tiles);

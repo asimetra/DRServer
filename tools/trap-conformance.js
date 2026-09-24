@@ -32,6 +32,7 @@ import { worldColliders } from "../src/socket/heading.js";
 import { clearHazardBeats, raiseHazard } from "../src/socket/hazards.js";
 import { loadNavigationLibrary } from "../src/socket/navigation.js";
 import { CLID } from "../src/socket/opcodes.js";
+import { captureBodyOf, isTruncatedCaptureRecord } from "./capture-lib.js";
 
 const FRAMES_PER_SECOND = 24;
 const OP_UPDATE_FIELD = 124;
@@ -76,7 +77,8 @@ const profileOfficial = async (files) => {
         continue;
       }
       if (!row.hex || row.dir !== "in") continue;
-      const body = Buffer.from(row.hex, "hex");
+      const body = captureBodyOf(row);
+      if (isTruncatedCaptureRecord(row, body)) continue;
 
       if (OP_GENERATE.has(row.op) && body.length >= 20) {
         for (let at = 16; at + 4 <= Math.min(body.length, 40); at += 1) {

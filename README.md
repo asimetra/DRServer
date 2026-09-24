@@ -247,6 +247,32 @@ To check that nothing unpublishable has reached the working tree or the history:
 npm run check:public
 ```
 
+## Load testing
+
+`tools/load-sim.js` drives a synthetic population from one process and measures
+the server from the players' side: heartbeat round trips (how long a player
+waits behind whatever the server is busy with), gaps between monster updates,
+time to enter a dungeon, and HTTP round trips per method. Give it the server's
+pid and it samples CPU and memory as well.
+
+```bash
+# a server of your own, with the movement rules reporting instead of expelling
+ODS_MOVEMENT_MODE=audit ODS_LOG_LEVEL=error \
+  ODS_MAX_SOCKET_CONNECTIONS_PER_IP=5000 npm start
+
+npm run load -- --players 500 --dungeons 200 --rpc --source-ips 50 \
+  --pid <server pid> --token-secret-file data/token-secret \
+  --slo "heartbeat.p99<200,npc.p95<400,entry.p95<3000"
+```
+
+Scenarios are `dungeon` (players spread over matches, fighting and starting new
+runs), `churn` (enter, stay `--stay` seconds, leave; `--reconnect` to log in
+afresh each time) and `lobby` (idle connections only). `--rpc` adds the HTTP
+calls a real client makes, at its measured rate; `--slow-readers 0.1` makes a
+tenth of the players stop reading, to check they cost nobody else. An SLO that
+is missed exits non-zero, so a run can gate CI. The tool only targets loopback
+unless `--allow-remote-target` is given, which is for a server you run.
+
 ## Repository layout
 
 ```text

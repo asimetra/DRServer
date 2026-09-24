@@ -365,7 +365,17 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
  * stable pair angle also separates two actors that arrived at identical
  * coordinates instead of leaving the direction undefined.
  */
-const separationDisplacement = (doid, actor, spatialIndex, heroDoids) => {
+const separationDisplacement = (
+  doid,
+  actor,
+  spatialIndex,
+  heroDoids,
+  {
+    includeHeroes = true,
+    npcPadding = 8,
+    correctionShare = 0.5,
+  } = {}
+) => {
   let x = 0;
   let y = 0;
   /**
@@ -393,6 +403,10 @@ const separationDisplacement = (doid, actor, spatialIndex, heroDoids) => {
 
       for (const [otherDoid, other] of cell) {
         if (otherDoid === doid) continue;
+        // Idle separation solves mob spawn overlap. A passive AggroRadius=0
+        // actor must not look as though it is fleeing merely because the hero
+        // walked into it; engaged/release movement keeps the hero-body rule.
+        if (!includeHeroes && heroDoids.has(otherDoid)) continue;
 
         let dx = actor.position.x - other.position.x;
         let dy = actor.position.y - other.position.y;
@@ -422,7 +436,7 @@ const separationDisplacement = (doid, actor, spatialIndex, heroDoids) => {
           ? heroStandoff(actor, other)
           : sameWave(actor, other)
             ? bodies
-            : bodies + 8;
+            : bodies + npcPadding;
         if (distance >= minimumDistance) continue;
 
         if (distance < 0.001) {
@@ -435,8 +449,11 @@ const separationDisplacement = (doid, actor, spatialIndex, heroDoids) => {
           distance = 1;
         }
 
-        // Each side takes half the correction, keeping pair motion symmetric.
-        const correction = (minimumDistance - Math.min(distance, minimumDistance)) * 0.5;
+        // Combat movement lets both participants share the correction. Idle
+        // spawn resolution is sequential and uses the whole shortfall so the
+        // pair reaches contact in the first server step instead of creeping.
+        const correction =
+          (minimumDistance - Math.min(distance, minimumDistance)) * correctionShare;
         x += (dx / distance) * correction;
         y += (dy / distance) * correction;
         contacts.push({ x: dx / distance, y: dy / distance });
@@ -481,6 +498,84 @@ const boundedPush = (separation, ai, deltaSeconds) => {
   if (push <= 0.001) return { x: 0, y: 0 };
   const travel = Math.min((ai?.moveSpeed ?? 0) * deltaSeconds, push);
   return { x: (separation.x / push) * travel, y: (separation.y / push) * travel };
+};
+
+/**
+ * Shares one movement budget between intentional motion and crowd correction.
+ *
+ * The separation vector used to be added after a complete walking step, so a
+ * crowded chaser could move at nearly twice BaseMove. The official p90 sits on
+ * BaseMove. The normal budget therefore caps the sum; an authored attack lunge
+ * that is already longer remains authoritative, but separation cannot make it
+ * longer still. With movement disabled the walk is zero while the undebuffed
+ * body-push budget remains, so a stunned actor can still be displaced out of a
+ * collision without walking under its own power.
+ */
+const movementWithinBudget = (motion, separation, ai, deltaSeconds) => {
+  const x = motion.x + separation.x;
+  const y = motion.y + separation.y;
+  const requested = Math.hypot(x, y);
+  if (requested <= 0.001) return { x: 0, y: 0 };
+
+  const authoredMotion = Math.hypot(motion.x, motion.y);
+  const walkingBudget = Math.max(0, Number(ai?.moveSpeed) || 0) *
+    Math.max(0, Number(deltaSeconds) || 0);
+  const budget = Math.max(walkingBudget, authoredMotion);
+  if (requested <= budget || budget <= 0) return budget > 0 ? { x, y } : { x: 0, y: 0 };
+  return { x: (x / requested) * budget, y: (y / requested) * budget };
+};
+
+/**
+ * Resolves body overlap without turning an idle NPC into a pursuing one.
+ *
+ * This deliberately runs only after cage release has had first refusal and
+ * only while the hero remains outside aggro. It emits position, not heading,
+ * does not set `engaged`, and uses ordinary navigation collisions. A prisoner
+ * therefore keeps the release target and its temporary ignored cage collider;
+ * a resting pack merely reaches body contact and stops.
+ */
+const separateIdleNpc = (
+  session,
+  doid,
+  actor,
+  spatialIndex,
+  heroDoids,
+  heroes,
+  deltaSeconds
+) => {
+  const crowding = separationDisplacement(
+    doid,
+    actor,
+    spatialIndex,
+    heroDoids,
+    {
+      includeHeroes: false,
+      npcPadding: 0,
+      correctionShare: 1,
+    }
+  );
+  const separation = boundedPush(crowding, actor.ai, deltaSeconds);
+  const movement = movementWithinBudget({ x: 0, y: 0 }, separation, actor.ai, deltaSeconds);
+  if (Math.hypot(movement.x, movement.y) <= 0.001) return false;
+
+  const wanted = keptOutOfHeroes(
+    { x: actor.position.x + movement.x, y: actor.position.y + movement.y },
+    actor,
+    heroes
+  );
+  const nextPosition = moveWithNavigation(
+    session.navigation,
+    actor.position,
+    { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
+    collisionRadius(actor)
+  );
+  const actualTravel = distanceTo(actor.position, nextPosition);
+  if (actualTravel <= 0.001) return false;
+
+  actor.position.x = nextPosition.x;
+  actor.position.y = nextPosition.y;
+  session.send(npcPositionUpdate(doid, actor.position));
+  return true;
 };
 
 const routeToTarget = (session, actor, target, now) => {
@@ -649,13 +744,22 @@ const advanceNpcRelease = (
   const separation = spatialIndex
     ? boundedPush(separationDisplacement(doid, actor, spatialIndex, heroDoids), ai, deltaSeconds)
     : { x: 0, y: 0 };
+  const movement = movementWithinBudget(
+    {
+      x: ((release.target.x - actor.position.x) / distance) * travel,
+      y: ((release.target.y - actor.position.y) / distance) * travel,
+    },
+    separation,
+    ai,
+    deltaSeconds
+  );
   // A cage exit may not run through the player either; see `keptOutOfHeroes`.
   // The release point is a doorway, not a destination, and walking a body into
   // the one dynamic body on the client shoves the player whatever the reason.
   const wanted = keptOutOfHeroes(
     {
-      x: actor.position.x + ((release.target.x - actor.position.x) / distance) * travel + separation.x,
-      y: actor.position.y + ((release.target.y - actor.position.y) / distance) * travel + separation.y,
+      x: actor.position.x + movement.x,
+      y: actor.position.y + movement.y,
     },
     actor,
     heroes
@@ -922,7 +1026,21 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     let distance = distanceTo(actor.position, target);
     if (!followingOwner) {
       if (!ai.engaged) {
-        if (distance > ai.aggroRadius) continue;
+        if (distance > ai.aggroRadius) {
+          // Release AI already returned above while a cage exit was active.
+          // Outside awareness the only permitted motion is resolving a body
+          // overlap; no route, facing change or chase state is created.
+          separateIdleNpc(
+            session,
+            doid,
+            actor,
+            spatialIndex,
+            heroDoids,
+            heroes,
+            deltaSeconds
+          );
+          continue;
+        }
         ai.engaged = true;
         ai.state = "chase";
       } else if (distance > ai.disengageDistance) {
@@ -998,22 +1116,8 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
           `hero (${Math.round(target.x)},${Math.round(target.y)})`
       );
     }
-    /**
-     * Pushing apart and walking are two budgets, not one.
-     *
-     * They shared a step, and the step was the debuffed speed. Two consequences,
-     * and both of them are the crowd standing inside itself:
-     *
-     * A monster whose `MOVEMENT` is zero — STUN_L4 and STOP_L4 both carry one —
-     * had no step at all, so nothing could separate it. Freezing a wave is
-     * ordinary play here, and a frozen wave collapsed into one square and stayed
-     * there until it thawed.
-     *
-     * And where the two were summed before being clamped, the chase term was
-     * already a whole step long, so the separation only tilted the direction a
-     * little and the pair kept closing. The tighter the crowd, the more the one
-     * thing holding it apart was squeezed out of the budget.
-     */
+    // Separation remains possible under MOVEMENT zero, but it no longer gives
+    // an actor a second BaseMove-sized step on top of its walk.
     const crowding = separationDisplacement(doid, actor, spatialIndex, heroDoids);
     const separation = boundedPush(crowding, ai, deltaSeconds);
 
@@ -1147,14 +1251,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     if (ai.kind !== "pet" && !usedOrdinaryWalk) ai.walkSpeed = 0;
 
     const walk = withoutDrivingIntoContacts({ x: chaseX, y: chaseY }, crowding.contacts);
-    const moveX = walk.x + separation.x;
-    const moveY = walk.y + separation.y;
-
-    // Both halves arrive already bounded — the chase by the debuffed speed and
-    // the push by the undebuffed one — so clamping the sum again here is what
-    // used to take the separation back out of it.
+    const movement = movementWithinBudget(walk, separation, ai, deltaSeconds);
     const wanted = keptOutOfHeroes(
-      { x: actor.position.x + moveX, y: actor.position.y + moveY },
+      { x: actor.position.x + movement.x, y: actor.position.y + movement.y },
       actor,
       heroes
     );

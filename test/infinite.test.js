@@ -54,6 +54,27 @@ test("MatchMaker publishes four stable weekly modifiers for all nine Infinite no
   assert.equal(reader.eof(), true);
 });
 
+test("MatchMaker keeps every Infinite detail at exactly four modifier words", () => {
+  const details = [
+    { epoch: 3000, nodeId: 50150, modifiers: [11, 12] },
+    { epoch: 3000, nodeId: 50151, modifiers: [21, 22, 23, 24, 25] },
+  ];
+  const { reader } = readVisible(matchMakerGenerate(900, details));
+
+  assert.equal(reader.u16(), 2 * 24);
+  assert.deepEqual(
+    [reader.u32(), reader.u32(), reader.u32(), reader.u32(), reader.u32(), reader.u32()],
+    [3000, 50150, 11, 12, 0, 0],
+    "a short modifier row shifted the following node"
+  );
+  assert.deepEqual(
+    [reader.u32(), reader.u32(), reader.u32(), reader.u32(), reader.u32(), reader.u32()],
+    [3000, 50151, 21, 22, 23, 24],
+    "a long modifier row changed the fixed struct width"
+  );
+  assert.equal(reader.eof(), true);
+});
+
 test("Infinite modifiers unlock on their authored floors and mark only the new one", async () => {
   const gm = await loadGameMaster();
   const node = gm.raw.MapPage.find((row) => row.Id === 50150);

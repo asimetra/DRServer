@@ -206,9 +206,34 @@ test("opening a triggerable swaps its closed and open navigation shapes", () => 
     ]),
   });
 
+  const index = navigation.colliderIndex;
+  const colliders = navigation.colliders;
   assert.equal(isPositionBlocked(navigation, { x: 150, y: 150 }, 10), true);
   assert.equal(setNavigationTriggerState(navigation, "gate", false), true);
   assert.equal(isPositionBlocked(navigation, { x: 150, y: 150 }, 10), false);
+  assert.equal(navigation.colliderIndex, index, "trigger toggle rebuilt the whole spatial index");
+  assert.equal(navigation.colliders, colliders, "trigger toggle replaced the collider array");
+});
+
+test("actor obstacles update only their own collider index entries", () => {
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 600, maxY: 600 },
+    staticColliders: [rectangle(500, 500, 20, 20)],
+  });
+  const index = navigation.colliderIndex;
+  const colliders = navigation.colliders;
+  const obstacle = rectangle(150, 150, 30, 30);
+
+  assert.equal(addNavigationObstacle(navigation, "box", [obstacle]), true);
+  assert.equal(isPositionBlocked(navigation, { x: 150, y: 150 }, 10), true);
+  assert.equal(navigation.colliderIndex, index);
+  assert.equal(navigation.colliders, colliders);
+
+  assert.equal(removeNavigationObstacle(navigation, "box"), true);
+  assert.equal(isPositionBlocked(navigation, { x: 150, y: 150 }, 10), false);
+  assert.equal(isPositionBlocked(navigation, { x: 500, y: 500 }, 10), true);
+  assert.equal(navigation.colliderIndex, index);
+  assert.equal(navigation.colliders, colliders);
 });
 
 test("generator release paths leave a rotated trigger enclosure through its local mouth", () => {

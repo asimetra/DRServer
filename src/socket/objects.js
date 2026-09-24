@@ -104,7 +104,12 @@ export const buffGenerate = ({
 export const matchMakerGenerate = (doid, infiniteDetails = []) => {
   const fields = byteList(infiniteDetails, (writer, detail) => {
     writer.u32(detail.epoch).u32(detail.nodeId);
-    for (const modifier of detail.modifiers ?? []) writer.u32(modifier);
+    // InfiniteMapNodeDetail is a fixed 24-byte struct, not a variable list:
+    // epoch, node id and exactly four modifier ids. One short row otherwise
+    // shifts every node after it and prevents MatchMaker from finishing load.
+    for (let slot = 0; slot < 4; slot++) {
+      writer.u32(detail.modifiers?.[slot] ?? 0);
+    }
   });
   return generateVisible({ clid: CLID.MatchMaker, doid, fields });
 };

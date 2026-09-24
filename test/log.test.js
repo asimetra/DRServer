@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { config } from "../src/config.js";
-import { singleLine, truncate } from "../src/log.js";
+import { info, singleLine, truncate, warn, warnOnce } from "../src/log.js";
 
 const limit = config.logBodyLimit;
 
@@ -52,4 +52,24 @@ test("a non-string, non-Buffer value still logs something", () => {
 
 test("singleLine cannot inject another log record", () => {
   assert.equal(singleLine("development\nWARN forged\r\u001b[31m"), "development?WARN forged??[31m");
+});
+
+test("log levels suppress chatter and warnOnce deduplicates one data miss", () => {
+  const previousLevel = config.logLevel;
+  const previousWrite = process.stdout.write;
+  const written = [];
+  config.logLevel = "warn";
+  process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
+  try {
+    info("hidden info");
+    warn("visible warning");
+    assert.equal(warnOnce("test:unique-warning", "only once"), true);
+    assert.equal(warnOnce("test:unique-warning", "only once"), false);
+  } finally {
+    process.stdout.write = previousWrite;
+    config.logLevel = previousLevel;
+  }
+  assert.equal(written.some((line) => line.includes("hidden info")), false);
+  assert.equal(written.filter((line) => line.includes("visible warning")).length, 1);
+  assert.equal(written.filter((line) => line.includes("only once")).length, 1);
 });

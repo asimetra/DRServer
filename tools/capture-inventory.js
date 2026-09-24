@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import readline from "node:readline";
 import { loadGameMaster } from "../src/gamemaster.js";
+import { captureBodyOf, isTruncatedCaptureRecord } from "./capture-lib.js";
 
 const OP_UPDATE_FIELD = 124;
 const OP_GENERATE = new Set([134, 135, 136]);
@@ -52,7 +53,8 @@ const readCapture = async (file, npcName, attackName) => {
       continue;
     }
     if (!row.hex || row.dir !== "in") continue;
-    const body = Buffer.from(row.hex, "hex");
+    const body = captureBodyOf(row);
+    if (isTruncatedCaptureRecord(row, body)) continue;
 
     if (OP_GENERATE.has(row.op) && body.length >= 20) {
       const name = npcTypeOf(body, npcName);

@@ -20,6 +20,7 @@ import readline from "node:readline";
 import path from "node:path";
 
 import { loadGameMaster } from "../src/gamemaster.js";
+import { captureBodyOf, isTruncatedCaptureRecord } from "./capture-lib.js";
 
 const OP_UPDATE_FIELD = 124;
 const OP_GENERATE = new Set([134, 135, 136]);
@@ -142,7 +143,8 @@ const read = async (files, npcName) => {
         continue;
       }
       if (!row.hex || (row.dir && row.dir !== "in")) continue;
-      const body = Buffer.from(row.hex, "hex");
+      const body = captureBodyOf(row);
+      if (isTruncatedCaptureRecord(row, body)) continue;
       frames += 1;
       const at = Date.parse(row.ts);
       if (Number.isFinite(at)) {

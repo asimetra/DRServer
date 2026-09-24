@@ -121,6 +121,7 @@ const boundsOf = (collider) => {
  */
 const buildColliderIndex = (navigation) => {
   const cells = new Map();
+  const entriesByCollider = new Map();
   const prepared = navigation.colliders.map((collider) => ({
     collider,
     box: boundsOf(collider),
@@ -131,6 +132,7 @@ const buildColliderIndex = (navigation) => {
   }));
 
   for (const entry of prepared) {
+    entriesByCollider.set(entry.collider, entry);
     const { box } = entry;
     const fromX = Math.floor(box.minX / INDEX_CELL);
     const toX = Math.floor(box.maxX / INDEX_CELL);
@@ -158,7 +160,55 @@ const buildColliderIndex = (navigation) => {
    * Holding the source array makes the check an identity comparison, and a
    * narrowed copy falls back to the linear scan by itself.
    */
-  navigation.colliderIndex = { forColliders: navigation.colliders, cells };
+  navigation.colliderIndex = { forColliders: navigation.colliders, cells, entriesByCollider };
+};
+
+const addColliderToIndex = (navigation, collider) => {
+  if (!collider || navigation.colliderIndex?.entriesByCollider.has(collider)) return false;
+  const entry = {
+    collider,
+    box: boundsOf(collider),
+    cosine: collider.type === "rectangle" ? Math.cos(-(collider.angle ?? 0)) : 0,
+    sine: collider.type === "rectangle" ? Math.sin(-(collider.angle ?? 0)) : 0,
+  };
+  const { box } = entry;
+  for (let x = Math.floor(box.minX / INDEX_CELL); x <= Math.floor(box.maxX / INDEX_CELL); x++) {
+    for (let y = Math.floor(box.minY / INDEX_CELL); y <= Math.floor(box.maxY / INDEX_CELL); y++) {
+      const key = `${x},${y}`;
+      const bucket = navigation.colliderIndex.cells.get(key);
+      if (bucket) bucket.push(entry);
+      else navigation.colliderIndex.cells.set(key, [entry]);
+    }
+  }
+  navigation.colliderIndex.entriesByCollider.set(collider, entry);
+  navigation.colliders.push(collider);
+  return true;
+};
+
+const removeColliderFromIndex = (navigation, collider) => {
+  const index = navigation.colliderIndex;
+  const entry = index?.entriesByCollider.get(collider);
+  if (!entry) return false;
+  const { box } = entry;
+  for (let x = Math.floor(box.minX / INDEX_CELL); x <= Math.floor(box.maxX / INDEX_CELL); x++) {
+    for (let y = Math.floor(box.minY / INDEX_CELL); y <= Math.floor(box.maxY / INDEX_CELL); y++) {
+      const key = `${x},${y}`;
+      const bucket = index.cells.get(key);
+      if (!bucket) continue;
+      const at = bucket.indexOf(entry);
+      if (at >= 0) bucket.splice(at, 1);
+      if (!bucket.length) index.cells.delete(key);
+    }
+  }
+  index.entriesByCollider.delete(collider);
+  const at = navigation.colliders.indexOf(collider);
+  if (at >= 0) navigation.colliders.splice(at, 1);
+  return true;
+};
+
+const replaceIndexedColliders = (navigation, remove, add) => {
+  for (const collider of remove ?? []) removeColliderFromIndex(navigation, collider);
+  for (const collider of add ?? []) addColliderToIndex(navigation, collider);
 };
 
 const rebuildActiveColliders = (navigation) => {
@@ -210,26 +260,31 @@ export const createNavigationState = (definition) => {
 export const setNavigationTriggerState = (navigation, id, on) => {
   const group = navigation?.triggerGroups.get(id);
   if (!group || group.on === on) return false;
+  const previous = group.on ? group.onColliders : group.offColliders;
+  const next = on ? group.onColliders : group.offColliders;
   group.on = on;
+  replaceIndexedColliders(navigation, previous, next);
   invalidatePathfinding(navigation);
-  rebuildActiveColliders(navigation);
   return true;
 };
 
 /** Adds an actor-backed obstacle such as a smashable barrel or wooden box. */
 export const addNavigationObstacle = (navigation, id, colliders) => {
   if (!navigation || !colliders?.length) return false;
+  const previous = navigation.obstacles.get(id) ?? [];
+  replaceIndexedColliders(navigation, previous, colliders);
   navigation.obstacles.set(id, [...colliders]);
   invalidatePathfinding(navigation);
-  rebuildActiveColliders(navigation);
   return true;
 };
 
 /** Removes an actor-backed obstacle when the corresponding object is destroyed. */
 export const removeNavigationObstacle = (navigation, id) => {
-  if (!navigation?.obstacles.delete(id)) return false;
+  const colliders = navigation?.obstacles.get(id);
+  if (!colliders) return false;
+  replaceIndexedColliders(navigation, colliders, []);
+  navigation.obstacles.delete(id);
   invalidatePathfinding(navigation);
-  rebuildActiveColliders(navigation);
   return true;
 };
 

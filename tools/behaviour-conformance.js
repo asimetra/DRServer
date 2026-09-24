@@ -37,6 +37,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { loadGameMaster } from "../src/gamemaster.js";
+import { captureBodyOf, isTruncatedCaptureRecord } from "./capture-lib.js";
 
 const argument = (name) => {
   const at = process.argv.indexOf(`--${name}`);
@@ -81,9 +82,8 @@ const profile = async (dir, nameOf, onlyConstant) => {
       if (!line.trim()) continue;
       let record;
       try { record = JSON.parse(line); } catch { continue; }
-      const hex = record.hex ?? "";
-      if (hex.length < 16) continue;
-      const b = Buffer.from(hex, "hex");
+      const b = captureBodyOf(record);
+      if (isTruncatedCaptureRecord(record, b) || b.length < 8) continue;
 
       if (record.op === 134 || record.op === 135) {
         const generate = npcTypeOf(b);

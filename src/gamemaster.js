@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
-import { info, warn } from "./log.js";
+import { info, warn, warnOnce } from "./log.js";
 
 /**
  * DB_GameMaster.json is the client's game-data dictionary and the server reads
@@ -146,7 +146,7 @@ export const npcForConstant = async (constant) => {
   const { npcByConstant } = await load();
   const npc = npcByConstant.get(constant);
   if (!npc) {
-    warn(`gamemaster: no NPC named "${constant}"`);
+    warnOnce(`gamemaster:npc:${constant}`, `gamemaster: no NPC named "${constant}"`);
     return null;
   }
   return npc;

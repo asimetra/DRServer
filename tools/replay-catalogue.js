@@ -31,6 +31,7 @@ import { createReadStream } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import { captureBodyOf, isTruncatedCaptureRecord } from "./capture-lib.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const levels = path.join(root, "local-data", "Resources", "Levels");
@@ -52,7 +53,8 @@ const layoutsIn = async (file) => {
     if (!line.trim()) continue;
     let record;
     try { record = JSON.parse(line); } catch { continue; }
-    const b = Buffer.from(record.hex ?? "", "hex");
+    const b = captureBodyOf(record);
+    if (isTruncatedCaptureRecord(record, b)) continue;
     if (b.length < 16) continue;
     const op = b.readUInt16LE(0);
     if ((op !== 134 && op !== 135) || b.readUInt16LE(10) !== 32) continue;

@@ -403,6 +403,66 @@ test("release movement exits only its enclosing cage before normal AI starts", a
   assert.equal(isPositionBlocked(session.navigation, knight.position, 20), false);
 });
 
+test("an overlapping cage wave stays on release AI until every member is outside", async () => {
+  const { session, knightDoid } = makeSession();
+  const first = session.actors.get(knightDoid);
+  first.position = { x: 150, y: 150 };
+  first.ai.collisionRadius = 20;
+  first.ai.moveSpeed = 180;
+  // Release must remain authoritative even before the wave has acquired a
+  // combat target; idle overlap resolution may not steal this state.
+  first.ai.engaged = false;
+  session.heroPosition = { x: 50, y: 150 };
+  session.actors.get(session.heroDoid).position = session.heroPosition;
+  session.navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 360, maxY: 300 },
+    triggerColliders: new Map([
+      [
+        "jail",
+        {
+          initialOn: true,
+          onColliders: [
+            { type: "rectangle", x: 150, y: 150, halfWidth: 25, halfHeight: 80, angle: 0 },
+          ],
+          offColliders: [
+            { type: "rectangle", x: 150, y: 150, halfWidth: 25, halfHeight: 80, angle: 0 },
+          ],
+        },
+      ],
+    ]),
+  });
+  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  first.ai.release = {
+    target: { x: 220, y: 150 },
+    ignoredColliders: new Set([jail]),
+    startsAt: 0,
+  };
+
+  const wave = [first];
+  for (let index = 1; index < 6; index++) {
+    const doid = knightDoid + index;
+    const member = structuredClone(first);
+    member.ai.release.ignoredColliders = new Set([jail]);
+    session.objects.set(doid, CLID.DistributedNPCGameObject);
+    session.actors.set(doid, member);
+    wave.push(member);
+  }
+
+  let sawRelease = false;
+  for (let tick = 0; tick < 20; tick++) {
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    sawRelease ||= wave.some((actor) => actor.ai.state === "release");
+    if (wave.every((actor) => !actor.ai.release)) break;
+  }
+
+  assert.equal(sawRelease, true, "the wave bypassed its cage release state");
+  for (const actor of wave) {
+    assert.equal(actor.ai.release, null, "a wave member remained stuck in release AI");
+    assert.equal(isPositionBlocked(session.navigation, actor.position, 20), false);
+    assert.ok(actor.position.x > 175, `a wave member stayed in the cage at ${actor.position.x}`);
+  }
+});
+
 test("a released NPC chases the latest hero position instead of its old cage target", async () => {
   const { session, heroDoid, knightDoid } = makeSession();
   const knight = session.actors.get(knightDoid);

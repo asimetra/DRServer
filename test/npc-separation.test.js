@@ -127,6 +127,58 @@ test("being shoved is bounded by what the monster could walk", async () => {
   assert.ok(moved <= 18 + 0.001, `pushed ${moved.toFixed(1)} in one tick`);
 });
 
+test("walking and crowd separation share one BaseMove budget", async () => {
+  const { session, first } = makeSession();
+  const start = { ...session.actors.get(first).position };
+
+  await tickNpcAi(session, 1000, 0.1);
+
+  const moved = Math.hypot(
+    session.actors.get(first).position.x - start.x,
+    session.actors.get(first).position.y - start.y
+  );
+  assert.ok(
+    moved <= 18 + 0.001,
+    `BaseMove 180 permits 18 units per 100ms, but walk + push moved ${moved.toFixed(1)}`
+  );
+});
+
+test("overlapping idle monsters separate without acquiring or walking toward the hero", async () => {
+  const { session, first, second } = makeSession();
+  session.actors.get(first).position = { x: 700, y: 0 };
+  session.actors.get(second).position = { x: 706, y: 0 };
+  session.actors.get(first).ai.aggroRadius = 100;
+  session.actors.get(second).ai.aggroRadius = 100;
+  session.actors.get(first).ai.engaged = false;
+  session.actors.get(second).ai.engaged = false;
+  const sent = [];
+  session.send = (frame) => sent.push(frame);
+  const before = gap(session, first, second);
+
+  // The official median is two position updates from overlap to contact.
+  for (let tick = 0; tick < 2; tick++) {
+    await tickNpcAi(session, 1000 + tick * 250, 0.25);
+  }
+
+  assert.ok(gap(session, first, second) >= 69, `idle bodies still overlap at ${gap(session, first, second)}`);
+  assert.ok(sent.length > 0, "idle overlap produced no position correction");
+  assert.ok(
+    sent.every((frame) => frame.readUInt16LE(8) === 132),
+    "idle separation emitted heading, attack, or another AI state field"
+  );
+  for (const doid of [first, second]) {
+    const actor = session.actors.get(doid);
+    assert.equal(actor.ai.engaged, false, "separation acquired the distant hero");
+    assert.equal(actor.ai.state, "idle", "separation changed idle AI state");
+    assert.ok(actor.position.x > 600, "an idle monster started chasing rather than separating");
+  }
+  assert.ok(gap(session, first, second) > before);
+
+  const settledFrames = sent.length;
+  await tickNpcAi(session, 1500, 0.25);
+  assert.equal(sent.length, settledFrames, "idle pair kept drifting after reaching body contact");
+});
+
 /**
  * A monster wider than its own reach.
  *
