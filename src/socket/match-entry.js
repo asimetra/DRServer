@@ -1,15 +1,12 @@
 import { loadAccount } from "../accounts.js";
 import { loadGameMaster } from "../gamemaster.js";
 import {
-  activeAvatarEligibleForExplicitJoin,
+  activeAvatarMayEnter,
   dungeonMatches,
   hasDungeonAdminOverride,
   isHubNode,
   isUltimateNode,
 } from "./matches.js";
-
-/** Role changes take effect on reconnect; progression is still read fresh. */
-const adminOverrideBySession = new WeakMap();
 
 const registryRequest = (session, request) => ({
   session,
@@ -19,12 +16,6 @@ const registryRequest = (session, request) => ({
   friendOnly: Boolean(request.friendOnly),
   group: request.matchMakerGroup ?? "",
 });
-
-const rememberAdminOverride = (session, account) => {
-  const adminOverride = hasDungeonAdminOverride(account);
-  adminOverrideBySession.set(session, adminOverride);
-  return adminOverride;
-};
 
 /**
  * Resolves a wire entry request using server-owned progression data.
@@ -67,22 +58,17 @@ export const resolveMatchEntry = async (
       error: "bad_map_node",
     };
   }
-  const progressionRequired = Boolean(target) || isUltimateNode(node);
-  let account = null;
-  let adminOverride;
-  if (progressionRequired || !adminOverrideBySession.has(session)) {
-    account = await loadAccountById(session.accountId);
-    adminOverride = rememberAdminOverride(session, account);
-  } else {
-    adminOverride = adminOverrideBySession.get(session);
-  }
-  const eligibleForExplicitJoin = adminOverride ||
+  // Read fresh on every entry: progression changes mid-session, and a door
+  // or a friend is no different a route from the map.
+  const account = await loadAccountById(session.accountId);
+  const adminOverride = hasDungeonAdminOverride(account);
+  const mayEnter = adminOverride ||
     isHubNode(node) ||
-    (progressionRequired && activeAvatarEligibleForExplicitJoin(account, node, mapNodes));
+    activeAvatarMayEnter(account, node, gameMaster);
 
-  // Keep the progression gate first: knowing a friend is in an Ultimate does
-  // not grant access to somebody whose active hero has not unlocked it.
-  if (target && !eligibleForExplicitJoin) {
+  // Checked before anything about the target: knowing a friend is somewhere
+  // does not grant a hero who has not opened it the way in.
+  if (!mayEnter) {
     return {
       match: null,
       created: false,
@@ -102,21 +88,9 @@ export const resolveMatchEntry = async (
     };
   }
 
-  // Ultimate is endgame content regardless of entry route. Checking only an
-  // explicit friend/map request would let a modified client bypass the same
-  // rule with a direct/public node request.
-  if (!target && isUltimateNode(node) && !eligibleForExplicitJoin) {
-    return {
-      match: null,
-      created: false,
-      source: request.friendOnly ? "private" : "public",
-      error: "content_not_completed",
-    };
-  }
-
   return registry.resolve({
     ...entry,
-    eligibleForExplicitJoin,
+    eligibleForExplicitJoin: mayEnter,
     adminOverride,
   });
 };

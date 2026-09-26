@@ -13,6 +13,7 @@
  */
 
 import { getMapNodeBit } from "../map-progress.js";
+import { heroLevel } from "../progression.js";
 
 export const MAX_DUNGEON_PLAYERS = 4;
 const DEFAULT_FINISHED_MATCH_TTL_MS = 10 * 60 * 1000;
@@ -45,7 +46,6 @@ export const hasDungeonAdminOverride = (account) => {
   }
 };
 
-/** Explicit friend/map join is progression-gated per active character. */
 export const avatarCompletedNode = (avatar, node) => {
   if (!avatar || !Number.isFinite(node?.BitIndex)) return false;
   return getMapNodeBit(avatar.completed_mapnode_mask, Number(node.BitIndex));
@@ -57,18 +57,65 @@ export const avatarCompletedAllNormalNodes = (avatar, mapNodes) => {
   return required.length > 0 && required.every((node) => avatarCompletedNode(avatar, node));
 };
 
+const parentsByCatalogue = new WeakMap();
+
 /**
- * Normal explicit joins require that exact node. Ultimate joins are stricter:
- * the joining character must have cleared every authored non-Ultimate combat
- * node, including bosses. This is evaluated once at entry, never per tick.
+ * The nodes that lead to each node, worked out the way the client does it
+ * (GameMaster.fixupMapNodeParents): a row names its children in ChildNode1..3,
+ * and a row's own ParentNode adds one more parent from the other side.
  */
-export const activeAvatarEligibleForExplicitJoin = (account, node, mapNodes) => {
+const parentsOf = (mapNodes, node) => {
+  let parents = parentsByCatalogue.get(mapNodes);
+  if (!parents) {
+    const byConstant = new Map(mapNodes.map((row) => [row.Constant, row]));
+    parents = new Map();
+    const link = (parent, childConstant) => {
+      const child = byConstant.get(childConstant);
+      if (!parent || !child) return;
+      if (!parents.has(child)) parents.set(child, []);
+      parents.get(child).push(parent);
+    };
+    for (const row of mapNodes) {
+      for (const child of [row.ChildNode1, row.ChildNode2, row.ChildNode3]) link(row, child);
+      if (row.ParentNode) link(byConstant.get(row.ParentNode), row.Constant);
+    }
+    parentsByCatalogue.set(mapNodes, parents);
+  }
+  return parents.get(node) ?? [];
+};
+
+/** Zero for a hero the catalogue cannot place, so any level requirement refuses it. */
+const avatarLevel = (gameMaster, avatar) => {
+  const hero = gameMaster?.heroById?.get(avatar.avatar_id);
+  return hero && gameMaster.raw?.Leveling
+    ? heroLevel(gameMaster, hero, Number(avatar.experience ?? 0))
+    : 0;
+};
+
+/**
+ * Whether the active hero may enter a node, by any route: the map, a friend,
+ * a match id or a door.
+ *
+ * The same answer the client's map gives (DBInventoryInfo.mapnodes1): a node
+ * the hero has completed, or one it has opened — no parent or a completed
+ * parent, with the hero's level and the account's trophies at or above the
+ * row's. That is what lets two friends take the next node together, and what
+ * stops somebody a node behind from being carried past it. Ultimate is
+ * stricter: every authored non-Ultimate combat node, including bosses.
+ * Evaluated once at entry, never per tick.
+ */
+export const activeAvatarMayEnter = (account, node, gameMaster) => {
   const avatar = account?.account_avatars?.find(
     (candidate) => candidate.id === account.active_avatar
   );
-  return isUltimateNode(node)
-    ? avatarCompletedAllNormalNodes(avatar, mapNodes)
-    : avatarCompletedNode(avatar, node);
+  if (!avatar) return false;
+  const mapNodes = gameMaster?.raw?.MapPage ?? [];
+  if (isUltimateNode(node)) return avatarCompletedAllNormalNodes(avatar, mapNodes);
+  if (avatarCompletedNode(avatar, node)) return true;
+  if (Number(node?.LevelReq ?? 0) > avatarLevel(gameMaster, avatar)) return false;
+  if (Number(node?.TrophyReq ?? 0) > Number(account.trophies ?? 0)) return false;
+  const parents = parentsOf(mapNodes, node);
+  return parents.length === 0 || parents.some((parent) => avatarCompletedNode(avatar, parent));
 };
 
 export class DungeonMatchRegistry {

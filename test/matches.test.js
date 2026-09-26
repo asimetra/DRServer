@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 
 import { loadGameMaster } from "../src/gamemaster.js";
 import { setMapNodeBit } from "../src/map-progress.js";
+import { heroLevel } from "../src/progression.js";
 import {
-  activeAvatarEligibleForExplicitJoin,
+  activeAvatarMayEnter,
   avatarCompletedAllNormalNodes,
   avatarCompletedNode,
   DungeonMatchRegistry,
@@ -293,9 +294,11 @@ test("explicit target identity cannot fall back to a forged map node", () => {
   assert.equal(registry.matches.size, 0);
 });
 
-test("normal completion is read from the active avatar only", () => {
+test("completion is read from the active avatar only", () => {
   const completedMask = String.fromCharCode(0x20);
-  const normalNode = { NodeType: "DUNGEON", BitIndex: 2 };
+  const gate = { Id: 1, Constant: "GATE", NodeType: "DUNGEON", BitIndex: 7, ChildNode1: "NODE" };
+  const normalNode = { Id: 2, Constant: "NODE", NodeType: "DUNGEON", BitIndex: 2 };
+  const gameMaster = { raw: { MapPage: [gate, normalNode] } };
   const account = {
     active_avatar: 20,
     completed_mapnode_mask: completedMask,
@@ -306,9 +309,158 @@ test("normal completion is read from the active avatar only", () => {
   };
 
   assert.equal(avatarCompletedNode(account.account_avatars[0], normalNode), true);
-  assert.equal(activeAvatarEligibleForExplicitJoin(account, normalNode, [normalNode]), false);
+  assert.equal(activeAvatarMayEnter(account, normalNode, gameMaster), false);
   account.account_avatars[1].completed_mapnode_mask = completedMask;
-  assert.equal(activeAvatarEligibleForExplicitJoin(account, normalNode, [normalNode]), true);
+  assert.equal(activeAvatarMayEnter(account, normalNode, gameMaster), true);
+});
+
+/**
+ * The client's own answer to "can this hero go there", ported line for line
+ * from DBInventoryInfo.get_mapnodes1 (NODE_RULES 0) and
+ * GameMaster.fixupMapNodeParents, so the server's rule is checked against the
+ * screen the player is looking at rather than against itself.
+ */
+const clientAccessibleNodeIds = (gameMaster, account) => {
+  const avatar = account.account_avatars.find((row) => row.id === account.active_avatar);
+  if (!avatar) return new Set();
+  const nodes = gameMaster.raw.MapPage.map((row) => ({
+    row,
+    Id: row.Id,
+    Constant: row.Constant,
+    LevelRequirement: Number(row.LevelReq ?? 0),
+    TrophyRequirement: Number(row.TrophyReq ?? 0),
+    ChildNodes: [row.ChildNode1, row.ChildNode2, row.ChildNode3],
+    PrefixupParentNode: row.ParentNode,
+    ParentNodes: [],
+  }));
+  const byConstant = new Map(nodes.map((node) => [node.Constant, node]));
+  for (const node of nodes) {
+    if (node.PrefixupParentNode) byConstant.get(node.PrefixupParentNode).ChildNodes.push(node.Constant);
+  }
+  for (const node of nodes) {
+    for (const child of node.ChildNodes) byConstant.get(child)?.ParentNodes.push(node);
+  }
+  const level = heroLevel(
+    gameMaster,
+    gameMaster.heroById.get(avatar.avatar_id),
+    Number(avatar.experience ?? 0)
+  );
+  const trophies = Number(account.trophies ?? 0);
+  const avatarNodeIds = new Set(
+    nodes.filter((node) => avatarCompletedNode(avatar, node.row)).map((node) => node.Id)
+  );
+  const accessible = new Set(avatarNodeIds);
+  for (const node of nodes) {
+    if (avatarNodeIds.has(node.Id)) continue;
+    if (node.LevelRequirement > level || node.TrophyRequirement > trophies) continue;
+    if (
+      node.ParentNodes.length === 0 ||
+      node.ParentNodes.some((parent) => avatarNodeIds.has(parent.Id))
+    ) {
+      accessible.add(node.Id);
+    }
+  }
+  return accessible;
+};
+
+test("a hero may enter exactly the nodes its own map shows as completed or open", async () => {
+  const gameMaster = await loadGameMaster();
+  const nodes = gameMaster.raw.MapPage.filter((node) => node.NodeType !== "INFINITE");
+  let seed = 7;
+  const random = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+  const masks = [
+    "",
+    setMapNodeBit("", 0),
+    nodes.reduce((mask, node) => setMapNodeBit(mask, node.BitIndex), ""),
+  ];
+  for (let sample = 0; sample < 24; sample++) {
+    masks.push(
+      nodes.filter(() => random() < 0.3).reduce((mask, node) => setMapNodeBit(mask, node.BitIndex), "")
+    );
+  }
+  let open = 0;
+  let locked = 0;
+  for (const avatarId of [101, 104]) {
+    for (const experience of [0, 3_000, 60_000, 400_000, 10_000_000]) {
+      for (const mask of masks) {
+        const account = {
+          active_avatar: 7,
+          trophies: 3,
+          account_avatars: [{ id: 7, avatar_id: avatarId, experience, completed_mapnode_mask: mask }],
+        };
+        const client = clientAccessibleNodeIds(gameMaster, account);
+        for (const node of nodes) {
+          const allowed = activeAvatarMayEnter(account, node, gameMaster);
+          assert.equal(
+            allowed,
+            client.has(node.Id),
+            `${node.Constant} for hero ${avatarId} at ${experience} xp`
+          );
+          if (allowed && !avatarCompletedNode(account.account_avatars[0], node)) open++;
+          if (!allowed) locked++;
+        }
+      }
+    }
+  }
+  assert.ok(open > 0 && locked > 0, "both answers were exercised");
+});
+
+test("two friends who cleared a node may take the next one together", async () => {
+  const gameMaster = await loadGameMaster();
+  const node = (constant) => gameMaster.raw.MapPage.find((row) => row.Constant === constant);
+  const tutorial = node("TUTORIAL");
+  const firstArena = node("ARENA_1");
+  const secondArena = node("ARENA_2");
+  const clearedFirst = [tutorial, firstArena].reduce(
+    (mask, row) => setMapNodeBit(mask, row.BitIndex),
+    ""
+  );
+  const friend = {
+    active_avatar: 7,
+    account_avatars: [{ id: 7, avatar_id: 101, experience: 0, completed_mapnode_mask: clearedFirst }],
+  };
+  assert.equal(activeAvatarMayEnter(friend, secondArena, gameMaster), true, "open, not yet cleared");
+  assert.equal(
+    activeAvatarMayEnter(friend, node("ARENA_BOSS"), gameMaster),
+    false,
+    "two steps ahead is still locked"
+  );
+});
+
+test("a node is open through the parent its own row names", () => {
+  const root = { Id: 1, Constant: "ROOT", NodeType: "DUNGEON", BitIndex: 0 };
+  const side = { Id: 2, Constant: "SIDE", NodeType: "DUNGEON", BitIndex: 1, ParentNode: "ROOT" };
+  const gameMaster = { raw: { MapPage: [root, side] } };
+  const account = (mask) => ({
+    active_avatar: 7,
+    account_avatars: [{ id: 7, completed_mapnode_mask: mask }],
+  });
+  assert.equal(activeAvatarMayEnter(account(""), side, gameMaster), false);
+  assert.equal(activeAvatarMayEnter(account(setMapNodeBit("", 0)), side, gameMaster), true);
+});
+
+test("an open node still waits for the hero's level and the account's trophies", async () => {
+  const gameMaster = await loadGameMaster();
+  const root = { Id: 1, Constant: "ROOT", NodeType: "DUNGEON", BitIndex: 0, ChildNode1: "HIGH" };
+  const high = { Id: 2, Constant: "HIGH", NodeType: "DUNGEON", BitIndex: 1, LevelReq: 5, TrophyReq: 2 };
+  const catalogue = { ...gameMaster, raw: { ...gameMaster.raw, MapPage: [root, high] } };
+  const account = (experience, trophies) => ({
+    active_avatar: 7,
+    trophies,
+    account_avatars: [
+      { id: 7, avatar_id: 101, experience, completed_mapnode_mask: setMapNodeBit("", 0) },
+    ],
+  });
+  const levelFive = gameMaster.raw.Leveling.slice(0, 4).reduce((sum, row) => sum + row.BERSERKER, 0);
+  assert.equal(heroLevel(gameMaster, gameMaster.heroById.get(101), levelFive), 5);
+  assert.equal(activeAvatarMayEnter(account(levelFive - 1, 2), high, catalogue), false, "level four");
+  assert.equal(activeAvatarMayEnter(account(levelFive, 1), high, catalogue), false, "one trophy short");
+  assert.equal(activeAvatarMayEnter(account(levelFive, 2), high, catalogue), true);
+  assert.equal(
+    activeAvatarMayEnter({ ...account(levelFive, 2), account_avatars: [{ id: 7, avatar_id: 999 }] }, high, catalogue),
+    false,
+    "a hero the catalogue does not know has no level to meet a requirement with"
+  );
 });
 
 test("Ultimate requires every normal dungeon and boss on the active avatar", () => {
@@ -333,13 +485,13 @@ test("Ultimate requires every normal dungeon and boss on the active avatar", () 
   const catalogue = [...normalNodes, ultimateNode];
 
   assert.equal(
-    activeAvatarEligibleForExplicitJoin(account, ultimateNode, catalogue),
+    activeAvatarMayEnter(account, ultimateNode, { raw: { MapPage: catalogue } }),
     false,
     "account-wide and another avatar's clears do not qualify"
   );
   account.account_avatars[1].completed_mapnode_mask = completeMask;
   assert.equal(avatarCompletedAllNormalNodes(account.account_avatars[1], catalogue), true);
-  assert.equal(activeAvatarEligibleForExplicitJoin(account, ultimateNode, catalogue), true);
+  assert.equal(activeAvatarMayEnter(account, ultimateNode, { raw: { MapPage: catalogue } }), true);
   assert.equal(
     avatarCompletedNode(account.account_avatars[1], ultimateNode),
     false,
@@ -353,7 +505,7 @@ test("Ultimate eligibility fails closed without a normal-node catalogue", () => 
     account_avatars: [{ id: 20, completed_mapnode_mask: String.fromCharCode(0xff) }],
   };
   assert.equal(
-    activeAvatarEligibleForExplicitJoin(account, { NodeType: "INFINITE", BitIndex: 100 }, []),
+    activeAvatarMayEnter(account, { NodeType: "INFINITE", BitIndex: 100 }, { raw: { MapPage: [] } }),
     false
   );
 });
@@ -375,7 +527,7 @@ test("the shipped Ultimate gate covers all 97 normal combat nodes", async () => 
     active_avatar: 20,
     account_avatars: [{ id: 20, completed_mapnode_mask: completeMask }],
   };
-  assert.equal(activeAvatarEligibleForExplicitJoin(account, ultimate, mapNodes), true);
+  assert.equal(activeAvatarMayEnter(account, ultimate, gameMaster), true);
 
   // Removing any one ordinary bit is enough to close every Ultimate entry.
   const missing = required[42];
@@ -384,7 +536,7 @@ test("the shipped Ultimate gate covers all 97 normal combat nodes", async () => 
   account.account_avatars[0].completed_mapnode_mask = bytes
     .map((byte) => String.fromCharCode(byte))
     .join("");
-  assert.equal(activeAvatarEligibleForExplicitJoin(account, ultimate, mapNodes), false);
+  assert.equal(activeAvatarMayEnter(account, ultimate, gameMaster), false);
 });
 
 test("leaving removes membership and an empty match is closed", () => {
