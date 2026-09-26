@@ -14,6 +14,8 @@ node_modules/
 .claude/
 
 .omx/
+.kilo/
+.kilocode/
 *.log
 node_modules
 logs/

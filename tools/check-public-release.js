@@ -13,6 +13,8 @@ const failures = [];
 const forbiddenDirectories = new Set([
   ".claude",
   ".git",
+  ".kilo",
+  ".kilocode",
   ".omx",
   "content",
   "data",
