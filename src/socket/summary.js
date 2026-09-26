@@ -5,6 +5,7 @@ import { CLID } from "./opcodes.js";
 import { dungeonSummaryGenerate, objectDisable } from "./objects.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { settleDungeonAccount } from "./settle-account.js";
+import { awardDungeonCompletion } from "./rewards.js";
 import { rankable } from "../leaderboard.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
@@ -314,6 +315,27 @@ export const sendDungeonSummary = (session, success) => {
   const doid = session.allocateDoid(CLID.DistributedDungeonSummary);
   session.summaryDoid = doid;
   const members = [...membersOf(session)];
+  /**
+   * Finishing the node is paid here, with the report, and only to whoever is
+   * still in the run to receive it — as the original did. Paid at the win
+   * banner instead, walking out in the seconds before the report kept the
+   * completion and left the party no row to report the leaver from.
+   *
+   * Before the report is drawn, so it shows what was banked: the award's
+   * changes to the account are made before its first wait, and its save is
+   * queued ahead of the settlement below.
+   */
+  if (success) {
+    for (const member of members) {
+      const target = member.world?.contextFor(member) ?? member;
+      const failed = (problem) => warn(`[${target.id}] could not award completion: ${problem.message}`);
+      try {
+        (target.awardDungeonCompletion ?? awardDungeonCompletion)(target)?.catch?.(failed);
+      } catch (problem) {
+        failed(problem);
+      }
+    }
+  }
   for (const member of members) {
     member.send(dungeonSummaryGenerate({
       doid,

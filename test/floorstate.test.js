@@ -73,7 +73,12 @@ test("defeat is emitted once", async () => {
   assert.deepEqual(summaries, [false]);
 });
 
-test("a shared-world victory awards every remaining member once", async () => {
+/**
+ * Finishing the run is paid when the report arrives, as the original did: the
+ * win banner is an announcement, and walking out between the two keeps
+ * nothing that completing the node would have given.
+ */
+test("the victory announcement pays nothing yet", async () => {
   const awarded = [];
   const make = (id) => ({
     id,
@@ -96,12 +101,16 @@ test("a shared-world victory awards every remaining member once", async () => {
   world.floorCount = 1;
   world.dungeonActive = true;
   world.victoryDelayMs = 0;
-  host.scheduleDungeonSummary = () => {};
+  let announced = false;
+  host.scheduleDungeonSummary = () => {
+    announced = true;
+  };
 
   assert.equal(completeFloor(world.contextFor(host)), true);
   await new Promise((resolve) => setTimeout(resolve, 5));
 
-  assert.deepEqual(awarded.sort((a, b) => a - b), [10, 11]);
+  assert.equal(announced, true, "the win is announced");
+  assert.deepEqual(awarded, [], "and nobody has been paid for it yet");
   world.destroy();
 });
 

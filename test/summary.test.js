@@ -562,3 +562,62 @@ test("a fresh dungeon's object table is what decides, not last run's", async () 
   assert.equal(removeHeroFromFloor(session), true, "and run two takes its own");
   assert.equal(sent.length, 2);
 });
+
+/**
+ * Completion is paid with the report, to whoever is there to receive it —
+ * before it is drawn, so the report shows what was banked.
+ */
+const reportingWorld = () => {
+  const paid = [];
+  const make = (id) => ({
+    id,
+    accountId: id,
+    playerDoid: id,
+    heroDoid: 100 + id,
+    objects: new Map(),
+    actors: new Map(),
+    doobers: new Map(),
+    socket: { destroyed: false },
+    sent: [],
+    send(frame) {
+      this.sent.push(frame);
+    },
+    allocateDoid: () => 900 + id,
+    awardDungeonCompletion(session) {
+      paid.push({ id, reportsSentBefore: this.sent.length });
+      return Promise.resolve({});
+    },
+  });
+  const host = make(20);
+  const peer = make(21);
+  const world = createMatchWorld({ id: 2, members: new Set([host, peer]) }, host);
+  world.contextFor(peer);
+  world.areaDoid = 600;
+  world.dungeonActive = true;
+  return { world, host, peer, paid };
+};
+
+test("the report pays completion to everyone still there, before it is drawn", () => {
+  const { world, host, paid } = reportingWorld();
+  assert.equal(sendDungeonSummary(world.contextFor(host), true), true);
+  assert.deepEqual(paid, [
+    { id: 20, reportsSentBefore: 0 },
+    { id: 21, reportsSentBefore: 0 },
+  ]);
+  world.destroy();
+});
+
+test("somebody who walked out after the banner is not paid by the report", () => {
+  const { world, host, peer, paid } = reportingWorld();
+  world.detachMember(peer);
+  sendDungeonSummary(world.contextFor(host), true);
+  assert.deepEqual(paid.map((row) => row.id), [20]);
+  world.destroy();
+});
+
+test("a defeat's report pays no completion", () => {
+  const { world, host, paid } = reportingWorld();
+  sendDungeonSummary(world.contextFor(host), false);
+  assert.deepEqual(paid, []);
+  world.destroy();
+});

@@ -3,7 +3,7 @@ import { OP } from "./opcodes.js";
 import { config } from "../config.js";
 import { info, warn } from "../log.js";
 import { scheduleDungeonSummary } from "./summary.js";
-import { awardDungeonCompletion, awardInfiniteFloor } from "./rewards.js";
+import { awardInfiniteFloor } from "./rewards.js";
 import { membersOf } from "./match-world.js";
 import { matchHost } from "./match-host.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
@@ -307,14 +307,9 @@ export const completeFloor = (session, { immediate = false } = {}) => {
   const timer = scheduleFloorTimeout(session, async () => {
     session.victoryTimer = null;
     if (!session.dungeonActive) return;
-    // Paid before the announcement so the summary reports what was banked.
-    for (const member of membersOf(session)) {
-      const target = member.world?.contextFor(member) ?? member;
-      await (target.awardDungeonCompletion ?? awardDungeonCompletion)(target).catch((error) =>
-        warn(`[${target.id}] could not award completion: ${error.message}`)
-      );
-    }
-    if (!session.dungeonActive) return;
+    // Nothing is paid here: completing the node is paid with the report
+    // (summary.js), as the original did, so leaving between the banner and
+    // the report keeps nothing that finishing would have given.
     /**
      * The hero stays. A boss floor ends with treasure on the ground and the
      * player still able to walk to it — removing them here took the loot away
