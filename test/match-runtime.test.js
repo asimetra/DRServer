@@ -230,6 +230,35 @@ test("late join replays one shared world in captured parent/owner order", async 
   assert.equal(host.world.playerActors.has(joiner.heroDoid), true);
 });
 
+/**
+ * The AFK marker (HeroGameObject field 167) is read when a hero is generated
+ * as well as when it changes, so somebody joining late sees a peer who is
+ * already idle as idle.
+ */
+test("a late joiner is shown a peer already marked idle as idle", async () => {
+  const registry = new DungeonMatchRegistry();
+  const host = member(1003, 1101003);
+  await joinDungeonMatch(host, registry.reserve({ session: host, mapNodeId: 50082 }), { mapNodeId: 50082 }, {
+    buildFirstMember: buildFixtureWorld,
+  });
+  host.idleState = { marked: true };
+
+  const joiner = member(1004, 1101004);
+  await joinDungeonMatch(joiner, registry.reserve({ session: joiner, mapNodeId: 50082 }), { mapNodeId: 50082 }, {
+    prepareMember: prepareFixture,
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {},
+  });
+
+  const hostHero = joiner.sent.find((frame) => {
+    const head = frameHead(frame);
+    return head.opcode === OP.CLIENT_CREATE_OBJECT_REQUIRED_RESP && head.clid === CLID.HeroGameObject;
+  });
+  assert.ok(hostHero, "the host's hero was replayed to the joiner");
+  assert.equal(hostHero.at(-1), 1, "with its marker up — setAFK is the last field generated");
+});
+
 test("the owner player precedes acceptance, area, floor, and hero", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(1041, 1101041);

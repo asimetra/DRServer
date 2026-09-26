@@ -516,6 +516,8 @@ const heroFields = ({
   consumables = [EMPTY_CONSUMABLE, EMPTY_CONSUMABLE],
   slotPoints = [0, 0, 0, 0],
   team = TEAM.PLAYERS,
+  /** HeroGameObject field 167, the "Zzz..." marker; see afk.js. */
+  afk = false,
   /**
    * The size the client draws *and collides* the hero at.
    *
@@ -559,7 +561,7 @@ const heroFields = ({
 
   fields
     .u32(dungeonBusterPoints)
-    .u8(0); // setAFK
+    .u8(afk ? 1 : 0); // setAFK
 
   return fields.body();
 };

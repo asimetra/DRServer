@@ -11,8 +11,8 @@
  * Here the player is also told why, and a minute of it sends them back to
  * town the way their own exit would — standing at the entrance while the
  * party plays is not playing. Neither applies to a hub, which is a place to
- * stand, nor to a hero that cannot move: dead and waiting for a revive, or
- * done, with the run finished and the report coming.
+ * stand, nor to the tutorial, nor to a hero that cannot move: dead and waiting
+ * for a revive, or done, with the run finished and the report coming.
  */
 import { config } from "../config.js";
 import { info, warn } from "../log.js";
@@ -47,6 +47,15 @@ const announce = (session, afk) => {
  * Short, and from the server's own speaker: written on the player's object it
  * read as the player's own line, with its first word taken for a name.
  */
+/**
+ * Where nobody is sent home: a hub is a place to stand, and the tutorial is a
+ * new player's first minutes — the client goes straight into it from login,
+ * and an exit out of it is the one the native client crashes on. Both still
+ * show the marker.
+ */
+const TUTORIAL = "TUTORIAL";
+const staysPut = (node) => isHubNode(node) || node?.Constant === TUTORIAL;
+
 const warningLine = () =>
   `Idle. Move within ${Math.round((config.afkKickMs - config.afkWarnMs) / 1000)}s or you return to town.`;
 
@@ -84,7 +93,7 @@ export const checkIdle = (session, at = Date.now()) => {
     return;
   }
   const idleFor = at - idle.lastActiveAt;
-  const place = isHubNode(session.mapPage);
+  const place = staysPut(session.mapPage);
   if (!idle.marked && idleFor >= config.afkWarnMs) {
     idle.marked = true;
     announce(session, true);

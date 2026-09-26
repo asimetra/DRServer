@@ -100,6 +100,8 @@ const heroFrame = (member, owner, floorDoid, position) => {
     dungeonBusterPoints: member.dungeonBusterPoints ?? 0,
     healthBombsUsed: member.healthBombsUsed ?? 0,
     partyBombsUsed: member.partyBombsUsed ?? 0,
+    // A peer already idle when somebody joins is drawn idle to them.
+    afk: Boolean(member.idleState?.marked),
   };
   return owner ? heroOwnerGenerate(details) : heroGenerate(details);
 };

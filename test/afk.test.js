@@ -215,3 +215,25 @@ test("on this thread, a player who has left the floor since is not sent anywhere
   await transitionsOf(connection).idle();
   assert.deepEqual(sent, []);
 });
+
+/**
+ * The client goes from login straight into the tutorial, and an exit out of
+ * it is the one the native client crashes on — so the server must not be the
+ * one to start it.
+ */
+test("a new player idling in the tutorial is not sent home", (t) => {
+  const sent = [];
+  const previous = matchHost();
+  installMatchHost({ ...previous, sendHome: async (session) => sent.push(session.id) });
+  t.after(() => installMatchHost(previous));
+  const session = {
+    id: 7, heroDoid: 4100, playerDoid: 4000, dungeonActive: true,
+    actors: new Map([[4100, { dead: false }]]),
+    mapPage: { Id: 50002, Constant: "TUTORIAL", NodeType: "BOSS", BitIndex: 0 },
+    broadcast: () => {}, sendDirect: () => {}, send: () => {},
+  };
+  const start = 1_000_000;
+  startAfkWatch(session, { now: () => start, schedule: () => 1, cancel: () => {} });
+  checkIdle(session, start + config.afkKickMs);
+  assert.deepEqual(sent, [], "the server itself started the tutorial exit the client crashes on");
+});

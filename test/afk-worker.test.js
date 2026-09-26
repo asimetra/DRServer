@@ -22,8 +22,11 @@ const { PacketReader, PacketWriter } = await import("../src/socket/packet.js");
 const { CLID, OP } = await import("../src/socket/opcodes.js");
 const { FLID, buildEntryResponse } = await import("../src/socket/entry-protocol.js");
 const { transitionsOf } = await import("../src/socket/session-transitions.js");
+const { loadAccount, saveAccount } = await import("../src/accounts.js");
+const { setMapNodeBit } = await import("../src/map-progress.js");
 
-const MAP_NODE = 50002;
+/** ARENA_1: an ordinary dungeon, since the tutorial sends nobody home. */
+const MAP_NODE = 50003;
 const MATCHMAKER_DOID = 11;
 
 const pool = new MatchWorkerPool({ size: 1, loadReportMs: 0 });
@@ -52,6 +55,12 @@ const fieldOf = (frame) => {
 };
 
 test("a player who does nothing on a worker's floor is marked, then sent back to town", async () => {
+  // ARENA_1 opens once the tutorial (bit 0) is cleared by the hero playing it.
+  const stored = await loadAccount(1000001101);
+  const hero = stored.account_avatars.find((row) => row.id === stored.active_avatar);
+  hero.completed_mapnode_mask = setMapNodeBit(hero.completed_mapnode_mask, 0);
+  await saveAccount(stored);
+
   const sent = [];
   const session = new MemberSession({
     id: 1,
