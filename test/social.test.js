@@ -298,7 +298,8 @@ test("a friend code creates one pending request and needs recipient approval", a
   // And the real thing: still no friendship until the recipient accepts it.
   const sent = await invite(code);
   assert.equal(sent.to_account_id, FRIEND, "the request names who it reached");
-  assert.equal(sent.name, "Harrow");
+  // The request itself, as the live server answered: who asked is its subject.
+  assert.equal(sent.account_id, ACCOUNT);
 
   const { loadAccount } = await import("../src/accounts.js");
   assert.deepEqual(friendIdsOf(await loadAccount(ACCOUNT)), []);
@@ -312,7 +313,7 @@ test("a friend code creates one pending request and needs recipient approval", a
   const accepted = await dispatch("friendrequests", "DRFriendRequestUpdate", [
     FRIEND, [pending.id], [ACCOUNT], 1, "token",
   ]);
-  assert.equal(accepted.accepted, 1);
+  assert.deepEqual(accepted.map((row) => row.account_id), [ACCOUNT], "the new friend's row");
   assert.deepEqual(friendIdsOf(await loadAccount(ACCOUNT)), [FRIEND]);
   assert.deepEqual(friendIdsOf(await loadAccount(FRIEND)), [ACCOUNT]);
 });

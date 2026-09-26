@@ -527,6 +527,25 @@ export const loadAccount = async (id) => {
 };
 
 /**
+ * An account somebody else named — a friend, a block, a request's sender — or
+ * null when no account has that id.
+ *
+ * `loadAccount` makes the account it does not find, which is right for the id
+ * a signed token carries on its first login and wrong for an id a client typed:
+ * every one of those would become a starter account on disk. Joins a read of
+ * the same account already under way, so a first login meanwhile is not raced.
+ */
+export const loadExistingAccount = async (id) => {
+  const key = Number(id);
+  if (!Number.isSafeInteger(key) || key <= 0) return null;
+  const live = heldAccount(key);
+  if (live) return live;
+  const elsewhere = await ownership?.load?.(key);
+  if (elsewhere) return elsewhere;
+  return (await readsInFlight.get(key)) ?? readStoredAccount(key);
+};
+
+/**
  * Loads an account and takes a gameplay hold as one account transaction.
  *
  * Match admission may inspect progression before a dungeon starts, but that
@@ -606,11 +625,13 @@ const readAccount = (id) => {
   return reading;
 };
 
-const readAccountOnce = async (id) => {
+const readAccountOnce = async (id) => (await readStoredAccount(id)) ?? createAndPersist(id);
+
+/** The account as storage has it, repaired, or null when there is none. */
+const readStoredAccount = async (id) => {
   if (usingDatabase()) {
     const existing = await (await db()).loadAccount(id);
-    if (existing) return repairLoadedAccount(existing);
-    return createAndPersist(id);
+    return existing ? repairLoadedAccount(existing) : null;
   }
 
   const file = filePathFor(id);
@@ -618,7 +639,7 @@ const readAccountOnce = async (id) => {
   try {
     raw = await fs.readFile(file, "utf8");
   } catch (err) {
-    if (err.code === "ENOENT") return createAndPersist(id);
+    if (err.code === "ENOENT") return null;
     throw err;
   }
 

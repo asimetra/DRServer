@@ -3,6 +3,7 @@ import { issueToken } from "./auth.js";
 import {
   isRemoteAccountCopy,
   loadAccount,
+  loadExistingAccount,
   saveAccount,
   saveAccounts,
   nextObjectId,
@@ -19,14 +20,19 @@ import {
   accountIdFromCode,
   activeSkinOf,
   befriend,
+  blockedBetween,
+  blockListTextOf,
   friendCodeOf,
   friendDataFor,
   friendIdsOf,
   friendRecordFor,
+  friendRowOf,
   ignore,
   ignoredDataFor,
+  ignoredIdsOf,
   mapNodeScoresFor,
   pendingFriendRequestsOf,
+  requestRowOf,
   topTwentyFor,
   unfriend,
   unignore,
@@ -809,13 +815,17 @@ register("leaderboard/getIgnoreFriendData", async ([accountId]) =>
 /**
  * params: [accountId, token]
  *
- * Incoming friend requests. Empty until something can create one — there is no
- * request flow here yet, and an invented pending request would show a stranger
- * in the player's social panel.
+ * Incoming friend requests, less any from somebody this account has blocked —
+ * one stored before blocking cleared them would otherwise sit in the panel
+ * waiting to be accepted.
  */
-register("friendrequests/DRFriendRequestPending", async ([accountId]) =>
-  pendingFriendRequestsOf(await loadAccount(Number(accountId)))
-);
+register("friendrequests/DRFriendRequestPending", async ([accountId]) => {
+  const account = await loadAccount(Number(accountId));
+  const blocked = new Set(ignoredIdsOf(account));
+  return pendingFriendRequestsOf(account)
+    .filter((row) => !blocked.has(Number(row.account_id)))
+    .map((row) => requestRowOf(row, Number(accountId)));
+});
 
 /**
  * Who the sixth parameter names, which is not always the same kind of thing.
@@ -891,14 +901,12 @@ register("friendrequests/DRFriendRequest", async (params) => {
   return withTwoAccountLocks(accountId, wantedId, async () => {
     const [account, recipient] = await Promise.all([
       loadAccount(accountId),
-      loadAccount(wantedId),
+      loadExistingAccount(wantedId),
     ]);
+    if (!recipient) return [];
     if (friendIdsOf(account).includes(wantedId)) return null;
-    const pending = pendingFriendRequestsOf(recipient);
-    const existing = pending.find((row) => Number(row.account_id) === accountId);
-    if (existing) return null;
 
-    const request = {
+    const newRequest = async () => requestRowOf({
       id: await nextObjectId(recipient),
       account_id: account.id,
       active_skin: activeSkinOf(account),
@@ -906,31 +914,72 @@ register("friendrequests/DRFriendRequest", async (params) => {
       trophies: account.trophies ?? 0,
       identifier: `3_${account.id}`,
       friend_code: friendCodeOf(account),
-    };
+      created: new Date().toISOString(),
+    }, recipient.id);
+    // Either has blocked the other: answered as sent, and kept nowhere. Being
+    // told "blocked" would be the one thing a block must not say.
+    if (blockedBetween(account, recipient)) return newRequest();
+
+    const pending = pendingFriendRequestsOf(recipient);
+    const existing = pending.find((row) => Number(row.account_id) === accountId);
+    if (existing) return null;
+
+    /**
+     * They asked first. Asking them back is saying yes: the live server made the
+     * friendship there and then, used their request up, and answered with the
+     * two-part shape `parseJson` in both invite paths recognises — the new
+     * friend's row, then the request that had been waiting. Only when there is
+     * such a request; otherwise this is an ordinary request that waits.
+     *
+     * The live server's first part was the asker's own row. `parseJson` hands
+     * it to `addFriendCallback`, which files each row under its account id —
+     * the asker's own — so the new friend reached the panel only if their
+     * coming online happened to prompt a refetch. Their row is what it needs.
+     */
+    const waiting = pendingFriendRequestsOf(account);
+    const theirs = waiting.find((row) => Number(row.account_id) === wantedId);
+    if (theirs) {
+      account.friend_requests = waiting.filter((row) => row !== theirs);
+      if (!(await befriend(account, recipient))) await saveAccount(account);
+      return [[friendRowOf(recipient, true)], requestRowOf(theirs, account.id)];
+    }
+
+    const request = await newRequest();
     recipient.friend_requests = [...pending, request];
     await saveAccount(recipient);
-    return {
-      to_account_id: recipient.id,
-      active_skin: activeSkinOf(recipient),
-      name: recipient.name,
-      friend_code: friendCodeOf(recipient),
-    };
+    // The live server answered with the request itself; the invite panel draws
+    // its icon from `active_skin` and logs `to_account_id`.
+    return request;
   });
 }, { account: 4, locks: false });
 
 /**
  * params: [accountId, [friendIds], token]
  *
- * `UIFriends` sends the whole selection at once and reads nothing back but the
- * fact that it answered — it refreshes its own list from `getFriendData`. The
- * count is returned rather than nothing so a log line can say what happened.
+ * `UIFriends` and the leaderboard send the selection and hand the answer to
+ * `DBAccountInfo.removeFriendCallback`, which takes it as an array and drops
+ * every `account_id` in it from the list. So the answer is the friends removed,
+ * one row each. An object here — this once answered `{ removed }` — is null
+ * once the native client casts it, and reading its length crashes the game.
  */
 register("friendrequests/DRFriendRemove", async ([accountId, friendIds]) => {
-  const account = await loadAccount(Number(accountId));
-  let removed = 0;
-  for (const id of friendIds ?? []) if (await unfriend(account, id)) removed++;
-  return { removed };
-});
+  const ownerId = Number(accountId);
+  const removed = [];
+  // Both sides are written, so both are held — in id order, as every two-account
+  // change here is — rather than writing the friend's account unguarded.
+  for (const id of friendIds ?? []) {
+    const friendId = Number(id);
+    if (!Number.isSafeInteger(friendId) || friendId === ownerId) continue;
+    const row = await withTwoAccountLocks(ownerId, friendId, async () => {
+      if (!(await unfriend(await loadAccount(ownerId), friendId))) return null;
+      const former = await loadExistingAccount(friendId).catch(() => null);
+      return former ? friendRowOf(former, false) : { account_id: friendId };
+    });
+    if (row) removed.push(row);
+  }
+  info(`rpc: ${ownerId} removed ${removed.length} friend(s)`);
+  return removed;
+}, { locks: false });
 
 /**
  * params: [accountId, personId, token]
@@ -939,16 +988,33 @@ register("friendrequests/DRFriendRemove", async ([accountId, friendIds]) => {
  * friendship as well, which is `ignore`'s doing and explained there.
  */
 register("friendrequests/IgnoreFriend", async ([accountId, personId]) => {
-  const account = await loadAccount(Number(accountId));
-  return { blocked: await ignore(account, personId) };
-});
+  const ownerId = Number(accountId);
+  const otherId = Number(personId);
+  /**
+   * Answered as the dungeon summary reads it: text, `[id,...]`, the block list
+   * as it now stands — it checks the length and slices the brackets off to log
+   * the id. Null when nothing was blocked, which it reports and moves on from.
+   */
+  const blockAndAnswer = async () => {
+    const account = await loadAccount(ownerId);
+    return (await ignore(account, otherId)) ? blockListTextOf(account) : null;
+  };
+  // Blocking drops the friendship too, which writes the other account.
+  if (!Number.isSafeInteger(otherId) || otherId <= 0 || otherId === ownerId) {
+    return withAccountLock(ownerId, blockAndAnswer);
+  }
+  return withTwoAccountLocks(ownerId, otherId, blockAndAnswer);
+}, { locks: false });
 
 /** params: [accountId, [friendIds], token] — the blocked panel, whole selection. */
 register("friendrequests/UnblockFriend", async ([accountId, friendIds]) => {
   const account = await loadAccount(Number(accountId));
   let unblocked = 0;
   for (const id of friendIds ?? []) if (await unignore(account, id)) unblocked++;
-  return { unblocked };
+  info(`rpc: ${account.id} unblocked ${unblocked}`);
+  // `UIBlocked` hands this to `refreshFriendData`, which reads it as the
+  // friend list — an array of friend rows, as `getFriendData` answers.
+  return friendDataFor(account);
 });
 
 /**
@@ -964,34 +1030,44 @@ const REQUEST_ACCEPTED = 1;
 
 register("friendrequests/DRFriendRequestUpdate", async ([accountId, requestIds, toIds, state]) => {
   const ownerId = Number(accountId);
-  let accepted = 0;
+  const accepted = [];
   let declined = 0;
   for (let index = 0; index < (toIds ?? []).length; index++) {
     const requesterId = Number(toIds[index]);
     const requestId = Number(requestIds?.[index]);
     if (!Number.isSafeInteger(requesterId) || requesterId === ownerId) continue;
     await withTwoAccountLocks(ownerId, requesterId, async () => {
-      const [account, requester] = await Promise.all([
-        loadAccount(ownerId),
-        loadAccount(requesterId),
-      ]);
+      const account = await loadAccount(ownerId);
       const pending = pendingFriendRequestsOf(account);
       const request = pending.find(
         (row) => Number(row.id) === requestId && Number(row.account_id) === requesterId
       );
+      // The requester is looked up only for a request actually held: both ids
+      // are the client's, and reading an unknown one would make an account.
       if (!request) return;
       account.friend_requests = pending.filter((row) => Number(row.id) !== requestId);
-      if (Number(state) === REQUEST_ACCEPTED) {
+      const requester = Number(state) === REQUEST_ACCEPTED
+        ? await loadExistingAccount(requesterId)
+        : null;
+      // Gone since, or blocked either way: used up, and nothing made.
+      if (requester && !blockedBetween(account, requester)) {
         const made = await befriend(account, requester);
         if (!made) await saveAccount(account);
-        accepted += 1;
-      } else {
-        await saveAccount(account);
-        declined += 1;
+        accepted.push(friendRowOf(requester, true));
+        return;
       }
+      await saveAccount(account);
+      if (Number(state) !== REQUEST_ACCEPTED) declined += 1;
     });
   }
-  return { accepted, declined };
+  info(`rpc: ${ownerId} accepted ${accepted.length}, declined ${declined} friend request(s)`);
+  /**
+   * `UIPending` hands the answer to `DBAccountInfo.addFriendCallback`, which
+   * reads it as an array of friend rows and adds each to the list. This once
+   * answered `{ accepted, declined }`, and accepting a request crashed the
+   * native client reading that object's length. A decline's answer is not read.
+   */
+  return accepted;
 }, { locks: false });
 
 /**

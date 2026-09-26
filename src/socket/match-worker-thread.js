@@ -47,7 +47,7 @@ import { dungeonMatches } from "./matches.js";
 import { registerBuiltinCommands } from "./command-set.js";
 import { createDistributedObjectIdAllocator } from "./doids.js";
 import { deliverGlobalLine } from "./global-chat.js";
-import { mirrorPresence } from "./presence.js";
+import { installFriendshipRelay, mirrorPresence } from "./presence.js";
 import { RULE, flushViolations, noteViolation } from "./security-events.js";
 import { createWorkerChannel, deferred } from "./worker-channel.js";
 
@@ -577,6 +577,10 @@ installMatchHost({
 });
 
 registerBuiltinCommands();
+
+// A friendship made or ended here changes who is told about whom, and those
+// connections are the main thread's.
+installFriendshipRelay((first, second, made) => channel.post({ t: "friendship", first, second, made }));
 
 // A sale here changes the list the main thread serves; it is told to forget it.
 observeMarketWrites(() => void channel.call("market").catch(() => {}));

@@ -315,6 +315,51 @@ export const activeSessions = () => [...sessions];
 export const sessionHolding = (accountId) =>
   [...sessions].find((session) => session.accountId === Number(accountId)) ?? null;
 
+/**
+ * Where friendship changes go when this thread holds no connections: a match
+ * worker settles friend requests for players in its dungeons, but the roll and
+ * the sockets are the main thread's, so the change is passed on to it.
+ */
+let friendshipRelay = null;
+
+export const installFriendshipRelay = (next) => {
+  const previous = friendshipRelay;
+  friendshipRelay = next ?? null;
+  return previous;
+};
+
+/**
+ * Two accounts became friends, or stopped being.
+ *
+ * Made: each side's connections follow the other from now on and are told at
+ * once where they are. That is also how the one who asked learns of it at all —
+ * the client's `friendlistUpdate` fetches the friend list again when somebody
+ * it does not list is reported online, and nothing else tells it. (The one who
+ * accepted added the other on its own.)
+ *
+ * Ended: neither follows the other any more, and each is shown the other as
+ * offline — so an ex-friend is not told where you are, or offered a way into
+ * your dungeon. The row stays in their panel until the client next fetches the
+ * list; there is no message that takes it out.
+ */
+export const friendshipChanged = (first, second, made) => {
+  if (friendshipRelay) return friendshipRelay(Number(first), Number(second), made);
+  for (const [who, other] of [[Number(first), Number(second)], [Number(second), Number(first)]]) {
+    for (const session of sessions) {
+      if (Number(session.accountId) !== who) continue;
+      if (made) {
+        session.watchedFriends ??= new Set();
+        session.watchedFriends.add(other);
+        tell(session, other);
+      } else {
+        const followed = session.watchedFriends?.delete(other);
+        if (followed && session.presenceDoid) session.send(friendState(session.presenceDoid, false, other, 0));
+      }
+    }
+  }
+  return true;
+};
+
 /** Whether an account is connected at all. */
 export const isOnline = (accountId) => online.has(Number(accountId));
 

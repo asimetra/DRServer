@@ -26,6 +26,7 @@
  *   worker -> main   out                             frames and markers, with acks
  *                    ready, presence, match,
  *                    release, unlock                 lifecycle and bookkeeping
+ *                    friendship                      a friendship made or ended there
  *                    call lease | lock | patch |
  *                         objectId | recordRuns |
  *                         say | door | account       what a dungeon asks of the server
@@ -58,6 +59,7 @@ import { disablePriority } from "./match-runtime.js";
 import { objectDisable } from "./objects.js";
 import { OP } from "./opcodes.js";
 import {
+  friendshipChanged,
   observePresence,
   presenceEntries,
   setPresenceLocation,
@@ -456,6 +458,8 @@ export class MatchWorkerPool {
       }
       case "match":
         return this.updateMatch(message);
+      case "friendship":
+        return friendshipChanged(message.first, message.second, message.made === true);
       default:
         return warn(`match worker ${worker.index}: unknown message ${message?.t}`);
     }

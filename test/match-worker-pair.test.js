@@ -174,6 +174,82 @@ test("a friend request between dungeons on two workers reaches the other run's l
   assert.equal(pendingFrom(await loadAccount(1000000808), 1000000807), true, "and kept");
 });
 
+test("unfriending across two workers takes the friendship off both runs, and it stays off", async () => {
+  const { saveAccount } = await import("../src/accounts.js");
+  const one = 1000000816;
+  const two = 1000000817;
+  for (const [id, other] of [[one, two], [two, one]]) {
+    const account = await loadAccount(id);
+    account.ingame_friends = JSON.stringify([other]);
+    await saveAccount(account);
+  }
+  const a = connect(one);
+  const b = connect(two);
+  assert.notEqual(await enter(a), await enter(b));
+
+  await dispatch("friendrequests", "DRFriendRemove", [one, [two], ""]);
+  const friendsOf = async (id) => JSON.parse((await loadAccount(id)).ingame_friends || "[]").map(Number);
+  assert.deepEqual(await friendsOf(one), []);
+  assert.deepEqual(await friendsOf(two), [], "the other run's own object lost the friend too");
+
+  // The other run saves its account again as it plays; the removal must survive that.
+  await dispatch("account", "AlterAttribute", [two, "t", "still", "playing"]);
+  await matchExecutor.leave(a.session, { notifyClient: true });
+  await matchExecutor.leave(b.session, { notifyClient: true });
+  await waitFor(() => !pool.ownerOf(one) && !pool.ownerOf(two), "both leases back");
+  assert.deepEqual(await friendsOf(one), []);
+  assert.deepEqual(await friendsOf(two), []);
+});
+
+test("blocking across two workers clears the waiting request on the other run, and it cannot be accepted", async () => {
+  const blocker = 1000000820;
+  const blocked = 1000000821;
+  const a = connect(blocker);
+  const b = connect(blocked);
+  assert.notEqual(await enter(a), await enter(b));
+
+  // Theirs to the blocker, and the blocker's to them.
+  assert.ok(await friendRequest(blocked, blocker));
+  const theirs = (await loadAccount(blocker)).friend_requests.find((row) => Number(row.account_id) === blocked);
+  await dispatch("friendrequests", "IgnoreFriend", [blocker, blocked, ""]);
+  assert.equal(pendingFrom(await loadAccount(blocker), blocked), false, "theirs is gone");
+  assert.deepEqual(
+    await dispatch("friendrequests", "DRFriendRequestUpdate", [blocker, [theirs.id], [blocked], 1, ""]),
+    []
+  );
+  // A new request from the blocked one lands nowhere, on either run.
+  assert.ok(await friendRequest(blocked, blocker), "answered as sent");
+  assert.equal(pendingFrom(await loadAccount(blocker), blocked), false);
+  await friendRequest(blocker, blocked);
+  assert.equal(pendingFrom(await loadAccount(blocked), blocker), false, "nor the other way");
+
+  await matchExecutor.leave(a.session, { notifyClient: true });
+  await matchExecutor.leave(b.session, { notifyClient: true });
+  await waitFor(() => !pool.ownerOf(blocker) && !pool.ownerOf(blocked), "both leases back");
+  const friendsOf = async (id) => JSON.parse((await loadAccount(id)).ingame_friends || "[]").map(Number);
+  assert.deepEqual(await friendsOf(blocker), []);
+  assert.deepEqual(await friendsOf(blocked), []);
+  assert.deepEqual(JSON.parse((await loadAccount(blocker)).ignore_friends), [blocked], "and the block kept");
+});
+
+test("a request cleared by a block on another worker's run stays cleared", async () => {
+  const blocker = 1000000822;
+  const other = 1000000823;
+  const a = connect(blocker);
+  const b = connect(other);
+  assert.notEqual(await enter(a), await enter(b));
+  // The blocker's own request waits on the other run's live account.
+  assert.ok(await friendRequest(blocker, other));
+  await dispatch("friendrequests", "IgnoreFriend", [blocker, other, ""]);
+  assert.equal(pendingFrom(await loadAccount(other), blocker), false, "taken off the live object there");
+  // The other run saves its account again as it plays.
+  await dispatch("account", "AlterAttribute", [other, "t", "still", "playing"]);
+  await matchExecutor.leave(a.session, { notifyClient: true });
+  await matchExecutor.leave(b.session, { notifyClient: true });
+  await waitFor(() => !pool.ownerOf(blocker) && !pool.ownerOf(other), "both leases back");
+  assert.equal(pendingFrom(await loadAccount(other), blocker), false);
+});
+
 test("an account moving to another worker waits for the first to hand it back", async () => {
   const accountId = 1000000809;
   const busy = connect(1000000810);
@@ -358,4 +434,36 @@ test("a new match waits for no replacement: it goes to a worker that is ready", 
   await replacement.ready.promise;
   assert.equal(pool.workerFor({ id: 999_998 }), replacement, "and once ready, it takes its share");
   await matchExecutor.leave(player.session, { notifyClient: true });
+});
+
+test("a friendship made on a worker reaches the asker's panel on the main thread", async (t) => {
+  const presence = await import("../src/socket/presence.js");
+  const { PacketReader } = await import("../src/socket/packet.js");
+  t.after(presence.clearPresence);
+  const asker = 1000000860;
+  const accepter = 1000000861;
+  await loadAccount(asker);
+  const inTown = connect(asker);
+  presence.enterPresence(inTown.session);
+  const inDungeon = connect(accepter);
+  presence.enterPresence(inDungeon.session);
+  await enter(inDungeon);
+
+  await friendRequest(asker, accepter);
+  const [request] = (await loadAccount(accepter)).friend_requests;
+  // Accepted from inside the dungeon: this runs on the accepter's worker.
+  await dispatch("friendrequests", "DRFriendRequestUpdate", [accepter, [request.id], [asker], 1, ""]);
+
+  const told = await waitFor(() => {
+    for (const frame of inTown.sent) {
+      const reader = new PacketReader(frame.subarray(2));
+      if (reader.u16() !== OP.CLIENT_OBJECT_UPDATE_FIELD || reader.u32() !== 12 || reader.u16() !== 188) continue;
+      const online = reader.u8() === 1;
+      if (reader.u32() === accepter) return { online, where: reader.u32() };
+    }
+    return null;
+  }, "the asker to be told");
+  assert.equal(told.online, true);
+  assert.equal(told.where, 50002, "and where they are");
+  await matchExecutor.leave(inDungeon.session, { notifyClient: true });
 });

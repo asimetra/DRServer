@@ -1,5 +1,5 @@
-import { isOnline, dungeonOf } from "./socket/presence.js";
-import { listAccountIds, loadAccount, saveAccount, saveAccounts } from "./accounts.js";
+import { isOnline, dungeonOf, friendshipChanged } from "./socket/presence.js";
+import { listAccountIds, loadAccount, loadExistingAccount, saveAccount, saveAccounts } from "./accounts.js";
 import { warn } from "./log.js";
 import { infiniteEpoch } from "./infinite.js";
 
@@ -118,7 +118,7 @@ export const activeSkinOf = (account) => {
  * cost is three fields and the alternative is a reader having to discover that
  * the JSON is silent about the thing it most obviously should carry.
  */
-const friendRowOf = (account, isIngameFriend) => ({
+export const friendRowOf = (account, isIngameFriend) => ({
   account_id: account.id,
   name: account.name,
   trophies: account.trophies ?? 0,
@@ -145,15 +145,16 @@ const loadKnown = async (ids) => {
 /**
  * Makes the friendship, both ways, and saves both sides.
  *
- * Both because this server has no pending-request flow —
- * `DRFriendRequestPending` answers empty and honestly so — and a one-sided
- * friend sits in one panel and not the other, which is worse than either having
- * it or not having it.
+ * Both because a one-sided friend sits in one panel and not the other, which is
+ * worse than either having it or not having it.
  *
  * Idempotent: adding somebody already there changes nothing rather than
  * doubling them in the list.
  */
 export const befriend = async (account, friend) => {
+  // Whatever path got here, a block stands: a friendship would start telling
+  // the blocked player where the blocker is again.
+  if (blockedBetween(account, friend)) return false;
   const add = (owner, otherId) => {
     const ids = friendIdsOf(owner);
     if (ids.includes(Number(otherId))) return false;
@@ -165,7 +166,29 @@ export const befriend = async (account, friend) => {
   // be left showing.
   const touched = [changed[0] && account, changed[1] && friend].filter(Boolean);
   if (touched.length) await saveAccounts(touched);
+  // Both panels, live: see presence.js for why the one who asked needs telling.
+  if (touched.length) friendshipChanged(account.id, friend.id, true);
   return changed[0] || changed[1];
+};
+
+/** Either of the two has the other on their block list. */
+export const blockedBetween = (account, other) =>
+  ignoredIdsOf(account).includes(Number(other.id)) ||
+  ignoredIdsOf(other).includes(Number(account.id));
+
+const dropFriend = (owner, otherId) => {
+  const ids = friendIdsOf(owner);
+  if (!ids.includes(Number(otherId))) return false;
+  owner.ingame_friends = encodeIdList(ids.filter((id) => Number(id) !== Number(otherId)));
+  return true;
+};
+
+const dropRequestsFrom = (owner, senderId) => {
+  const pending = pendingFriendRequestsOf(owner);
+  const kept = pending.filter((row) => Number(row.account_id) !== Number(senderId));
+  if (kept.length === pending.length) return false;
+  owner.friend_requests = kept;
+  return true;
 };
 
 /**
@@ -173,18 +196,16 @@ export const befriend = async (account, friend) => {
  *
  * A one-sided removal leaves the other player with a friend who does not have
  * them, and the panel that still shows the row is the one that cannot act on it.
+ * Only a friend the owner actually lists is looked up: the id is the client's.
  */
 export const unfriend = async (account, formerId) => {
-  const remove = (owner, otherId) => {
-    const ids = friendIdsOf(owner);
-    if (!ids.includes(Number(otherId))) return false;
-    owner.ingame_friends = encodeIdList(ids.filter((id) => Number(id) !== Number(otherId)));
-    return true;
-  };
-  const friend = await loadAccount(Number(formerId)).catch(() => null);
-  const changed = [remove(account, formerId), friend && remove(friend, account.id)];
+  if (!friendIdsOf(account).includes(Number(formerId))) return false;
+  const friend = await loadExistingAccount(Number(formerId));
+  const changed = [dropFriend(account, formerId), friend && dropFriend(friend, account.id)];
   const touched = [changed[0] && account, changed[1] && friend].filter(Boolean);
   if (touched.length) await saveAccounts(touched);
+  // And an ex-friend stops being told where you are.
+  if (touched.length) friendshipChanged(account.id, formerId, false);
   return Boolean(changed[0] || changed[1]);
 };
 
@@ -194,17 +215,27 @@ export const unfriend = async (account, formerId) => {
  * The blocker's list is the blocker's own: telling the other account it has been
  * blocked would be a thing they could read. It also drops the friendship, since
  * blocking somebody you are friends with and staying friends with them is not a
- * state either panel can draw.
+ * state either panel can draw, and every request waiting between the two, since
+ * accepting one afterwards would make that friendship again. All of it in one
+ * save. Only an account that exists can be blocked.
  */
 export const ignore = async (account, otherId) => {
   const id = Number(otherId);
   if (!Number.isSafeInteger(id) || id <= 0 || id === Number(account.id)) return false;
-  await unfriend(account, id);
+  const other = await loadExistingAccount(id);
+  if (!other) return false;
   const ids = ignoredIdsOf(account);
-  if (ids.includes(id)) return false;
-  account.ignore_friends = encodeIdList([...ids, id]);
-  await saveAccount(account);
-  return true;
+  const blocked = !ids.includes(id);
+  if (blocked) account.ignore_friends = encodeIdList([...ids, id]);
+  const friendship = [dropFriend(account, id), dropFriend(other, account.id)];
+  const requests = [dropRequestsFrom(account, id), dropRequestsFrom(other, account.id)];
+  const touched = [
+    (blocked || friendship[0] || requests[0]) && account,
+    (friendship[1] || requests[1]) && other,
+  ].filter(Boolean);
+  if (touched.length) await saveAccounts(touched);
+  if (friendship[0] || friendship[1]) friendshipChanged(account.id, id, false);
+  return blocked;
 };
 
 export const unignore = async (account, otherId) => {
@@ -226,6 +257,27 @@ export const friendRecordFor = (account) => ({
   // else with the reply. Null in every capture, so there is nothing to cache.
   friends_hash: null,
 });
+
+/**
+ * A friend request, in the shape the live server answered `DRFriendRequest` and
+ * `DRFriendRequestPending` with: who asked (`account_id`, `name`, `trophies`,
+ * `active_skin`), whom (`to_account_id`), and `curr_state` 0 for waiting. The
+ * two fields this server added before it had a recording — `identifier` and
+ * `friend_code` — stay, since the panel has been reading them.
+ *
+ * Also what a request stored before those fields existed is widened to on the
+ * way out, so an old pending row answers in the same shape as a new one.
+ */
+export const requestRowOf = (request, recipientId) => ({
+  ...request,
+  facebook_id: request.facebook_id ?? "",
+  to_account_id: Number(request.to_account_id ?? recipientId),
+  curr_state: request.curr_state ?? 0,
+  created: request.created ?? null,
+});
+
+/** The block list as the client keeps it: `[id,...]`, as text. */
+export const blockListTextOf = (account) => encodeIdList(ignoredIdsOf(account));
 
 export const friendDataFor = async (account) =>
   (await loadKnown(friendIdsOf(account))).map((row) => friendRowOf(row, true));
