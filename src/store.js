@@ -341,6 +341,13 @@ export const purchaseOffer = async ({ account, offerId, nextId, free = false }) 
     }
 
     const price = Number(offer.Price ?? 0);
+    /**
+     * An offer that costs nothing is not for sale. The only such rows are the
+     * three free gifts, which the client shows on its gift page alone and which
+     * the gift cooldown rations; sold here they were free and unlimited. They
+     * still arrive as gifts and rewards, which take the `free` path.
+     */
+    if (!(price > 0)) throw new StoreError(REFUSED, `offer ${offerId} is not sold, only given`);
     const balance = Number(account[column] ?? 0);
     if (balance < price) {
       throw new StoreError(REFUSED, `offer ${offerId} costs ${price}, account has ${balance}`);
