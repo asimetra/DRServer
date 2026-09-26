@@ -83,6 +83,20 @@ const connect = async (accountId) => {
 };
 
 /** The client asks about a set, and it replaces whatever it asked about before. */
+/**
+ * Friends both ways, as presence requires: `addFriends` follows nobody the
+ * server does not know as a friend of the one asking.
+ */
+const befriend = async (first, second) => {
+  const { loadAccount, saveAccount } = await import("../src/accounts.js");
+  for (const [id, other] of [[first, second], [second, first]]) {
+    const account = await loadAccount(id);
+    account.ingame_friends = JSON.stringify([other]);
+    account.ignore_friends = "[]";
+    await saveAccount(account);
+  }
+};
+
 const watch = async (socket, session, ids) => {
   const list = new PacketWriter();
   for (const id of ids) list.u32(id);
@@ -102,6 +116,7 @@ const watch = async (socket, session, ids) => {
 test("a friend's panel is told who is online and where", async (t) => {
   clearPresence();
   t.after(clearPresence);
+  await befriend(1000000001, 1000000002);
 
   const me = await connect(1000000001);
   assert.ok(me.session.presenceDoid, "the object the panel reads is generated at login");
@@ -188,6 +203,7 @@ test("a second socket on one account does not report a departure", async (t) => 
   clearPresence();
   t.after(clearPresence);
 
+  await befriend(1000000020, 1000000021);
   const watcher = await connect(1000000020);
   await watch(watcher.socket, watcher.session, [1000000021]);
 

@@ -188,6 +188,23 @@ export const areFriends = (account, other) =>
   friendIdsOf(other).includes(Number(account.id)) &&
   !blockedBetween(account, other);
 
+/**
+ * Of these ids, the ones this account may follow for presence: friends both
+ * ways, neither blocking. Only ids the account itself lists are read, so a
+ * list the client made up costs nothing past the first lookup.
+ */
+export const followableAmong = async (account, ids) => {
+  if (!account) return [];
+  const listed = new Set(friendIdsOf(account).map(Number));
+  const followable = [];
+  for (const id of new Set((ids ?? []).map(Number))) {
+    if (!listed.has(id)) continue;
+    const other = await loadExistingAccount(id);
+    if (other && areFriends(account, other)) followable.push(id);
+  }
+  return followable;
+};
+
 const dropFriend = (owner, otherId) => {
   const ids = friendIdsOf(owner);
   if (!ids.includes(Number(otherId))) return false;

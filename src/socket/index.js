@@ -22,7 +22,7 @@ import {
   watchFriends,
 } from "./presence.js";
 import { listAccountIds, loadAccount } from "../accounts.js";
-import { friendIdsOf } from "../social.js";
+import { followableAmong, friendIdsOf } from "../social.js";
 import { createDistributedObjectIdAllocator } from "./doids.js";
 import { loadGameMaster } from "../gamemaster.js";
 import { infiniteMapDetails } from "../infinite.js";
@@ -166,7 +166,9 @@ const tellHimAboutHisFriends = async (session) => {
     const known = new Set(await listAccountIds());
     if (!known.has(Number(session.accountId))) return;
 
-    const friends = friendIdsOf(await loadAccount(session.accountId));
+    // Friends both ways and unblocked, as `addFriends` is held to.
+    const account = await loadAccount(session.accountId);
+    const friends = await followableAmong(account, friendIdsOf(account));
     if (!friends.length || session.closed) return;
     const watching = watchFriends(session, friends);
     info(`${describe(session)} watching ${watching} friend(s) for presence`);

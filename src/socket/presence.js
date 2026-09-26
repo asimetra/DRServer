@@ -1,7 +1,7 @@
 import { PacketWriter } from "./packet.js";
 import { CLID, OP } from "./opcodes.js";
 import { generateVisible } from "./objects.js";
-import { info } from "../log.js";
+import { info, warn } from "../log.js";
 
 /**
  * Who is online, and which dungeon they are in.
@@ -236,11 +236,43 @@ export const setPresenceLocation = (session, mapNodeId) => {
  */
 const MAX_WATCHED = 512;
 
-export const handleAddFriends = (session, reader) => {
+/**
+ * Who of these the account may follow, from the server's own record. Imported
+ * when used: social.js imports this file, and reading the accounts is its job.
+ */
+const followableFor = async (accountId, ids) => {
+  const [{ loadExistingAccount }, { followableAmong }] = await Promise.all([
+    import("../accounts.js"),
+    import("../social.js"),
+  ]);
+  return followableAmong(await loadExistingAccount(accountId), ids);
+};
+
+export const handleAddFriends = (session, reader, { followable = followableFor } = {}) => {
   const byteLength = reader.u16();
-  const wanted = new Set();
+  const asked = new Set();
   const count = Math.min(Math.floor(byteLength / 4), MAX_WATCHED);
-  for (let index = 0; index < count; index++) wanted.add(reader.u32());
+  for (let index = 0; index < count; index++) asked.add(reader.u32());
+
+  /**
+   * Only friends, and the server says who they are.
+   *
+   * The ids are the client's: the shipped one sends them from the summary, the
+   * invite and the pending panels, about friendships the server announces on
+   * its own (`friendshipChanged`), but nothing stopped any client naming
+   * anybody — a stranger, or somebody who had blocked them — and being told
+   * from then on whether they were online and which dungeon they were in.
+   */
+  return followable(session.accountId, [...asked])
+    .then((ids) => admitWatched(session, new Set(ids)))
+    .catch((problem) => {
+      warn(`[${session.id}] could not check who may be followed: ${problem.message}`);
+      return false;
+    });
+};
+
+const admitWatched = (session, wanted) => {
+  if (session.closed) return false;
 
   /**
    * Added to what is already watched rather than replacing it.

@@ -578,3 +578,74 @@ test("rows for somebody who is not a friend say nothing of where they are", asyn
   assert.equal(blockedRow.account_id, THEM);
   assert.deepEqual([blockedRow.is_online, blockedRow.current_dungeon], [false, 0], "a blocked player");
 });
+
+/**
+ * PresenceManager.addFriends (field 189) is the client's list, and the client
+ * is not the one who decides who may follow whom: only somebody each side
+ * lists, with neither blocking the other, is watched. Asked after the list is
+ * checked against the server's own record, which is why these wait.
+ */
+const { PacketWriter } = await import("../src/socket/packet.js");
+const addFriends = (session, ids) => {
+  const writer = new PacketWriter().u16(ids.length * 4);
+  for (const id of ids) writer.u32(id);
+  return presence.handleAddFriends(session, new PacketReader(writer.body()));
+};
+const befriendBoth = async () => {
+  await addFriend(THEM);
+  await acceptRequest();
+};
+
+test("a stranger naming somebody in addFriends is told nothing about them", async (t) => {
+  await reset();
+  presence.clearPresence();
+  t.after(presence.clearPresence);
+  const them = online(THEM, 720);
+  presence.setPresenceLocation(them.session, 50021);
+  const me = online(ME, 721);
+
+  await addFriends(me.session, [THEM]);
+  assert.deepEqual(me.told, [], "not online, not where");
+  assert.equal(me.session.watchedFriends?.has(THEM) ?? false, false, "and not followed later");
+});
+
+test("a friend named in addFriends is told where they are", async (t) => {
+  await reset();
+  await befriendBoth();
+  presence.clearPresence();
+  t.after(presence.clearPresence);
+  const them = online(THEM, 722);
+  presence.setPresenceLocation(them.session, 50021);
+  const me = online(ME, 723);
+
+  await addFriends(me.session, [THEM]);
+  assert.deepEqual(me.told, [{ online: true, who: THEM, where: 50021 }]);
+});
+
+test("neither a blocked friend nor a one-sided listing is watched", async (t) => {
+  await reset();
+  await befriendBoth();
+  const mine = await loadAccount(ME);
+  mine.ignore_friends = `[${THEM}]`;
+  await saveAccount(mine);
+  presence.clearPresence();
+  t.after(presence.clearPresence);
+  const them = online(THEM, 724);
+  presence.setPresenceLocation(them.session, 50021);
+  const blocker = online(ME, 725);
+  await addFriends(them.session, [ME]);
+  await addFriends(blocker.session, [THEM]);
+  assert.deepEqual(them.told, [], "the blocked one learns nothing of the blocker");
+  assert.deepEqual(blocker.told, [], "nor the other way");
+
+  await reset();
+  const oneSided = await loadAccount(ME);
+  oneSided.ingame_friends = `[${THEM}]`;
+  await saveAccount(oneSided);
+  presence.clearPresence();
+  const other = online(THEM, 726);
+  presence.setPresenceLocation(other.session, 50021);
+  const lister = online(ME, 727);
+  await addFriends(lister.session, [THEM]);
+  assert.deepEqual(lister.told, [], "listing somebody is not being listed by them");
+});
