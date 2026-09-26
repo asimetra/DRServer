@@ -16,7 +16,7 @@ import path from "node:path";
 process.env.ODS_DATA_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), "dr-two-account-moves-"));
 const { loadAccount, saveAccount, createAccount, closeAccountStorage } = await import("../src/accounts.js");
 const { settleTrade } = await import("../src/trade.js");
-const { listForSale, buyListing } = await import("../src/market.js");
+const { listForSale, buyListing, cancelListing } = await import("../src/market.js");
 test.after(() => closeAccountStorage());
 
 const base = 1_000_700_000 + (Date.now() % 100_000) * 10;
@@ -56,4 +56,31 @@ test("a bought weapon can be listed again before its seller claims", async () =>
   await buyListing({ listingId: base + 105, buyerId: buyer });
   await listForSale({ sellerId: buyer, itemId: base + 105, price: 100 });
   assert.ok((await loadAccount(buyer)).market_listings.some((row) => Number(row.id) === base + 105));
+});
+
+/**
+ * A weapon can come back to its seller — bought back — and go up again before
+ * the first sale is claimed, leaving two listings under its id on one account.
+ * The open one is the one a buyer or the seller means.
+ */
+test("a weapon back with its seller and listed again can be withdrawn, and bought", async () => {
+  const weapon = base + 200;
+  const seller = await account(base + 21, weapon);
+  const buyer = await account(base + 22, base + 221);
+  const third = await account(base + 23, base + 231);
+  await listForSale({ sellerId: seller, itemId: weapon, price: 100 });
+  await buyListing({ listingId: weapon, buyerId: buyer });
+  await listForSale({ sellerId: buyer, itemId: weapon, price: 100 });
+  await buyListing({ listingId: weapon, buyerId: seller });
+  await listForSale({ sellerId: seller, itemId: weapon, price: 100 });
+  const states = (await loadAccount(seller)).market_listings
+    .filter((row) => Number(row.id) === weapon)
+    .map((row) => (row.sold_to ? "sold" : "open"));
+  assert.deepEqual(states.sort(), ["open", "sold"]);
+
+  await cancelListing({ listingId: weapon, sellerId: seller });
+  await listForSale({ sellerId: seller, itemId: weapon, price: 100 });
+  await buyListing({ listingId: weapon, buyerId: third });
+  const owned = (await loadAccount(third)).account_items.some((row) => Number(row.id) === weapon);
+  assert.equal(owned, true, "withdrawn, put up again, and sold");
 });

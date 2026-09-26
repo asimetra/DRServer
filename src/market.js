@@ -103,6 +103,21 @@ const openListings = (account) =>
 const soldListings = (account) =>
   listingsOf(account).filter((listing) => Boolean(listing.sold_to));
 
+/**
+ * The listing an id names on this account: the open one if there is one.
+ *
+ * A listing's id is its weapon's, and a weapon can come back to the seller —
+ * bought back, then put up again — before the first sale is claimed. The
+ * account then holds two rows under one id, sold and open, and taking the
+ * first by position found the sold one: the open listing showed in the market
+ * and could be neither bought nor withdrawn. Which came first also differed
+ * between the file and the PostgreSQL backend.
+ */
+const listingNamed = (account, id) => {
+  const rows = listingsOf(account).filter((row) => Number(row.id) === Number(id));
+  return rows.find((row) => !row.sold_to) ?? rows[0];
+};
+
 const BROWSE_CACHE_MS = 2000;
 let browseCache = null;
 
@@ -257,7 +272,7 @@ const listForSaleHere = async ({ sellerId, itemId, price } = {}) => {
     invalidateBrowse();
 
     info(`market: ${seller} listed item ${wanted} at ${asking} gold`);
-    return asView(listingsOf(account).find((row) => Number(row.id) === wanted), seller, account.name);
+    return asView(listingNamed(account, wanted), seller, account.name);
   });
 };
 
@@ -273,7 +288,7 @@ const listForSaleHere = async ({ sellerId, itemId, price } = {}) => {
 const sellerHolding = async (listingId) => {
   for (const id of await listAccountIds()) {
     const account = await loadAccount(id);
-    const listing = listingsOf(account).find((row) => Number(row.id) === listingId);
+    const listing = listingNamed(account, listingId);
     if (listing && !listing.sold_to) return id;
   }
   return null;
@@ -315,7 +330,7 @@ const buyListingHere = async ({ listingId, buyerId } = {}) => {
     /* Looked up again inside the lock, which is the look that decides: two
        buyers reaching for the same listing both got past the check above, and
        only the one that gets here first finds it unsold. */
-    const listing = listingsOf(sellerAccount).find((row) => Number(row.id) === wanted);
+    const listing = listingNamed(sellerAccount, wanted);
     if (!listing || listing.sold_to) throw refuse("gone", `listing ${wanted} is no longer up`);
 
     const price = Number(listing.price);
@@ -394,7 +409,7 @@ const cancelListingHere = async ({ listingId, sellerId } = {}) => {
     refuseIfPlaying(seller);
 
     const account = await loadAccount(seller);
-    const listing = listingsOf(account).find((row) => Number(row.id) === wanted);
+    const listing = listingNamed(account, wanted);
     if (!listing) throw refuse("gone", `account ${seller} has no listing ${wanted}`);
     if (listing.sold_to) throw refuse("already_sold", `listing ${wanted} has sold — claim it instead`);
 
