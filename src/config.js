@@ -40,6 +40,18 @@ const asWorkerCount = (value, fallback = 0) => {
 /** Public ODS_* settings take precedence; DR_* remains a compatibility alias. */
 const setting = (environment, name) => envSetting(name, environment);
 
+const DEFAULT_ACTIVITY_THRESHOLDS = [1, 5, 9, 17];
+
+/** Four ascending positive counts, from a list or "1,5,9,17"; the defaults otherwise. */
+const activityThresholdsFrom = (value) => {
+  const list = (Array.isArray(value) ? value : String(value ?? "").split(","))
+    .map((entry) => Number(String(entry).trim()));
+  const valid =
+    list.length === 4 &&
+    list.every((entry, index) => Number.isSafeInteger(entry) && entry > 0 && (index === 0 || entry > list[index - 1]));
+  return valid ? list : DEFAULT_ACTIVITY_THRESHOLDS;
+};
+
 const configuredPath = ({ environmentValue, defaultValue, configDir }) =>
   environmentValue
     ? path.resolve(environmentValue)
@@ -401,6 +413,17 @@ export const loadServerConfig = (environment = process.env) => {
     projectileTickMs: asInt(
       setting(environment, "PROJECTILE_TICK_MS"),
       defaults.projectileTickMs ?? 20
+    ),
+
+    /**
+     * Players in a node's open public runs at which the world map calls it
+     * Active, Popular, Bustling and Rampaging (see game-status.js). Four
+     * ascending counts; anything else falls back to the defaults.
+     *
+     *   ODS_ACTIVITY_THRESHOLDS=1,5,9,17
+     */
+    activityThresholds: activityThresholdsFrom(
+      setting(environment, "ACTIVITY_THRESHOLDS") ?? defaults.activityThresholds
     ),
 
     /** Production delay between dungeonEnding and DistributedDungeonSummary. */

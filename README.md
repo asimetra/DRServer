@@ -200,6 +200,7 @@ that has to match somewhere else — `ODS_INTERNAL_TOKEN` and the website's
 | `ODS_DUNGEON` | enabled | Set `0` to refuse dungeon entry cleanly |
 | `ODS_AFK_WARN_MS` | `30000` | Idle time before a hero shows "Zzz..." to its party and the player is warned; `0` turns it off |
 | `ODS_AFK_KICK_MS` | `60000` | Idle time in a dungeon before the player is sent back to town; `0` turns it off |
+| `ODS_ACTIVITY_THRESHOLDS` | `1,5,9,17` | Players in a dungeon's open public runs at which the world map shows it Active, Popular, Bustling and Rampaging |
 | `ODS_MATCH_WORKERS` | `0` | Threads that run whole matches (at most 16); `auto` uses up to four, leaving one core to the main thread, and none on a single core |
 | `ODS_MATCH_WORKER_HANG_MS` | `5000` | How long a match worker may stop turning over before it is replaced and its players sent home |
 

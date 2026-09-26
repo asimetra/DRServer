@@ -4,6 +4,7 @@ import { dispatch } from "./rpc.js";
 import { info, warn } from "./log.js";
 import { serveContent } from "./content.js";
 import { tokenProblem } from "./auth.js";
+import { gameStatusFor } from "./game-status.js";
 
 const json = (body, status = 200) => ({
   status,
@@ -61,8 +62,8 @@ const serviceDiscovery = () =>
     gameSocketFallbackPort: 0,
   });
 
-/** GET /game-status — online player count (uI/map/PlayerActivityCount.hx). */
-const gameStatus = () => json({ players: 1 });
+/** GET /game-status — how busy each dungeon is, for the world map (game-status.js). */
+const gameStatus = async () => json(await gameStatusFor());
 
 /**
  * GET /api/dbAccountInfo/accountdetails

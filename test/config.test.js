@@ -81,3 +81,11 @@ test("remote internal exposure requires its own explicit acknowledgement", () =>
   assert.equal(loaded.internalHost, "0.0.0.0");
   assert.equal(loaded.allowInsecureInternal, true);
 });
+
+test("activity thresholds come from the environment, and a bad list falls back", () => {
+  assert.deepEqual(loadServerConfig({}).activityThresholds, [1, 5, 9, 17]);
+  assert.deepEqual(loadServerConfig({ ODS_ACTIVITY_THRESHOLDS: "2, 6, 12, 24" }).activityThresholds, [2, 6, 12, 24]);
+  for (const bad of ["1,5,9", "1,5,5,9", "0,5,9,17", "a,b,c,d"]) {
+    assert.deepEqual(loadServerConfig({ ODS_ACTIVITY_THRESHOLDS: bad }).activityThresholds, [1, 5, 9, 17], bad);
+  }
+});

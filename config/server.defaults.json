@@ -35,6 +35,7 @@
   "dungeonSummaryDelayMs": 5000,
   "afkWarnMs": 30000,
   "afkKickMs": 60000,
+  "activityThresholds": [1, 5, 9, 17],
   "pickupRadius": 120,
   "logBodyLimit": 600,
   "logLevel": "info",
