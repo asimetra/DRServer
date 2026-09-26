@@ -183,6 +183,33 @@ CREATE TABLE IF NOT EXISTS market_listings (
 
 CREATE INDEX IF NOT EXISTS market_listings_account ON market_listings(account_id);
 
+-- Listings that have sold and wait to be claimed: the same rows as above, kept
+-- apart. A listing's id is its weapon's, and the weapon has gone to the buyer,
+-- who may put it up again before the seller collects — two listings under one
+-- id, on two accounts, which the key above refuses. So an account's sold
+-- listings are written here, keyed by the pair, and read back beside its open
+-- ones; the account itself does not know the difference. A new table rather
+-- than a new key, because this file only ever adds.
+CREATE TABLE IF NOT EXISTS market_sold_listings (
+    id                BIGINT      NOT NULL,
+    account_id        BIGINT      NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    item_id           INTEGER     NOT NULL,
+    price             BIGINT      NOT NULL,
+    listed_at         TIMESTAMPTZ NOT NULL,
+    sold_to           BIGINT,
+    sold_at           TIMESTAMPTZ,
+    tax               BIGINT,
+    proceeds          BIGINT,
+    power             INTEGER,
+    requiredlevel     INTEGER,
+    rarity            INTEGER,
+    modifier1         INTEGER,
+    modifier2         INTEGER,
+    legendarymodifier INTEGER,
+    created           TIMESTAMPTZ,
+    PRIMARY KEY (account_id, id)
+);
+
 -- What the market has done, kept for good.
 --
 -- The listings above cannot be the history: one lives on the seller's account

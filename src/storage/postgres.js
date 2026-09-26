@@ -122,6 +122,14 @@ export const CHILD_TABLES = {
   ],
 };
 
+/**
+ * Sold listings are stored apart from the open ones, keyed by account and id
+ * (see db/schema.sql): the buyer can list the weapon again under the same id
+ * before the seller claims. In the account they stay one list.
+ */
+const SOLD_LISTINGS = "market_sold_listings";
+const isSold = (listing) => listing?.sold_to !== undefined && listing?.sold_to !== null;
+
 const ACCOUNT_COLUMNS = [
   "id", "name", "campaign", "ancestor_campaign", "demographic", "trophies",
   "completed_mapnode_mask", "basic_currency", "premium_currency", "basic_keys",
@@ -217,6 +225,11 @@ export const loadAccount = async (id) => {
     );
     account[field] = child.rows.map(fromRow);
   }
+  const sold = await db.query(
+    `SELECT ${CHILD_TABLES.market_listings.join(", ")} FROM ${SOLD_LISTINGS} WHERE account_id = $1 ORDER BY id`,
+    [id]
+  );
+  account.market_listings = [...account.market_listings, ...sold.rows.map(fromRow)];
 
   // Still unmodelled: nothing in this server writes a booster row, so there is
   // no shape to store (see db/schema.sql). Chests used to be lumped in with
@@ -232,6 +245,12 @@ export const loadAccount = async (id) => {
  * a few writes would be a lot of machinery for an object this size.
  */
 export const writeAccount = async (client, account) => {
+  await clearAccount(client, account);
+  await fillAccount(client, account);
+};
+
+/** The account row, and none of its children: the first half of a write. */
+const clearAccount = async (client, account) => {
   /**
    * Updated in place, never removed and remade.
    *
@@ -272,14 +291,18 @@ export const writeAccount = async (client, account) => {
    * otherwise come back on the next write. Nothing outside this server points
    * at them, so removing them costs nothing.
    */
-  for (const field of Object.keys(CHILD_TABLES)) {
+  for (const field of [...Object.keys(CHILD_TABLES), SOLD_LISTINGS]) {
     await client.query(`DELETE FROM ${field} WHERE account_id = $1`, [account.id]);
   }
+};
 
+/** Its children, written again: the second half. */
+const fillAccount = async (client, account) => {
   // Avatars first: items and pets reference them.
   for (const [field, columns] of Object.entries(CHILD_TABLES)) {
     for (const row of account[field] ?? []) {
-      await insert(client, field, columns, { ...row, account_id: account.id });
+      const table = field === "market_listings" && isSold(row) ? SOLD_LISTINGS : field;
+      await insert(client, table, columns, { ...row, account_id: account.id });
     }
   }
 };
@@ -301,7 +324,14 @@ export const saveAccounts = async (accounts) => {
 
   try {
     await client.query("BEGIN");
-    for (const account of accounts) await writeAccount(client, account);
+    /**
+     * Every account cleared before any is filled. Child ids are global keys, so
+     * a weapon moving from the second account to the first is inserted under
+     * the first while the second still holds its old row — and a trade the
+     * second party gave something in failed on the duplicate key, every time.
+     */
+    for (const account of accounts) await clearAccount(client, account);
+    for (const account of accounts) await fillAccount(client, account);
     await client.query("COMMIT");
     return accounts;
   } catch (err) {
