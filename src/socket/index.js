@@ -9,6 +9,7 @@ import { heartbeat, logoutResponse, matchMakerGenerate } from "./objects.js";
 import * as matchMaker from "./matchmaker.js";
 import { matchExecutor } from "./match-runtime.js";
 import { MemberSession } from "./member-session.js";
+import { transitionsOf } from "./session-transitions.js";
 import { registerBuiltinCommands } from "./command-set.js";
 import { RULE, flushViolations, noteTraffic, noteViolation } from "./security-events.js";
 import {
@@ -375,7 +376,7 @@ export const onConnection = (socket) => {
     // `socket.end()` may wait indefinitely for a slow peer before emitting
     // close. Release the match/world now so a displaced or logging-out player
     // cannot keep a ghost room and all of its timers alive during that wait.
-    matchExecutor.leave(session);
+    transitionsOf(session).disconnect();
     buffered = Buffer.alloc(0);
     info(`${describe(session)} closing: ${why}`);
     /**
@@ -555,7 +556,7 @@ export const onConnection = (socket) => {
     session.queue.length = 0;
     session.queuedBytes = 0;
     leavePresence(session);
-    matchExecutor.leave(session);
+    transitionsOf(session).disconnect();
     // Whatever a rule was still counting goes out with the session, since the
     // tail is the part that says whether it fired once or constantly.
     flushViolations(session);

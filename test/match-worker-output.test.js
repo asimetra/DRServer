@@ -59,7 +59,7 @@ const inDungeon = async (id, accountId) => {
     session.closedBecause = why;
     matchExecutor.leave(session);
   };
-  const result = dungeonMatches.resolve({ session, mapNodeId: 50002, group: "" });
+  const result = dungeonMatches.reserve({ session, mapNodeId: 50002, group: "" });
   const joined = matchExecutor.join(session, result, { mapNodeId: 50002 }, { onPlayerReady: () => {} });
   const player = await waitFor(
     () =>

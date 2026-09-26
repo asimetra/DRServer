@@ -55,7 +55,7 @@ import { invalidateMarketBrowse } from "../market.js";
 import { recordRuns } from "../leaderboard.js";
 import { dungeonMatches } from "./matches.js";
 import { EntryRefusedError } from "./match-entry.js";
-import { buildExitComplete } from "./matchmaker.js";
+import { buildExitComplete } from "./entry-protocol.js";
 import { disablePriority } from "./match-runtime.js";
 import { objectDisable } from "./objects.js";
 import { OP } from "./opcodes.js";

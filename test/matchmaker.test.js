@@ -17,6 +17,7 @@ import {
   playerOwnerGenerate,
 } from "../src/socket/objects.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
+import { transitionsOf } from "../src/socket/session-transitions.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
 
 test("MatchMaker generate contains the required empty detail list", () => {
@@ -142,7 +143,7 @@ test("joining a friend who already left returns Friend Not Found, not Internal E
     .body();
 
   assert.equal(handleField(session, FLID.ClientRequestEntry, new PacketReader(request)), true);
-  await session.entryPromise;
+  await transitionsOf(session).idle();
 
   const response = new PacketReader(sent.at(-1).subarray(2));
   assert.equal(response.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
@@ -171,7 +172,7 @@ test("an active session cannot enter its current dungeon a second time", () => {
     .body();
 
   assert.equal(handleField(session, FLID.ClientRequestEntry, new PacketReader(request)), true);
-  assert.equal(session.entryPromise, undefined, "no second admission/build starts");
+  assert.equal(transitionsOf(session).current, null, "no second admission/build starts");
 
   const response = new PacketReader(sent[0].subarray(2));
   assert.equal(response.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
@@ -227,7 +228,7 @@ test("early exit flushes rewards before acknowledging and clearing dungeon state
   assert.equal(handleField(session, FLID.RequestExit, new PacketReader(request)), true);
   assert.equal(sent.length, 0);
   finishSaving();
-  await session.exitPromise;
+  await transitionsOf(session).idle();
   assert.equal(triggerStops, 1);
   assert.equal(aiStops, 1);
   assert.equal(session.dungeonActive, false);

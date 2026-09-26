@@ -318,16 +318,18 @@ export class DungeonMatchRegistry {
   }
 
   /**
-   * Resolves an entry request without building anything yet.
+   * Where an entry request would go, deciding and changing nothing.
    *
    * A normal explicit target may be joined after floor zero while capacity
    * remains. A full explicit target is a refusal — silently creating a separate
    * run makes a Join Friend action look successful without joining the friend.
    * Eligibility is computed outside the registry from server-owned account and
    * MapPage data and is fail-closed.
+   *
+   * Answers `{ match, source }` for an existing match to join, `{ create,
+   * source }` for a new one, or `{ error, source }`.
    */
-  resolve({
-    session,
+  inspect({
     mapNodeId = 0,
     friendId = 0,
     mapId = 0,
@@ -338,21 +340,12 @@ export class DungeonMatchRegistry {
   }) {
     const privileged = adminOverride === true;
     const target = this.explicitTarget({ friendId, mapId });
-
     if (target) {
-      if (!privileged && !eligibleForExplicitJoin) {
-        return {
-          match: null,
-          created: false,
-          source: mapId ? "map" : "friend",
-          error: "content_not_completed",
-        };
-      }
+      const source = mapId ? "map" : "friend";
+      if (!privileged && !eligibleForExplicitJoin) return { source, error: "content_not_completed" };
       if (!this.canJoin(target, { adminOverride: privileged })) {
         return {
-          match: null,
-          created: false,
-          source: mapId ? "map" : "friend",
+          source,
           // Over and full are different refusals, and the client has a
           // different sentence for each. Calling a finished run full would tell
           // somebody to try again later for a game that has ended.
@@ -366,53 +359,76 @@ export class DungeonMatchRegistry {
                 : "friend_full",
         };
       }
-      const match = target;
-      if (!this.add(match, session, { adminOverride: privileged })) {
-        return {
-          match: null,
-          created: false,
-          source: mapId ? "map" : "friend",
-          error: "game_not_enterable",
-        };
-      }
-      return { match, created: false, source: mapId ? "map" : "friend" };
+      return { match: target, source };
     }
-
     if (friendId || mapId) {
-      return { match: null, created: false, source: friendId ? "friend" : "map", error: "target_not_found" };
+      return { source: friendId ? "friend" : "map", error: "target_not_found" };
     }
+    const source = friendOnly ? "private" : "public";
+    const open = friendOnly
+      ? null
+      : this.publicMatch({ mapNodeId, group, adminOverride: privileged });
+    return open ? { match: open, source } : { create: { mapNodeId, group, privateMatch: Boolean(friendOnly) }, source };
+  }
 
-    let match = null;
-    if (!friendOnly) {
-      match = this.publicMatch({
-        mapNodeId,
-        group,
-        adminOverride: privileged,
-      });
+  /**
+   * Holds a place for a session: the match it will join, made if need be, with
+   * the session counted in it from now on so that nobody else takes the slot.
+   *
+   * What comes back owns that place. `commit()` once the session is really in
+   * the run; `abort()` from any path that ends before then — a refusal, an
+   * exit, a worker gone — and it is given back, once, however often it is
+   * called. A result without a `reservation` holds nothing.
+   */
+  reserve({ session, adminOverride = false, ...request }) {
+    const decision = this.inspect({ ...request, adminOverride });
+    const refused = (error, source = decision.source) => ({ match: null, created: false, source, error });
+    if (decision.error) return refused(decision.error);
+    const match = decision.match ?? this.create(decision.create);
+    if (!this.add(match, session, { adminOverride: adminOverride === true })) {
+      if (decision.create) this.close(match);
+      return refused("game_not_enterable");
     }
-    if (!match) {
-      match = this.create({ mapNodeId, group, privateMatch: Boolean(friendOnly) });
-      if (!this.add(match, session, { adminOverride: privileged })) {
-        this.close(match);
-        return {
-          match: null,
-          created: false,
-          source: friendOnly ? "private" : "public",
-          error: "game_not_enterable",
-        };
-      }
-      return { match, created: true, source: friendOnly ? "private" : "public" };
-    }
+    const reservation = new Reservation(this, match, session);
+    return { match, created: Boolean(decision.create), source: decision.source, reservation };
+  }
+}
 
-    if (!this.add(match, session, { adminOverride: privileged })) {
-      return {
-        match: null,
-        created: false,
-        source: "public",
-        error: "game_not_enterable",
-      };
-    }
-    return { match, created: false, source: "public" };
+/**
+ * One session's place in one match, from admission until it is either used or
+ * given back.
+ *
+ * The registry counts the session in the match as soon as it is reserved, so
+ * capacity is honest while the account is leased and the world built. Every
+ * way an entry can end short of the run — refused once the account is held, an
+ * exit, a disconnect, a worker lost — ends in `abort()`, which gives the place
+ * back only if it is still this reservation's: a session that has since moved
+ * to another match is left where it is.
+ */
+export class Reservation {
+  constructor(registry, match, session) {
+    this.registry = registry;
+    this.match = match;
+    this.session = session;
+    this.state = "reserved";
+  }
+
+  /** Still the session's place: it has not been given back or taken elsewhere. */
+  get held() {
+    return this.match.members.has(this.session) && this.session.dungeonMatch === this.match;
+  }
+
+  commit() {
+    if (this.state !== "reserved") return false;
+    this.state = "committed";
+    return true;
+  }
+
+  abort() {
+    if (this.state !== "reserved") return false;
+    this.state = "aborted";
+    if (this.held) this.registry.remove(this.session);
+    return true;
   }
 }
 

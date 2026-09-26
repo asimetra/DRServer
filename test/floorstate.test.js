@@ -121,7 +121,7 @@ test("final-floor completion closes matchmaking before the victory delay", () =>
       return doid;
     },
   };
-  const opened = dungeonMatches.resolve({ session: host, mapNodeId: 50082 });
+  const opened = dungeonMatches.reserve({ session: host, mapNodeId: 50082 });
   const world = createMatchWorld(opened.match, host);
   world.areaDoid = 700;
   world.floorIndex = 0;
@@ -132,7 +132,7 @@ test("final-floor completion closes matchmaking before the victory delay", () =>
 
   assert.equal(completeFloor(context), true);
   assert.equal(opened.match.state, "finished");
-  const refused = dungeonMatches.resolve({
+  const refused = dungeonMatches.reserve({
     session: { accountId: 71 },
     friendId: host.accountId,
     eligibleForExplicitJoin: true,

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveMatchEntry } from "../src/socket/match-entry.js";
+import { admitEntry } from "../src/socket/match-entry.js";
 import { DungeonMatchRegistry } from "../src/socket/matches.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { setMapNodeBit } from "../src/map-progress.js";
@@ -58,7 +58,7 @@ test("direct entry reads the active hero's progression on every request", async 
     },
     loadGameMasterData: async () => gameMaster,
   };
-  const result = await resolveMatchEntry(session, request({ mapNodeId: 50002 }), dependencies);
+  const result = await admitEntry(session, request({ mapNodeId: 50002 }), dependencies);
 
   assert.equal(result.match.mapNodeId, 50002);
   assert.equal(result.source, "public");
@@ -67,7 +67,7 @@ test("direct entry reads the active hero's progression on every request", async 
     undefined,
     "an unlocked admission snapshot must not escape into dungeon setup"
   );
-  const repeated = await resolveMatchEntry(session, request({ mapNodeId: 50002 }), dependencies);
+  const repeated = await admitEntry(session, request({ mapNodeId: 50002 }), dependencies);
   assert.equal(repeated.match, result.match);
   assert.equal(accountLoads, 2);
 });
@@ -86,7 +86,7 @@ test("direct entry to a node the active hero has not opened is refused", async (
   };
 
   for (const friendOnly of [false, true]) {
-    const denied = await resolveMatchEntry(player(2), request({ mapNodeId: 50055, friendOnly }), dependencies);
+    const denied = await admitEntry(player(2), request({ mapNodeId: 50055, friendOnly }), dependencies);
     assert.equal(denied.match, null);
     assert.equal(denied.error, "content_not_completed");
     assert.equal(denied.source, friendOnly ? "private" : "public");
@@ -94,7 +94,7 @@ test("direct entry to a node the active hero has not opened is refused", async (
   assert.equal(registry.matches.size, 0);
 
   account.account_avatars[0].completed_mapnode_mask = setMapNodeBit("", 1);
-  const opened = await resolveMatchEntry(player(2), request({ mapNodeId: 50055 }), dependencies);
+  const opened = await admitEntry(player(2), request({ mapNodeId: 50055 }), dependencies);
   assert.equal(opened.match.mapNodeId, 50055, "open once the gate is cleared, before the node itself");
 });
 
@@ -115,7 +115,7 @@ test("direct/public Ultimate entry cannot bypass the endgame gate", async () => 
     account_avatars: [{ id: 20, completed_mapnode_mask: String.fromCharCode(0x80) }],
   };
 
-  const denied = await resolveMatchEntry(player(2), request({ mapNodeId: 50158 }), {
+  const denied = await admitEntry(player(2), request({ mapNodeId: 50158 }), {
     registry,
     loadAccountById: async () => account,
     loadGameMasterData: async () => gameMaster,
@@ -124,7 +124,7 @@ test("direct/public Ultimate entry cannot bypass the endgame gate", async () => 
   assert.equal(registry.matches.size, 0);
 
   account.account_avatars[0].completed_mapnode_mask = String.fromCharCode(0xc0);
-  const allowed = await resolveMatchEntry(player(2), request({ mapNodeId: 50158 }), {
+  const allowed = await admitEntry(player(2), request({ mapNodeId: 50158 }), {
     registry,
     loadAccountById: async () => account,
     loadGameMasterData: async () => gameMaster,
@@ -136,10 +136,10 @@ test("direct/public Ultimate entry cannot bypass the endgame gate", async () => 
 test("server-owned admin_flags bypass friendship, progression, floor and the four-player cap", async () => {
   const registry = new DungeonMatchRegistry();
   const host = player(1);
-  const target = registry.resolve({ session: host, mapNodeId: 50055 }).match;
+  const target = registry.reserve({ session: host, mapNodeId: 50055 }).match;
   target.floorIndex = 5;
   for (let accountId = 2; accountId <= 4; accountId++) {
-    registry.resolve({
+    registry.reserve({
       session: player(accountId),
       mapId: target.id,
       eligibleForExplicitJoin: true,
@@ -151,7 +151,7 @@ test("server-owned admin_flags bypass friendship, progression, floor and the fou
     mapNodeById: new Map([[node.Id, node]]),
   };
 
-  const joined = await resolveMatchEntry(player(99), request({ friendId: 1 }), {
+  const joined = await admitEntry(player(99), request({ friendId: 1 }), {
     registry,
     loadAccountById: async () => ({
       admin_flags: 1,
@@ -168,10 +168,10 @@ test("server-owned admin_flags bypass friendship, progression, floor and the fou
 test("a client-supplied admin-shaped field grants no override", async () => {
   const registry = new DungeonMatchRegistry();
   const host = player(1);
-  const target = registry.resolve({ session: host, mapNodeId: 50055 }).match;
+  const target = registry.reserve({ session: host, mapNodeId: 50055 }).match;
   const { gameMaster } = gatedCatalogue();
 
-  const denied = await resolveMatchEntry(
+  const denied = await admitEntry(
     player(2),
     request({ friendId: 1, adminOverride: true, admin_flags: 1 }),
     {
@@ -192,7 +192,7 @@ test("a client-supplied admin-shaped field grants no override", async () => {
 test("server-authorized admin may enter Ultimate without progression", async () => {
   const registry = new DungeonMatchRegistry();
   const ultimate = { Id: 50158, NodeType: "INFINITE", BitIndex: 100 };
-  const result = await resolveMatchEntry(player(99), request({ mapNodeId: 50158 }), {
+  const result = await admitEntry(player(99), request({ mapNodeId: 50158 }), {
     registry,
     loadAccountById: async () => ({
       admin_flags: 1,
@@ -227,12 +227,12 @@ test("friends who cleared a node together may both go into the next one", async 
     loadGameMasterData: async () => gameMaster,
   };
 
-  const hosted = await resolveMatchEntry(player(1), request({ mapNodeId: row("ARENA_2").Id }), dependencies);
+  const hosted = await admitEntry(player(1), request({ mapNodeId: row("ARENA_2").Id }), dependencies);
   assert.ok(hosted.match, "the host picks the node that opened");
-  const joined = await resolveMatchEntry(player(2), request({ friendId: 1 }), dependencies);
+  const joined = await admitEntry(player(2), request({ friendId: 1 }), dependencies);
   assert.equal(joined.match, hosted.match, "and the friend follows onto it");
 
-  const boosted = await resolveMatchEntry(player(3), request({ friendId: 1 }), dependencies);
+  const boosted = await admitEntry(player(3), request({ friendId: 1 }), dependencies);
   assert.equal(boosted.error, "content_not_completed", "somebody a node behind is not carried forward");
   assert.equal(hosted.match.members.size, 2);
 });
@@ -240,7 +240,7 @@ test("friends who cleared a node together may both go into the next one", async 
 test("normal explicit join reads completion from the joining active avatar", async () => {
   const registry = new DungeonMatchRegistry();
   const host = player(1);
-  const target = registry.resolve({ session: host, mapNodeId: 50055 }).match;
+  const target = registry.reserve({ session: host, mapNodeId: 50055 }).match;
   const { gameMaster } = gatedCatalogue();
   const account = {
     active_avatar: 20,
@@ -251,7 +251,7 @@ test("normal explicit join reads completion from the joining active avatar", asy
     ],
   };
 
-  const denied = await resolveMatchEntry(player(2), request({ friendId: 1 }), {
+  const denied = await admitEntry(player(2), request({ friendId: 1 }), {
     registry,
     loadAccountById: friendOfHost(account),
     loadGameMasterData: async () => gameMaster,
@@ -260,7 +260,7 @@ test("normal explicit join reads completion from the joining active avatar", asy
   assert.equal(target.members.size, 1);
 
   account.account_avatars[1].completed_mapnode_mask = String.fromCharCode(0x20);
-  const allowed = await resolveMatchEntry(player(2), request({ friendId: 1 }), {
+  const allowed = await admitEntry(player(2), request({ friendId: 1 }), {
     registry,
     loadAccountById: friendOfHost(account),
     loadGameMasterData: async () => gameMaster,
@@ -272,7 +272,7 @@ test("normal explicit join reads completion from the joining active avatar", asy
 test("Ultimate explicit join refuses arrivals after floor one has begun", async () => {
   const registry = new DungeonMatchRegistry();
   const host = player(1);
-  const target = registry.resolve({ session: host, mapNodeId: 50158 }).match;
+  const target = registry.reserve({ session: host, mapNodeId: 50158 }).match;
   target.floorIndex = 8;
   const normalNodes = [
     { Id: 50002, NodeType: "BOSS", BitIndex: 0 },
@@ -289,7 +289,7 @@ test("Ultimate explicit join refuses arrivals after floor one has begun", async 
     account_avatars: [{ id: 20, completed_mapnode_mask: String.fromCharCode(0x80) }],
   };
 
-  const denied = await resolveMatchEntry(player(2), request({ friendId: 1 }), {
+  const denied = await admitEntry(player(2), request({ friendId: 1 }), {
     registry,
     loadAccountById: friendOfHost(account),
     loadGameMasterData: async () => gameMaster,
@@ -301,7 +301,7 @@ test("Ultimate explicit join refuses arrivals after floor one has begun", async 
   mask[0] = String.fromCharCode(0x80);
   mask[12] = String.fromCharCode(0x80);
   account.account_avatars[0].completed_mapnode_mask = mask.join("");
-  const joined = await resolveMatchEntry(player(2), request({ friendId: 1 }), {
+  const joined = await admitEntry(player(2), request({ friendId: 1 }), {
     registry,
     loadAccountById: friendOfHost(account),
     loadGameMasterData: async () => gameMaster,
@@ -313,7 +313,7 @@ test("Ultimate explicit join refuses arrivals after floor one has begun", async 
 /** A private run hosted by 1 on the gated node, and the accounts that might follow it. */
 const privateRun = (accounts) => {
   const registry = new DungeonMatchRegistry();
-  const target = registry.resolve({ session: player(1), mapNodeId: 50055, friendOnly: true }).match;
+  const target = registry.reserve({ session: player(1), mapNodeId: 50055, friendOnly: true }).match;
   const byId = new Map(accounts.map((row) => [row.id, row]));
   const cleared = String.fromCharCode(0x20);
   for (const row of accounts) {
@@ -334,13 +334,13 @@ test("a stranger naming a player or their match is told there is nothing there",
     { id: 2, ingame_friends: "[1]" },
     { id: 3, ingame_friends: "[]" },
   ]);
-  const viaFriend = await resolveMatchEntry(player(3), request({ friendId: 1 }), dependencies);
-  const viaMap = await resolveMatchEntry(player(3), request({ mapId: target.id }), dependencies);
+  const viaFriend = await admitEntry(player(3), request({ friendId: 1 }), dependencies);
+  const viaMap = await admitEntry(player(3), request({ mapId: target.id }), dependencies);
   assert.deepEqual([viaFriend.error, viaFriend.source], ["target_not_found", "friend"]);
   assert.deepEqual([viaMap.error, viaMap.source], ["target_not_found", "map"]);
   assert.equal(target.members.size, 1);
 
-  const friend = await resolveMatchEntry(player(2), request({ mapId: target.id }), dependencies);
+  const friend = await admitEntry(player(2), request({ mapId: target.id }), dependencies);
   assert.equal(friend.match, target, "the match id is there for friends to use");
 });
 
@@ -351,8 +351,8 @@ test("a friend's id beside an unrelated match id opens nothing", async () => {
     { id: 4, ingame_friends: "[3]" },
   ]);
   // A real friend, elsewhere, named beside a guessed private run.
-  registry.resolve({ session: player(4), mapNodeId: 50055 });
-  const probe = await resolveMatchEntry(
+  registry.reserve({ session: player(4), mapNodeId: 50055 });
+  const probe = await admitEntry(
     player(3),
     request({ friendId: 4, mapId: target.id }),
     { ...dependencies, loadAccountById: () => assert.fail("a malformed request loaded an account") }
@@ -373,7 +373,7 @@ test("a match id looks only at members the joiner already lists", async () => {
   registry.attach(target, player(2), {});
   target.members.add(host);
   const asked = [];
-  const joined = await resolveMatchEntry(player(3), request({ mapId: target.id }), {
+  const joined = await admitEntry(player(3), request({ mapId: target.id }), {
     ...dependencies,
     loadAccountById: async (id) => {
       asked.push(id);
@@ -390,8 +390,8 @@ test("a match id admits a friend of anybody already in it", async () => {
     { id: 2, ingame_friends: "[1,3]" },
     { id: 3, ingame_friends: "[2]" },
   ]);
-  assert.equal((await resolveMatchEntry(player(2), request({ friendId: 1 }), dependencies)).match, target);
-  const joined = await resolveMatchEntry(player(3), request({ mapId: target.id }), dependencies);
+  assert.equal((await admitEntry(player(2), request({ friendId: 1 }), dependencies)).match, target);
+  const joined = await admitEntry(player(3), request({ mapId: target.id }), dependencies);
   assert.equal(joined.match, target);
   assert.equal(target.members.size, 3);
 });
@@ -401,7 +401,7 @@ test("a one-sided or blocked friendship does not let anybody follow", async () =
     { id: 1, ingame_friends: "[]" },
     { id: 2, ingame_friends: "[1]" },
   ]);
-  const followed = await resolveMatchEntry(player(2), request({ friendId: 1 }), oneSided.dependencies);
+  const followed = await admitEntry(player(2), request({ friendId: 1 }), oneSided.dependencies);
   assert.equal(followed.error, "target_not_found", "listing them is not being listed by them");
 
   const blocked = privateRun([
@@ -409,7 +409,7 @@ test("a one-sided or blocked friendship does not let anybody follow", async () =
     { id: 2, ingame_friends: "[1]" },
   ]);
   for (const probe of [{ friendId: 1 }, { mapId: blocked.target.id }]) {
-    const refused = await resolveMatchEntry(player(2), request(probe), blocked.dependencies);
+    const refused = await admitEntry(player(2), request(probe), blocked.dependencies);
     assert.equal(refused.error, "target_not_found");
   }
   assert.equal(blocked.target.members.size, 1);
@@ -417,7 +417,7 @@ test("a one-sided or blocked friendship does not let anybody follow", async () =
 
 test("an unknown map node is rejected before dungeon construction", async () => {
   const registry = new DungeonMatchRegistry();
-  const result = await resolveMatchEntry(player(2), request({ mapNodeId: 59999 }), {
+  const result = await admitEntry(player(2), request({ mapNodeId: 59999 }), {
     registry,
     loadAccountById: async () => ({ admin_flags: 0 }),
     loadGameMasterData: async () => ({
@@ -433,7 +433,7 @@ test("an unknown map node is rejected before dungeon construction", async () => 
 
 test("an unknown explicit target is rejected without loading unrelated content", async () => {
   const registry = new DungeonMatchRegistry();
-  const result = await resolveMatchEntry(
+  const result = await admitEntry(
     player(2),
     request({ friendId: 999, mapNodeId: 50055 }),
     {

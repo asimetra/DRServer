@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { updateProximityTriggers } from "../src/socket/triggers.js";
+import { transitionsOf } from "../src/socket/session-transitions.js";
 
 /**
  * A threshold is a place you can stand, which is the whole difficulty. The
@@ -42,7 +43,7 @@ test("a crossing asks once, for the place the door names", async () => {
 
   const crossed = await walkThrough(session, 50009, {
     check: async () => null,
-    resolve: async (_, request) => {
+    admit: async (_, request) => {
       asked.push(request.mapNodeId);
       return { match: { mapNodeId: request.mapNodeId } };
     },
@@ -51,7 +52,7 @@ test("a crossing asks once, for the place the door names", async () => {
 
   assert.equal(crossed, true);
   assert.deepEqual(asked, [50009]);
-  assert.equal(session.walkingThrough, false, "and the guard is released");
+  assert.equal(transitionsOf(session).current, null, "and the crossing is over");
 });
 
 /**
@@ -133,7 +134,7 @@ test("a refused crossing is answered, not swallowed", async () => {
 
   const crossed = await walkThrough(session, 50009, {
     check: async () => null,
-    resolve: async () => ({ match: null, error: "map_full", source: "map" }),
+    admit: async () => ({ match: null, error: "map_full", source: "map" }),
     join: async () => {
       throw new Error("a refused crossing must not join anything");
     },
@@ -141,7 +142,7 @@ test("a refused crossing is answered, not swallowed", async () => {
 
   assert.equal(crossed, false);
   assert.equal(sent.length, 1, "the client is told");
-  assert.equal(session.walkingThrough, false, "and the doorway is usable again");
+  assert.equal(transitionsOf(session).current, null, "and the doorway is usable again");
 });
 
 test("a failed doorway join does not replace the connection's matchmaking cohort", async () => {
@@ -157,7 +158,7 @@ test("a failed doorway join does not replace the connection's matchmaking cohort
   assert.equal(
     await walkThrough(session, 50009, {
       check: async () => null,
-      resolve: async () => ({ match: { mapNodeId: 50009, group: "failed-group" } }),
+      admit: async () => ({ match: { mapNodeId: 50009, group: "failed-group" } }),
       join: async () => {
         throw new Error("fixture join failed");
       },
@@ -168,22 +169,32 @@ test("a failed doorway join does not replace the connection's matchmaking cohort
 });
 
 /**
- * The guard lives on the connection rather than the floor context, because a
- * successful crossing takes the floor — and its triggers — away. Clearing it on
- * something that no longer exists would leave the flag set forever.
+ * The crossing belongs to the connection rather than the floor context,
+ * because a successful crossing takes the floor — and its triggers — away,
+ * and a second context on the same connection is the same player.
  */
-test("the crossing guard is held where it outlives the floor", async () => {
+test("one crossing at a time, held where it outlives the floor", async () => {
   const { walkThrough } = await import("../src/socket/doors.js");
-  const connection = { id: 5, matchMakerDoid: 9, send: () => {}, walkingThrough: true };
-  const context = { id: 5, member: connection };
+  const connection = { id: 5, matchMakerDoid: 9, send: () => {} };
+  let answer;
+  const first = walkThrough({ id: 5, member: connection }, 50009, {
+    check: () => new Promise((resolve) => {
+      answer = resolve;
+    }),
+  });
   const untouched = () => assert.fail("a crossing already under way began another");
 
   assert.equal(
-    await walkThrough(context, 50009, { check: untouched, leave: untouched, resolve: untouched, join: untouched }),
+    await walkThrough({ id: 5, member: connection }, 50009, {
+      check: untouched, leave: untouched, admit: untouched, join: untouched,
+    }),
     false,
     "already crossing"
   );
-  assert.equal(connection.walkingThrough, true, "and the first crossing still holds it");
+  assert.equal(transitionsOf(connection).phase, "checking", "and the first crossing still holds it");
+  answer("content_not_completed");
+  assert.equal(await first, false);
+  assert.equal(transitionsOf(connection).current, null);
 });
 
 test("a door to somewhere this hero may not go leaves them where they stand", async () => {
@@ -196,13 +207,13 @@ test("a door to somewhere this hero may not go leaves them where they stand", as
     const crossed = await walkThrough({ id: 8, member: connection }, 50009, {
       check: async () => refusal,
       leave: untouched,
-      resolve: untouched,
+      admit: untouched,
       join: untouched,
     });
     assert.equal(crossed, false);
   }
   assert.deepEqual(sent, [], "nothing said on the old floor that would read as an entry");
-  assert.equal(connection.walkingThrough, false, "and the doorway can be tried again");
+  assert.equal(transitionsOf(connection).current, null, "and the doorway can be tried again");
 });
 
 test("a locked door is said so on the floor, and the crossing is never asked for", async () => {
@@ -230,7 +241,7 @@ test("a destination that is not a place is refused before anything else", async 
   assert.equal(await walkThrough(session, 0), false);
   assert.equal(await walkThrough(session, "nowhere"), false);
   assert.equal(await walkThrough(session, -1), false);
-  assert.equal(session.walkingThrough, undefined, "and nothing was begun");
+  assert.equal(transitionsOf(session).generation, 0, "and nothing was begun");
 });
 
 test("a refusal raised once the new run holds the account keeps its own message", async () => {
@@ -243,7 +254,7 @@ test("a refusal raised once the new run holds the account keeps its own message"
   const crossed = await walkThrough(session, 50009, {
     check: async () => null,
     leave: async () => {},
-    resolve: async () => ({ match: { mapNodeId: 50009 } }),
+    admit: async () => ({ match: { mapNodeId: 50009 } }),
     join: async () => {
       throw new EntryRefusedError("content_not_completed");
     },

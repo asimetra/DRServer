@@ -222,7 +222,7 @@ test("a displaced session releases its dungeon before a graceful socket close co
   t.after(clearPresence);
 
   const first = await connect(1000000005);
-  const opened = dungeonMatches.resolve({
+  const opened = dungeonMatches.reserve({
     session: first.session,
     mapNodeId: 50082,
   });

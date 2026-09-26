@@ -72,7 +72,7 @@ const field = (doid, fieldId) =>
 
 /** Enters a fresh private match, so each run is its own and the pool spreads them. */
 const enter = async ({ session, sent }) => {
-  const result = dungeonMatches.resolve({ session, mapNodeId: MAP_NODE, friendOnly: true, group: "" });
+  const result = dungeonMatches.reserve({ session, mapNodeId: MAP_NODE, friendOnly: true, group: "" });
   const joined = matchExecutor.join(session, result, { mapNodeId: MAP_NODE }, {
     onPlayerReady: () => session.send(buildEntryResponse(MATCHMAKER_DOID, 0, MAP_NODE)),
   });

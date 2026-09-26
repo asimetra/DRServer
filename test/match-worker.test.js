@@ -111,7 +111,7 @@ const fieldPacket = (doid, fieldId) =>
 /** MatchMaker entry, answered as matchmaker.js answers it, with the client's loading signals. */
 const enter = async ({ session, sent }, { friendId = 0 } = {}) => {
   const request = { mapNodeId: MAP_NODE, friendId, mapId: 0, friendOnly: 0, matchMakerGroup: "" };
-  const result = dungeonMatches.resolve({
+  const result = dungeonMatches.reserve({
     session,
     mapNodeId: MAP_NODE,
     friendId,
@@ -227,6 +227,7 @@ test("through the MatchMaker, a friend follows a private run onto its worker and
   const { saveAccount } = await import("../src/accounts.js");
   const { ENTRY_ERROR, FLID, handleField } = await import("../src/socket/matchmaker.js");
   const { PacketReader } = await import("../src/socket/packet.js");
+  const { transitionsOf } = await import("../src/socket/session-transitions.js");
   const [hostId, friendId, strangerId] = [1000000111, 1000000112, 1000000113];
   for (const [id, friends] of [[hostId, [friendId]], [friendId, [hostId]], [strangerId, []]]) {
     const account = await loadAccount(id);
@@ -249,7 +250,7 @@ test("through the MatchMaker, a friend follows a private run onto its worker and
     );
     matchExecutor.forward(session, fieldPacket(createdDoid(player), REQUEST_ENTRY));
     matchExecutor.forward(session, fieldPacket(createdDoid(player), REQUEST_HERO));
-    await session.entryPromise;
+    await transitionsOf(session).idle();
   };
   const lastAnswer = ({ sent }) => {
     const reader = new PacketReader(sent.at(-1).subarray(2));
@@ -267,10 +268,10 @@ test("through the MatchMaker, a friend follows a private run onto its worker and
 
   const stranger = connect(strangerId);
   ask(stranger, { friend: hostId });
-  await stranger.session.entryPromise;
+  await transitionsOf(stranger.session).idle();
   assert.equal(lastAnswer(stranger), ENTRY_ERROR.FRIEND_NOT_FOUND);
   ask(stranger, { mapId: match.id });
-  await stranger.session.entryPromise;
+  await transitionsOf(stranger.session).idle();
   assert.equal(lastAnswer(stranger), ENTRY_ERROR.MAP_NOT_FOUND);
 
   const friend = connect(friendId);

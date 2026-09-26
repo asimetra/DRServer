@@ -171,7 +171,7 @@ const frameHead = (frame) => {
 test("late join replays one shared world in captured parent/owner order", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(1001, 1101001);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
@@ -181,7 +181,7 @@ test("late join replays one shared world in captured parent/owner order", async 
   // client and server agree on a higher maximum.
   joiner.fixtureHitPoints = 80;
   joiner.fixtureEffectiveHitPoints = 130;
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   const hostBefore = host.sent.length;
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: prepareFixture,
@@ -233,7 +233,7 @@ test("late join replays one shared world in captured parent/owner order", async 
 test("the owner player precedes acceptance, area, floor, and hero", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(1041, 1101041);
-  const result = registry.resolve({ session: host, mapNodeId: 50082 });
+  const result = registry.reserve({ session: host, mapNodeId: 50082 });
 
   await joinDungeonMatch(host, result, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
@@ -259,7 +259,7 @@ test("the owner player precedes acceptance, area, floor, and hero", async () => 
 test("match admission snapshots are not passed into host or late-join preparation", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(1051, 1101051);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   let hostPreparedWith;
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: async (context, mapNodeId, options) => {
@@ -269,7 +269,7 @@ test("match admission snapshots are not passed into host or late-join preparatio
   });
 
   const joiner = member(1052, 1101052);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   let joinerPreparedWith;
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: async (session, options) => {
@@ -306,7 +306,7 @@ test("the held account is checked again before a run is built on it", async () =
 
   const registry = new DungeonMatchRegistry();
   const host = member(1053, 1101053);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   let hostChecks;
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: async (context, mapNodeId, options) => {
@@ -315,7 +315,7 @@ test("the held account is checked again before a run is built on it", async () =
     },
   });
   const joiner = member(1054, 1101054);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   let joinerChecks;
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: async (session, options) => {
@@ -361,13 +361,13 @@ test("a held account that fails the check is let go and nothing is prepared", as
 test("a late joiner's equipped pet is snapshotted for itself and owned by the shared world", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(1071, 1101071);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
 
   const joiner = member(1072, 1101072);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   const hostBefore = host.sent.length;
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: async (session, options) => {
@@ -449,7 +449,7 @@ test("member preparation starts each dungeon with fresh completion and summary s
 test("late join does not recreate an NPC that already died", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(1051, 1101051);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
@@ -468,7 +468,7 @@ test("late join does not recreate an NPC that already died", async () => {
   assert.equal(world.snapshotCreates.has(deadNpcDoid), false);
 
   const joiner = member(1052, 1101052);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: prepareFixture,
     beginManaRegen: async () => () => {},
@@ -492,12 +492,12 @@ test("late join does not recreate an NPC that already died", async () => {
 test("one member leaving preserves the shared world and disables only that remote peer", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(2001, 1102001);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
   const joiner = member(2002, 1102002);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: prepareFixture,
     beginManaRegen: async () => () => {},
@@ -548,7 +548,7 @@ test("one member leaving preserves the shared world and disables only that remot
 test("the final matched member destroys its owner hero before floor and area", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(2101, 1102101);
-  const resolved = registry.resolve({ session: host, mapNodeId: 50082 });
+  const resolved = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, resolved, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
@@ -573,12 +573,12 @@ test("the final matched member destroys its owner hero before floor and area", a
 test("a duplicate hero doid is rejected before it overwrites the live member", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(3001, 1103001);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
   const joiner = member(3002, host.heroDoid);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
 
   await assert.rejects(
     joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
@@ -595,7 +595,7 @@ test("a duplicate hero doid is rejected before it overwrites the live member", a
 test("a socket closed while waiting for world readiness cannot reattach itself", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(4001, 1104001);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
   const worldBuild = joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
     buildFirstMember: async (context, mapNodeId) => {
       await new Promise((resolve) => setImmediate(resolve));
@@ -603,7 +603,7 @@ test("a socket closed while waiting for world readiness cannot reattach itself",
     },
   });
   const joiner = member(4002, 1104002);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   const waiting = joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: prepareFixture,
     beginManaRegen: async () => () => {},
@@ -622,7 +622,7 @@ test("a socket closed while waiting for world readiness cannot reattach itself",
 test("a failed host build releases every joiner waiting on world readiness", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(4051, 1104051);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   let enteredBuild;
   const building = new Promise((resolve) => {
     enteredBuild = resolve;
@@ -640,7 +640,7 @@ test("a failed host build releases every joiner waiting on world readiness", asy
   await building;
 
   const joiner = member(4052, 1104052);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   const waiting = joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: prepareFixture,
     beginManaRegen: async () => () => {},
@@ -683,12 +683,12 @@ test("a failed host build releases every joiner waiting on world readiness", asy
 test("two members closing together tear down without throwing", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(2401, 1102401);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
   const joiner = member(2402, 1102402);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: prepareFixture,
     beginManaRegen: async () => () => {},
@@ -716,7 +716,7 @@ test("two members closing together tear down without throwing", async () => {
 test("joining a wiped match stops the defeat countdown", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(2501, 1102501);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
@@ -730,7 +730,7 @@ test("joining a wiped match stops the defeat countdown", async () => {
   assert.ok(world.floorFailingTimer, "the wipe started a countdown");
 
   const joiner = member(2502, 1102502);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: prepareFixture,
     beginManaRegen: async () => () => {},
@@ -759,12 +759,12 @@ test("joining a wiped match stops the defeat countdown", async () => {
 test("the last player standing leaving a match starts the defeat countdown", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(2601, 1102601);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hostResult, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
   const joiner = member(2602, 1102602);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
     prepareMember: prepareFixture,
     beginManaRegen: async () => () => {},
@@ -786,15 +786,15 @@ test("the last player standing leaving a match starts the defeat countdown", asy
 test("two simultaneous late joins serialize and receive each other's remote objects", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(2701, 1102701);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
 
   const first = member(2702, 1102702);
   const second = member(2703, 1102703);
-  const firstResult = registry.resolve({ session: first, mapNodeId: 50082 });
-  const secondResult = registry.resolve({ session: second, mapNodeId: 50082 });
+  const firstResult = registry.reserve({ session: first, mapNodeId: 50082 });
+  const secondResult = registry.reserve({ session: second, mapNodeId: 50082 });
   const yieldOnce = async () => new Promise((resolve) => setImmediate(resolve));
   const options = {
     prepareMember: prepareFixture,
@@ -832,13 +832,13 @@ test("two simultaneous late joins serialize and receive each other's remote obje
 test("disconnect during late-join asset wait rolls every pending world mutation back", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(2801, 1102801);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
 
   const joiner = member(2802, 1102802);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   let enteredWait;
   const waiting = new Promise((resolve) => {
     enteredWait = resolve;
@@ -881,13 +881,13 @@ test("disconnect during late-join asset wait rolls every pending world mutation 
 test("late join stays broadcast-inactive until its ordered snapshot is complete", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(2901, 1102901);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
 
   const joiner = member(2902, 1102902);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   const npcDoid = [...host.world.objects].find(
     ([, clid]) => clid === CLID.DistributedNPCGameObject
   )[0];
@@ -910,13 +910,13 @@ test("late join stays broadcast-inactive until its ordered snapshot is complete"
 test("a run finishing during asset replay cannot activate the pending joiner", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(3001, 1103001);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
 
   const joiner = member(3002, 1103002);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   let enteredWait;
   const waiting = new Promise((resolve) => {
     enteredWait = resolve;
@@ -948,13 +948,13 @@ test("a run finishing during asset replay cannot activate the pending joiner", a
 test("a pending joiner that requests exit cannot be reattached after asset replay", async () => {
   const registry = new DungeonMatchRegistry();
   const host = member(3101, 1103101);
-  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hosted = registry.reserve({ session: host, mapNodeId: 50082 });
   await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
     buildFirstMember: buildFixtureWorld,
   });
 
   const joiner = member(3102, 1103102);
-  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  const joined = registry.reserve({ session: joiner, mapNodeId: 50082 });
   let enteredWait;
   const waiting = new Promise((resolve) => {
     enteredWait = resolve;

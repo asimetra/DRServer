@@ -19,6 +19,7 @@ const { dungeonMatches } = await import("../src/socket/matches.js");
 const { EntryRefusedError } = await import("../src/socket/match-entry.js");
 const { PacketReader, PacketWriter } = await import("../src/socket/packet.js");
 const { OP } = await import("../src/socket/opcodes.js");
+const { transitionsOf } = await import("../src/socket/session-transitions.js");
 
 const TUTORIAL = 50002;
 let nextId = 1000000900;
@@ -60,9 +61,11 @@ const executor = (join) => {
   };
 };
 
-const settle = async (session) => {
-  await session.exitPromise;
-  await session.entryPromise;
+const settle = (session) => transitionsOf(session).idle();
+
+/** The exit has answered — which it does before the entry it cancelled has finished. */
+const exitAnswered = async (session) => {
+  while (!answersIn(session.sent).includes("exit")) await new Promise((resolve) => setImmediate(resolve));
 };
 
 test("an exit before admission finishes: nothing is joined, and only the exit is answered", async (t) => {
@@ -98,7 +101,8 @@ test("an exit during the join: the failing entry neither answers nor tears down 
   handleField(session, FLID.ClientRequestEntry, entryFor(TUTORIAL));
   while (!fail) await new Promise((resolve) => setImmediate(resolve));
   handleField(session, FLID.RequestExit, exitRequest());
-  await session.exitPromise;
+  await exitAnswered(session);
+  assert.equal(transitionsOf(session).phase, "leaving", "still leaving until the entry has finished");
   fail(new Error("match member disconnected during entry"));
   await settle(session);
 
@@ -121,7 +125,7 @@ test("a join that completes after the exit is let go without a word", async (t) 
   handleField(session, FLID.ClientRequestEntry, entryFor(TUTORIAL));
   while (!finish) await new Promise((resolve) => setImmediate(resolve));
   handleField(session, FLID.RequestExit, exitRequest());
-  await session.exitPromise;
+  await exitAnswered(session);
   finish();
   await settle(session);
 
@@ -164,7 +168,7 @@ test("an entry asked for while the exit is still leaving is refused, and nothing
   handleField(session, FLID.RequestExit, exitRequest());
   while (!finishLeaving) await new Promise((resolve) => setImmediate(resolve));
   handleField(session, FLID.ClientRequestEntry, entryFor(TUTORIAL));
-  await session.entryPromise;
+  assert.equal(transitionsOf(session).current.kind, "exit", "the exit is still the one under way");
   assert.equal(dungeonMatches.matchByAccount.get(session.accountId), undefined, "no admission");
   finishLeaving();
   await settle(session);
@@ -179,6 +183,6 @@ test("an entry while a worker is still letting the last run go is refused", () =
   // only when the worker says the run is gone.
   session.matchRoute = { leaving: true };
   handleField(session, FLID.ClientRequestEntry, entryFor(TUTORIAL));
-  assert.equal(session.entryPromise, undefined);
+  assert.equal(transitionsOf(session).current, null);
   assert.deepEqual(answersIn(session.sent), [`entry:${ENTRY_ERROR.GAME_NOT_ENTERABLE}`]);
 });

@@ -49,14 +49,14 @@ test("only server-stored admin flag bit zero enables the dungeon override", () =
 test("public matchmaking fills one dungeon to four, then creates another", () => {
   const registry = new DungeonMatchRegistry();
   const firstFour = Array.from({ length: MAX_DUNGEON_PLAYERS }, (_, index) =>
-    registry.resolve({ session: player(100 + index), mapNodeId: 50082 })
+    registry.reserve({ session: player(100 + index), mapNodeId: 50082 })
   );
   assert.equal(new Set(firstFour.map((result) => result.match.id)).size, 1);
   assert.equal(firstFour[0].match.members.size, 4);
   assert.equal(firstFour[0].created, true);
   assert.equal(firstFour[1].created, false);
 
-  const fifth = registry.resolve({ session: player(200), mapNodeId: 50082 });
+  const fifth = registry.reserve({ session: player(200), mapNodeId: 50082 });
   assert.notEqual(fifth.match.id, firstFour[0].match.id);
   assert.equal(fifth.created, true);
   assert.equal(fifth.match.members.size, 1);
@@ -64,10 +64,10 @@ test("public matchmaking fills one dungeon to four, then creates another", () =>
 
 test("public matchmaking does not fill an instance after floor zero", () => {
   const registry = new DungeonMatchRegistry();
-  const first = registry.resolve({ session: player(1), mapNodeId: 50082 });
+  const first = registry.reserve({ session: player(1), mapNodeId: 50082 });
   first.match.floorIndex = 1;
 
-  const next = registry.resolve({ session: player(2), mapNodeId: 50082 });
+  const next = registry.reserve({ session: player(2), mapNodeId: 50082 });
   assert.notEqual(next.match.id, first.match.id);
   assert.equal(next.match.mapNodeId, first.match.mapNodeId);
 });
@@ -75,10 +75,10 @@ test("public matchmaking does not fill an instance after floor zero", () => {
 test("friend id resolves the friend's match, not a dungeon id", () => {
   const registry = new DungeonMatchRegistry();
   const host = player(20);
-  const hostResult = registry.resolve({ session: host, mapNodeId: 50082 });
+  const hostResult = registry.reserve({ session: host, mapNodeId: 50082 });
 
   const joiner = player(21);
-  const joined = registry.resolve({
+  const joined = registry.reserve({
     session: joiner,
     friendId: host.accountId,
     eligibleForExplicitJoin: true,
@@ -91,10 +91,10 @@ test("friend id resolves the friend's match, not a dungeon id", () => {
 test("an eligible friend may join a normal dungeon after floor zero", () => {
   const registry = new DungeonMatchRegistry();
   const host = player(10);
-  const original = registry.resolve({ session: host, mapNodeId: 50047 }).match;
+  const original = registry.reserve({ session: host, mapNodeId: 50047 }).match;
   original.floorIndex = 2;
 
-  const joined = registry.resolve({
+  const joined = registry.reserve({
     session: player(11),
     friendId: host.accountId,
     eligibleForExplicitJoin: true,
@@ -107,16 +107,16 @@ test("an eligible friend may join a normal dungeon after floor zero", () => {
 test("a full friend dungeon reports that the friend cannot be joined", () => {
   const registry = new DungeonMatchRegistry();
   const host = player(10);
-  const original = registry.resolve({ session: host, mapNodeId: 50047 }).match;
+  const original = registry.reserve({ session: host, mapNodeId: 50047 }).match;
   for (let accountId = 11; accountId < 10 + MAX_DUNGEON_PLAYERS; accountId++) {
-    registry.resolve({
+    registry.reserve({
       session: player(accountId),
       friendId: host.accountId,
       eligibleForExplicitJoin: true,
     });
   }
 
-  const joined = registry.resolve({
+  const joined = registry.reserve({
     session: player(99),
     friendId: host.accountId,
     eligibleForExplicitJoin: true,
@@ -129,10 +129,10 @@ test("a full friend dungeon reports that the friend cannot be joined", () => {
 test("one server-authorized admin may occupy the fifth slot", () => {
   const registry = new DungeonMatchRegistry();
   const host = player(10);
-  const original = registry.resolve({ session: host, mapNodeId: 50047 }).match;
+  const original = registry.reserve({ session: host, mapNodeId: 50047 }).match;
   original.floorIndex = 3;
   for (let accountId = 11; accountId < 10 + MAX_DUNGEON_PLAYERS; accountId++) {
-    registry.resolve({
+    registry.reserve({
       session: player(accountId),
       friendId: host.accountId,
       eligibleForExplicitJoin: true,
@@ -141,7 +141,7 @@ test("one server-authorized admin may occupy the fifth slot", () => {
   assert.equal(original.members.size, 4);
 
   const adminMember = player(99);
-  const admin = registry.resolve({
+  const admin = registry.reserve({
     session: adminMember,
     friendId: host.accountId,
     adminOverride: true,
@@ -151,7 +151,7 @@ test("one server-authorized admin may occupy the fifth slot", () => {
   assert.equal(original.members.size, 5);
   assert.equal(original.privilegedMembers.has(adminMember), true);
 
-  const sixth = registry.resolve({
+  const sixth = registry.reserve({
     session: player(100),
     friendId: host.accountId,
     adminOverride: true,
@@ -164,37 +164,37 @@ test("one server-authorized admin may occupy the fifth slot", () => {
 test("a privileged member never consumes one of the four ordinary player slots", () => {
   const registry = new DungeonMatchRegistry();
   const admin = player(150);
-  const original = registry.resolve({
+  const original = registry.reserve({
     session: admin,
     mapNodeId: 50047,
     adminOverride: true,
   }).match;
 
   const ordinary = Array.from({ length: MAX_DUNGEON_PLAYERS }, (_, index) =>
-    registry.resolve({ session: player(151 + index), mapNodeId: 50047 })
+    registry.reserve({ session: player(151 + index), mapNodeId: 50047 })
   );
 
   assert.ok(ordinary.every(({ match }) => match === original));
   assert.equal(original.members.size, MAX_DUNGEON_PLAYERS + 1);
   assert.equal(original.privilegedMembers.size, 1);
 
-  const overflow = registry.resolve({ session: player(199), mapNodeId: 50047 });
+  const overflow = registry.reserve({ session: player(199), mapNodeId: 50047 });
   assert.notEqual(overflow.match, original, "a fifth ordinary player starts another room");
 });
 
 test("an admin public search may fill an advanced floor as the fifth member", () => {
   const registry = new DungeonMatchRegistry();
-  const original = registry.resolve({ session: player(10), mapNodeId: 50047 }).match;
+  const original = registry.reserve({ session: player(10), mapNodeId: 50047 }).match;
   original.floorIndex = 4;
   for (let accountId = 11; accountId < 10 + MAX_DUNGEON_PLAYERS; accountId++) {
-    registry.resolve({
+    registry.reserve({
       session: player(accountId),
       mapId: original.id,
       eligibleForExplicitJoin: true,
     });
   }
 
-  const joined = registry.resolve({
+  const joined = registry.reserve({
     session: player(99),
     mapNodeId: 50047,
     adminOverride: true,
@@ -206,15 +206,15 @@ test("an admin public search may fill an advanced floor as the fifth member", ()
 
 test("private requests never enter the public pool", () => {
   const registry = new DungeonMatchRegistry();
-  const privateMatch = registry.resolve({
+  const privateMatch = registry.reserve({
     session: player(1),
     mapNodeId: 50002,
     friendOnly: true,
   }).match;
-  const publicMatch = registry.resolve({ session: player(2), mapNodeId: 50002 }).match;
+  const publicMatch = registry.reserve({ session: player(2), mapNodeId: 50002 }).match;
   assert.notEqual(publicMatch, privateMatch);
 
-  const invited = registry.resolve({
+  const invited = registry.reserve({
     session: player(3),
     friendId: 1,
     friendOnly: true,
@@ -226,20 +226,20 @@ test("private requests never enter the public pool", () => {
 test("a full private friend target remains full rather than creating a copy", () => {
   const registry = new DungeonMatchRegistry();
   const host = player(1);
-  const target = registry.resolve({
+  const target = registry.reserve({
     session: host,
     mapNodeId: 50002,
     friendOnly: true,
   }).match;
   for (let accountId = 2; accountId <= MAX_DUNGEON_PLAYERS; accountId++) {
-    registry.resolve({
+    registry.reserve({
       session: player(accountId),
       friendId: host.accountId,
       eligibleForExplicitJoin: true,
     });
   }
 
-  const overflow = registry.resolve({
+  const overflow = registry.reserve({
     session: player(99),
     friendId: host.accountId,
     eligibleForExplicitJoin: true,
@@ -251,9 +251,9 @@ test("a full private friend target remains full rather than creating a copy", ()
 
 test("an eligible explicit instance id may join after floor zero", () => {
   const registry = new DungeonMatchRegistry();
-  const match = registry.resolve({ session: player(1), mapNodeId: 50055 }).match;
+  const match = registry.reserve({ session: player(1), mapNodeId: 50055 }).match;
   assert.equal(
-    registry.resolve({
+    registry.reserve({
       session: player(2),
       mapId: match.id,
       eligibleForExplicitJoin: true,
@@ -261,7 +261,7 @@ test("an eligible explicit instance id may join after floor zero", () => {
     match
   );
   match.floorIndex = 1;
-  const joined = registry.resolve({
+  const joined = registry.reserve({
     session: player(3),
     mapId: match.id,
     eligibleForExplicitJoin: true,
@@ -273,9 +273,9 @@ test("an eligible explicit instance id may join after floor zero", () => {
 test("explicit joins fail closed when the active avatar has not completed the node", () => {
   const registry = new DungeonMatchRegistry();
   const host = player(1);
-  const match = registry.resolve({ session: host, mapNodeId: 50055 }).match;
+  const match = registry.reserve({ session: host, mapNodeId: 50055 }).match;
 
-  const denied = registry.resolve({ session: player(2), friendId: 1 });
+  const denied = registry.reserve({ session: player(2), friendId: 1 });
   assert.equal(denied.match, null);
   assert.equal(denied.error, "content_not_completed");
   assert.equal(match.members.size, 1);
@@ -283,7 +283,7 @@ test("explicit joins fail closed when the active avatar has not completed the no
 
 test("explicit target identity cannot fall back to a forged map node", () => {
   const registry = new DungeonMatchRegistry();
-  const result = registry.resolve({
+  const result = registry.reserve({
     session: player(2),
     friendId: 999,
     mapNodeId: 50055,
@@ -542,7 +542,7 @@ test("the shipped Ultimate gate covers all 97 normal combat nodes", async () => 
 test("leaving removes membership and an empty match is closed", () => {
   const registry = new DungeonMatchRegistry();
   const member = player(1);
-  const match = registry.resolve({ session: member, mapNodeId: 50002 }).match;
+  const match = registry.reserve({ session: member, mapNodeId: 50002 }).match;
   registry.remove(member);
   assert.equal(match.state, "closed");
   assert.equal(registry.matches.has(match.id), false);
@@ -552,7 +552,7 @@ test("leaving removes membership and an empty match is closed", () => {
 test("privileged membership follows the admitted session and is cleared on leave", () => {
   const registry = new DungeonMatchRegistry();
   const admin = player(801);
-  const match = registry.resolve({
+  const match = registry.reserve({
     session: admin,
     mapNodeId: 50002,
     adminOverride: true,
@@ -567,10 +567,10 @@ test("privileged membership follows the admitted session and is cleared on leave
 test("a second session for one account cannot orphan the first account's match", () => {
   const registry = new DungeonMatchRegistry();
   const first = player(700);
-  const original = registry.resolve({ session: first, mapNodeId: 50002 }).match;
+  const original = registry.reserve({ session: first, mapNodeId: 50002 }).match;
   const duplicate = player(700);
 
-  const refused = registry.resolve({ session: duplicate, mapNodeId: 50055 });
+  const refused = registry.reserve({ session: duplicate, mapNodeId: 50055 });
 
   assert.equal(refused.match, null);
   assert.equal(refused.error, "game_not_enterable");
@@ -603,14 +603,14 @@ test("a finished run refuses a join instead of hanging it", async () => {
     eligibleForExplicitJoin: true,
   };
 
-  const opened = registry.resolve({ session: host, mapNodeId: 50082 });
+  const opened = registry.reserve({ session: host, mapNodeId: 50082 });
   assert.ok(opened.match, "the host is in a match");
-  assert.ok(registry.resolve(joinRequest).match, "which a friend can join while it runs");
+  assert.ok(registry.reserve(joinRequest).match, "which a friend can join while it runs");
   registry.remove(joiner);
 
   assert.equal(registry.finish(opened.match), true);
 
-  const refused = registry.resolve(joinRequest);
+  const refused = registry.reserve(joinRequest);
   assert.equal(refused.match, null, "the join is refused rather than admitted");
   assert.equal(refused.error, "run_finished", "and not called full, which it is not");
   assert.equal(
@@ -627,7 +627,7 @@ test("a finished match is evicted after its bounded report-screen TTL", async ()
   const registry = new DungeonMatchRegistry({ finishedMatchTtlMs: 5 });
   const host = player(901);
   host.dungeonActive = true;
-  const opened = registry.resolve({ session: host, mapNodeId: 50082 });
+  const opened = registry.reserve({ session: host, mapNodeId: 50082 });
 
   registry.finish(opened.match);
   assert.equal(opened.match.state, "finished");
@@ -639,4 +639,61 @@ test("a finished match is evicted after its bounded report-screen TTL", async ()
   assert.equal(registry.publicByKey.size, 0);
   assert.equal(host.dungeonMatch, undefined);
   assert.equal(host.dungeonActive, false, "the session may enter another dungeon after TTL");
+});
+
+test("inspecting an entry decides and changes nothing", () => {
+  const registry = new DungeonMatchRegistry();
+  const host = player(1);
+  const { match } = registry.reserve({ session: host, mapNodeId: 50002 });
+  const before = { matches: registry.matches.size, members: match.members.size };
+
+  assert.deepEqual(registry.inspect({ mapNodeId: 50002 }), { match, source: "public" });
+  assert.deepEqual(registry.inspect({ mapNodeId: 50003 }).create, {
+    mapNodeId: 50003, group: "", privateMatch: false,
+  });
+  assert.equal(registry.inspect({ friendId: 1 }).error, "content_not_completed");
+  assert.equal(registry.inspect({ friendId: 1, eligibleForExplicitJoin: true }).match, match);
+  assert.equal(registry.inspect({ friendId: 99 }).error, "target_not_found");
+  assert.deepEqual(
+    { matches: registry.matches.size, members: match.members.size },
+    before,
+    "no match made, no place taken"
+  );
+});
+
+test("a reservation holds its place until it is used or given back, once", () => {
+  const registry = new DungeonMatchRegistry({ maxPlayers: 2 });
+  const host = registry.reserve({ session: player(1), mapNodeId: 50002 });
+  const second = registry.reserve({ session: player(2), mapNodeId: 50002 });
+  assert.equal(second.match, host.match);
+  assert.equal(registry.reserve({ session: player(3), mapNodeId: 50002 }).created, true, "the pair is full while reserved");
+
+  assert.equal(second.reservation.abort(), true);
+  assert.equal(second.reservation.abort(), false, "given back once");
+  assert.equal(host.match.members.size, 1);
+  assert.equal(registry.matchByAccount.get(2), undefined);
+
+  assert.equal(host.reservation.commit(), true);
+  assert.equal(host.reservation.abort(), false, "a used place is left by leaving, not by aborting");
+  assert.equal(host.match.members.size, 1);
+});
+
+test("aborting the reservation that made a match closes it", () => {
+  const registry = new DungeonMatchRegistry();
+  const { match, created, reservation } = registry.reserve({ session: player(1), mapNodeId: 50002, friendOnly: true });
+  assert.equal(created, true);
+  reservation.abort();
+  assert.equal(match.state, "closed");
+  assert.equal(registry.matches.has(match.id), false);
+});
+
+test("an old reservation cannot give back a place its session holds elsewhere now", () => {
+  const registry = new DungeonMatchRegistry();
+  const session = player(1);
+  const first = registry.reserve({ session, mapNodeId: 50002, friendOnly: true });
+  registry.remove(session);
+  const second = registry.reserve({ session, mapNodeId: 50003, friendOnly: true });
+  assert.equal(first.reservation.abort(), true);
+  assert.equal(session.dungeonMatch, second.match, "still in the match it moved to");
+  assert.equal(second.match.members.has(session), true);
 });

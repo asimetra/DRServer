@@ -96,7 +96,7 @@ const field = (doid, fieldId, pad = 0) =>
     .subarray(2);
 
 const enter = async ({ session, sent }, mapNodeId = MAP_NODE) => {
-  const result = dungeonMatches.resolve({ session, mapNodeId, group: "" });
+  const result = dungeonMatches.reserve({ session, mapNodeId, group: "" });
   const joined = matchExecutor.join(session, result, { mapNodeId }, {
     onPlayerReady: () => session.send(buildEntryResponse(MATCHMAKER_DOID, 0, mapNodeId)),
   });
@@ -274,7 +274,7 @@ test("a second login on the same account takes the run over without two live cop
 test("a connection lost half way through loading leaves nothing behind", async () => {
   const accountId = 1000000711;
   const { session, sent } = connect(accountId);
-  const result = dungeonMatches.resolve({ session, mapNodeId: MAP_NODE, group: "" });
+  const result = dungeonMatches.reserve({ session, mapNodeId: MAP_NODE, group: "" });
   const joined = matchExecutor.join(session, result, { mapNodeId: MAP_NODE }, {
     onPlayerReady: () => session.send(buildEntryResponse(MATCHMAKER_DOID, 0, MAP_NODE)),
   });
@@ -291,7 +291,7 @@ test("a connection lost half way through loading leaves nothing behind", async (
 test("a connection lost before its account even arrives does not keep the account", async () => {
   const accountId = 1000000714;
   const { session } = connect(accountId);
-  const result = dungeonMatches.resolve({ session, mapNodeId: MAP_NODE, group: "" });
+  const result = dungeonMatches.reserve({ session, mapNodeId: MAP_NODE, group: "" });
   const joined = matchExecutor.join(session, result, { mapNodeId: MAP_NODE }, {
     onPlayerReady: () => session.send(buildEntryResponse(MATCHMAKER_DOID, 0, MAP_NODE)),
   });
@@ -343,7 +343,7 @@ test("a hero switched after admission is refused on the worker, with the client'
   const { session } = connect(1000000717);
   // Admitted as if the entry check had passed — as it would have for the hero
   // active then — and the run's own hold finds a hero that has cleared nothing.
-  const result = dungeonMatches.resolve({ session, mapNodeId: 50150, group: "" });
+  const result = dungeonMatches.reserve({ session, mapNodeId: 50150, group: "" });
   assert.ok(result.match);
   await assert.rejects(matchExecutor.join(session, result, { mapNodeId: 50150 }, {}), (problem) =>
     problem instanceof EntryRefusedError &&

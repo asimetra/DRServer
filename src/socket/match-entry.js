@@ -1,3 +1,16 @@
+/**
+ * Who may enter what, asked at three moments with one rule each time.
+ *
+ * - Friendship (`friendId`/`mapId` joins): at admission only. It decides
+ *   whether the joiner may learn the match exists at all; a friendship ending
+ *   while the floor loads does not reach back into the run.
+ * - Progression (`mayEnterNode`): before a door leaves the old floor
+ *   (`checkDestination`), at admission (`admitEntry`), and once the run holds
+ *   the account (`requireMayEnter`) — the last because the hero played is read
+ *   from that hold, not from the admission snapshot.
+ * - Capacity and the match's state: at admission, by the registry, which
+ *   counts the reserved place from then on.
+ */
 import { loadAccount } from "../accounts.js";
 import { loadGameMaster } from "../gamemaster.js";
 import { areFriends, friendIdsOf } from "../social.js";
@@ -107,14 +120,15 @@ const hasFriendThere = async (account, target, request, loadAccountById) => {
 };
 
 /**
- * Resolves a wire entry request using server-owned progression data.
+ * Admits a wire entry request on server-owned data and reserves its place.
  *
  * `friendId` and `mapId` identify a live match; they never prove that the
  * joining character is eligible for its content, nor that the joiner is
  * welcome in it. The account and MapPage row are loaded here so callers cannot
- * accidentally trust a client-supplied flag.
+ * accidentally trust a client-supplied flag. An admitted entry carries the
+ * registry's `reservation`, which its caller commits or aborts.
  */
-export const resolveMatchEntry = async (
+export const admitEntry = async (
   session,
   request,
   {
@@ -134,7 +148,7 @@ export const resolveMatchEntry = async (
   // from closing a spoofing path, returning before any loads keeps missing
   // friend/map probes cheap.
   if ((request.friendId || request.mapId) && !target) {
-    return registry.resolve(entry);
+    return registry.reserve(entry);
   }
 
   const source = target
@@ -186,7 +200,7 @@ export const resolveMatchEntry = async (
     };
   }
 
-  return registry.resolve({
+  return registry.reserve({
     ...entry,
     eligibleForExplicitJoin: mayEnter,
     adminOverride,
