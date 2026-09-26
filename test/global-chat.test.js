@@ -3,7 +3,15 @@ import test from "node:test";
 
 import { PacketReader } from "../src/socket/packet.js";
 import { enterPresence, leavePresence } from "../src/socket/presence.js";
-import { sayGlobally } from "../src/socket/global-chat.js";
+import {
+  admitGlobalLine,
+  deliverGlobalLine,
+  forgetGlobalAllowances,
+  sayGlobally,
+} from "../src/socket/global-chat.js";
+
+// Every test starts with a full allowance; see the rate tests at the end.
+test.beforeEach(() => forgetGlobalAllowances());
 
 /**
  * A player on a floor, as the global channel sees one.
@@ -132,4 +140,50 @@ test("an unnamed account still has a name to speak under", () => {
 
   withPresence([speaker, far], () => sayGlobally(speaker.context, "hm"));
   assert.match(spoken(far.context.sent[0]), /^Player7: /);
+});
+
+/**
+ * A listener who has blocked the speaker does not hear them. The line comes
+ * from a server-made speaker object, so the client has nothing to filter by —
+ * and its block list is read only by the blocked panel anyway.
+ */
+test("somebody who blocked the speaker does not hear them", () => {
+  const speaker = playerOn(1, "Simetra");
+  const blocker = playerOn(2, "Beacon");
+  blocker.context.dungeonAccount.ignore_friends = "[1]";
+  const other = playerOn(3, "Quill");
+
+  const heard = deliverGlobalLine({ account: 1, name: "Simetra", text: "hello" }, [blocker, other]);
+  assert.equal(heard, 1);
+  assert.deepEqual(blocker.context.sent, []);
+  assert.equal(spoken(other.context.sent.at(-1)), "Simetra: hello");
+});
+
+/** Three lines at once, then one every two seconds; the rest is not said. */
+test("the global channel allows three lines at once and one every two seconds after", () => {
+  const at = 1_000_000;
+  assert.deepEqual([0, 1, 2, 3].map(() => admitGlobalLine(7, at)), [true, true, true, false]);
+  assert.equal(admitGlobalLine(7, at + 1_999), false);
+  assert.equal(admitGlobalLine(7, at + 2_000), true);
+  assert.equal(admitGlobalLine(8, at), true, "and each account has its own");
+});
+
+test("a line over the allowance reaches nobody, and the speaker is told", () => {
+  const speaker = playerOn(1, "Simetra");
+  const far = playerOn(2, "Beacon");
+  withPresence([speaker, far], () => {
+    for (let line = 0; line < 3; line++) assert.equal(sayGlobally(speaker.context, `line ${line}`), 1);
+    assert.equal(sayGlobally(speaker.context, "one too many"), null, "refused, not unheard");
+  });
+  assert.equal(far.context.sent.filter((frame) => spoken(frame).endsWith("one too many")).length, 0);
+});
+
+test("with match workers, the allowance is kept on the main thread", async () => {
+  const { MatchWorkerPool } = await import("../src/socket/match-worker-pool.js");
+  const asked = [];
+  const pool = { workers: [{ alive: true, channel: { call: async (op, args) => asked.push(args) && 1 } }] };
+  const say = (text) => MatchWorkerPool.prototype.sayEverywhere.call(pool, { account: 9, name: "N", text });
+  for (let line = 0; line < 3; line++) assert.equal(await say(`line ${line}`), 1);
+  assert.equal(await say("one too many"), null);
+  assert.equal(asked.length, 3, "the fourth never reached a worker");
 });

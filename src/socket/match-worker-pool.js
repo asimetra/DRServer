@@ -58,6 +58,7 @@ import { dungeonMatches } from "./matches.js";
 import { EntryRefusedError } from "./match-entry.js";
 import { buildExitComplete } from "./entry-protocol.js";
 import { transitionsOf } from "./session-transitions.js";
+import { admitGlobalLine } from "./global-chat.js";
 import { disablePriority } from "./match-runtime.js";
 import { objectDisable } from "./objects.js";
 import { OP } from "./opcodes.js";
@@ -735,6 +736,8 @@ export class MatchWorkerPool {
   }
 
   async sayEverywhere({ account, name, text, sid }) {
+    // The allowance lives here, where every worker's lines pass (global-chat.js).
+    if (!admitGlobalLine(account)) return null;
     const answers = await Promise.allSettled(
       this.workers
         .filter((worker) => worker.alive)

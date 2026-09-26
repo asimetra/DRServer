@@ -63,9 +63,8 @@ export const registerBuiltinCommands = () => {
    * The channel the game never had.
    *
    * At player rank because that is the point of it — a global channel only
-   * moderators may use is a notice board. Rate limiting and muting are the
-   * obvious next things and are deliberately not guessed at here; what this
-   * needs first is somebody to talk to.
+   * moderators may use is a notice board. Held to an allowance per account,
+   * and not delivered to anybody who has blocked the speaker (global-chat.js).
    */
   define({
     name: "g",
@@ -77,6 +76,7 @@ export const registerBuiltinCommands = () => {
       if (!text) throw new Error(`usage: ${COMMAND_PREFIX}g <message>`);
 
       const heard = await matchHost().sayGlobally(session, text);
+      if (heard === null) return reply.warn("slow down: one global line every two seconds");
       // Said rather than counted silently: with nobody else on, the difference
       // between "it worked" and "it went nowhere" is the whole message.
       if (!heard) reply("nobody else is on a floor to hear that");

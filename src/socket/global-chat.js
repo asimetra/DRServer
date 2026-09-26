@@ -19,8 +19,42 @@
  * standing next to you.
  */
 import { info } from "../log.js";
+import { ignoredIdsOf } from "../social.js";
 import { activeSessions } from "./presence.js";
 import { giveVoice, say } from "./speech.js";
+
+/**
+ * How often one account may speak here: three lines at once, then one every
+ * two seconds. One line is a frame to everybody on a floor anywhere, so with
+ * nothing but the socket's own packet ceiling one player could send thousands
+ * a minute to everyone. Kept by the main thread, which every line passes
+ * through whether or not match workers run, so a player cannot reset it by
+ * walking into a dungeon on another worker.
+ */
+const LINE_EVERY_MS = 2000;
+const LINES_SAVED = 3;
+const allowances = new Map();
+
+/** Whether this account may say a line now; takes it from the allowance if so. */
+export const admitGlobalLine = (account, now = Date.now()) => {
+  const id = Number(account);
+  const last = allowances.get(id);
+  const saved = last
+    ? Math.min(LINES_SAVED, last.saved + (now - last.at) / LINE_EVERY_MS)
+    : LINES_SAVED;
+  if (saved < 1) return false;
+  allowances.set(id, { saved: saved - 1, at: now });
+  // Somebody whose allowance has refilled is somebody who can be forgotten.
+  if (allowances.size > 4096) {
+    for (const [key, entry] of allowances) {
+      if (now - entry.at >= LINE_EVERY_MS * LINES_SAVED) allowances.delete(key);
+    }
+  }
+  return true;
+};
+
+/** Test seam: the allowances are process-wide. */
+export const forgetGlobalAllowances = () => allowances.clear();
 
 /** How the speaker is known to everyone else's floor, for as long as it lasts. */
 const voiceIdFor = (accountId) => `global:${accountId}`;
@@ -45,6 +79,8 @@ const canHear = (session) => Boolean(session?.playerDoid && session?.floorDoid);
  */
 export const sayGlobally = (speaker, text) => {
   const account = Number(speaker?.accountId ?? 0);
+  // Null rather than zero: over the allowance is not the same as unheard.
+  if (!admitGlobalLine(account)) return null;
   const name = speaker?.dungeonAccount?.name ?? `Player${account || "?"}`;
   const heard = deliverGlobalLine({ account, name, text }, activeSessions());
   info(`[${speaker?.id ?? "?"}] global: ${name}: ${text} (${heard} heard)`);
@@ -74,6 +110,9 @@ export const deliverGlobalLine = ({ account, name, text }, connections) => {
     // the raw connection has no objects of its own to speak through.
     const listener = connection.world?.contextFor?.(connection) ?? connection;
     if (!canHear(listener)) continue;
+    // Nor to somebody who has blocked the speaker: the line arrives on a voice
+    // this server made, so the client has nothing it could filter it by.
+    if (ignoredIdsOf(listener.dungeonAccount).includes(Number(account))) continue;
 
     giveVoice(listener, { id, name });
     if (say(listener, id, text)) heard += 1;
