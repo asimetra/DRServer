@@ -118,6 +118,7 @@ import { startNpcAi } from "./ai.js";
 import { npcAttackChoices } from "./npc-attacks.js";
 export { npcAttackChoices } from "./npc-attacks.js";
 import { startManaRegen } from "./regen.js";
+import { startAfkWatch } from "./afk.js";
 import {
   addNavigationObstacle,
   collisionPointOf,
@@ -2353,6 +2354,8 @@ const clearFloorRuntime = (session) => {
     member.petDoid = null;
     member.stopManaRegen?.();
     member.stopManaRegen = null;
+    member.stopAfkWatch?.();
+    member.stopAfkWatch = null;
     clearSecurityState(contextForMember(member));
   }
   session.stopTriggers?.();
@@ -3145,6 +3148,8 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
     const context = contextForMember(member);
     context.stopManaRegen?.();
     context.stopManaRegen = await startManaRegen(context);
+    context.stopAfkWatch?.();
+    context.stopAfkWatch = startAfkWatch(context);
   }
   return true;
 };
@@ -3360,6 +3365,8 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   session.stopAi = null;
   session.stopManaRegen?.();
   session.stopManaRegen = null;
+  session.stopAfkWatch?.();
+  session.stopAfkWatch = null;
   session.stopTrapProjectiles?.();
   session.stopTrapProjectiles = null;
   cancelVictory(session);

@@ -34,6 +34,7 @@ import {
 import { CLID, TEAM } from "./opcodes.js";
 import { matchHost } from "./match-host.js";
 import { startManaRegen } from "./regen.js";
+import { startAfkWatch } from "./afk.js";
 import {
   PLAYER_REQUEST_ENTRY,
   PLAYER_REQUEST_HERO,
@@ -323,6 +324,8 @@ const joinDungeonMatchLocked = async (
   });
   session.stopManaRegen?.();
   session.stopManaRegen = await beginManaRegen(context);
+  session.stopAfkWatch?.();
+  session.stopAfkWatch = startAfkWatch(context);
   info(`[${session.id}] joined match ${match.id} on floor ${session.floorIndex + 1}`);
   return { match, world, lateJoin: true };
 };

@@ -409,6 +409,15 @@ export const loadServerConfig = (environment = process.env) => {
       defaults.dungeonSummaryDelayMs
     ),
 
+    /**
+     * Standing still in a dungeon. The warning is the official server's: its
+     * "Zzz..." marker (HeroGameObject field 167) came up 30 seconds after a
+     * hero last moved, turned or attacked. Sending the player back to town is
+     * this server's own rule. Zero turns either off.
+     */
+    afkWarnMs: Math.max(0, asInt(setting(environment, "AFK_WARN_MS"), defaults.afkWarnMs ?? 30000)),
+    afkKickMs: Math.max(0, asInt(setting(environment, "AFK_KICK_MS"), defaults.afkKickMs ?? 60000)),
+
     /** How close the hero must get to collect a doober, in world units. */
     pickupRadius: asInt(setting(environment, "PICKUP_RADIUS"), defaults.pickupRadius),
 

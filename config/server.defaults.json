@@ -33,6 +33,8 @@
   "startFloor": 1,
   "projectileTickMs": 20,
   "dungeonSummaryDelayMs": 5000,
+  "afkWarnMs": 30000,
+  "afkKickMs": 60000,
   "pickupRadius": 120,
   "logBodyLimit": 600,
   "logLevel": "info",

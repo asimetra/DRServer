@@ -41,6 +41,20 @@ export const localMatchHost = Object.freeze({
     const { walkThrough } = await import("./doors.js");
     return walkThrough(session, destination);
   },
+  /**
+   * Back to town without having asked: an exit on the player's behalf, which
+   * the client takes as its own — RunState goes home on ClientExitComplete
+   * whoever started it. Not awaited by the caller; the exit answers itself.
+   */
+  sendHome: async (session) => {
+    const { transitionsOf } = await import("./session-transitions.js");
+    // Still on the floor that asked — a worker's route generation does the
+    // same. One who has left since is not sent anywhere.
+    const connection = session.member ?? session;
+    if (session.world && connection.world !== session.world) return false;
+    transitionsOf(session).requestExit();
+    return true;
+  },
 });
 
 let host = localMatchHost;

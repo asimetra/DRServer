@@ -198,6 +198,8 @@ that has to match somewhere else — `ODS_INTERNAL_TOKEN` and the website's
 | `ODS_INTERNAL_HOST` / `ODS_INTERNAL_PORT` | `127.0.0.1` / `8081` | Internal API bind address |
 | `ODS_ALLOW_INSECURE_INTERNAL` | disabled | Permit acknowledged cleartext internal binding outside loopback |
 | `ODS_DUNGEON` | enabled | Set `0` to refuse dungeon entry cleanly |
+| `ODS_AFK_WARN_MS` | `30000` | Idle time before a hero shows "Zzz..." to its party and the player is warned; `0` turns it off |
+| `ODS_AFK_KICK_MS` | `60000` | Idle time in a dungeon before the player is sent back to town; `0` turns it off |
 | `ODS_MATCH_WORKERS` | `0` | Threads that run whole matches (at most 16); `auto` uses up to four, leaving one core to the main thread, and none on a single core |
 | `ODS_MATCH_WORKER_HANG_MS` | `5000` | How long a match worker may stop turning over before it is replaced and its players sent home |
 

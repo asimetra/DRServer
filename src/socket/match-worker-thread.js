@@ -575,6 +575,10 @@ installMatchHost({
     const member = memberOf(session);
     return channel.call("door", { sid: member.id, gen: member.generation, destination });
   },
+  sendHome: (session) => {
+    const member = memberOf(session);
+    return channel.call("home", { sid: member.id, gen: member.generation });
+  },
 });
 
 registerBuiltinCommands();

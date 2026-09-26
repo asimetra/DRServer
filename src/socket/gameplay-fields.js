@@ -39,8 +39,23 @@ import {
   segmentStaysOnAuthoredTiles,
 } from "./navigation.js";
 import { noteEntryHandshake } from "./entry-handshake.js";
+import { noteActivity } from "./afk.js";
 
 const FLID_HERO_HEADING = 148;
+
+/**
+ * What a player sends only by playing: moving, turning, attacking, reviving.
+ * The official AFK marker cleared on exactly these and never on chat.
+ */
+const ACTIVITY_FIELDS = new Set([
+  FLID_HERO_POSITION,
+  FLID_HERO_HEADING,
+  FLID_PROPOSE_ATTACK_CHOREOGRAPHY,
+  FLID_STOP_CHOREOGRAPHY,
+  FLID_PROPOSE_COMBAT_RESULTS,
+  FLID_PROPOSE_REVIVE,
+  FLID_PROPOSE_SELF_REVIVE,
+]);
 /** Bounds attacker-selected sampling work while covering every authored hero move. */
 const MOVEMENT_WALL_AUDIT_MAX_DISTANCE = 1000;
 const MOVEMENT_CREDIT_CAP = 1000;
@@ -78,6 +93,7 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
   // before the ordered snapshot is complete.
   if (member.world && !member.world.isActiveMember(member)) return;
   const session = member.world?.contextFor(member) ?? member;
+  if (doid === session.heroDoid && ACTIVITY_FIELDS.has(fieldId)) noteActivity(session);
 
   if (doid === session.heroDoid && fieldId === FLID_HERO_POSITION) {
     // The hero broadcasts its position constantly; that stream is also how we

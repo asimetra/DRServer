@@ -744,6 +744,8 @@ export const createMatchWorld = (match, seedSession) => {
         member.petRespawnTimer = null;
         member.stopManaRegen?.();
         member.stopManaRegen = null;
+        member.stopAfkWatch?.();
+        member.stopAfkWatch = null;
       }
       return true;
     },

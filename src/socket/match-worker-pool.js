@@ -29,7 +29,8 @@
  *                    friendship                      a friendship made or ended there
  *                    call lease | lock | patch |
  *                         objectId | recordRuns |
- *                         say | door | account       what a dungeon asks of the server
+ *                         say | door | home | account
+ *                                                     what a dungeon asks of the server
  *
  * Accounts: one in a dungeon is leased to that worker. RPCs and internal-API
  * writes that need it run there (rpc.js, account-operations.js); a transaction
@@ -56,6 +57,7 @@ import { recordRuns } from "../leaderboard.js";
 import { dungeonMatches } from "./matches.js";
 import { EntryRefusedError } from "./match-entry.js";
 import { buildExitComplete } from "./entry-protocol.js";
+import { transitionsOf } from "./session-transitions.js";
 import { disablePriority } from "./match-runtime.js";
 import { objectDisable } from "./objects.js";
 import { OP } from "./opcodes.js";
@@ -601,6 +603,13 @@ export class MatchWorkerPool {
         const route = this.routeOf(worker, args);
         if (!route) return false;
         return this.walkThrough(route.session, args.destination);
+      }
+      case "home": {
+        // Not awaited: the exit waits on this worker's own teardown frames.
+        const route = this.routeOf(worker, args);
+        if (!route) return false;
+        transitionsOf(route.session).requestExit();
+        return true;
       }
       default:
         throw new Error(`unknown match worker call ${op}`);
