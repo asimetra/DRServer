@@ -192,7 +192,7 @@ test("an RPC for an account in a worker's dungeon changes the object the run hol
   assert.equal(after.account_attributes.find((row) => row.name === "volume")?.value, "7");
 });
 
-test("a friend joining a running match lands on its worker and both see each other", async () => {
+test("a player placed in a running match lands on its worker and both see each other", async () => {
   const host = connect(1000000104);
   const match = await enter(host);
   const hostHero = createdDoid(host.sent.find((frame) => createdClid(frame) === CLID.HeroGameObject));
@@ -216,6 +216,73 @@ test("a friend joining a running match lands on its worker and both see each oth
   assert.equal(dungeonMatches.matches.has(match.id), true, "the host is still playing");
   await matchExecutor.leave(host.session, { notifyClient: true });
   assert.equal(dungeonMatches.matches.has(match.id), false);
+});
+
+/**
+ * The whole way in, as the socket layer takes it: the MatchMaker field, the
+ * server's own friendship and progression checks, then the worker. The test
+ * above places the player directly; this one asks.
+ */
+test("through the MatchMaker, a friend follows a private run onto its worker and a stranger is told it is not there", async () => {
+  const { saveAccount } = await import("../src/accounts.js");
+  const { ENTRY_ERROR, FLID, handleField } = await import("../src/socket/matchmaker.js");
+  const { PacketReader } = await import("../src/socket/packet.js");
+  const [hostId, friendId, strangerId] = [1000000111, 1000000112, 1000000113];
+  for (const [id, friends] of [[hostId, [friendId]], [friendId, [hostId]], [strangerId, []]]) {
+    const account = await loadAccount(id);
+    account.ingame_friends = JSON.stringify(friends);
+    await saveAccount(account);
+  }
+  const ask = (client, { mapNodeId = 0, friend = 0, mapId = 0, friendOnly = 0 }) =>
+    handleField(
+      client.session,
+      FLID.ClientRequestEntry,
+      new PacketReader(
+        new PacketWriter().utf("{}").u32(0).u32(mapNodeId).u32(friend).u32(mapId).u8(friendOnly).utf("").body()
+      )
+    );
+  /** The client's two loading signals, once its owner player exists. */
+  const load = async ({ session, sent }) => {
+    const player = await waitFor(
+      () => sent.find((frame) => createdClid(frame) === CLID.PlayerGameObject),
+      "the owner player"
+    );
+    matchExecutor.forward(session, fieldPacket(createdDoid(player), REQUEST_ENTRY));
+    matchExecutor.forward(session, fieldPacket(createdDoid(player), REQUEST_HERO));
+    await session.entryPromise;
+  };
+  const lastAnswer = ({ sent }) => {
+    const reader = new PacketReader(sent.at(-1).subarray(2));
+    reader.u16();
+    reader.u32();
+    assert.equal(reader.u16(), FLID.ClientRequestEntryResponce);
+    return reader.u16();
+  };
+
+  const host = connect(hostId);
+  ask(host, { mapNodeId: MAP_NODE, friendOnly: 1 });
+  await load(host);
+  const match = dungeonMatches.matchByAccount.get(hostId);
+  assert.ok(match?.private, "a private run");
+
+  const stranger = connect(strangerId);
+  ask(stranger, { friend: hostId });
+  await stranger.session.entryPromise;
+  assert.equal(lastAnswer(stranger), ENTRY_ERROR.FRIEND_NOT_FOUND);
+  ask(stranger, { mapId: match.id });
+  await stranger.session.entryPromise;
+  assert.equal(lastAnswer(stranger), ENTRY_ERROR.MAP_NOT_FOUND);
+
+  const friend = connect(friendId);
+  ask(friend, { friend: hostId });
+  await load(friend);
+  assert.equal(dungeonMatches.matchByAccount.get(friendId), match);
+  assert.equal(pool.workers[0].matches.get(match.id), 2, "both on the run's worker");
+  assert.equal(match.members.size, 2);
+
+  await matchExecutor.leave(friend.session, { notifyClient: true });
+  await matchExecutor.leave(host.session, { notifyClient: true });
+  await waitFor(() => !pool.ownerOf(hostId) && !pool.ownerOf(friendId), "both leases back");
 });
 
 test("a worker that dies sends its players home and is replaced", async () => {

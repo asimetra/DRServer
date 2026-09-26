@@ -21,7 +21,7 @@ import {
   rememberMatchMakerGroup,
 } from "./matchmaker.js";
 import { matchExecutor } from "./match-runtime.js";
-import { resolveMatchEntry } from "./match-entry.js";
+import { EntryRefusedError, checkDestination, resolveMatchEntry } from "./match-entry.js";
 
 const joinMatch = (...args) => matchExecutor.join(...args);
 const leaveMatch = (...args) => matchExecutor.leave(...args);
@@ -50,20 +50,42 @@ const requestFor = (session, destination) => ({
  * Guarded against a second crossing, because a threshold is a place you can
  * stand: the proximity trigger fires once on entry, but a failed or slow
  * transition would leave the player standing in it, and the guard is what stops
- * a stutter from becoming two entries.
+ * a stutter from becoming two entries. Checked, set and cleared on the
+ * connection, which outlives the floor context the door was standing on.
+ *
+ * The destination is asked about before anything is left: a door that goes
+ * nowhere for this hero leaves them standing on the floor they are on, rather
+ * than out of it with nowhere to be.
  */
 export const walkThrough = async (
   session,
   destination,
   // Injected so a test can watch a crossing without running a dungeon entry.
-  { resolve = resolveMatchEntry, join = joinMatch, leave = leaveMatch } = {}
+  {
+    check = checkDestination,
+    resolve = resolveMatchEntry,
+    join = joinMatch,
+    leave = leaveMatch,
+  } = {}
 ) => {
   const node = Number(destination);
   if (!Number.isFinite(node) || node <= 0) return false;
-  if (session.walkingThrough) return false;
-  session.walkingThrough = true;
-
   const connection = session.member ?? session;
+  if (connection.walkingThrough) return false;
+  connection.walkingThrough = true;
+
+  let refusal;
+  try {
+    refusal = await check(connection, node);
+  } catch (problem) {
+    refusal = problem.message;
+  }
+  if (refusal) {
+    info(`[${session.id}] door to ${node} refused before leaving: ${refusal}`);
+    connection.walkingThrough = false;
+    return false;
+  }
+
   try {
     /**
      * Off the old floor properly first.
@@ -108,13 +130,17 @@ export const walkThrough = async (
     info(`[${session.id}] walked through to ${node}`);
     return true;
   } catch (problem) {
-    error(`[${session.id}] door to ${node} failed: ${problem.stack ?? problem}`);
+    // A hero switched since the check: refused with the client's own
+    // sentence, as the matchmaker answers the same refusal.
+    const refusal = problem instanceof EntryRefusedError
+      ? entryErrorCodeFor({ error: problem.reason })
+      : null;
+    if (refusal) info(`[${session.id}] door to ${node} refused once held: ${problem.message}`);
+    else error(`[${session.id}] door to ${node} failed: ${problem.stack ?? problem}`);
     await leave(connection, { notifyClient: true });
-    connection.send(buildEntryResponse(connection.matchMakerDoid, ENTRY_ERROR.INTERNAL));
+    connection.send(buildEntryResponse(connection.matchMakerDoid, refusal ?? ENTRY_ERROR.INTERNAL));
     return false;
   } finally {
-    // Cleared on the *connection*, which outlives the floor context the door
-    // was standing on — a fresh dungeon is a fresh set of triggers anyway.
     connection.walkingThrough = false;
   }
 };

@@ -2462,6 +2462,27 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
 };
 
 /**
+ * The held account's active hero must exist and pass `verifyAccount` — the
+ * entry check asked again of the object the run will play, since the hero may
+ * have been switched after admission. Either failing lets the account go.
+ */
+const heldAvatarOrRelease = async (session, account, verifyAccount) => {
+  try {
+    const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
+    if (!avatar) {
+      throw new Error(
+        `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
+      );
+    }
+    await verifyAccount(account);
+  } catch (problem) {
+    matchHost().releaseAccount(account.id);
+    delete session.dungeonAccount;
+    throw problem;
+  }
+};
+
+/**
  * Builds the per-member half of a dungeon without laying out a second world.
  *
  * Solo entry uses it and immediately builds the floor. Multiplayer late entry
@@ -2474,6 +2495,7 @@ export const prepareDungeonMember = async (
     isActive = () => true,
     sendPlayerOwner = true,
     acquireAccountById = (id) => matchHost().acquireAccount(id),
+    verifyAccount = async () => {},
   } = {}
 ) => {
   const account = await acquireAccountById(session.accountId);
@@ -2483,14 +2505,8 @@ export const prepareDungeonMember = async (
     delete session.dungeonAccount;
     return false;
   }
-  const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
-  if (!avatar) {
-    matchHost().releaseAccount(account.id);
-    delete session.dungeonAccount;
-    throw new Error(
-      `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
-    );
-  }
+  await heldAvatarOrRelease(session, account, verifyAccount);
+  const avatar = account.account_avatars.find((row) => row.id === account.active_avatar);
 
   session.dungeonAvatar = avatar;
   session.dungeonStart = {
@@ -2608,6 +2624,7 @@ export const enterDungeon = async (
     acquireAccountById = (id) => matchHost().acquireAccount(id),
     onPlayerReady = () => {},
     waitForHandshake = waitForEntryHandshake,
+    verifyAccount = async () => {},
   } = {}
 ) => {
   // A same-session transition may still be persisting the run it just left.
@@ -2618,14 +2635,8 @@ export const enterDungeon = async (
   // race, this makes all RPCs during the loading screen share the run's object.
   const account = await acquireAccountById(session.accountId);
   session.dungeonAccount = account;
-  const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
-  if (!avatar) {
-    matchHost().releaseAccount(account.id);
-    delete session.dungeonAccount;
-    throw new Error(
-      `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
-    );
-  }
+  await heldAvatarOrRelease(session, account, verifyAccount);
+  const avatar = account.account_avatars.find((row) => row.id === account.active_avatar);
   session.dungeonAvatar = avatar;
   session.dungeonStart = {
     basicCurrency: account.basic_currency ?? 0,

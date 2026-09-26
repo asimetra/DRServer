@@ -2,7 +2,7 @@ import { PacketWriter } from "./packet.js";
 import { OP } from "./opcodes.js";
 import { config } from "../config.js";
 import { error, info, warn } from "../log.js";
-import { resolveMatchEntry } from "./match-entry.js";
+import { EntryRefusedError, resolveMatchEntry } from "./match-entry.js";
 import { matchExecutor } from "./match-runtime.js";
 
 /**
@@ -131,15 +131,31 @@ export const handleField = (session, fieldId, reader) => {
       // would prepare the same hero into its current world a second time. Door
       // transitions explicitly leave their old match before resolving the new
       // one, so refusing here cannot block that legitimate path.
-      if (session.dungeonMatch || session.world || session.dungeonActive) {
-        warn(`[${session.id}] refusing duplicate dungeon entry on an active session`);
+      // Nor while one is being left: an exit still under way, or — on a
+      // worker — a route the worker has not yet said is gone. The membership
+      // goes at once, so it is not there to refuse on.
+      if (
+        session.dungeonMatch || session.world || session.dungeonActive ||
+        session.exitPromise || session.matchRoute
+      ) {
+        warn(`[${session.id}] refusing dungeon entry on a session still in or leaving a dungeon`);
         session.send(buildEntryResponse(session.matchMakerDoid, ENTRY_ERROR.GAME_NOT_ENTERABLE));
         return true;
       }
 
       if (session.entryPromise) return true;
+      // An exit advances this; an entry that finds it moved has been
+      // cancelled, and the exit is the one that answers and tears down.
+      const attempt = (session.entryAttempt ?? 0) + 1;
+      session.entryAttempt = attempt;
+      const cancelled = () => session.entryAttempt !== attempt;
       session.entryPromise = (async () => {
         const result = await resolveMatchEntry(session, request);
+        if (cancelled()) {
+          // The admission is given back; the client has already gone to town.
+          if (result.match) await matchExecutor.leave(session);
+          return;
+        }
         if (!result.match) {
           const errorCode = entryErrorCodeFor(result);
           warn(
@@ -153,22 +169,35 @@ export const handleField = (session, fieldId, reader) => {
         let accepted = false;
         await matchExecutor.join(session, result, request, {
           onPlayerReady: () => {
-            if (accepted) return;
+            if (accepted || cancelled()) return;
             accepted = true;
             session.send(buildEntryResponse(session.matchMakerDoid, 0, result.match.mapNodeId));
           },
         });
+        if (cancelled()) {
+          // Finished after the exit had already torn it down: let it go quietly.
+          await matchExecutor.leave(session);
+          return;
+        }
         if (!accepted) {
           throw new Error(`match ${result.match.id} did not create the owner player`);
         }
         rememberMatchMakerGroup(session, result.match);
       })()
         .catch(async (err) => {
-          error(`[${session.id}] dungeon entry failed: ${err.stack ?? err}`);
+          if (cancelled()) {
+            info(`[${session.id}] dungeon entry ended by the exit: ${err.message}`);
+            return;
+          }
+          // Refused once the account was held — a hero switched since
+          // admission — which the client has a sentence for.
+          const refusal = err instanceof EntryRefusedError ? entryErrorCodeFor({ error: err.reason }) : null;
+          if (refusal) warn(`[${session.id}] refusing dungeon entry with ${refusal}: ${err.message}`);
+          else error(`[${session.id}] dungeon entry failed: ${err.stack ?? err}`);
           // Awaited: with match workers the teardown frames arrive later, and
           // the refusal has to follow them rather than overtake them.
           await matchExecutor.leave(session, { notifyClient: true });
-          session.send(buildEntryResponse(session.matchMakerDoid, ENTRY_ERROR.INTERNAL));
+          session.send(buildEntryResponse(session.matchMakerDoid, refusal ?? ENTRY_ERROR.INTERNAL));
         })
         .finally(() => {
           session.entryPromise = null;
@@ -179,6 +208,8 @@ export const handleField = (session, fieldId, reader) => {
     case FLID.RequestExit: {
       const value = reader.u32();
       info(`[${session.id}] exit requested value=${value}`);
+      // Cancels any entry still under way; see ClientRequestEntry.
+      session.entryAttempt = (session.entryAttempt ?? 0) + 1;
       if (session.exitPromise) return true;
       session.exitPromise = (async () => {
         try {

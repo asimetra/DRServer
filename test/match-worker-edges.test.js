@@ -323,6 +323,36 @@ test("security strikes follow the connection from one worker run to the next", a
   assert.match(client.session.closedBecause, /security policy: combat\.forged_attacker/);
 });
 
+/** Ultimate is entered only by a hero that has cleared every normal node. */
+const clearEveryNormalNode = async (accountId) => {
+  const { loadGameMaster } = await import("../src/gamemaster.js");
+  const { setMapNodeBit } = await import("../src/map-progress.js");
+  const { saveAccount } = await import("../src/accounts.js");
+  const gameMaster = await loadGameMaster();
+  const account = await loadAccount(accountId);
+  const avatar = account.account_avatars.find((row) => row.id === account.active_avatar);
+  avatar.completed_mapnode_mask = gameMaster.raw.MapPage
+    .filter((node) => node.NodeType === "DUNGEON" || node.NodeType === "BOSS")
+    .reduce((mask, node) => setMapNodeBit(mask, node.BitIndex), "");
+  await saveAccount(account);
+};
+
+test("a hero switched after admission is refused on the worker, with the client's own reason", async () => {
+  const { EntryRefusedError } = await import("../src/socket/match-entry.js");
+  const { entryErrorCodeFor, ENTRY_ERROR } = await import("../src/socket/matchmaker.js");
+  const { session } = connect(1000000717);
+  // Admitted as if the entry check had passed — as it would have for the hero
+  // active then — and the run's own hold finds a hero that has cleared nothing.
+  const result = dungeonMatches.resolve({ session, mapNodeId: 50150, group: "" });
+  assert.ok(result.match);
+  await assert.rejects(matchExecutor.join(session, result, { mapNodeId: 50150 }, {}), (problem) =>
+    problem instanceof EntryRefusedError &&
+    entryErrorCodeFor({ error: problem.reason }) === ENTRY_ERROR.UNAUTHORIZED_MAP
+  );
+  await matchExecutor.leave(session, { notifyClient: true });
+  await waitFor(() => !pool.ownerOf(1000000717), "the refused account handed back");
+});
+
 test("stopping the server settles every run still in a worker, including one still leaving", async () => {
   const accountId = 1000000712;
   const client = connect(accountId);
@@ -333,6 +363,7 @@ test("stopping the server settles every run still in a worker, including one sti
   // an Ultimate records the room reached on entry, and the disk is slow.
   pool.workers[0].thread.postMessage({ t: "test.slowWrites", ms: 1500 });
   const exiting = connect(1000000716);
+  await clearEveryNormalNode(1000000716);
   await enter(exiting, 50150);
   let exited = false;
   matchExecutor.leave(exiting.session, { notifyClient: true }).then(() => {

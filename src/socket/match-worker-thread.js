@@ -42,6 +42,7 @@ import { MalformedPacketError, PacketReader } from "./packet.js";
 import { MemberSession } from "./member-session.js";
 import { installMatchHost } from "./match-host.js";
 import { joinDungeonMatch, leaveDungeonSession } from "./match-runtime.js";
+import { EntryRefusedError } from "./match-entry.js";
 import { handleGameplayField } from "./gameplay-fields.js";
 import { dungeonMatches } from "./matches.js";
 import { registerBuiltinCommands } from "./command-set.js";
@@ -662,7 +663,12 @@ const join = (message) => {
       });
       enqueueControl(member, { c: "joined", lateJoin: Boolean(result?.lateJoin) });
     } catch (problem) {
-      enqueueControl(member, { c: "failed", message: problem?.stack ?? String(problem) });
+      enqueueControl(member, {
+        c: "failed",
+        message: problem?.stack ?? String(problem),
+        // A refusal the client has a sentence for keeps its name across.
+        reason: problem instanceof EntryRefusedError ? problem.reason : undefined,
+      });
     } finally {
       if (member.left) clearAfterEntry(member);
     }

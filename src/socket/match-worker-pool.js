@@ -54,6 +54,7 @@ import { installAccountOperationForwarder } from "../account-operations.js";
 import { invalidateMarketBrowse } from "../market.js";
 import { recordRuns } from "../leaderboard.js";
 import { dungeonMatches } from "./matches.js";
+import { EntryRefusedError } from "./match-entry.js";
 import { buildExitComplete } from "./matchmaker.js";
 import { disablePriority } from "./match-runtime.js";
 import { objectDisable } from "./objects.js";
@@ -533,7 +534,11 @@ export class MatchWorkerPool {
         if (route) route.entered = true;
         return route?.joined.resolve({ lateJoin: marker.lateJoin });
       case "failed":
-        return route?.joined.reject(new Error(`match worker ${worker.index}: ${marker.message}`));
+        return route?.joined.reject(
+          marker.reason
+            ? new EntryRefusedError(marker.reason, `match worker ${worker.index}: ${marker.message}`)
+            : new Error(`match worker ${worker.index}: ${marker.message}`)
+        );
       case "left": {
         const leaving = route ?? worker.routes.get(sid);
         if (leaving?.gen === gen) returnStrikes(leaving.session, marker.strikes);

@@ -22,6 +22,7 @@ import {
 import { refreshFloorFailing } from "./floorstate.js";
 import { createMatchWorld, isLiveMember, membersOf } from "./match-world.js";
 import { dungeonMatches } from "./matches.js";
+import { requireMayEnter } from "./match-entry.js";
 import {
   heroGenerate,
   heroOwnerGenerate,
@@ -187,10 +188,12 @@ const joinDungeonMatchLocked = async (
   const match = result?.match;
   if (!match) throw new Error("joinDungeonMatch needs an admitted match");
   requireOpenMember(session);
+  const verifyAccount = (account) => requireMayEnter(account, match.mapNodeId);
 
   if (buildHost) {
     const context = world.contextFor(session);
     const built = await buildFirstMember(context, match.mapNodeId, {
+      verifyAccount,
       onPlayerReady,
       waitForHandshake: handshakeRequired ? waitForEntryHandshake : async () => true,
     });
@@ -215,7 +218,7 @@ const joinDungeonMatchLocked = async (
   requireJoinableWorld(match, world, session);
   requireOpenMember(session);
 
-  const prepared = await prepareMember(session, { sendPlayerOwner: false });
+  const prepared = await prepareMember(session, { sendPlayerOwner: false, verifyAccount });
   requireOpenMember(session);
   requireJoinableWorld(match, world, session);
   if (!prepared) throw new Error(`member ${session.accountId} preparation was cancelled`);

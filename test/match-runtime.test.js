@@ -18,6 +18,9 @@ import { PacketReader } from "../src/socket/packet.js";
 import { applyDamage, hitPointsUpdate } from "../src/socket/combat.js";
 import { buildEntryResponse, FLID } from "../src/socket/matchmaker.js";
 import { readNpc } from "./helpers/floor.js";
+import { EntryRefusedError } from "../src/socket/match-entry.js";
+import { loadGameMaster } from "../src/gamemaster.js";
+import { setMapNodeBit } from "../src/map-progress.js";
 
 let nextDoid = 9000;
 
@@ -282,6 +285,77 @@ test("match admission snapshots are not passed into host or late-join preparatio
   assert.equal(typeof hostPreparedWith.onPlayerReady, "function");
   assert.equal(typeof hostPreparedWith.waitForHandshake, "function");
   assert.equal(joinerPreparedWith.account, undefined);
+});
+
+/**
+ * Admission checks an unlocked snapshot; the run plays the account it holds.
+ * A hero switched between the two must be caught on the held one.
+ */
+test("the held account is checked again before a run is built on it", async () => {
+  const gameMaster = await loadGameMaster();
+  const node = gameMaster.mapNodeById.get(50082);
+  const heroes = (mask) => ({
+    id: 1,
+    active_avatar: 7,
+    account_avatars: [
+      { id: 7, avatar_id: 101, experience: 0, completed_mapnode_mask: mask },
+    ],
+  });
+  const opened = heroes(setMapNodeBit("", node.BitIndex));
+  const switched = heroes("");
+
+  const registry = new DungeonMatchRegistry();
+  const host = member(1053, 1101053);
+  const hosted = registry.resolve({ session: host, mapNodeId: 50082 });
+  let hostChecks;
+  await joinDungeonMatch(host, hosted, { mapNodeId: 50082 }, {
+    buildFirstMember: async (context, mapNodeId, options) => {
+      hostChecks = options.verifyAccount;
+      return buildFixtureWorld(context, mapNodeId);
+    },
+  });
+  const joiner = member(1054, 1101054);
+  const joined = registry.resolve({ session: joiner, mapNodeId: 50082 });
+  let joinerChecks;
+  await joinDungeonMatch(joiner, joined, { mapNodeId: 50082 }, {
+    prepareMember: async (session, options) => {
+      joinerChecks = options.verifyAccount;
+      return prepareFixture(session, options);
+    },
+    beginManaRegen: async () => () => {},
+    grantArrivalBuff: async () => null,
+    waitForAssets: async () => {},
+  });
+
+  for (const check of [hostChecks, joinerChecks]) {
+    await check(opened);
+    await assert.rejects(check(switched), (problem) =>
+      problem instanceof EntryRefusedError && problem.reason === "content_not_completed"
+    );
+  }
+});
+
+test("a held account that fails the check is let go and nothing is prepared", async () => {
+  const session = member(1062, 1200001062);
+  session.floorPlan = { npcLevel: 1 };
+  const account = {
+    id: session.accountId,
+    active_avatar: session.fixtureAvatarDoid,
+    account_avatars: [{ id: session.fixtureAvatarDoid, avatar_id: 101, experience: 0 }],
+    account_items: [],
+  };
+  await assert.rejects(
+    prepareDungeonMember(session, {
+      acquireAccountById: async () => account,
+      sendPlayerOwner: false,
+      verifyAccount: async () => {
+        throw new EntryRefusedError("content_not_completed");
+      },
+    }),
+    EntryRefusedError
+  );
+  assert.equal(session.dungeonAccount, undefined);
+  assert.equal(session.dungeonAvatar, undefined);
 });
 
 test("a late joiner's equipped pet is snapshotted for itself and owned by the shared world", async () => {

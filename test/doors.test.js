@@ -41,6 +41,7 @@ test("a crossing asks once, for the place the door names", async () => {
   const asked = [];
 
   const crossed = await walkThrough(session, 50009, {
+    check: async () => null,
     resolve: async (_, request) => {
       asked.push(request.mapNodeId);
       return { match: { mapNodeId: request.mapNodeId } };
@@ -131,6 +132,7 @@ test("a refused crossing is answered, not swallowed", async () => {
   const session = { id: 8, matchMakerDoid: 9, send: (frame) => sent.push(frame) };
 
   const crossed = await walkThrough(session, 50009, {
+    check: async () => null,
     resolve: async () => ({ match: null, error: "map_full", source: "map" }),
     join: async () => {
       throw new Error("a refused crossing must not join anything");
@@ -154,6 +156,7 @@ test("a failed doorway join does not replace the connection's matchmaking cohort
 
   assert.equal(
     await walkThrough(session, 50009, {
+      check: async () => null,
       resolve: async () => ({ match: { mapNodeId: 50009, group: "failed-group" } }),
       join: async () => {
         throw new Error("fixture join failed");
@@ -173,8 +176,51 @@ test("the crossing guard is held where it outlives the floor", async () => {
   const { walkThrough } = await import("../src/socket/doors.js");
   const connection = { id: 5, matchMakerDoid: 9, send: () => {}, walkingThrough: true };
   const context = { id: 5, member: connection };
+  const untouched = () => assert.fail("a crossing already under way began another");
 
-  assert.equal(await walkThrough(context, 50009), false, "already crossing");
+  assert.equal(
+    await walkThrough(context, 50009, { check: untouched, leave: untouched, resolve: untouched, join: untouched }),
+    false,
+    "already crossing"
+  );
+  assert.equal(connection.walkingThrough, true, "and the first crossing still holds it");
+});
+
+test("a door to somewhere this hero may not go leaves them where they stand", async () => {
+  const { walkThrough } = await import("../src/socket/doors.js");
+  const sent = [];
+  const connection = { id: 8, matchMakerDoid: 9, send: (frame) => sent.push(frame) };
+  const untouched = () => assert.fail("the old floor was touched for a door that goes nowhere");
+
+  for (const refusal of ["content_not_completed", "bad_map_node"]) {
+    const crossed = await walkThrough({ id: 8, member: connection }, 50009, {
+      check: async () => refusal,
+      leave: untouched,
+      resolve: untouched,
+      join: untouched,
+    });
+    assert.equal(crossed, false);
+  }
+  assert.deepEqual(sent, [], "nothing said on the old floor that would read as an entry");
+  assert.equal(connection.walkingThrough, false, "and the doorway can be tried again");
+});
+
+test("a locked door is said so on the floor, and the crossing is never asked for", async () => {
+  const { crossDoor } = await import("../src/socket/triggers.js");
+  const told = [];
+  const session = { id: 9, accountId: 1, playerDoid: 70, sendDirect: (frame) => told.push(frame) };
+  const crossed = await crossDoor(session, 50009, {
+    check: async () => "content_not_completed",
+    walkThrough: () => assert.fail("asked to cross a locked door"),
+  });
+  assert.equal(crossed, false);
+  assert.equal(told.length, 1, "one line, to the one who walked into it");
+
+  const open = await crossDoor(session, 50009, {
+    check: async () => null,
+    walkThrough: async () => true,
+  });
+  assert.equal(open, true);
 });
 
 test("a destination that is not a place is refused before anything else", async () => {
@@ -185,4 +231,27 @@ test("a destination that is not a place is refused before anything else", async 
   assert.equal(await walkThrough(session, "nowhere"), false);
   assert.equal(await walkThrough(session, -1), false);
   assert.equal(session.walkingThrough, undefined, "and nothing was begun");
+});
+
+test("a refusal raised once the new run holds the account keeps its own message", async () => {
+  const { walkThrough } = await import("../src/socket/doors.js");
+  const { EntryRefusedError } = await import("../src/socket/match-entry.js");
+  const { ENTRY_ERROR } = await import("../src/socket/matchmaker.js");
+  const { PacketReader } = await import("../src/socket/packet.js");
+  const sent = [];
+  const session = { id: 10, matchMakerDoid: 9, send: (frame) => sent.push(frame) };
+  const crossed = await walkThrough(session, 50009, {
+    check: async () => null,
+    leave: async () => {},
+    resolve: async () => ({ match: { mapNodeId: 50009 } }),
+    join: async () => {
+      throw new EntryRefusedError("content_not_completed");
+    },
+  });
+  assert.equal(crossed, false);
+  const reader = new PacketReader(sent.at(-1).subarray(2));
+  reader.u16();
+  reader.u32();
+  reader.u16();
+  assert.equal(reader.u16(), ENTRY_ERROR.UNAUTHORIZED_MAP);
 });

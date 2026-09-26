@@ -559,3 +559,22 @@ test("an existing account reads the same through the no-create path", async () =
   assert.equal(await loadExistingAccount(-5), null);
   assert.equal(await loadExistingAccount("abc"), null);
 });
+
+test("rows for somebody who is not a friend say nothing of where they are", async (t) => {
+  await reset();
+  presence.clearPresence();
+  t.after(presence.clearPresence);
+  const them = online(THEM, 709);
+  presence.setPresenceLocation(them.session, 50082);
+  await requestFrom(ME, THEM);
+  await accept(THEM, ME);
+
+  const [removed] = await dispatch("friendrequests", "DRFriendRemove", [ME, [THEM], "token"]);
+  assert.equal(removed.account_id, THEM);
+  assert.deepEqual([removed.is_online, removed.current_dungeon], [false, 0], "an ex-friend");
+
+  await block(ME, THEM);
+  const [blockedRow] = await dispatch("leaderboard", "getIgnoreFriendData", [ME, "token"]);
+  assert.equal(blockedRow.account_id, THEM);
+  assert.deepEqual([blockedRow.is_online, blockedRow.current_dungeon], [false, 0], "a blocked player");
+});

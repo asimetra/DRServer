@@ -16,6 +16,7 @@ import { tell } from "./chat.js";
 import { say } from "./speech.js";
 import { grantBuff } from "./buffs.js";
 import { matchHost } from "./match-host.js";
+import { checkDestination } from "./match-entry.js";
 import { collisionPointOf, setNavigationTriggerState } from "./navigation.js";
 import { applyDamage } from "./combat.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
@@ -777,13 +778,38 @@ export const updateProximityTriggers = (session, position) => {
       // doorway transition.
       announce(session, trigger);
       if (trigger.destination) {
-        matchHost().walkThrough(session, trigger.destination).catch((problem) =>
+        crossDoor(session, trigger.destination).catch((problem) =>
           warn(`[${session.id}] door failed: ${problem.message}`)
         );
       }
     }
     applyProximityState(session, trigger, trigger.occupants.size > 0);
   }
+};
+
+const DOOR_LOCKED = "That way is not open to this hero yet.";
+
+/**
+ * Walks a member through a door, or says why not.
+ *
+ * Asked here, on the thread the floor is on, because this is where the
+ * player can be told: the crossing itself is the matchmaker's and runs where
+ * the connection is. A door this hero cannot use is a line in the chat and
+ * nothing else — they stay on the floor they are standing on.
+ */
+export const crossDoor = async (
+  session,
+  destination,
+  // Injected so a test can watch a door without an account or a matchmaker.
+  { check = checkDestination, walkThrough = (...args) => matchHost().walkThrough(...args) } = {}
+) => {
+  const refusal = await check(session, destination);
+  if (refusal) {
+    info(`[${session.id}] door to ${destination} is closed to this hero: ${refusal}`);
+    tell(session, DOOR_LOCKED);
+    return false;
+  }
+  return walkThrough(session, destination);
 };
 
 const seconds = (value, fallbackMs) =>

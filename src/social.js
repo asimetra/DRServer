@@ -126,8 +126,10 @@ export const friendRowOf = (account, isIngameFriend) => ({
   is_ingame_friend: isIngameFriend,
   identifier: `${NETWORK_ID}_${account.id}`,
   friend_code: friendCodeOf(account),
-  is_online: isOnline(account.id),
-  current_dungeon: dungeonOf(account.id),
+  // Where somebody is belongs to their friends: an ex-friend's row and a
+  // blocked player's row say offline and nowhere, whatever is true.
+  is_online: isIngameFriend && isOnline(account.id),
+  current_dungeon: isIngameFriend ? dungeonOf(account.id) : 0,
   avatar_url: null,
 });
 
@@ -175,6 +177,16 @@ export const befriend = async (account, friend) => {
 export const blockedBetween = (account, other) =>
   ignoredIdsOf(account).includes(Number(other.id)) ||
   ignoredIdsOf(other).includes(Number(account.id));
+
+/**
+ * Friends in the sense that lets one follow the other into a dungeon: each on
+ * the other's list, and neither blocking the other. Both lists, because a
+ * legacy import can leave a friendship one-sided.
+ */
+export const areFriends = (account, other) =>
+  friendIdsOf(account).includes(Number(other.id)) &&
+  friendIdsOf(other).includes(Number(account.id)) &&
+  !blockedBetween(account, other);
 
 const dropFriend = (owner, otherId) => {
   const ids = friendIdsOf(owner);
