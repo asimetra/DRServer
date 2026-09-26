@@ -187,9 +187,13 @@ CREATE INDEX IF NOT EXISTS market_listings_account ON market_listings(account_id
 -- apart. A listing's id is its weapon's, and the weapon has gone to the buyer,
 -- who may put it up again before the seller collects — two listings under one
 -- id, on two accounts, which the key above refuses. So an account's sold
--- listings are written here, keyed by the pair, and read back beside its open
--- ones; the account itself does not know the difference. A new table rather
--- than a new key, because this file only ever adds.
+-- listings are written here and read back beside its open ones; the account
+-- itself does not know the difference. No key at all: one account can sell the
+-- same weapon twice before claiming, and its rows are rewritten whole on every
+-- save, like the other children. A new table rather than a new key, because
+-- this file only ever adds. (Its first version keyed (account_id, id); startup
+-- drops that key where it was created — see moveSoldListingsOut.) One sale is
+-- still one row: the same weapon sold twice has two sale times.
 CREATE TABLE IF NOT EXISTS market_sold_listings (
     id                BIGINT      NOT NULL,
     account_id        BIGINT      NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -206,9 +210,11 @@ CREATE TABLE IF NOT EXISTS market_sold_listings (
     modifier1         INTEGER,
     modifier2         INTEGER,
     legendarymodifier INTEGER,
-    created           TIMESTAMPTZ,
-    PRIMARY KEY (account_id, id)
+    created           TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS market_sold_listings_account ON market_sold_listings(account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS market_sold_listings_sale
+    ON market_sold_listings(account_id, id, sold_at);
 
 -- What the market has done, kept for good.
 --

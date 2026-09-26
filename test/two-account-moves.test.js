@@ -84,3 +84,91 @@ test("a weapon back with its seller and listed again can be withdrawn, and bough
   const owned = (await loadAccount(third)).account_items.some((row) => Number(row.id) === weapon);
   assert.equal(owned, true, "withdrawn, put up again, and sold");
 });
+
+/**
+ * Sold listings written before they had a table of their own sit among the
+ * open ones, where the weapon's id still blocks its buyer from listing it
+ * again. Startup moves them across; PostgreSQL only.
+ */
+test("sold listings from before their own table are moved out of the way", {
+  skip: process.env.ODS_STORAGE !== "postgres" && "PostgreSQL only",
+}, async () => {
+  const { default: pg } = await import("pg");
+  const { moveSoldListingsOut } = await import("../src/storage/postgres.js");
+  const weapon = base + 300;
+  const seller = await account(base + 31, weapon);
+  const buyer = await account(base + 32, base + 321);
+  await listForSale({ sellerId: seller, itemId: weapon, price: 100 });
+  await buyListing({ listingId: weapon, buyerId: buyer });
+
+  const client = new pg.Client({ connectionString: process.env.ODS_DATABASE_URL });
+  await client.connect();
+  try {
+    // As a server before the table wrote it: the sold row among the open ones.
+    await client.query(
+      `INSERT INTO market_listings SELECT id, account_id, item_id, price, listed_at, sold_to, sold_at, tax,
+         proceeds, power, requiredlevel, rarity, modifier1, modifier2, legendarymodifier, created
+         FROM market_sold_listings WHERE account_id = $1`,
+      [seller]
+    );
+    await client.query("DELETE FROM market_sold_listings WHERE account_id = $1", [seller]);
+    await assert.rejects(
+      listForSale({ sellerId: buyer, itemId: weapon, price: 100 }),
+      /market_listings_pkey/,
+      "the old row still blocks it"
+    );
+
+    assert.equal(await moveSoldListingsOut(client), 1);
+    assert.equal(await moveSoldListingsOut(client), 0, "and a second run finds nothing");
+  } finally {
+    await client.end();
+  }
+  await listForSale({ sellerId: buyer, itemId: weapon, price: 100 });
+  const sellerRows = (await loadAccount(seller)).market_listings.filter((row) => Number(row.id) === weapon);
+  assert.deepEqual(sellerRows.map((row) => row.sold_to), [buyer], "the seller is still owed");
+});
+
+/**
+ * An older server still running on the same database writes a sold listing
+ * back among the open ones — it has never heard of the other table. The sale
+ * is then in both, and must still be paid once, and moved without doubling.
+ */
+test("a sale written in both tables is read, moved and paid once", {
+  skip: process.env.ODS_STORAGE !== "postgres" && "PostgreSQL only",
+}, async () => {
+  const { default: pg } = await import("pg");
+  const { moveSoldListingsOut } = await import("../src/storage/postgres.js");
+  const { claimProceeds } = await import("../src/market.js");
+  const weapon = base + 400;
+  const seller = await account(base + 41, weapon);
+  const buyer = await account(base + 42, base + 421);
+  await listForSale({ sellerId: seller, itemId: weapon, price: 100 });
+  await buyListing({ listingId: weapon, buyerId: buyer });
+
+  const client = new pg.Client({ connectionString: process.env.ODS_DATABASE_URL });
+  await client.connect();
+  try {
+    // The older server's save: the sold row among the open ones, again.
+    await client.query(
+      `INSERT INTO market_listings SELECT id, account_id, item_id, price, listed_at, sold_to, sold_at, tax,
+         proceeds, power, requiredlevel, rarity, modifier1, modifier2, legendarymodifier, created
+         FROM market_sold_listings WHERE account_id = $1`,
+      [seller]
+    );
+    const sold = (await loadAccount(seller)).market_listings.filter((row) => row.sold_to);
+    assert.equal(sold.length, 1, "one sale, read once");
+
+    await moveSoldListingsOut(client);
+    const { rows } = await client.query(
+      "SELECT count(*)::int AS n FROM market_sold_listings WHERE account_id = $1",
+      [seller]
+    );
+    assert.equal(rows[0].n, 1, "and moved without a second copy");
+  } finally {
+    await client.end();
+  }
+  const before = (await loadAccount(seller)).basic_currency;
+  const claimed = await claimProceeds({ sellerId: seller });
+  assert.equal(claimed.gold - before, claimed.claimed);
+  assert.equal(claimed.listings.length, 1, "paid for once");
+});

@@ -314,3 +314,35 @@ export const checkDatabaseSchema = async () => {
     await client.end().catch(() => undefined);
   }
 };
+
+/**
+ * Data a newer server keeps elsewhere, moved there once the schema is current.
+ *
+ * Only on PostgreSQL, only when the server may change its own database
+ * (`ODS_MIGRATE`), and never fatal: a market row left where it was blocks one
+ * weapon from being listed again, which is not worth refusing to start over.
+ */
+export const moveLegacyData = async () => {
+  if (config.storage !== "postgres" || config.migrate === false) return 0;
+  const [{ moveSoldListingsOut }, { default: pg }] = await Promise.all([
+    import("./storage/postgres.js"),
+    import("pg"),
+  ]);
+  const client = new pg.Client({ connectionString: config.databaseUrl });
+  try {
+    await client.connect();
+    await client.query("SELECT pg_advisory_lock($1)", [0x0d5_5c8e]);
+    try {
+      const moved = await moveSoldListingsOut(client);
+      if (moved) info(`database: moved ${moved} sold market listing(s) into market_sold_listings`);
+      return moved;
+    } finally {
+      await client.query("SELECT pg_advisory_unlock($1)", [0x0d5_5c8e]).catch(() => undefined);
+    }
+  } catch (problem) {
+    warn(`could not move sold market listings: ${problem.message}`);
+    return 0;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+};

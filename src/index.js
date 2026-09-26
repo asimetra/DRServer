@@ -9,6 +9,7 @@ import {
   checkCompatibilityData,
   ensureSafeTransport,
   checkDatabaseSchema,
+  moveLegacyData,
   ensureTokenSecret,
   reportAuth,
   reportContentOverride,
@@ -27,6 +28,9 @@ checkCompatibilityData();
 reportContentOverride();
 await checkDatabaseSchema();
 const releaseProcessLock = await acquireProcessLock();
+// Only once the storage is ours: an older server still running on it would
+// write moved rows straight back (see moveLegacyData).
+await moveLegacyData();
 ensureTokenSecret();
 reportAuth();
 /**

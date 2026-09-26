@@ -229,7 +229,17 @@ export const loadAccount = async (id) => {
     `SELECT ${CHILD_TABLES.market_listings.join(", ")} FROM ${SOLD_LISTINGS} WHERE account_id = $1 ORDER BY id`,
     [id]
   );
-  account.market_listings = [...account.market_listings, ...sold.rows.map(fromRow)];
+  /**
+   * One sale is one listing, whichever table it was read from. A sold row
+   * written by a server that predates the sold table, while this one runs or
+   * after it moved it, is the same sale — and counted twice it is paid twice.
+   */
+  const saleKey = (row) => `${row.id}|${row.sold_at}`;
+  const moved = new Set(sold.rows.map(fromRow).map(saleKey));
+  account.market_listings = [
+    ...account.market_listings.filter((row) => !isSold(row) || !moved.has(saleKey(row))),
+    ...sold.rows.map(fromRow),
+  ];
 
   // Still unmodelled: nothing in this server writes a booster row, so there is
   // no shape to store (see db/schema.sql). Chests used to be lumped in with
@@ -339,6 +349,37 @@ export const saveAccounts = async (accounts) => {
     throw err;
   } finally {
     client.release();
+  }
+};
+
+/**
+ * Puts sold listings where they belong, on a caller's client. Run at startup.
+ *
+ * Sold listings written before `market_sold_listings` existed sit among the
+ * open ones, where the weapon's id still blocks its buyer from listing it
+ * again until the seller's account happens to be saved. This moves them now.
+ * It also drops the (account_id, id) key the table's first version carried,
+ * which refused a seller who sold one weapon twice before claiming. Returns
+ * how many rows moved; a second run finds none.
+ */
+export const moveSoldListingsOut = async (client) => {
+  const columns = CHILD_TABLES.market_listings.join(", ");
+  await client.query("BEGIN");
+  try {
+    await client.query(`ALTER TABLE ${SOLD_LISTINGS} DROP CONSTRAINT IF EXISTS ${SOLD_LISTINGS}_pkey`);
+    // A sale already there — written by this version and again by an older
+    // one — is one sale, not two.
+    await client.query(
+      `INSERT INTO ${SOLD_LISTINGS} (${columns})
+       SELECT ${columns} FROM market_listings WHERE sold_to IS NOT NULL
+       ON CONFLICT DO NOTHING`
+    );
+    const moved = await client.query("DELETE FROM market_listings WHERE sold_to IS NOT NULL");
+    await client.query("COMMIT");
+    return moved.rowCount;
+  } catch (problem) {
+    await client.query("ROLLBACK");
+    throw problem;
   }
 };
 
