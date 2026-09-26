@@ -27,6 +27,7 @@ import { schedulePlaceables } from "./placeables.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 import { isAllyReviveAttack, noteAllyReviveAttempt } from "./revive.js";
+import { fieldsFor, positive } from "../powerup-slots.js";
 
 export const FLID_PROPOSE_ATTACK_CHOREOGRAPHY = 172;
 export const FLID_RECEIVE_ATTACK_CHOREOGRAPHY = 159;
@@ -558,11 +559,25 @@ const hasPowerupWeapon = async (session, attack, weaponSlot) => {
  * back up out of it, so a potion drunk on floor three is paid for once, from
  * the total.
  */
-const spendStackable = (session, stackId, slot, remaining) => {
+/**
+ * Relative, and only from the stack the slot still holds. The slot can change
+ * under a run — equipping and unequipping are HTTP calls a token can make at
+ * any moment — and writing the run's own remaining count over it both kept a
+ * potion that had been moved back to the bag drinkable and wiped a slot that
+ * had been topped up. False when the slot no longer carries this stack; the
+ * drink is refused rather than charged to something else.
+ */
+const spendStackable = (session, stackId, slot) => {
   const avatar = session.dungeonAvatar;
-  if (avatar) avatar[`consumable${slot + 1}_count`] = remaining;
+  if (avatar) {
+    const field = fieldsFor(slot + 1);
+    const carried = positive(avatar[field.count]);
+    if (positive(avatar[field.id]) !== Number(stackId) || carried === 0) return false;
+    avatar[field.count] = carried - 1;
+  }
 
   session.queueAccountSave?.(session) ?? queueAccountSave(session);
+  return true;
 };
 
 /**
@@ -608,8 +623,11 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
     return true;
   }
 
+  if (!spendStackable(session, equipped.type, slot)) {
+    warn(`[${session.id}] rejected ${attack.Constant}: powerup slot ${slot} no longer holds it`);
+    return true;
+  }
   equipped.count -= 1;
-  spendStackable(session, equipped.type, slot, equipped.count);
 
   // Party health and Mana potions (CONSUMABLE_HEALTH_POTION_PARTY_ATTACK,
   // CONSUMABLE_MANA_POTION_PARTY_ATTACK) carry AffectsOthers exactly like the

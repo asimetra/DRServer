@@ -338,7 +338,8 @@ test("a thrown bomb places its bomb, which is the only thing that does damage", 
   // CONSUMABLE_POISON_BOMB_ATTACK is authored DamageMod 0 — the attack itself
   // is not the weapon, the bomb it leaves is.
   session.heroConsumables = [{ type: 70026, count: 2 }];
-  session.dungeonAvatar = { avatar_id: 104, experience: 0 };
+  // The run's copy is taken from the slot, so the slot holds the same two.
+  session.dungeonAvatar = { avatar_id: 104, experience: 0, consumable1_id: 70026, consumable1_count: 2 };
   session.dungeonAccount = { account_stackables: [{ stack_id: 70026, count: 2 }] };
   session.queueAccountSave = () => {};
   session.objects.set(700, CLID.DistributedNPCGameObject);
