@@ -1,5 +1,6 @@
 import {
   accountInPlay,
+  isRemoteAccountCopy,
   listAccountIds,
   loadAccount,
   saveAccount,
@@ -301,6 +302,14 @@ const buyListingHere = async ({ listingId, buyerId } = {}) => {
 
     const sellerAccount = await loadAccount(seller);
     const buyerAccount = await loadAccount(buyer);
+    /* Before anything changes. A copy of an account in a dungeon on another
+       worker is written back there as a patch, and that worker refuses gold and
+       items — so a sale would mark the listing sold here and fail to charge the
+       buyer there, leaving the seller paid for a weapon nobody received. */
+    if (isRemoteAccountCopy(buyerAccount)) throw refuse("in_dungeon", `account ${buyer} is in a dungeon`);
+    if (isRemoteAccountCopy(sellerAccount)) {
+      throw refuse("busy", `the seller of listing ${wanted} is in a dungeon on another worker; try again`);
+    }
     if (isBarred(buyerAccount)) throw refuse("barred", `account ${buyer} may not use the market`);
 
     /* Looked up again inside the lock, which is the look that decides: two

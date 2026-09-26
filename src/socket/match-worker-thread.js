@@ -414,6 +414,13 @@ installAccountOwnership({
     return elsewhere ?? null;
   },
   isRemoteCopy: (account) => remoteCopies.get(Number(account?.id))?.copy === account,
+  /**
+   * In a dungeon on another worker, as far as this one can know: an account
+   * whose borrowed lock came with a copy of its live object. Without this,
+   * `accountInPlay` here saw only this worker's own players, and a check that
+   * refuses players in dungeons passed for one playing next door.
+   */
+  inPlayElsewhere: (id) => Boolean(remoteCopies.get(Number(id))),
   divertSave: async (accounts) => {
     const here = [];
     for (const account of accounts) {

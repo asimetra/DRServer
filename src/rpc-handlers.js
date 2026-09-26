@@ -38,6 +38,7 @@ import {
   unignore,
 } from "./social.js";
 import { excludeIdsFor, giftsFor, sendGift, takeGift } from "./gifts.js";
+import { defineAccountOperation } from "./account-operations.js";
 import { info, warn } from "./log.js";
 
 /**
@@ -962,19 +963,28 @@ register("friendrequests/DRFriendRequest", async (params) => {
  * one row each. An object here — this once answered `{ removed }` — is null
  * once the native client casts it, and reading its length crashes the game.
  */
+/**
+ * One friend removed, holding both sides — in id order, as every two-account
+ * change here is — rather than writing the friend's account unguarded. An
+ * account operation, so that a friend in a dungeon on a match worker is
+ * removed there, alone: a whole selection sent across when its second friend
+ * turned out to be leased came back without the first, already removed, row.
+ */
+const removeOneFriend = defineAccountOperation("friend.remove", async (ownerId, friendId) =>
+  withTwoAccountLocks(ownerId, friendId, async () => {
+    if (!(await unfriend(await loadAccount(ownerId), friendId))) return null;
+    const former = await loadExistingAccount(friendId).catch(() => null);
+    return former ? friendRowOf(former, false) : { account_id: friendId };
+  })
+);
+
 register("friendrequests/DRFriendRemove", async ([accountId, friendIds]) => {
   const ownerId = Number(accountId);
   const removed = [];
-  // Both sides are written, so both are held — in id order, as every two-account
-  // change here is — rather than writing the friend's account unguarded.
   for (const id of friendIds ?? []) {
     const friendId = Number(id);
     if (!Number.isSafeInteger(friendId) || friendId === ownerId) continue;
-    const row = await withTwoAccountLocks(ownerId, friendId, async () => {
-      if (!(await unfriend(await loadAccount(ownerId), friendId))) return null;
-      const former = await loadExistingAccount(friendId).catch(() => null);
-      return former ? friendRowOf(former, false) : { account_id: friendId };
-    });
+    const row = await removeOneFriend(ownerId, friendId);
     if (row) removed.push(row);
   }
   info(`rpc: ${ownerId} removed ${removed.length} friend(s)`);
@@ -1028,6 +1038,36 @@ register("friendrequests/UnblockFriend", async ([accountId, friendIds]) => {
  */
 const REQUEST_ACCEPTED = 1;
 
+/**
+ * One request answered, holding both sides; an account operation for the same
+ * reason as `removeOneFriend`. Answers the new friend's row, `declined`, or
+ * null when there was nothing to answer.
+ */
+const answerOneRequest = defineAccountOperation(
+  "friend.answer",
+  async (ownerId, requestId, requesterId, accept) =>
+    withTwoAccountLocks(ownerId, requesterId, async () => {
+      const account = await loadAccount(ownerId);
+      const pending = pendingFriendRequestsOf(account);
+      const request = pending.find(
+        (row) => Number(row.id) === requestId && Number(row.account_id) === requesterId
+      );
+      // The requester is looked up only for a request actually held: both ids
+      // are the client's, and reading an unknown one would make an account.
+      if (!request) return null;
+      account.friend_requests = pending.filter((row) => Number(row.id) !== requestId);
+      const requester = accept ? await loadExistingAccount(requesterId) : null;
+      // Gone since, or blocked either way: used up, and nothing made.
+      if (requester && !blockedBetween(account, requester)) {
+        const made = await befriend(account, requester);
+        if (!made) await saveAccount(account);
+        return { row: friendRowOf(requester, true) };
+      }
+      await saveAccount(account);
+      return accept ? null : { declined: true };
+    })
+);
+
 register("friendrequests/DRFriendRequestUpdate", async ([accountId, requestIds, toIds, state]) => {
   const ownerId = Number(accountId);
   const accepted = [];
@@ -1036,29 +1076,9 @@ register("friendrequests/DRFriendRequestUpdate", async ([accountId, requestIds, 
     const requesterId = Number(toIds[index]);
     const requestId = Number(requestIds?.[index]);
     if (!Number.isSafeInteger(requesterId) || requesterId === ownerId) continue;
-    await withTwoAccountLocks(ownerId, requesterId, async () => {
-      const account = await loadAccount(ownerId);
-      const pending = pendingFriendRequestsOf(account);
-      const request = pending.find(
-        (row) => Number(row.id) === requestId && Number(row.account_id) === requesterId
-      );
-      // The requester is looked up only for a request actually held: both ids
-      // are the client's, and reading an unknown one would make an account.
-      if (!request) return;
-      account.friend_requests = pending.filter((row) => Number(row.id) !== requestId);
-      const requester = Number(state) === REQUEST_ACCEPTED
-        ? await loadExistingAccount(requesterId)
-        : null;
-      // Gone since, or blocked either way: used up, and nothing made.
-      if (requester && !blockedBetween(account, requester)) {
-        const made = await befriend(account, requester);
-        if (!made) await saveAccount(account);
-        accepted.push(friendRowOf(requester, true));
-        return;
-      }
-      await saveAccount(account);
-      if (Number(state) !== REQUEST_ACCEPTED) declined += 1;
-    });
+    const answer = await answerOneRequest(ownerId, requestId, requesterId, Number(state) === REQUEST_ACCEPTED);
+    if (answer?.row) accepted.push(answer.row);
+    if (answer?.declined) declined += 1;
   }
   info(`rpc: ${ownerId} accepted ${accepted.length}, declined ${declined} friend request(s)`);
   /**
@@ -1112,6 +1132,32 @@ register("store/GetAllGifts", async ([accountId]) =>
  * anyway, so a batch here is already unusual; refusing the whole call because
  * the fourth id in it is a stranger would lose three good gifts.
  */
+/**
+ * One gift, to one friend, holding both accounts.
+ *
+ * An account operation rather than inline work, so that a recipient in a
+ * dungeon on a match worker is gifted there, against the live account, and
+ * the gifts already sent to the others are not sent again: the loop below
+ * used to take a leased recipient's refusal as a failed gift and move on,
+ * and the gift was simply lost.
+ */
+const sendOneGift = defineAccountOperation("gift.send", async (senderId, recipientId, offerId) =>
+  withTwoAccountLocks(senderId, recipientId, async () => {
+    const sender = await loadAccount(senderId);
+    const recipient = recipientId === senderId ? sender : await loadAccount(recipientId);
+    // A gift is value on both sides — the recipient's gift, the sender's day
+    // — and a copy of an account on another match worker is written there
+    // separately. Refused before either side is changed, rather than risk
+    // one half landing without the other.
+    if (isRemoteAccountCopy(sender) || isRemoteAccountCopy(recipient)) {
+      throw new Error("both players are in dungeons on different match workers; try again from town");
+    }
+    const made = await sendGift({ sender, recipient, offerId });
+    await saveAccounts([recipient, sender]);
+    return made;
+  })
+);
+
 register("store/GiftOffer", async ([accountId, offerId, , , toIds]) => {
   /**
    * One gift at a time, holding both accounts, smallest id first.
@@ -1141,20 +1187,7 @@ register("store/GiftOffer", async ([accountId, offerId, , , toIds]) => {
       continue;
     }
     try {
-      const gift = await withTwoAccountLocks(senderId, recipientId, async () => {
-        const sender = await loadAccount(senderId);
-        const recipient = recipientId === senderId ? sender : await loadAccount(recipientId);
-        // A gift is value on both sides — the recipient's gift, the sender's day
-        // — and a copy of an account on another match worker is written there
-        // separately. Refused before either side is changed, rather than risk
-        // one half landing without the other.
-        if (isRemoteAccountCopy(sender) || isRemoteAccountCopy(recipient)) {
-          throw new Error("both players are in dungeons on different match workers; try again from town");
-        }
-        const made = await sendGift({ sender, recipient, offerId });
-        await saveAccounts([recipient, sender]);
-        return made;
-      });
+      const gift = await sendOneGift(senderId, recipientId, offerId);
       sent++;
       info(`rpc: ${senderId} gifted offer ${gift.offer_id} to ${recipientId}`);
     } catch (problem) {
