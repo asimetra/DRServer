@@ -35,13 +35,14 @@ import { beginFloorFailing, checkFloorCleared } from "./floorstate.js";
 import { objectDisable } from "./objects.js";
 import { grantMana, queueAccountSave } from "./rewards.js";
 import { collisionPointOf, hasLineOfSight, isPositionBlocked } from "./navigation.js";
-import { heroMembersOf, memberForHero } from "./match-world.js";
+import { heroMembersOf, matchStateOf, memberForHero, worldOf } from "./match-world.js";
 import { npcAttackSpeed, npcAttackSpeedStat } from "./npc-attacks.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { moveWithNavigation } from "./navigation.js";
 import { spawnFoodDoober } from "./drops.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 import {
   critRollFor,
   onHitBuffEffectsFor,
@@ -481,8 +482,12 @@ export const applyDamage = (session, doid, damage, announce) => {
       actor.onGone?.(doid);
     };
 
-    if (blastMs > 0) setTimeout(() => (callItDead(), retire()), blastMs).unref?.();
-    else callItDead();
+    if (blastMs > 0) {
+      const finish = () => (callItDead(), retire());
+      const scope = session.floorScope;
+      const timer = scope ? scope.timeout(finish, blastMs) : setTimeout(finish, blastMs);
+      if (!scope) timer.unref?.();
+    } else callItDead();
 
     actor.onDeath?.(doid);
     if (recoverableHero) (session.beginFloorFailing ?? beginFloorFailing)(session);
@@ -613,10 +618,11 @@ const trapVictims = (
   session,
   { attack, attackerTeam, includeFallen = false, candidateDoids = null } = {}
 ) => {
+  const state = matchStateOf(session);
   const victims = [];
   const entries = candidateDoids
-    ? [...candidateDoids].map((doid) => [doid, session.actors?.get(doid)])
-    : session.actors ?? [];
+    ? [...candidateDoids].map((doid) => [doid, state.actors?.get(doid)])
+    : state.actors ?? [];
   for (const [doid, actor] of entries) {
     if (!actor) continue;
     if (actor.teleportHidden) continue;
@@ -625,7 +631,7 @@ const trapVictims = (
     // path — so admitting every corpse turned each dead monster into cover and
     // an arrow trap with anything dead in front of it stopped hurting anybody.
     if (actor.dead && !(includeFallen && isPartyHero(session, doid))) continue;
-    const clid = session.objects?.get(doid);
+    const clid = state.objects?.get(doid);
     if (!RECEIVE_FIELD_BY_CLID[clid]) continue;
     // A late join installs its actor before replay so its create/state can be
     // composed, but it is not part of live gameplay until snapshot activation.
@@ -675,8 +681,9 @@ const hazardColliderBounds = (collider) => {
 
 /** Builds one actor grid for every sustained hazard sharing this timestamp. */
 const hazardVictimIndex = (session, now) => {
-  const actors = session.actors;
-  const cached = session.hazardVictimIndex;
+  const state = matchStateOf(session);
+  const actors = state.actors;
+  const cached = state.hazardVictimIndex;
   if (cached?.at === now && cached.actors === actors && cached.size === actors?.size) return cached;
 
   const cells = new Map();
@@ -697,7 +704,7 @@ const hazardVictimIndex = (session, now) => {
     }
   }
   const index = { at: now, actors, size: actors?.size ?? 0, cells };
-  session.hazardVictimIndex = index;
+  state.hazardVictimIndex = index;
   return index;
 };
 
@@ -1254,18 +1261,24 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
 /** Runs the authoritative projectile clock for one active dungeon session. */
 export const startTrapProjectiles = (session) => {
   let previous = Date.now();
-  const timer = setInterval(() => {
+  const scope = session.floorScope;
+  const tick = () => {
     const now = Date.now();
     const elapsed = (now - previous) / 1000;
     previous = now;
-    tickTrapProjectiles(session, elapsed).catch((error) =>
+    const run = () => tickTrapProjectiles(session, elapsed);
+    const operation = worldOf(session)?.withOutputBatch(run) ?? run();
+    Promise.resolve(operation).catch((error) =>
       warn(`[${session.id}] trap projectiles: ${error.message}`)
     );
-  }, config.projectileTickMs);
-  timer.unref?.();
+  };
+  const timer = scope
+    ? scope.interval(tick, config.projectileTickMs)
+    : setInterval(tick, config.projectileTickMs);
+  if (!scope) timer.unref?.();
   info(`[${session.id}] trap projectiles ticking every ${config.projectileTickMs}ms`);
   return () => {
-    clearInterval(timer);
+    cancelScopedTimer(scope, timer, clearInterval);
     session.activeTrapProjectiles = [];
   };
 };
@@ -1483,17 +1496,18 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
    */
   const clocks = (session.damageOverTimeByBuff ??= new Map());
   const existing = clocks.get(buffDoid);
+  const scope = session.floorScope;
   if (existing) {
-    clearInterval(existing);
+    cancelScopedTimer(scope, existing, clearInterval);
     session.damageOverTimeTimers?.delete(existing);
   }
 
   let remaining = ticks;
-  const timer = setInterval(() => {
+  const tick = () => {
     const actor = session.actors?.get(victimDoid);
     const done = !actor || actor.dead || !session.dungeonActive || remaining <= 0;
     if (done) {
-      clearInterval(timer);
+      cancelScopedTimer(scope, timer, clearInterval);
       session.damageOverTimeTimers?.delete(timer);
       clocks.delete(buffDoid);
       return;
@@ -1522,8 +1536,9 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
         colorType,
       })
     );
-  }, 1000);
-  timer.unref?.();
+  };
+  const timer = scope ? scope.interval(tick, 1000) : setInterval(tick, 1000);
+  if (!scope) timer.unref?.();
   session.damageOverTimeTimers ??= new Set();
   session.damageOverTimeTimers.add(timer);
   clocks.set(buffDoid, timer);
@@ -2174,8 +2189,10 @@ export const performNpcAttack = async (
       cancelTimers.push(() => session.combatClock?.clearTimeout?.(handle));
       return;
     }
-    const handle = setTimeout(invoke, delay);
-    cancelTimers.push(() => clearTimeout(handle));
+    const scope = session.floorScope;
+    const handle = scope ? scope.timeout(invoke, delay) : setTimeout(invoke, delay);
+    if (!scope) handle.unref?.();
+    cancelTimers.push(() => cancelScopedTimer(scope, handle, clearTimeout));
   };
   const report = (error) =>
     warn(`npc attack ${attackerDoid}: ${error.stack ?? error.message ?? error}`);

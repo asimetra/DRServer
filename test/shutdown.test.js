@@ -28,6 +28,7 @@ test("graceful shutdown closes listeners and waits for dungeon/account writes", 
     servers: () => [server, null],
     sessions: () => [session],
     waitForWrites: async () => events.push(["writes drained"]),
+    closeServices: async () => events.push(["services closed"]),
     releaseProcessLock: async () => events.push(["process lock released"]),
     closeStorage: async () => events.push(["storage closed"]),
   });
@@ -44,8 +45,9 @@ test("graceful shutdown closes listeners and waits for dungeon/account writes", 
 
   releaseDungeonSave();
   await first;
-  assert.deepEqual(events.slice(-4), [
+  assert.deepEqual(events.slice(-5), [
     ["dungeon saved"],
+    ["services closed"],
     ["writes drained"],
     ["process lock released"],
     ["storage closed"],

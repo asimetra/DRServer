@@ -179,6 +179,44 @@ export class DungeonMatchRegistry {
     return true;
   }
 
+  /**
+   * A match admitted somewhere else, run here.
+   *
+   * With matches in workers, admission — capacity, the public index, the
+   * floor-zero rule — stays with the main thread's registry, and the worker
+   * running the dungeon keeps a copy of the record under the same id. The copy
+   * is never searched for, so it stays out of the public index; it exists so
+   * that leaving, finishing and closing work on the worker exactly as they do
+   * in one thread.
+   */
+  adopt({ id, mapNodeId, group = "", privateMatch = false, floorIndex = 0, state = "active" }) {
+    const existing = this.matches.get(Number(id));
+    if (existing) return existing;
+    const match = {
+      id: Number(id),
+      mapNodeId: Number(mapNodeId),
+      group: String(group ?? ""),
+      private: Boolean(privateMatch),
+      floorIndex: Number(floorIndex) || 0,
+      members: new Set(),
+      privilegedMembers: new Set(),
+      state,
+      createdAt: Date.now(),
+      world: null,
+    };
+    this.matches.set(match.id, match);
+    return match;
+  }
+
+  /** Puts an already admitted member into an adopted match, without asking again. */
+  attach(match, session, { privileged = false } = {}) {
+    match.members.add(session);
+    if (privileged) match.privilegedMembers?.add(session);
+    session.dungeonMatch = match;
+    if (session.accountId) this.matchByAccount.set(session.accountId, match);
+    return match;
+  }
+
   remove(session) {
     const match = session?.dungeonMatch ?? this.matchByAccount.get(session?.accountId);
     if (!match) return null;

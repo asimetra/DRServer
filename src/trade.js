@@ -1,5 +1,5 @@
-import { loadAccount, saveAccounts, withTwoAccountLocks } from "./accounts.js";
-import { heldAccount } from "./account-registry.js";
+import { accountInPlay, loadAccount, saveAccounts, withTwoAccountLocks } from "./accounts.js";
+import { defineAccountOperation } from "./account-operations.js";
 import { occupiedSlots, storageLimit } from "./inventory-space.js";
 import { info } from "./log.js";
 
@@ -139,7 +139,7 @@ const describe = (taken) =>
  * those weapons in a run that is still going, and the hero's statistics were
  * settled when they walked in.
  */
-export const settleTrade = async ({ parties } = {}) => {
+const settleTradeHere = async ({ parties } = {}) => {
   if (!Array.isArray(parties) || parties.length !== 2) {
     throw refuse("bad_offer", "a trade has exactly two parties");
   }
@@ -150,7 +150,7 @@ export const settleTrade = async ({ parties } = {}) => {
   }
 
   for (const id of [firstId, secondId]) {
-    if (heldAccount(id)) {
+    if (accountInPlay(id)) {
       throw refuse("in_dungeon", `account ${id} is in a dungeon`);
     }
   }
@@ -162,7 +162,7 @@ export const settleTrade = async ({ parties } = {}) => {
     // Checked again inside the locks: a run can begin between the first look
     // and here, and this is the one that decides.
     for (const id of [firstId, secondId]) {
-      if (heldAccount(id)) throw refuse("in_dungeon", `account ${id} is in a dungeon`);
+      if (accountInPlay(id)) throw refuse("in_dungeon", `account ${id} is in a dungeon`);
     }
 
     const fromFirst = gather(first, parties[0]);
@@ -195,3 +195,12 @@ export const settleTrade = async ({ parties } = {}) => {
     };
   });
 };
+
+/**
+ * Run where its accounts live. A trade with somebody in a dungeon on a match
+ * worker is refused there, by the same rule, as `in_dungeon`; see
+ * account-operations.js.
+ */
+export const settleTrade = defineAccountOperation("trade.settle", settleTradeHere, {
+  errors: [TradeRefused],
+});

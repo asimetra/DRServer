@@ -11,7 +11,7 @@ import { attackForConstant } from "../gamemaster.js";
 import { grantBuff } from "./buffs.js";
 import { cancelFloorFailing } from "./floorstate.js";
 import { heroManaPointsUpdate, queueAccountSave } from "./rewards.js";
-import { loadAccount } from "../accounts.js";
+import { matchHost } from "./match-host.js";
 import { heroMembersOf, memberForHero } from "./match-world.js";
 import { RULE, noteViolation } from "./security-events.js";
 
@@ -204,7 +204,7 @@ const stackRow = (account, stackId) =>
 const refreshStackables = async (session) => {
   const id = session.dungeonAccount?.id ?? session.accountId;
   if (!id || !session.dungeonAccount) return;
-  const fresh = await loadAccount(id);
+  const fresh = await matchHost().loadAccount(id);
   if (fresh?.account_stackables) {
     session.dungeonAccount.account_stackables = fresh.account_stackables;
   }

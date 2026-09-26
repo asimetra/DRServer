@@ -198,8 +198,19 @@ that has to match somewhere else — `ODS_INTERNAL_TOKEN` and the website's
 | `ODS_INTERNAL_HOST` / `ODS_INTERNAL_PORT` | `127.0.0.1` / `8081` | Internal API bind address |
 | `ODS_ALLOW_INSECURE_INTERNAL` | disabled | Permit acknowledged cleartext internal binding outside loopback |
 | `ODS_DUNGEON` | enabled | Set `0` to refuse dungeon entry cleanly |
+| `ODS_MATCH_WORKERS` | `0` | Threads that run whole matches (at most 16); `auto` uses up to four, leaving one core to the main thread, and none on a single core |
+| `ODS_MATCH_WORKER_HANG_MS` | `5000` | How long a match worker may stop turning over before it is replaced and its players sent home |
 
 See [config/README.md](config/README.md) for the complete configuration model.
+
+With match workers, each dungeon runs whole in one worker thread: its world,
+AI, traps and rewards, and the account of every player in it, which is leased
+to that worker for the run. The main thread keeps the sockets, login, the
+MatchMaker and presence, forwards dungeon packets and writes back the frames in
+order. Under the load tool at 500 players in 200 dungeons, four workers took
+heartbeat p99 from 41 ms to 1–3 ms. It is off by default until it has been
+played on with the real client. The design and its limits are described at the top of
+`src/socket/match-worker-pool.js` and `src/socket/match-worker-thread.js`.
 
 ## Tests
 

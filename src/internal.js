@@ -4,6 +4,7 @@ import { BOARDS, boardFor, runsSince, standingsFor, titleFor } from "./leaderboa
 import { STAT_CAP, heroLevel, statPointsEarned } from "./progression.js";
 import { loadGameMaster, weaponIconFor } from "./gamemaster.js";
 import { presenceSummary } from "./socket/presence.js";
+import { activeMatchWorkerPool } from "./socket/match-worker-service.js";
 import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
 import { NameRefused, accountIdNamed, checkName, nameKey, nameTaken, tidyName } from "./account-names.js";
@@ -951,8 +952,35 @@ const readStatus = async (req) => {
   });
 };
 
+/** GET /internal/v1/match-workers — how the matches are spread, when workers run them. */
+const readMatchWorkers = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+  const pool = activeMatchWorkerPool();
+  if (!pool) return json({ workers: [], enabled: false });
+  return json({ enabled: true, workers: pool.distribution() });
+};
+
+/**
+ * POST /internal/v1/match-workers/:index/restart — stop one as a crash would.
+ * Its players go home and a fresh worker takes its place; see restartWorker.
+ */
+const restartMatchWorker = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+  const pool = activeMatchWorkerPool();
+  if (!pool) return json({ error: "match workers are off" }, 409);
+  const index = Number(capture);
+  if (!Number.isSafeInteger(index) || index < 0) return json({ error: "index must be a worker number" }, 400);
+  const outcome = pool.restartWorker(index);
+  if (outcome.error) return json(outcome, outcome.error === "no such worker" ? 404 : 409);
+  return json(outcome, 202);
+};
+
 export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/status", handler: readStatus },
+  { method: "GET", pattern: "/internal/v1/match-workers", handler: readMatchWorkers },
+  { method: "POST", pattern: "/internal/v1/match-workers/:index/restart", handler: restartMatchWorker },
   { method: "GET", pattern: "/internal/v1/leaderboards/:metric", handler: readBoard },
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },

@@ -33,11 +33,29 @@ import {
 } from "./combat.js";
 import { hasLineOfSight, isPositionBlocked, nearestClearPosition } from "./navigation.js";
 import { inFrontOf, worldColliders } from "./heading.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 /** One server simulation turn around creation, measured from official traffic. */
 const PLACEABLE_ACTIVATION_DELAY_MS = 80;
 /** Lets the final rendered frame survive the timer that notices completion. */
 const PLACEABLE_RETIRE_GRACE_MS = 50;
+
+const floorTimeout = (session, callback, delay) => {
+  const scope = session.floorScope;
+  const timer = scope ? scope.timeout(callback, delay) : setTimeout(callback, delay);
+  if (!scope) timer.unref?.();
+  return timer;
+};
+
+const floorInterval = (session, callback, delay) => {
+  const scope = session.floorScope;
+  const timer = scope ? scope.interval(callback, delay) : setInterval(callback, delay);
+  if (!scope) timer.unref?.();
+  return timer;
+};
+
+const cancelFloorTimer = (session, timer, clear = clearTimeout) =>
+  cancelScopedTimer(session.floorScope, timer, clear);
 
 /** The client advances an authored frame clock at choreography.playSpeed. */
 export const timelineDelayMs = (frame, playSpeed = 1) => {
@@ -215,7 +233,7 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
    */
   live.beats ??= [];
   for (const [at, frameColliders] of beats) {
-    const timer = setTimeout(() => {
+    const timer = floorTimeout(session, () => {
       live.beats = live.beats?.filter((pending) => pending !== timer);
       if (!session.dungeonActive || session.floorDoid !== live.floorDoid) return;
       const caught = placeableVictims(session, doid, frameColliders);
@@ -227,7 +245,6 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
         weapon: live.heroWeapon,
       }).catch((error) => warn(`[${session.id}] ${attack.Constant}: ${error.message}`));
     }, at);
-    timer.unref?.();
     live.beats.push(timer);
   }
 
@@ -247,7 +264,7 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
    * spawn nothing and simply explode.
    */
   for (const action of await spawnNpcActions(attack.AttackTimeline)) {
-    setTimeout(() => {
+    floorTimeout(session, () => {
       if (!session.dungeonActive || session.floorDoid !== live.floorDoid) return;
       spawnPlaceable(session, {
         action,
@@ -262,7 +279,7 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
       }).catch((error) =>
         warn(`[${session.id}] ${attack.Constant} spawn failed: ${error.message}`)
       );
-    }, timelineDelayMs(action.frame, playSpeed)).unref?.();
+    }, timelineDelayMs(action.frame, playSpeed));
   }
   return hits;
 };
@@ -274,9 +291,9 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
 const expirePlaceable = async (session, doid) => {
   const live = session.placeables?.get(doid);
   if (!live) return;
-  clearInterval(live.ticker);
-  clearTimeout(live.activation);
-  clearTimeout(live.expiry);
+  cancelFloorTimer(session, live.ticker, clearInterval);
+  cancelFloorTimer(session, live.activation);
+  cancelFloorTimer(session, live.expiry);
   session.placeables.delete(doid);
 
   if (session.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
@@ -336,10 +353,9 @@ const tickPlaceable = async (session, doid) => {
     if (live.suicideMs === null) return;
 
     live.spent = true;
-    clearInterval(live.ticker);
+    cancelFloorTimer(session, live.ticker, clearInterval);
     live.ticker = null;
-    const timer = setTimeout(() => expireSafely(session, doid), live.suicideMs);
-    timer.unref?.();
+    const timer = floorTimeout(session, () => expireSafely(session, doid), live.suicideMs);
     live.expiry = timer;
   } finally {
     live.busy = false;
@@ -608,14 +624,12 @@ export const spawnPlaceable = async (
         lifetimeMs > firstAttackDelayMs + beatMs &&
         session.placeables.has(doid)
       ) {
-        live.ticker = setInterval(() => tickSafely(session, doid), beatMs);
-        live.ticker.unref?.();
+        live.ticker = floorInterval(session, () => tickSafely(session, doid), beatMs);
       }
     };
 
     if (firstAttackDelayMs > 0) {
-      live.activation = setTimeout(beginAttacking, firstAttackDelayMs);
-      live.activation.unref?.();
+      live.activation = floorTimeout(session, beginAttacking, firstAttackDelayMs);
     } else {
       await beginAttacking();
     }
@@ -654,7 +668,7 @@ export const spawnPlaceable = async (
    * for each on the clock that starts with this delayed choreography.
    */
   if (deathOnly) {
-    live.activation = setTimeout(() => {
+    live.activation = floorTimeout(session, () => {
       live.activation = null;
       if (!session.dungeonActive || session.floorDoid !== live.floorDoid) return;
       if (session.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
@@ -668,11 +682,9 @@ export const spawnPlaceable = async (
         `${live.constant} activation`
       );
     }, PLACEABLE_ACTIVATION_DELAY_MS);
-    live.activation.unref?.();
   }
 
-  live.expiry = setTimeout(() => expireSafely(session, doid), lifetimeMs);
-  live.expiry.unref?.();
+  live.expiry = floorTimeout(session, () => expireSafely(session, doid), lifetimeMs);
 
   info(
     `[${session.id}] placed ${npc.Constant} for ${lifetimeMs}ms` +
@@ -948,7 +960,8 @@ export const schedulePlaceables = async (
   const placementGroup = { positions: [] };
 
   for (const action of actions) {
-    const timer = setTimeout(
+    const timer = floorTimeout(
+      session,
       () => {
         session.placeableSpawnTimers?.delete(timer);
         if (!session.dungeonActive || session.floorDoid !== floorDoid) return;
@@ -958,7 +971,6 @@ export const schedulePlaceables = async (
       },
       timelineDelayMs(action.frame, playSpeed)
     );
-    timer.unref?.();
     session.placeableSpawnTimers ??= new Set();
     session.placeableSpawnTimers.add(timer);
   }
@@ -967,14 +979,14 @@ export const schedulePlaceables = async (
 
 /** Clears pending spawns and everything still standing, on teardown. */
 export const clearDungeonPlaceables = (session) => {
-  for (const timer of session.placeableSpawnTimers ?? []) clearTimeout(timer);
+  for (const timer of session.placeableSpawnTimers ?? []) cancelFloorTimer(session, timer);
   session.placeableSpawnTimers?.clear();
   for (const live of session.placeables?.values() ?? []) {
-    clearInterval(live.ticker);
-    clearTimeout(live.activation);
-    for (const beat of live.beats ?? []) clearTimeout(beat);
+    cancelFloorTimer(session, live.ticker, clearInterval);
+    cancelFloorTimer(session, live.activation);
+    for (const beat of live.beats ?? []) cancelFloorTimer(session, beat);
     live.beats = [];
-    clearTimeout(live.expiry);
+    cancelFloorTimer(session, live.expiry);
   }
   session.placeables?.clear();
 };

@@ -12,7 +12,7 @@ import { CLID } from "./opcodes.js";
 import { COMMAND_PREFIX, commands, define, rankOf } from "./commands.js";
 import { ROLE, roleName } from "./roles.js";
 import { hitPointsUpdate } from "./combat.js";
-import { sayGlobally } from "./global-chat.js";
+import { matchHost } from "./match-host.js";
 import { heroPositionUpdate } from "./objects.js";
 import { damageTurnedAside } from "./combat.js";
 import { buffMultiplierFor } from "./buffs.js";
@@ -72,11 +72,11 @@ export const registerBuiltinCommands = () => {
     role: ROLE.PLAYER,
     usage: "<message>",
     summary: "say something to everyone, wherever they are",
-    run: ({ session, args, reply }) => {
+    run: async ({ session, args, reply }) => {
       const text = args.join(" ").trim();
       if (!text) throw new Error(`usage: ${COMMAND_PREFIX}g <message>`);
 
-      const heard = sayGlobally(session, text);
+      const heard = await matchHost().sayGlobally(session, text);
       // Said rather than counted silently: with nobody else on, the difference
       // between "it worked" and "it went nowhere" is the whole message.
       if (!heard) reply("nobody else is on a floor to hear that");

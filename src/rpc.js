@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { withAccountLock } from "./accounts.js";
+import { AccountLeasedError, withAccountLock } from "./accounts.js";
 import { unimplemented, warn } from "./log.js";
 
 /**
@@ -32,6 +32,53 @@ export const register = (key, handler, { account = 0, locks = true } = {}) =>
   handlers.set(key, { handler, account, locks });
 
 /**
+ * Where a call goes when its account is in a dungeon on a match worker.
+ *
+ * Unset in the ordinary server. With workers, the live object of an account in
+ * a dungeon exists only on that worker, so the call is run there — against the
+ * same object the run is changing, exactly as it would be here. `ownerOf`
+ * names the worker holding an account, or null; `forward` runs the dispatch on
+ * it and answers what it answered.
+ */
+let forwarder = null;
+
+export const installRpcForwarder = (next) => {
+  const previous = forwarder;
+  forwarder = next ?? null;
+  return previous;
+};
+
+/**
+ * Runs the call where its accounts live.
+ *
+ * Its own account decides first. Another account it touches is only found out
+ * when the handler reaches for its lock, and that is early enough: nothing is
+ * written before a lock is held, so the call is sent whole to that account's
+ * owner and starts again there. Once only — a call whose two accounts are in
+ * dungeons on two different workers has nowhere it can run whole, and is
+ * refused with the error that says so.
+ */
+const dispatchWhereOwned = async ({ service, method, run, params, account, forwarded }) => {
+  if (!forwarder || forwarded) return run();
+  const owner = account === null ? null : forwarder.ownerOf(Number(params?.[account]));
+  if (owner !== null && owner !== undefined) {
+    return forwarder.forward(owner, service, method, params, {
+      accountId: Number(params?.[account]),
+      own: true,
+    });
+  }
+  try {
+    return await run();
+  } catch (problem) {
+    if (!(problem instanceof AccountLeasedError)) throw problem;
+    return forwarder.forward(problem.owner, service, method, params, {
+      accountId: problem.accountId,
+      own: false,
+    });
+  }
+};
+
+/**
  * Dispatches a decoded JSON-RPC request. Returns the value for `result`.
  * Throws to produce a JSON-RPC error response.
  *
@@ -41,7 +88,7 @@ export const register = (key, handler, { account = 0, locks = true } = {}) =>
  * write another number there could spend somebody else's gold with a token of
  * their own. So the two have to be the same number.
  */
-export const dispatch = async (service, method, params, caller = null) => {
+export const dispatch = async (service, method, params, caller = null, { forwarded = false } = {}) => {
   const key = `${service}/${method}`;
   const entry = handlers.get(key);
 
@@ -72,10 +119,10 @@ export const dispatch = async (service, method, params, caller = null) => {
      * account, and nothing here is hot enough for the serialisation to matter.
      */
     const held = Number(params?.[account]);
-    if (account !== null && locks && Number.isFinite(held)) {
-      return withAccountLock(held, () => handler(params ?? []));
-    }
-    return handler(params ?? []);
+    const run = account !== null && locks && Number.isFinite(held)
+      ? () => withAccountLock(held, () => handler(params ?? []))
+      : () => handler(params ?? []);
+    return dispatchWhereOwned({ service, method, run, params, account, forwarded });
   }
 
   if (config.permissive) {

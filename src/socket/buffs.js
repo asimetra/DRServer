@@ -4,6 +4,7 @@ import { warn } from "../log.js";
 import { CLID, OP } from "./opcodes.js";
 import { buffGenerate, objectDisable } from "./objects.js";
 import { PacketWriter } from "./packet.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 const FLID_HERO_REPORT_BUFF_EFFECT = 168;
 /** Official buff disables trail their authored duration by one ~100ms server turn. */
@@ -87,11 +88,11 @@ const multiplier = (value) =>
 
 const expireBuff = (session, doid) => {
   const timer = session.buffTimers?.get(doid);
-  if (timer) clearTimeout(timer);
+  if (timer) cancelScopedTimer(session.floorScope, timer, clearTimeout);
   session.buffTimers?.delete(doid);
   const damageTimer = session.damageOverTimeByBuff?.get(doid);
   if (damageTimer) {
-    clearInterval(damageTimer);
+    cancelScopedTimer(session.floorScope, damageTimer, clearInterval);
     session.damageOverTimeTimers?.delete(damageTimer);
     session.damageOverTimeByBuff.delete(doid);
   }
@@ -235,8 +236,10 @@ const durationOf = (buff, bonusSeconds) =>
 /** Starts the one lifetime clock belonging to a distributed buff object. */
 const startBuffTimer = (session, doid, durationMs) => {
   if (!durationMs) return;
-  const timer = setTimeout(() => expireBuff(session, doid), durationMs);
-  timer.unref?.();
+  const scope = session.floorScope;
+  const expire = () => expireBuff(session, doid);
+  const timer = scope ? scope.timeout(expire, durationMs) : setTimeout(expire, durationMs);
+  if (!scope) timer.unref?.();
   session.buffTimers ??= new Map();
   session.buffTimers.set(doid, timer);
 };
@@ -377,10 +380,14 @@ export const hasAbility = (session, actorDoid, ability) => {
 
 /** Stops timers before a floor/object teardown; dungeon.js emits the disables. */
 export const clearDungeonBuffs = (session) => {
-  for (const timer of session.buffTimers?.values() ?? []) clearTimeout(timer);
+  for (const timer of session.buffTimers?.values() ?? []) {
+    cancelScopedTimer(session.floorScope, timer, clearTimeout);
+  }
   session.buffTimers?.clear();
   // Damage-over-time runs on its own interval per victim — see combat.js.
-  for (const timer of session.damageOverTimeTimers ?? []) clearInterval(timer);
+  for (const timer of session.damageOverTimeTimers ?? []) {
+    cancelScopedTimer(session.floorScope, timer, clearInterval);
+  }
   session.damageOverTimeTimers?.clear();
   session.damageOverTimeByBuff?.clear();
   session.activeBuffs?.clear();

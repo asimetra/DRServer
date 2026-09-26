@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     ignore_friends         TEXT        NOT NULL DEFAULT '[]',
     friend_requests        JSONB       NOT NULL DEFAULT '[]'::jsonb,
     infinite_progress      JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    gifts                  JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    gift_sends             JSONB       NOT NULL DEFAULT '[]'::jsonb,
     admin_flags            BIGINT      NOT NULL DEFAULT 0,
     account_flags          BIGINT      NOT NULL DEFAULT 0,
     completed_dungeons     INTEGER     NOT NULL DEFAULT 0,
@@ -327,5 +329,10 @@ ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS infinite_progress JSONB 
 -- not know which bits that field means to it, and guessing at somebody else's
 -- format is how a client stops working.
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS market_barred BOOLEAN NOT NULL DEFAULT false;
+-- Gifts waiting to be opened, and whom this account has gifted lately (the
+-- daily limit). Both lived only in account files; against this database they
+-- were dropped on every save and a gift never arrived.
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gifts JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gift_sends JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);

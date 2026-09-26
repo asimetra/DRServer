@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
+import { availableParallelism } from "node:os";
 import { readJsonFile } from "./json-file.js";
 import { envSetting } from "./env.js";
 
@@ -11,6 +12,29 @@ const defaultConfigFile = path.join(serverRoot, "config", "server.defaults.json"
 const asInt = (value, fallback) => {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+/**
+ * `auto` leaves one core to the main thread and uses up to four for matches.
+ * Four carried 700 simulated players in 280 dungeons at about a third busy
+ * each; more mostly adds another GameMaster's worth of memory per thread.
+ */
+const MAX_AUTO_MATCH_WORKERS = 4;
+
+/**
+ * The most that may be asked for. Past this the threads mostly add memory, and
+ * the database connections they open together (see storage/postgres.js) stop
+ * fitting under the common limit of a hundred.
+ */
+export const MAX_MATCH_WORKERS = 16;
+
+const asWorkerCount = (value, fallback = 0) => {
+  const selected = value ?? fallback;
+  if (String(selected).toLowerCase() === "auto") {
+    // One core means nothing to leave the main thread: no workers at all.
+    return Math.max(0, Math.min(MAX_AUTO_MATCH_WORKERS, availableParallelism() - 1));
+  }
+  return Math.max(0, Math.min(MAX_MATCH_WORKERS, asInt(selected, 0)));
 };
 
 /** Public ODS_* settings take precedence; DR_* remains a compatibility alias. */
@@ -393,6 +417,28 @@ export const loadServerConfig = (environment = process.env) => {
 
     /** Minimum terminal log level: info, warn, error or silent. */
     logLevel: String(setting(environment, "LOG_LEVEL") ?? defaults.logLevel ?? "info").toLowerCase(),
+
+    /**
+     * Threads that run whole matches, the main thread keeping sockets, login,
+     * the MatchMaker and presence. Zero runs everything in one thread, which is
+     * the default until the worker mode has been played on with the real
+     * client. match-worker-pool.js and match-worker-thread.js describe it.
+     */
+    matchWorkerCount: asWorkerCount(
+      setting(environment, "MATCH_WORKERS"),
+      defaults.matchWorkerCount
+    ),
+
+    /**
+     * How long a match worker's event loop may go without turning over before
+     * it is taken to be stuck, stopped, and its players sent home. It answers
+     * between tasks, so heavy work that yields never trips it; one synchronous
+     * task this long has already frozen every dungeon on the worker.
+     */
+    matchWorkerHangMs: Math.max(
+      1000,
+      asInt(setting(environment, "MATCH_WORKER_HANG_MS"), defaults.matchWorkerHangMs ?? 5000)
+    ),
 
     /** Hard per-socket cap for multiplayer broadcasts waiting in Node memory. */
     maxOutboundBufferBytes: Math.max(

@@ -7,7 +7,7 @@
  * it has the area/floor parents those objects require.
  */
 
-import { info } from "../log.js";
+import { info, warn } from "../log.js";
 import { config } from "../config.js";
 import { grantBuff } from "./buffs.js";
 import { hitPointsUpdate, stateUpdate } from "./combat.js";
@@ -31,7 +31,7 @@ import {
   playerOwnerGenerate,
 } from "./objects.js";
 import { CLID, TEAM } from "./opcodes.js";
-import { setPresenceLocation } from "./presence.js";
+import { matchHost } from "./match-host.js";
 import { startManaRegen } from "./regen.js";
 import {
   PLAYER_REQUEST_ENTRY,
@@ -40,6 +40,7 @@ import {
 } from "./entry-handshake.js";
 import { infiniteFloorGold, infiniteRewards } from "../infinite.js";
 import { noteInfiniteFloorReached } from "./rewards.js";
+import { LocalMatchExecutor } from "./match-executor.js";
 
 const directSend = (member, frame) => {
   if (!member || member.closed || member.socket?.destroyed || typeof member.send !== "function") {
@@ -222,7 +223,7 @@ const joinDungeonMatchLocked = async (
   session.dungeonZone = world.dungeonZone ?? 10;
   session.mapNodeId = match.mapNodeId;
   session.floorIndex = world.floorIndex ?? match.floorIndex ?? 0;
-  setPresenceLocation(session, match.mapNodeId);
+  matchHost().setPresenceLocation(session, match.mapNodeId);
   // Bound for teardown, but deliberately absent from liveMembers until the
   // ordered snapshot has created this member's area/floor/owner objects.
   const context = world.contextFor(session, { activate: false });
@@ -345,7 +346,7 @@ export const joinDungeonMatch = async (session, result, request, options = {}) =
   }
 };
 
-const disablePriority = (clid) => {
+export const disablePriority = (clid) => {
   if (clid === CLID.HeroGameObject) return 0;
   if (clid === CLID.DistributedDungeonFloor) return 2;
   if (clid === CLID.DistributedDungionArea) return 3;
@@ -442,4 +443,30 @@ export const leaveDungeonSession = (
     refreshFloorFailing(world.contextFor(peers[0]));
   }
   return true;
+};
+
+/**
+ * Matches run in this thread unless match workers are started, which swap in
+ * the executor from match-worker-pool.js. Callers hold `matchExecutor` and
+ * never learn which one answered. Defined after both runtime functions to keep
+ * the existing dungeon/door module cycle initialization-safe.
+ */
+const localMatchExecutor = new LocalMatchExecutor({
+  joinRuntime: joinDungeonMatch,
+  leaveRuntime: leaveDungeonSession,
+});
+let activeMatchExecutor = localMatchExecutor;
+
+export const matchExecutor = Object.freeze({
+  join: (...args) => activeMatchExecutor.join(...args),
+  leave: (...args) => activeMatchExecutor.leave(...args),
+  /** Hands a dungeon packet to the thread running the session's match; false when that is this one. */
+  forward: (session, body) => activeMatchExecutor.forward?.(session, body) ?? false,
+});
+
+/** Replaces the executor, returning the previous one; null puts the local one back. */
+export const installMatchExecutor = (next) => {
+  const previous = activeMatchExecutor;
+  activeMatchExecutor = next ?? localMatchExecutor;
+  return previous;
 };

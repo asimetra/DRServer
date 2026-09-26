@@ -23,6 +23,18 @@ test("JSON defaults make the server independent from the client repository", () 
   assert.equal(loaded.maxOutboundBufferBytes, 4 * 1024 * 1024);
   assert.equal(loaded.allowInsecureInternal, false);
   assert.equal(loaded.logLevel, "info");
+  assert.equal(loaded.matchWorkerCount, 0);
+});
+
+test("auto match workers leave the main thread a core and stop at four", async () => {
+  const { availableParallelism } = await import("node:os");
+  const loaded = loadServerConfig({ ODS_MATCH_WORKERS: "auto" });
+  assert.equal(loaded.matchWorkerCount, Math.max(0, Math.min(4, availableParallelism() - 1)));
+});
+
+test("an explicit match worker count stops at sixteen", () => {
+  assert.equal(loadServerConfig({ ODS_MATCH_WORKERS: "64" }).matchWorkerCount, 16);
+  assert.equal(loadServerConfig({ ODS_MATCH_WORKERS: "-3" }).matchWorkerCount, 0);
 });
 
 test("environment values override JSON defaults", () => {
@@ -33,6 +45,7 @@ test("environment values override JSON defaults", () => {
     DR_DUNGEON: "0",
     DR_NPC_AGGRO_RADIUS: "2400",
     DR_LOG_LEVEL: "warn",
+    DR_MATCH_WORKERS: "4",
   });
 
   assert.equal(loaded.host, "0.0.0.0");
@@ -41,6 +54,7 @@ test("environment values override JSON defaults", () => {
   assert.equal(loaded.dungeonsEnabled, false);
   assert.equal(loaded.npcAggroRadius, 2400);
   assert.equal(loaded.logLevel, "warn");
+  assert.equal(loaded.matchWorkerCount, 4);
 });
 
 test("public ODS settings take precedence over legacy DR aliases", () => {

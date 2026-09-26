@@ -2,7 +2,7 @@ import { PacketWriter } from "./packet.js";
 import { OP } from "./opcodes.js";
 import { info, warn } from "../log.js";
 import { ChestError, openChest } from "../chests.js";
-import { nextObjectId } from "../accounts.js";
+import { matchHost } from "./match-host.js";
 import { queueAccountSave } from "./rewards.js";
 import { membersOf } from "./match-world.js";
 
@@ -131,7 +131,7 @@ const treasureAt = (session, slot) => {
  */
 const grantChest = async (account, treasure) => {
   const chest = {
-    id: await nextObjectId(account),
+    id: await matchHost().nextObjectId(account),
     account_id: account.id,
     chest_id: treasure.chestId,
     is_new: 1,
@@ -254,7 +254,7 @@ export const handleOpenChest = async (session, reader) => {
       account: request.account,
       chestInstanceId: chest.id,
       heroInstanceId: session.dungeonAvatar?.id,
-      nextId: () => nextObjectId(request.account),
+      nextId: () => matchHost().nextObjectId(request.account),
     });
     treasure.settled = "opened";
     info(

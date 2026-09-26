@@ -46,17 +46,30 @@ const canHear = (session) => Boolean(session?.playerDoid && session?.floorDoid);
 export const sayGlobally = (speaker, text) => {
   const account = Number(speaker?.accountId ?? 0);
   const name = speaker?.dungeonAccount?.name ?? `Player${account || "?"}`;
+  const heard = deliverGlobalLine({ account, name, text }, activeSessions());
+  info(`[${speaker?.id ?? "?"}] global: ${name}: ${text} (${heard} heard)`);
+  return heard;
+};
+
+/**
+ * The delivering half, over whichever connections this thread holds.
+ *
+ * Separate so that a match worker can say a line to the players in its own
+ * dungeons: the roll of everybody lives on the main thread, and a line said in
+ * one worker reaches the others by being handed to each of them in turn.
+ */
+export const deliverGlobalLine = ({ account, name, text }, connections) => {
   const id = voiceIdFor(account);
   let heard = 0;
 
-  for (const connection of activeSessions()) {
+  for (const connection of connections) {
     /**
      * By account rather than by identity. Presence holds *connections* and a
      * caller inside a dungeon holds a world *context* — two objects for one
      * player — so comparing references would never match and the speaker would
      * be told what they had just said.
      */
-    if (Number(connection.accountId) === account) continue;
+    if (Number(connection.accountId) === Number(account)) continue;
     // Chat belongs to whoever is on a floor, and a floor is a world context —
     // the raw connection has no objects of its own to speak through.
     const listener = connection.world?.contextFor?.(connection) ?? connection;
@@ -65,7 +78,5 @@ export const sayGlobally = (speaker, text) => {
     giveVoice(listener, { id, name });
     if (say(listener, id, text)) heard += 1;
   }
-
-  info(`[${speaker?.id ?? "?"}] global: ${name}: ${text} (${heard} heard)`);
   return heard;
 };

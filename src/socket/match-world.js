@@ -7,12 +7,16 @@
  */
 
 import { CLID, OP } from "./opcodes.js";
+import { LifecycleScope } from "./lifecycle-scope.js";
+import { warn } from "../log.js";
 
 const MATCH_WORLD = Symbol("match-world");
+const MATCH_STATE = Symbol("match-state");
 
 const SPECIAL_FIELDS = new Set([
   "member",
   "world",
+  "state",
   "send",
   "sendDirect",
   "broadcast",
@@ -32,6 +36,8 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "doobers",
   "dungeonActive",
   "dungeonEpoch",
+  "runScope",
+  "floorScope",
   "dungeonZone",
   "mapNodeId",
   "floorPlan",
@@ -131,6 +137,7 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const isSharedField = (key) => typeof key === "string" && MATCH_WORLD_SHARED_FIELDS.has(key);
 const isMatchWorld = (value) => Boolean(value?.[MATCH_WORLD]);
+export const isMatchState = (value) => Boolean(value?.[MATCH_STATE]);
 
 const activeMembersOf = (match) => {
   if (match?.members instanceof Set) return match.members;
@@ -181,14 +188,14 @@ const NPC_CREATE_TRANSFORM_END = NPC_CREATE_HEADING_OFFSET + 4;
  * visible spawn-position -> current-position teleport. This runs only while a
  * snapshot is requested; ordinary AI ticks keep their existing O(1) update.
  */
-const currentNpcCreateFrame = (world, entry) => {
+const currentNpcCreateFrame = (state, entry) => {
   if (
     entry.clid !== CLID.DistributedNPCGameObject ||
     entry.frame.length < NPC_CREATE_TRANSFORM_END
   ) {
     return null;
   }
-  const actor = world.actors.get(entry.doid);
+  const actor = state.actors.get(entry.doid);
   const x = Number(actor?.position?.x);
   const y = Number(actor?.position?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
@@ -260,55 +267,150 @@ const snapshotSharedState = (world, seedSession) => {
   world.actors = new Map(seedSession?.actors);
   world.doobers = new Map(seedSession?.doobers);
   for (const key of MATCH_WORLD_SHARED_FIELDS) {
-    if (key === "objects" || key === "actors" || key === "doobers") continue;
+    if (
+      key === "objects" ||
+      key === "actors" ||
+      key === "doobers" ||
+      key === "runScope" ||
+      key === "floorScope"
+    ) continue;
     if (hasOwn(seedSession ?? {}, key) && seedSession[key] !== undefined) {
       world[key] = seedSession[key];
     }
   }
 };
 
-const proxyHandlerFor = (world, member) => ({
-  get(_target, key) {
-    if (key === "member") return member;
-    if (key === "world") return world;
-    if (key === "send") return (frame) => world.publish(member, frame);
-    if (key === "sendDirect") return (frame) => world.sendDirect(member, frame);
-    if (key === "broadcast") return (frame, options) => world.broadcast(frame, options);
-    if (key === "allocateDoid") return world.allocateDoid.bind(world);
+/**
+ * Mutable gameplay state owned by one match.
+ *
+ * Network coordination, snapshots and membership stay on MatchWorld; account,
+ * socket and hero-owner details stay on the raw member session. The legacy
+ * context Proxy forwards known shared fields here while callers migrate to the
+ * explicit `state` namespace.
+ */
+export class MatchState {
+  constructor(match, seedSession, runScope) {
+    this[MATCH_STATE] = true;
+    this.match = match;
+    this.runScope = runScope;
+    this.floorScope = null;
+    let floorIndex = Number(seedSession?.floorIndex ?? match?.floorIndex ?? 0);
+    Object.defineProperty(this, "floorIndex", {
+      configurable: true,
+      enumerable: true,
+      get: () => floorIndex,
+      set: (value) => {
+        floorIndex = value;
+        if (this.match) this.match.floorIndex = value;
+      },
+    });
+    snapshotSharedState(this, seedSession);
+  }
 
-    const owner = isSharedField(key) ? world : member;
-    const value = owner?.[key];
-    return typeof value === "function" ? value.bind(owner) : value;
-  },
-  set(_target, key, value) {
-    if (key === "member" || key === "world") return false;
-    const owner = isSharedField(key) ? world : member;
-    owner[key] = value;
-    if (key === "floorIndex" && world.match) world.match.floorIndex = value;
-    return true;
-  },
-  deleteProperty(_target, key) {
-    if (key === "member" || key === "world") return false;
-    const owner = isSharedField(key) ? world : member;
-    return delete owner[key];
-  },
-  has(_target, key) {
-    if (SPECIAL_FIELDS.has(String(key))) return true;
-    const owner = isSharedField(key) ? world : member;
-    return key in owner;
-  },
-  ownKeys() {
-    return [...new Set([...Reflect.ownKeys(member), ...Reflect.ownKeys(world), ...SPECIAL_FIELDS])];
-  },
-  getOwnPropertyDescriptor(_target, key) {
-    if (SPECIAL_FIELDS.has(String(key))) {
-      return { configurable: true, enumerable: false };
-    }
-    const owner = isSharedField(key) ? world : member;
-    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
-    return descriptor ? { ...descriptor, configurable: true } : undefined;
-  },
-});
+  beginFloorScope() {
+    this.floorScope?.dispose();
+    this.floorScope = this.runScope.child(
+      `match:${this.match.id ?? "unknown"}:floor:${(this.floorIndex ?? 0) + 1}`
+    );
+    return this.floorScope;
+  }
+
+  endFloorScope() {
+    if (!this.floorScope) return false;
+    const disposed = this.floorScope.dispose();
+    this.floorScope = null;
+    return disposed;
+  }
+}
+
+const exposeStateFields = (world, state) => {
+  for (const key of MATCH_WORLD_SHARED_FIELDS) {
+    Object.defineProperty(world, key, {
+      configurable: false,
+      enumerable: true,
+      get: () => state[key],
+      set: (value) => {
+        state[key] = value;
+      },
+    });
+  }
+};
+
+/**
+ * Explicit pairing of one connection-owned member with one shared MatchState.
+ * The Proxy below is now only a legacy flat-field adapter around this object.
+ */
+export class MatchMemberContext {
+  constructor(world, member) {
+    Object.defineProperties(this, {
+      member: { configurable: true, value: member },
+      world: { configurable: true, value: world },
+      state: { configurable: true, value: world.state },
+      send: { configurable: true, value: (frame) => world.publish(member, frame) },
+      sendDirect: { configurable: true, value: (frame) => world.sendDirect(member, frame) },
+      broadcast: {
+        configurable: true,
+        value: (frame, options) => world.broadcast(frame, options),
+      },
+      allocateDoid: { configurable: true, value: (clid) => world.allocateDoid(clid) },
+    });
+  }
+}
+
+const proxyHandlerFor = (world, member) => {
+  const boundFunctions = new Map();
+  return {
+    get(target, key) {
+      if (SPECIAL_FIELDS.has(key)) return Reflect.get(target, key);
+
+      const owner = isSharedField(key) ? world.state : member;
+      const value = owner?.[key];
+      if (typeof value !== "function") return value;
+      const cached = boundFunctions.get(key);
+      if (cached?.source === value && cached.owner === owner) return cached.bound;
+      const bound = value.bind(owner);
+      boundFunctions.set(key, { source: value, owner, bound });
+      return bound;
+    },
+    set(_target, key, value) {
+      if (key === "member" || key === "world" || key === "state") return false;
+      boundFunctions.delete(key);
+      const owner = isSharedField(key) ? world.state : member;
+      owner[key] = value;
+      return true;
+    },
+    deleteProperty(_target, key) {
+      if (key === "member" || key === "world" || key === "state") return false;
+      boundFunctions.delete(key);
+      const owner = isSharedField(key) ? world.state : member;
+      return delete owner[key];
+    },
+    has(_target, key) {
+      if (SPECIAL_FIELDS.has(key)) return true;
+      const owner = isSharedField(key) ? world.state : member;
+      return key in owner;
+    },
+    ownKeys(target) {
+      return [
+        ...new Set([
+          ...Reflect.ownKeys(target),
+          ...Reflect.ownKeys(member),
+          ...Reflect.ownKeys(world.state).filter(isSharedField),
+          ...Reflect.ownKeys(world),
+          ...SPECIAL_FIELDS,
+        ]),
+      ];
+    },
+    getOwnPropertyDescriptor(target, key) {
+      if (SPECIAL_FIELDS.has(key)) {
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      }
+      const owner = isSharedField(key) ? world.state : member;
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      return descriptor ? { ...descriptor, configurable: true } : undefined;
+    },
+  };
+};
 
 export const createMatchWorld = (match, seedSession) => {
   if (isMatchWorld(match?.world)) return match.world;
@@ -319,9 +421,14 @@ export const createMatchWorld = (match, seedSession) => {
   const readyPromise = new Promise((resolve) => {
     settleReady = resolve;
   });
+  const runScope = new LifecycleScope(`match:${match.id ?? "unknown"}`, {
+    onError: (error, scope) => warn(`${scope.label} cleanup failed: ${error.message}`),
+  });
+  const state = new MatchState(match, seedSession, runScope);
   const world = {
     [MATCH_WORLD]: true,
     match,
+    state,
     active: true,
     destroyed: false,
     ready: false,
@@ -332,9 +439,17 @@ export const createMatchWorld = (match, seedSession) => {
     snapshotCreates: new Map(),
     snapshotUpdates: new Map(),
     snapshotClosure: null,
+    outputBatchDepth: 0,
+    outputQueues: new Map(),
     quiesced: false,
+    beginFloorScope() {
+      return this.state.beginFloorScope();
+    },
+    endFloorScope() {
+      return this.state.endFloorScope();
+    },
     allocateDoid(clid) {
-      return seedSession.allocateDoid.call(this, clid);
+      return seedSession.allocateDoid.call(this.state, clid);
     },
     observe(frame) {
       const body = bodyOf(frame);
@@ -359,7 +474,7 @@ export const createMatchWorld = (match, seedSession) => {
         if (body.length < 8) return false;
         const doid = body.readUInt32LE(2);
         const fieldId = body.readUInt16LE(6);
-        const clid = this.objects.get(doid);
+        const clid = this.state.objects.get(doid);
         // Current members must see the death animation, but a future member
         // must not recreate the corpse and immediately replay that animation.
         // The disable that follows a death would forget it anyway; this forgets
@@ -396,8 +511,54 @@ export const createMatchWorld = (match, seedSession) => {
     sendDirect(member, frame) {
       const send = directSendOf(member);
       if (!send || shouldSkipMember(member, null)) return false;
+      if (this.outputBatchDepth > 0) {
+        const frames = this.outputQueues.get(member);
+        if (frames) frames.push(frame);
+        else this.outputQueues.set(member, [frame]);
+        return true;
+      }
       send(frame);
       return true;
+    },
+    beginOutputBatch() {
+      this.outputBatchDepth += 1;
+      return this.outputBatchDepth;
+    },
+    flushOutputBatch() {
+      let sent = 0;
+      const queued = this.outputQueues;
+      this.outputQueues = new Map();
+      for (const [member, frames] of queued) {
+        if (shouldSkipMember(member, null) || !frames.length) continue;
+        const send = directSendOf(member);
+        if (!send) continue;
+        const socket = member.socket;
+        const corked = frames.length > 1 && typeof socket?.cork === "function";
+        if (corked) socket.cork();
+        try {
+          for (const frame of frames) {
+            if (send(frame) === false) break;
+            sent += 1;
+          }
+        } finally {
+          if (corked) socket.uncork?.();
+        }
+      }
+      return sent;
+    },
+    endOutputBatch() {
+      if (!(this.outputBatchDepth > 0)) return false;
+      this.outputBatchDepth -= 1;
+      if (this.outputBatchDepth === 0) this.flushOutputBatch();
+      return true;
+    },
+    async withOutputBatch(operation) {
+      this.beginOutputBatch();
+      try {
+        return await operation();
+      } finally {
+        this.endOutputBatch();
+      }
     },
     publish(member, frame) {
       const body = bodyOf(frame);
@@ -417,7 +578,7 @@ export const createMatchWorld = (match, seedSession) => {
 
       if (opcode === OP.CLIENT_OBJECT_UPDATE_FIELD && body.length >= 8) {
         const doid = body.readUInt32LE(2);
-        const clid = this.objects.get(doid);
+        const clid = this.state.objects.get(doid);
         // Remote PlayerGameObject has no owner basicCurrency field. Player
         // updates therefore remain direct; hero/shared-object state is visible.
         if (!clid || clid === CLID.PlayerGameObject) return this.sendDirect(member, frame);
@@ -445,7 +606,7 @@ export const createMatchWorld = (match, seedSession) => {
           (phase === "foundation" && infrastructure) ||
           (phase === "children" && !infrastructure)
         ) {
-          const currentNpc = currentNpcCreateFrame(this, entry);
+          const currentNpc = currentNpcCreateFrame(this.state, entry);
           frames.push(currentNpc ?? entry.frame);
           if (currentNpc) foldedNpcTransforms.add(entry.doid);
         }
@@ -478,11 +639,8 @@ export const createMatchWorld = (match, seedSession) => {
     },
     sendSnapshot(member, phase = "all") {
       let sent = 0;
-      const send = directSendOf(member);
-      if (!send || shouldSkipMember(member, null)) return sent;
       for (const frame of this.snapshotFrames(phase)) {
-        send(frame);
-        sent++;
+        if (this.sendDirect(member, frame)) sent++;
       }
       return sent;
     },
@@ -523,14 +681,20 @@ export const createMatchWorld = (match, seedSession) => {
       bindMember(this, member, { activate });
       const cached = this.contexts.get(member);
       if (cached) return cached;
-      const context = new Proxy({}, proxyHandlerFor(this, member));
+      const context = new Proxy(
+        new MatchMemberContext(this, member),
+        proxyHandlerFor(this, member)
+      );
       this.contexts.set(member, context);
       return context;
     },
     quiesce() {
+      const state = this.state;
       this.quiesced = true;
-      this.dungeonActive = false;
-      this.dungeonEpoch = (this.dungeonEpoch ?? 0) + 1;
+      state.dungeonActive = false;
+      state.dungeonEpoch = (state.dungeonEpoch ?? 0) + 1;
+      state.runScope.dispose();
+      state.floorScope = null;
 
       for (const key of ["stopTriggers", "stopAi", "stopTrapProjectiles"]) {
         if (typeof this[key] === "function") this[key]();
@@ -606,27 +770,72 @@ export const createMatchWorld = (match, seedSession) => {
       this.snapshotCreates.clear();
       this.snapshotUpdates.clear();
       this.snapshotClosure = null;
-      this.objects.clear();
-      this.actors.clear();
-      this.doobers.clear();
+      this.outputQueues.clear();
+      this.outputBatchDepth = 0;
+      this.state.objects.clear();
+      this.state.actors.clear();
+      this.state.doobers.clear();
       return true;
     },
   };
 
-  snapshotSharedState(world, seedSession);
+  exposeStateFields(world, state);
   bindMember(world, seedSession);
   match.world = world;
   return world;
 };
 
+/**
+ * Read with plain property access, not `hasOwn`.
+ *
+ * Hazard, projectile and AI ticks call this through `matchStateOf` for every
+ * actor they look at, and on a member context `hasOwn` is the Proxy's
+ * `getOwnPropertyDescriptor` trap — a fresh descriptor object per call. Under
+ * 500 players that was the largest single cost the Proxy added. `world` and
+ * `member` are special fields the trap answers from its own target, so a get
+ * returns the same object without the allocation.
+ */
 export const worldOf = (value) => {
+  if (!value) return null;
+  const direct = value.world;
+  if (direct !== undefined) return isMatchWorld(direct) ? direct : null;
   if (isMatchWorld(value)) return value;
-  if (value && hasOwn(value, "world")) return isMatchWorld(value.world) ? value.world : null;
-  if (value?.member && hasOwn(value.member, "world")) {
-    return isMatchWorld(value.member.world) ? value.member.world : null;
-  }
-  if (isMatchWorld(value?.dungeonMatch?.world)) return value.dungeonMatch.world;
-  return null;
+  const viaMember = value.member?.world;
+  if (viaMember !== undefined) return isMatchWorld(viaMember) ? viaMember : null;
+  const viaMatch = value.dungeonMatch?.world;
+  return isMatchWorld(viaMatch) ? viaMatch : null;
+};
+
+/** Explicit shared-state ownership; standalone sessions remain their own state. */
+export const matchStateOf = (value) => {
+  if (isMatchState(value)) return value;
+  return worldOf(value)?.state ?? value;
+};
+
+/** Explicit connection/member ownership for code leaving the compatibility Proxy. */
+export const memberSessionOf = (value) => value?.member ?? (isMatchWorld(value) ? null : value);
+
+/** Starts a new floor lifetime on a match world or a standalone test session. */
+export const beginFloorScope = (value) => {
+  const world = worldOf(value);
+  if (world) return world.beginFloorScope();
+  if (!value) return null;
+  value.runScope ??= new LifecycleScope(`session:${value.id ?? "unknown"}`);
+  value.floorScope?.dispose();
+  value.floorScope = value.runScope.child(
+    `session:${value.id ?? "unknown"}:floor:${(value.floorIndex ?? 0) + 1}`
+  );
+  return value.floorScope;
+};
+
+/** Ends only floor-owned work; the run scope remains available for summaries. */
+export const endFloorScope = (value) => {
+  const world = worldOf(value);
+  if (world) return world.endFloorScope();
+  if (!value?.floorScope) return false;
+  const disposed = value.floorScope.dispose();
+  value.floorScope = null;
+  return disposed;
 };
 
 export const membersOf = (value) => {
@@ -657,9 +866,8 @@ export const broadcastWorld = (value, frame, { except } = {}) => {
   for (const member of membersOf(value)) {
     if (shouldSkipMember(member, excluded)) continue;
     const send = directSendOf(member);
-    if (!send) continue;
-    send(frame);
-    sent += 1;
+    const delivered = world ? world.sendDirect(member, frame) : Boolean(send) && send(frame) !== false;
+    if (delivered) sent += 1;
   }
   return sent;
 };

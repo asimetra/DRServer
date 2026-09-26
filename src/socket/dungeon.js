@@ -67,7 +67,7 @@ import {
 } from "../pets.js";
 import { isStockedRoleMarker, stockFloor, tierHasEnemyPopulation } from "./population.js";
 import { preloadFor } from "./precache.js";
-import { acquireAccount } from "../accounts.js";
+import { matchHost } from "./match-host.js";
 import {
   activeInfiniteModifiers,
   infiniteDefinitionForNode,
@@ -134,13 +134,12 @@ import { envFlag, envSetting } from "../env.js";
 import { info, warn } from "../log.js";
 import { cancelDungeonSummary, removeHeroFromFloor } from "./summary.js";
 import { settleDungeonAccount } from "./settle-account.js";
-import { releaseAccount } from "../account-registry.js";
 import { spawnNpcRewards, spawnBossReward } from "./drops.js";
 import { clearDungeonBuffs, grantBuff } from "./buffs.js";
 import { clearDungeonPowerups, scheduleTimelineDoobers } from "./powerups.js";
 import { clearDungeonPlaceables, clearPlacementPermits } from "./placeables.js";
-import { setPresenceLocation } from "./presence.js";
 import { clearCooldowns } from "./cooldowns.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 import {
   PLAYER_REQUEST_ENTRY,
   PLAYER_REQUEST_HERO,
@@ -155,7 +154,13 @@ import {
   killAllEnemies,
   npcAttackChoreography,
 } from "./combat.js";
-import { isLiveMember, membersOf, worldOf } from "./match-world.js";
+import {
+  beginFloorScope,
+  endFloorScope,
+  isLiveMember,
+  membersOf,
+  worldOf,
+} from "./match-world.js";
 import { noteInfiniteFloorReached } from "./rewards.js";
 
 /**
@@ -1000,26 +1005,30 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
   return options.returnDoid ? npcDoid : 1;
 };
 
-const rememberInfiniteTimer = (session, timer) => {
+const rememberInfiniteTimer = (session, timer, scope = session.floorScope) => {
   session.infiniteModifierTimers ??= new Set();
   session.infiniteModifierTimers.add(timer);
-  timer.unref?.();
+  if (!scope) timer.unref?.();
   return timer;
 };
 
 const scheduleInfiniteTimeout = (session, callback, delay) => {
+  const scope = session.floorScope;
   let timer;
-  timer = setTimeout(() => {
+  const run = () => {
     session.infiniteModifierTimers?.delete(timer);
     Promise.resolve(callback()).catch((error) =>
       warn(`Infinite timer failed: ${error.message}`)
     );
-  }, delay);
-  return rememberInfiniteTimer(session, timer);
+  };
+  timer = scope ? scope.timeout(run, delay) : setTimeout(run, delay);
+  return rememberInfiniteTimer(session, timer, scope);
 };
 
 const clearInfiniteModifierTimers = (session) => {
-  for (const timer of session.infiniteModifierTimers ?? []) clearTimeout(timer);
+  for (const timer of session.infiniteModifierTimers ?? []) {
+    cancelScopedTimer(session.floorScope, timer, clearTimeout);
+  }
   session.infiniteModifierTimers?.clear();
 };
 
@@ -1102,14 +1111,16 @@ const startInfiniteModifierSpawns = (context) => {
   for (const modifier of session.infiniteActiveModifiers ?? []) {
     const everyMs = Math.max(0, Number(modifier.NPCSpawnTime ?? 0) * 1000);
     if (!modifier.NPCSpawnId || !everyMs) continue;
-    const timer = setInterval(() => {
+    const scope = session.floorScope;
+    const tick = () => {
       const hero = session.actors?.get(session.heroDoid);
       if (!context.isActive() || !hero?.position) return;
       spawnInfiniteModifierNpc(context, modifier, hero.position).catch((error) =>
         warn(`Infinite periodic spawn failed: ${error.message}`)
       );
-    }, everyMs);
-    rememberInfiniteTimer(session, timer);
+    };
+    const timer = scope ? scope.interval(tick, everyMs) : setInterval(tick, everyMs);
+    rememberInfiniteTimer(session, timer, scope);
   }
 };
 
@@ -2326,7 +2337,42 @@ const dungeonMembers = (session) =>
     (member) => isLiveMember(member) && member?.heroSpawn && member?.heroDoid
   );
 
-const contextForMember = (member) => member.world?.contextFor(member) ?? member;
+const contextForMember = (member) =>
+  member.world && !member.world.destroyed
+    ? member.world.contextFor(member)
+    : member;
+
+/** Everything whose lifetime is one floor, registered once on its owner scope. */
+const clearFloorRuntime = (session) => {
+  session.stopAi?.();
+  session.stopAi = null;
+  for (const stop of session.generatorStops?.values?.() ?? []) stop?.();
+  session.generatorStops?.clear?.();
+  for (const member of dungeonMembers(session)) {
+    cancelPetRespawn(member);
+    member.petDoid = null;
+    member.stopManaRegen?.();
+    member.stopManaRegen = null;
+    clearSecurityState(contextForMember(member));
+  }
+  session.stopTriggers?.();
+  session.stopTriggers = null;
+  session.stopTrapProjectiles?.();
+  session.stopTrapProjectiles = null;
+  clearInfiniteModifierTimers(session);
+  clearFloorFailing(session);
+  clearHazardBeats(session);
+  forgetVoices(session);
+  clearDungeonBuffs(session);
+  clearDungeonPowerups(session);
+  clearDungeonPlaceables(session);
+};
+
+const ownFloorRuntime = (session) => {
+  const scope = beginFloorScope(session);
+  scope?.defer(() => clearFloorRuntime(session));
+  return scope;
+};
 
 const heroFrameForFloor = (member, floorDoid, position, owner) => {
   const spawn = member.heroSpawn;
@@ -2427,19 +2473,19 @@ export const prepareDungeonMember = async (
   {
     isActive = () => true,
     sendPlayerOwner = true,
-    acquireAccountById = acquireAccount,
+    acquireAccountById = (id) => matchHost().acquireAccount(id),
   } = {}
 ) => {
   const account = await acquireAccountById(session.accountId);
   session.dungeonAccount = account;
   if (!isActive()) {
-    releaseAccount(account.id);
+    matchHost().releaseAccount(account.id);
     delete session.dungeonAccount;
     return false;
   }
   const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
   if (!avatar) {
-    releaseAccount(account.id);
+    matchHost().releaseAccount(account.id);
     delete session.dungeonAccount;
     throw new Error(
       `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
@@ -2559,7 +2605,7 @@ export const enterDungeon = async (
   session,
   mapNodeId,
   {
-    acquireAccountById = acquireAccount,
+    acquireAccountById = (id) => matchHost().acquireAccount(id),
     onPlayerReady = () => {},
     waitForHandshake = waitForEntryHandshake,
   } = {}
@@ -2574,7 +2620,7 @@ export const enterDungeon = async (
   session.dungeonAccount = account;
   const avatar = account.account_avatars?.find((row) => row.id === account.active_avatar);
   if (!avatar) {
-    releaseAccount(account.id);
+    matchHost().releaseAccount(account.id);
     delete session.dungeonAccount;
     throw new Error(
       `account ${account.id} active avatar ${account.active_avatar} does not name an owned avatar`
@@ -2595,7 +2641,7 @@ export const enterDungeon = async (
   session.dungeonZone = 10;
   session.mapNodeId = mapNodeId;
   // Which is what a friend's panel means by "in a dungeon" — see presence.js.
-  setPresenceLocation(session, mapNodeId);
+  matchHost().setPresenceLocation(session, mapNodeId);
   session.dungeonRewards = { gold: 0, gems: 0, xp: 0 };
   session.dungeonContribution = { kills: 0, damage: 0 };
   session.dungeonTreasures = [];
@@ -2866,6 +2912,7 @@ export const enterDungeon = async (
  * to play, notice, and report before anyone could see it.
  */
 export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) => {
+  ownFloorRuntime(session);
   const heroDoid = session.heroDoid;
 
   /**
@@ -3173,27 +3220,8 @@ const advanceFloorUnlocked = async (session) => {
   const isActive = () => session.dungeonActive && session.dungeonEpoch === dungeonEpoch;
 
   // Per-floor work belongs to the floor that is ending.
-  session.stopAi?.();
-  session.stopAi = null;
   const party = dungeonMembers(session);
-  for (const member of party) {
-    cancelPetRespawn(member);
-    member.petDoid = null;
-    member.stopManaRegen?.();
-    member.stopManaRegen = null;
-    clearSecurityState(contextForMember(member));
-  }
-  session.stopTriggers?.();
-  session.stopTriggers = null;
-  session.stopTrapProjectiles?.();
-  session.stopTrapProjectiles = null;
-  clearInfiniteModifierTimers(session);
-  clearFloorFailing(session);
-  clearHazardBeats(session);
-  forgetVoices(session);
-  clearDungeonBuffs(session);
-  clearDungeonPowerups(session);
-  clearDungeonPlaceables(session);
+  if (!endFloorScope(session)) clearFloorRuntime(session);
 
   const floor = await loadFloorAt(session.floorPlan, next);
   if (!isActive()) return false;
@@ -3305,9 +3333,16 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   cancelPetRespawn(session);
 
   // Back in town, which the client reads as online and not in a dungeon.
-  setPresenceLocation(session, 0);
+  matchHost().setPresenceLocation(session, 0);
   session.dungeonEpoch = (session.dungeonEpoch ?? 0) + 1;
   session.dungeonActive = false;
+  // Shared scopes belong to MatchWorld and are disposed when its final member
+  // closes it. Standalone sessions (including direct floor fixtures) own both.
+  if (!worldOf(session)) {
+    endFloorScope(session);
+    session.runScope?.dispose();
+    session.runScope = null;
+  }
   session.stopTriggers?.();
   session.stopTriggers = null;
   session.stopAi?.();
@@ -3356,7 +3391,7 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
    * nothing, so the next JSON-RPC should read storage again rather than a copy
    * this run happened to leave behind.
    */
-  if (session.dungeonAccount) releaseAccount(session.dungeonAccount.id);
+  if (session.dungeonAccount) matchHost().releaseAccount(session.dungeonAccount.id);
 
   for (const key of [
     "areaDoid",

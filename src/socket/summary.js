@@ -1,11 +1,12 @@
 import { config } from "../config.js";
-import { dungeonMatches } from "./matches.js";
+import { matchHost } from "./match-host.js";
 import { info, warn } from "../log.js";
 import { CLID } from "./opcodes.js";
 import { dungeonSummaryGenerate, objectDisable } from "./objects.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { settleDungeonAccount } from "./settle-account.js";
-import { rankable, recordRuns } from "../leaderboard.js";
+import { rankable } from "../leaderboard.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 /**
  * Takes the hero off the floor, once.
@@ -332,7 +333,7 @@ export const sendDungeonSummary = (session, success) => {
    * is already ordered against every other writer. If this throws, the line in
    * the log is the whole consequence.
    */
-  recordRuns(members.map((member) =>
+  matchHost().recordRuns(members.map((member) =>
     runRecordFor(member.world?.contextFor(member) ?? member, success)
   )).catch((problem) => warn(`[${session.id}] run not recorded: ${problem.message}`));
 
@@ -367,7 +368,7 @@ export const sendDungeonSummary = (session, success) => {
 
 export const cancelDungeonSummary = (session) => {
   if (!session.summaryTimer) return false;
-  clearTimeout(session.summaryTimer);
+  cancelScopedTimer(session.runScope, session.summaryTimer, clearTimeout);
   session.summaryTimer = null;
   return true;
 };
@@ -382,12 +383,16 @@ export const scheduleDungeonSummary = (session, success) => {
    * seconds in between are exactly when somebody watching a friend finish would
    * press Join — and the world is already gone by then.
    */
-  dungeonMatches.finish(session.dungeonMatch);
-  const timer = setTimeout(() => {
+  matchHost().matchFinished(session.dungeonMatch);
+  const scope = session.runScope;
+  const finish = () => {
     session.summaryTimer = null;
     sendDungeonSummary(session, success);
-  }, config.dungeonSummaryDelayMs);
-  timer.unref?.();
+  };
+  const timer = scope
+    ? scope.timeout(finish, config.dungeonSummaryDelayMs)
+    : setTimeout(finish, config.dungeonSummaryDelayMs);
+  if (!scope) timer.unref?.();
   session.summaryTimer = timer;
   return timer;
 };

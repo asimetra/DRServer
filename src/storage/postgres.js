@@ -1,4 +1,6 @@
 import pg from "pg";
+import { isMainThread } from "node:worker_threads";
+import { MAIN_THREAD_CONNECTIONS, WORKER_THREAD_CONNECTIONS } from "./connections.js";
 import { config } from "../config.js";
 import { info } from "../log.js";
 import { ACCOUNT_OBJECT_ID_FLOOR } from "../account-object-ids.js";
@@ -30,7 +32,10 @@ let pool = null;
 let processLockClient = null;
 
 const connect = () => {
-  pool ??= new pg.Pool({ connectionString: config.databaseUrl, max: 8 });
+  pool ??= new pg.Pool({
+    connectionString: config.databaseUrl,
+    max: isMainThread ? MAIN_THREAD_CONNECTIONS : WORKER_THREAD_CONNECTIONS,
+  });
   return pool;
 };
 
@@ -122,7 +127,7 @@ const ACCOUNT_COLUMNS = [
   "completed_mapnode_mask", "basic_currency", "premium_currency", "basic_keys",
   "uncommon_keys", "rare_keys", "legendary_keys", "highest_avatar",
   "buckets_weapon", "buckets_other", "active_avatar", "admin_flags",
-  "ingame_friends", "ignore_friends", "friend_requests", "infinite_progress",
+  "ingame_friends", "ignore_friends", "friend_requests", "infinite_progress", "gifts", "gift_sends",
   "account_flags", "market_barred", "completed_dungeons", "matchmaker_group", "concurrent_days",
   "last_reward_date", "last_login", "created",
 ];
@@ -169,10 +174,24 @@ const insert = async (client, table, columns, row) => {
   );
 };
 
-/** The same, for a row that has to keep its identity across a rewrite. */
+/**
+ * The same, for a row that has to keep its identity across a rewrite — and the
+ * same rule: a field the account does not carry is DEFAULT, not null. The
+ * account row had the `?? null` the child tables lost, so a brand-new account
+ * (the template carries no `market_barred`) could not be saved at all against
+ * PostgreSQL. `EXCLUDED` then carries the default into the update as well, so
+ * an absent field means the column's default whether the row is new or not —
+ * as it would read back from a file that never had it.
+ */
 const upsert = async (client, table, columns, row) => {
-  const values = columns.map((column) => row[column] ?? null);
-  const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
+  const values = [];
+  const placeholders = columns
+    .map((column) => {
+      if (row[column] === undefined) return "DEFAULT";
+      values.push(row[column]);
+      return `$${values.length}`;
+    })
+    .join(", ");
   const assignments = columns
     .filter((column) => column !== "id")
     .map((column) => `${column} = EXCLUDED.${column}`)
@@ -226,15 +245,25 @@ export const writeAccount = async (client, account) => {
    * then said was "confirm your email address first" to somebody who had
    * confirmed it days before.
    */
+  /**
+   * The JSONB fields go as JSON text. Handed a JavaScript array, the driver
+   * writes a PostgreSQL array literal — `{...}` — which JSONB refuses, so the
+   * first pending friend request made the whole save fail, and an empty list
+   * was stored as the object `{}`.
+   */
+  const asJsonList = (value) => JSON.stringify(Array.isArray(value) ? value : []);
   await upsert(client, "accounts", ACCOUNT_COLUMNS, {
     ...account,
     ingame_friends: account.ingame_friends ?? "[]",
     ignore_friends: account.ignore_friends ?? "[]",
-    friend_requests: Array.isArray(account.friend_requests) ? account.friend_requests : [],
-    infinite_progress:
+    friend_requests: asJsonList(account.friend_requests),
+    gifts: asJsonList(account.gifts),
+    gift_sends: asJsonList(account.gift_sends),
+    infinite_progress: JSON.stringify(
       account.infinite_progress && typeof account.infinite_progress === "object"
         ? account.infinite_progress
-        : {},
+        : {}
+    ),
   });
 
   /**

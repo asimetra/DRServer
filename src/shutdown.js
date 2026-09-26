@@ -22,6 +22,7 @@ export const createGracefulShutdown = ({
   servers,
   sessions,
   waitForWrites,
+  closeServices,
   releaseProcessLock,
   closeStorage,
 } = {}) => {
@@ -60,6 +61,7 @@ export const createGracefulShutdown = ({
           warn(`shutdown: listener close failed: ${result.reason?.message ?? result.reason}`);
         }
       }
+      await closeServices?.();
       await waitForWrites?.();
       await releaseProcessLock?.();
       await closeStorage?.();

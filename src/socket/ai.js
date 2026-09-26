@@ -5,7 +5,7 @@ import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 import { performNpcAttack } from "./combat.js";
 import { buffMultiplierFor, hasAbility } from "./buffs.js";
-import { heroMembersOf } from "./match-world.js";
+import { heroMembersOf, matchStateOf, worldOf } from "./match-world.js";
 import { collectNearbyForPet } from "./pickups.js";
 import { npcAttackSpeed } from "./npc-attacks.js";
 import {
@@ -16,6 +16,7 @@ import {
   nearestClearPosition,
 } from "./navigation.js";
 import { objectDisable } from "./objects.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 const npcPositionUpdate = (doid, position) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
@@ -812,7 +813,8 @@ const advanceNpcRelease = (
 
 /** One deterministic AI step; exported so movement and combat can be locked by tests. */
 export const tickNpcAi = async (session, now, deltaSeconds) => {
-  const actors = session.actors;
+  const state = matchStateOf(session);
+  const actors = state.actors;
   if (!actors) return;
   const heroes = [...heroMembersOf(session)]
     .map(([doid, member]) => {
@@ -1108,7 +1110,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     // DR_DEBUG_AI=1 prints where each chaser is actually heading, which is the
     // only way to tell a legitimate detour around geometry from a detour to
     // somewhere nobody asked for.
-    if (session.debugAi && route.waypoint) {
+    if (state.debugAi && route.waypoint) {
       info(
         `[ai] ${doid} at (${Math.round(actor.position.x)},${Math.round(actor.position.y)}) ` +
           `-> (${Math.round(route.waypoint.x)},${Math.round(route.waypoint.y)}) ` +
@@ -1260,7 +1262,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const requestedTravel = distanceTo(actor.position, wanted);
     if (requestedTravel > 0.001) {
       const nextPosition = moveWithNavigation(
-        session.navigation,
+        state.navigation,
         actor.position,
         { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
         collisionRadius(actor)
@@ -1291,7 +1293,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     }
 
     const clearAttack = hasLineOfSight(
-      session.navigation,
+      state.navigation,
       actor.position,
       target,
       0
@@ -1388,17 +1390,22 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
 /** Runs the lightweight server-authoritative chase/attack loop for one session. */
 export const startNpcAi = (session) => {
   let previous = Date.now();
-  const timer = setInterval(() => {
+  const scope = matchStateOf(session).floorScope;
+  const tick = () => {
     const now = Date.now();
     const deltaSeconds = Math.min((now - previous) / 1000, 0.25);
     previous = now;
+    const run = () => tickNpcAi(session, now, deltaSeconds);
     // The loop must survive a failed tick rather than die silently.
-    tickNpcAi(session, now, deltaSeconds).catch((error) =>
+    Promise.resolve(worldOf(session)?.withOutputBatch(run) ?? run()).catch((error) =>
       warn(`ai: tick failed: ${error.message}`)
     );
-  }, config.npcAiTickMs);
+  };
+  const timer = scope
+    ? scope.interval(tick, config.npcAiTickMs)
+    : setInterval(tick, config.npcAiTickMs);
 
-  timer.unref?.();
+  if (!scope) timer.unref?.();
   info(`[${session.id}] NPC AI ticking every ${config.npcAiTickMs}ms`);
-  return () => clearInterval(timer);
+  return () => cancelScopedTimer(scope, timer, clearInterval);
 };

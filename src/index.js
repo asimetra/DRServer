@@ -16,6 +16,7 @@ import {
 import { error, info } from "./log.js";
 import { createGracefulShutdown, installProcessHandlers } from "./shutdown.js";
 import { acquireProcessLock } from "./process-lock.js";
+import { closeMatchWorkers, startMatchWorkers } from "./socket/match-worker-service.js";
 
 info("Open Dungeon Server — web services + game socket");
 if (config.permissive) {
@@ -37,12 +38,14 @@ reportAuth();
 await purgeLegacyExperienceBoard();
 await seedStandings();
 ensureSafeTransport();
+await startMatchWorkers();
 
 const listeners = [startWebServices(), startInternalApi(), startGameSocket()];
 const shutdown = createGracefulShutdown({
   servers: () => listeners,
   sessions: activeSocketSessions,
   waitForWrites: waitForAccountWrites,
+  closeServices: closeMatchWorkers,
   releaseProcessLock,
   closeStorage: closeAccountStorage,
 });

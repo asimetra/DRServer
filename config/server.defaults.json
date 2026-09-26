@@ -36,5 +36,7 @@
   "pickupRadius": 120,
   "logBodyLimit": 600,
   "logLevel": "info",
+  "matchWorkerCount": 0,
+  "matchWorkerHangMs": 5000,
   "maxOutboundBufferBytes": 4194304
 }

@@ -5,7 +5,8 @@ import { info, warn } from "../log.js";
 import { scheduleDungeonSummary } from "./summary.js";
 import { awardDungeonCompletion, awardInfiniteFloor } from "./rewards.js";
 import { membersOf } from "./match-world.js";
-import { dungeonMatches } from "./matches.js";
+import { matchHost } from "./match-host.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 /**
  * Floor outcome.
@@ -119,6 +120,16 @@ const anyPlayerPresent = (session) => {
 const COUNTDOWN_LEAD_IN_MS = 2000;
 const countdownDurationMs = (seconds) => COUNTDOWN_LEAD_IN_MS + (seconds + 1) * 1000;
 
+const scheduleFloorTimeout = (session, callback, delay) => {
+  const scope = session.floorScope;
+  const timer = scope ? scope.timeout(callback, delay) : setTimeout(callback, delay);
+  if (!scope) timer.unref?.();
+  return timer;
+};
+
+const cancelFloorTimeout = (session, timer) =>
+  cancelScopedTimer(session.floorScope, timer, clearTimeout);
+
 /**
  * A hero has dropped. Starts the countdown if that was the last one up.
  *
@@ -131,11 +142,10 @@ export const beginFloorFailing = (session) => {
 
   const seconds = defeatCountdownSeconds(session);
   session.send(buildFloorFailing(session.areaDoid, seconds));
-  const timer = setTimeout(() => {
+  const timer = scheduleFloorTimeout(session, () => {
     session.floorFailingTimer = null;
     (session.reportFloorFailed ?? reportFloorFailed)(session);
   }, countdownDurationMs(seconds));
-  timer.unref?.();
   session.floorFailingTimer = timer;
   info(`[${session.id}] every player down — ${seconds}s to revive`);
 };
@@ -180,7 +190,7 @@ export const refreshFloorFailing = (session) => {
 /** Drops the timer without telling a client that may already be gone. */
 export const clearFloorFailing = (session) => {
   if (!session.floorFailingTimer) return;
-  clearTimeout(session.floorFailingTimer);
+  cancelFloorTimeout(session, session.floorFailingTimer);
   session.floorFailingTimer = null;
 };
 
@@ -270,7 +280,7 @@ export const completeFloor = (session, { immediate = false } = {}) => {
   // delay remains playable for current members, but nobody new may enter it
   // and be included in the completion-award loop below.
   const match = session.dungeonMatch ?? session.world?.match;
-  if (match) dungeonMatches.finish(match);
+  if (match) matchHost().matchFinished(match);
 
   /**
    * How long after the floor is complete the run is announced.
@@ -294,7 +304,7 @@ export const completeFloor = (session, { immediate = false } = {}) => {
   const delayMs = session.victoryDelayMs ?? VICTORY_DELAY_MS;
   info(`[${session.id}] final floor complete — victory in ${delayMs}ms`);
 
-  const timer = setTimeout(async () => {
+  const timer = scheduleFloorTimeout(session, async () => {
     session.victoryTimer = null;
     if (!session.dungeonActive) return;
     // Paid before the announcement so the summary reports what was banked.
@@ -315,7 +325,6 @@ export const completeFloor = (session, { immediate = false } = {}) => {
     (session.scheduleDungeonSummary ?? scheduleDungeonSummary)(session, true);
     info(`[${session.id}] victory sent`);
   }, delayMs);
-  timer.unref?.();
   session.victoryTimer = timer;
   return true;
 };
@@ -328,10 +337,10 @@ export const completeFloor = (session, { immediate = false } = {}) => {
  * being told to collect its treasure.
  */
 export const cancelVictory = (session) => {
-  for (const timer of session.victoryTextTimers ?? []) clearTimeout(timer);
+  for (const timer of session.victoryTextTimers ?? []) cancelFloorTimeout(session, timer);
   session.victoryTextTimers?.clear();
   if (!session.victoryTimer) return;
-  clearTimeout(session.victoryTimer);
+  cancelFloorTimeout(session, session.victoryTimer);
   session.victoryTimer = null;
 };
 

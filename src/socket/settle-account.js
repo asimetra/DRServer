@@ -1,4 +1,4 @@
-import { saveAccount } from "../accounts.js";
+import { matchHost } from "./match-host.js";
 import { reconcileConsumables } from "../consumables.js";
 import { warn } from "../log.js";
 
@@ -70,7 +70,7 @@ export const settleDungeonAccount = (session) => {
 
   // Read now, because the teardown deletes `persistDungeonAccount` too.
   const queued = session.queueAccountSave;
-  const persist = session.persistDungeonAccount ?? saveAccount;
+  const persist = session.persistDungeonAccount ?? matchHost().saveAccount;
   const save = queued ? () => queued(session) : () => persist(account);
 
   const pending = (session.rewardSavePromise ?? Promise.resolve())

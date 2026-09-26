@@ -1,6 +1,7 @@
 import { register } from "./rpc.js";
 import { issueToken } from "./auth.js";
 import {
+  isRemoteAccountCopy,
   loadAccount,
   saveAccount,
   saveAccounts,
@@ -1067,6 +1068,13 @@ register("store/GiftOffer", async ([accountId, offerId, , , toIds]) => {
       const gift = await withTwoAccountLocks(senderId, recipientId, async () => {
         const sender = await loadAccount(senderId);
         const recipient = recipientId === senderId ? sender : await loadAccount(recipientId);
+        // A gift is value on both sides — the recipient's gift, the sender's day
+        // — and a copy of an account on another match worker is written there
+        // separately. Refused before either side is changed, rather than risk
+        // one half landing without the other.
+        if (isRemoteAccountCopy(sender) || isRemoteAccountCopy(recipient)) {
+          throw new Error("both players are in dungeons on different match workers; try again from town");
+        }
         const made = await sendGift({ sender, recipient, offerId });
         await saveAccounts([recipient, sender]);
         return made;

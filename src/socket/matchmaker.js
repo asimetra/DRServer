@@ -3,7 +3,7 @@ import { OP } from "./opcodes.js";
 import { config } from "../config.js";
 import { error, info, warn } from "../log.js";
 import { resolveMatchEntry } from "./match-entry.js";
-import { joinDungeonMatch, leaveDungeonSession } from "./match-runtime.js";
+import { matchExecutor } from "./match-runtime.js";
 
 /**
  * MatchMaker (clid 42) field handling.
@@ -151,7 +151,7 @@ export const handleField = (session, fieldId, reader) => {
         }
 
         let accepted = false;
-        await joinDungeonMatch(session, result, request, {
+        await matchExecutor.join(session, result, request, {
           onPlayerReady: () => {
             if (accepted) return;
             accepted = true;
@@ -163,9 +163,11 @@ export const handleField = (session, fieldId, reader) => {
         }
         rememberMatchMakerGroup(session, result.match);
       })()
-        .catch((err) => {
+        .catch(async (err) => {
           error(`[${session.id}] dungeon entry failed: ${err.stack ?? err}`);
-          leaveDungeonSession(session, { notifyClient: true });
+          // Awaited: with match workers the teardown frames arrive later, and
+          // the refusal has to follow them rather than overtake them.
+          await matchExecutor.leave(session, { notifyClient: true });
           session.send(buildEntryResponse(session.matchMakerDoid, ENTRY_ERROR.INTERNAL));
         })
         .finally(() => {
@@ -184,7 +186,8 @@ export const handleField = (session, fieldId, reader) => {
         } catch (err) {
           warn(`[${session.id}] exiting after reward persistence failed: ${err.message}`);
         }
-        leaveDungeonSession(session, { notifyClient: true });
+        // The disables first, wherever the dungeon runs; ExitComplete after.
+        await matchExecutor.leave(session, { notifyClient: true });
         session.send(buildExitComplete(session.matchMakerDoid));
       })().finally(() => {
         session.exitPromise = null;

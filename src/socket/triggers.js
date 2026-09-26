@@ -15,9 +15,10 @@ import {
 import { tell } from "./chat.js";
 import { say } from "./speech.js";
 import { grantBuff } from "./buffs.js";
-import { walkThrough } from "./doors.js";
+import { matchHost } from "./match-host.js";
 import { collisionPointOf, setNavigationTriggerState } from "./navigation.js";
 import { applyDamage } from "./combat.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 // Re-exported: the dungeon builds and tears traps down through this module.
 export {
@@ -339,9 +340,19 @@ const evaluateGate = (session, gate) => {
 
 /** What an authored `resetTime` of zero actually means; see startResetGate. */
 const MINIMUM_PULSE_MS = 100;
+const scheduleFloorTimeout = (session, callback, delay) => {
+  const scope = session.floorScope;
+  const timer = scope ? scope.timeout(callback, delay) : setTimeout(callback, delay);
+  if (!scope) timer.unref?.();
+  return timer;
+};
+
+const cancelFloorTimeout = (session, timer) =>
+  cancelScopedTimer(session.floorScope, timer, clearTimeout);
+
 const startResetGate = (session, gate) => {
   const previous = session.logicGateTimers.get(gate.id);
-  if (previous) clearTimeout(previous);
+  if (previous) cancelFloorTimeout(session, previous);
 
   const startMs = Number.isFinite(gate.startDelay) ? Math.max(0, gate.startDelay * 1000) : 0;
   /**
@@ -354,18 +365,16 @@ const startResetGate = (session, gate) => {
 
   const open = () => {
     emitSignal(session, gate.id, true);
-    const close = setTimeout(() => {
+    const close = scheduleFloorTimeout(session, () => {
       session.logicGateTimers.delete(gate.id);
       emitSignal(session, gate.id, false);
     }, resetMs);
-    close.unref?.();
     session.logicGateTimers.set(gate.id, close);
   };
 
   if (!startMs) return open();
 
-  const waiting = setTimeout(open, startMs);
-  waiting.unref?.();
+  const waiting = scheduleFloorTimeout(session, open, startMs);
   session.logicGateTimers.set(gate.id, waiting);
 };
 
@@ -768,7 +777,7 @@ export const updateProximityTriggers = (session, position) => {
       // doorway transition.
       announce(session, trigger);
       if (trigger.destination) {
-        walkThrough(session, trigger.destination).catch((problem) =>
+        matchHost().walkThrough(session, trigger.destination).catch((problem) =>
           warn(`[${session.id}] door failed: ${problem.message}`)
         );
       }
@@ -820,6 +829,7 @@ const TIMER_TRIGGERS = new Set(["AUTO_TIMER_TRIGGER", "ASYM_AUTO_TIMER_TRIGGER"]
  */
 export const startTimerTriggers = (session) => {
   const stopTimers = [];
+  const scope = session.floorScope;
 
   for (const trigger of session.triggers ?? []) {
     if (!TIMER_TRIGGERS.has(trigger.constant)) continue;
@@ -834,19 +844,23 @@ export const startTimerTriggers = (session) => {
     const tick = () => {
       trigger.on = !trigger.on;
       emitSignal(session, trigger.id, trigger.on);
-      pending = setTimeout(tick, trigger.on ? onMs : offMs);
-      pending.unref?.();
+      pending = scope
+        ? scope.timeout(tick, trigger.on ? onMs : offMs)
+        : setTimeout(tick, trigger.on ? onMs : offMs);
+      if (!scope) pending.unref?.();
     };
 
-    pending = setTimeout(tick, startMs);
-    pending.unref?.();
-    stopTimers.push(() => clearTimeout(pending));
+    pending = scope ? scope.timeout(tick, startMs) : setTimeout(tick, startMs);
+    if (!scope) pending.unref?.();
+    stopTimers.push(() => cancelScopedTimer(scope, pending, clearTimeout));
   }
 
   if (stopTimers.length) info(`[${session.id}] ${stopTimers.length} timer trigger(s) cycling`);
   return () => {
     stopTimers.forEach((stop) => stop());
-    for (const timer of session.logicGateTimers?.values() ?? []) clearTimeout(timer);
+    for (const timer of session.logicGateTimers?.values() ?? []) {
+      cancelScopedTimer(scope, timer, clearTimeout);
+    }
     session.logicGateTimers?.clear();
   };
 };

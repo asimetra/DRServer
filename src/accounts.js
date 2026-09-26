@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { threadId } from "node:worker_threads";
 import { config } from "./config.js";
 import { heldAccount, holdAccount } from "./account-registry.js";
 import { NameRefused, checkName, nameTaken } from "./account-names.js";
@@ -340,7 +341,7 @@ const repairLoadedAccount = async (account) => {
     return account;
   }
 
-  await saveAccount(account);
+  const stored = await saveUnlessLeased(account);
   if (migratedAvatars) {
     info(
       `accounts: moved ${migratedAvatars} avatar id(s) out of the client-local range`
@@ -368,7 +369,7 @@ const repairLoadedAccount = async (account) => {
       `accounts: account ${account.id} has beaten the tutorial, so it is not shown again`
     );
   }
-  return account;
+  return stored;
 };
 
 /**
@@ -413,7 +414,61 @@ const serialise = async (chains, id, work) => {
   }
 };
 
-export const withAccountLock = (id, work) => serialise(accountChains, id, work);
+/**
+ * Who else may be holding an account, when matches run in worker threads.
+ *
+ * Unset — the ordinary single-thread server — every account belongs to this
+ * thread and nothing below changes. With workers, an account in a dungeon is
+ * leased to the worker running that dungeon for the length of the run: its
+ * live object exists only there, so a transaction on it anywhere else would be
+ * a transaction on a copy, which is the divergence account-registry.js exists
+ * to prevent. The installed policy decides, per account, whether this thread
+ * may lock it, must borrow the lock from the thread that owns it, or must hand
+ * the work to that owner instead (by throwing AccountLeasedError, which the
+ * RPC dispatcher answers by forwarding the call). See match-worker-pool.js and
+ * match-worker-thread.js for the two policies.
+ */
+let ownership = null;
+
+export class AccountLeasedError extends Error {
+  constructor(id, owner) {
+    super(`account ${id} is in a dungeon on match worker ${owner}`);
+    this.name = "AccountLeasedError";
+    this.accountId = Number(id);
+    this.owner = owner;
+  }
+}
+
+/** Installs the ownership policy for this thread, returning the previous one. */
+export const installAccountOwnership = (next) => {
+  const previous = ownership;
+  ownership = next ?? null;
+  return previous;
+};
+
+/**
+ * Whether somebody is playing the account: held here for a dungeon, or leased to
+ * a match worker running one. The game's "not while you are in a dungeon" rules
+ * ask this rather than the registry, which only knows this thread.
+ */
+export const accountInPlay = (id) =>
+  Boolean(heldAccount(Number(id))) || Boolean(ownership?.inPlayElsewhere?.(Number(id)));
+
+/**
+ * Whether this object is a working copy of an account whose live object is in
+ * a dungeon on another match worker. Changes to such a copy cross threads as a
+ * patch, which is not one transaction with the rest of the work — so anything
+ * that moves value refuses to write through one (see gifts in rpc-handlers.js).
+ */
+export const isRemoteAccountCopy = (account) => Boolean(ownership?.isRemoteCopy?.(account));
+
+/** This thread's lock chain for an account, whoever else may own it. */
+export const withThreadAccountLock = (id, work) => serialise(accountChains, id, work);
+
+export const withAccountLock = async (id, work) =>
+  ownership?.lock
+    ? ownership.lock(Number(id), work, withThreadAccountLock)
+    : withThreadAccountLock(id, work);
 
 /**
  * And a second, narrower chain: one write at a time per account.
@@ -464,6 +519,10 @@ export const withTwoAccountLocks = async (first, second, work) => {
 export const loadAccount = async (id) => {
   const live = heldAccount(id);
   if (live) return live;
+  // In a dungeon on a match worker: a copy of the live object there, which is
+  // newer than storage. Reading is all it is good for — saving it is refused.
+  const elsewhere = await ownership?.load?.(Number(id));
+  if (elsewhere) return elsewhere;
   return readAccount(id);
 };
 
@@ -502,11 +561,52 @@ export const acquireAccount = (id) =>
 const createAndPersist = async (id) => {
   info(`accounts: creating new account ${id}`);
   const account = await repairLoadedAccount(await createAccount(id));
-  await saveAccount(account);
-  return account;
+  return saveUnlessLeased(account);
 };
 
-const readAccount = async (id) => {
+/**
+ * The save a read makes on its own account — creating it, repairing it — made
+ * without the account's lock, as reads are. Reads of one account are joined
+ * while one is under way (`readAccount`), so there is one account to save; but
+ * a match worker can still take the account between the read and its save. The
+ * worker's object is the account then, and it is what the read answers with.
+ */
+const saveUnlessLeased = async (account) => {
+  try {
+    await saveAccount(account);
+    return account;
+  } catch (problem) {
+    if (!(problem instanceof AccountLeasedError)) throw problem;
+    const live = await ownership?.load?.(Number(account.id));
+    if (!live) throw problem;
+    return live;
+  }
+};
+
+/**
+ * One read of an account at a time, shared by everybody who asks meanwhile.
+ *
+ * A read that finds no account makes one, and making one allocates the starter
+ * hero's and items' ids. Two reads arriving together — a new player's first RPC
+ * and first dungeon — each made their own, and the client drew one hero while
+ * the dungeon spawned the other. Joined, they get one account, one set of ids,
+ * one save. Only while a read is in flight: afterwards reads go to storage (or
+ * to the live object) as before.
+ */
+const readsInFlight = new Map();
+
+const readAccount = (id) => {
+  const key = Number(id);
+  const inFlight = readsInFlight.get(key);
+  if (inFlight) return inFlight;
+  const reading = readAccountOnce(key).finally(() => {
+    if (readsInFlight.get(key) === reading) readsInFlight.delete(key);
+  });
+  readsInFlight.set(key, reading);
+  return reading;
+};
+
+const readAccountOnce = async (id) => {
   if (usingDatabase()) {
     const existing = await (await db()).loadAccount(id);
     if (existing) return repairLoadedAccount(existing);
@@ -588,14 +688,20 @@ export const saveAccounts = async (accounts) => {
     }
   }
 
+  // A copy of an account whose live object is on another match worker is
+  // written there, as a change to that object; the policy sends those and
+  // hands back the rest to be written here.
+  const here = ownership?.divertSave ? await ownership.divertSave(unique) : unique;
+  ownership?.beforeSave?.(here.map((account) => Number(account.id)));
+  if (!here.length) return unique;
   const pending = withWriteChains(
-    unique.map((account) => account.id),
+    here.map((account) => account.id),
     async () => {
       if (usingDatabase()) {
-        await (await db()).saveAccounts(unique);
-        return unique;
+        await (await db()).saveAccounts(here);
+        return here;
       }
-      return saveAccountsToFiles(unique);
+      return saveAccountsToFiles(here);
     }
   );
   pendingAccountWrites.add(pending);
@@ -604,6 +710,12 @@ export const saveAccounts = async (accounts) => {
   } finally {
     pendingAccountWrites.delete(pending);
   }
+};
+
+/** Waits until no write for this one account is queued or running. */
+export const accountWritesSettled = async (id) => {
+  const key = Number(id);
+  while (writeChains.has(key)) await writeChains.get(key);
 };
 
 /** Waits until every account write already in flight (and any it queues) settles. */
@@ -772,7 +884,19 @@ export const createNewAccount = async ({ name } = {}) => {
   return mine;
 };
 
-export const nextObjectId = async (account = null) => {
+export const nextObjectId = async (account = null) =>
+  nextObjectIdAbove(account ? highestIdIn(account) : 0);
+
+/**
+ * The next persistent id, above `floor` as well as above everything issued.
+ *
+ * The file counter lives in one thread. A match worker asks that thread rather
+ * than keeping a second counter, which would hand out the same ids twice.
+ */
+export const nextObjectIdAbove = async (floorHint = 0) => {
+  if (!usingDatabase() && ownership?.nextObjectIdAbove) {
+    return ownership.nextObjectIdAbove(Number(floorHint) || 0);
+  }
   if (usingDatabase()) {
     const id = await (await db()).nextId();
     if (id > CLIENT_PERSISTENT_OBJECT_ID_MAX) {
@@ -783,7 +907,7 @@ export const nextObjectId = async (account = null) => {
 
   fileObjectIdReady ??= initializeFileObjectId();
   await fileObjectIdReady;
-  const floor = Math.max(FILE_ID_FLOOR, fileObjectId, account ? highestIdIn(account) : 0);
+  const floor = Math.max(FILE_ID_FLOOR, fileObjectId, Number(floorHint) || 0);
   fileObjectId = floor + 1;
   if (fileObjectId > CLIENT_PERSISTENT_OBJECT_ID_MAX) {
     throw new RangeError("persistent object id space exhausted");
@@ -807,7 +931,8 @@ const saveAccountsToFiles = async (accounts) => {
     const file = filePathFor(account.id);
     return {
       file,
-      temporary: `${file}.${process.pid}.${++temporaryFileId}.tmp`,
+      // The thread as well as the process: match workers write accounts too.
+      temporary: `${file}.${process.pid}-${threadId}.${++temporaryFileId}.tmp`,
       contents: `${JSON.stringify(account, null, 2)}\n`,
     };
   });

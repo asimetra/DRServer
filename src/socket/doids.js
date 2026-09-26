@@ -14,9 +14,27 @@ import {
  */
 export const createDistributedObjectIdAllocator = ({
   start = 1000,
+  offset = 0,
+  stride = 1,
   onLocalRangeSkipped = () => {},
 } = {}) => {
-  let next = Number(start);
+  /**
+   * `stride` and `offset` split one id space between threads that allocate at
+   * once: with matches in workers, thread k of n takes every n-th id from its
+   * own offset, so no two threads can hand out the same doid and none of them
+   * runs out before the others.
+   */
+  const step = Number(stride);
+  const lane = Number(offset);
+  if (!Number.isSafeInteger(step) || step < 1) throw new RangeError(`invalid doid stride ${stride}`);
+  if (!Number.isSafeInteger(lane) || lane < 0 || lane >= step) {
+    throw new RangeError(`invalid doid offset ${offset} for stride ${stride}`);
+  }
+  const first = Number(start) + lane;
+  let next = first;
+
+  /** The first id at or after `value` that belongs to this lane. */
+  const inLane = (value) => value + ((((first - value) % step) + step) % step);
 
   return () => {
     if (!Number.isSafeInteger(next) || next <= 0) {
@@ -24,7 +42,7 @@ export const createDistributedObjectIdAllocator = ({
     }
     if (isClientLocalObjectId(next)) {
       const skippedFrom = next;
-      next = CLIENT_LOCAL_OBJECT_ID_MAX + 1;
+      next = inLane(CLIENT_LOCAL_OBJECT_ID_MAX + 1);
       onLocalRangeSkipped({ from: skippedFrom, to: next });
     }
     if (next >= ACCOUNT_OBJECT_ID_FLOOR) {
@@ -32,6 +50,8 @@ export const createDistributedObjectIdAllocator = ({
         `distributed object id space exhausted before persistent range ${ACCOUNT_OBJECT_ID_FLOOR}`
       );
     }
-    return next++;
+    const id = next;
+    next += step;
+    return id;
   };
 };

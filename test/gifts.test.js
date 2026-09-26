@@ -191,3 +191,23 @@ test("GiftOffer answers with the exclude list, which is what the client reads", 
   // recipient id strings.
   assert.deepEqual(answer, [String(THEM)]);
 });
+
+test("a request id is never one the recipient is already holding", async () => {
+  // Every thread that can run a gift keeps its own counter, so two of them can
+  // mint the same id in the same millisecond; the recipient's pile, which only
+  // ever changes under its lock, is what decides.
+  const { mintRequestId, sendGift } = await import("../src/gifts.js");
+  const now = Date.now();
+  const [offer] = [...(await giftableOfferIds())];
+  const next = Number(mintRequestId(THEM, now).split("_")[0]) + 1;
+  const held = Array.from({ length: 150 }, (_, step) => ({
+    request_id: `${(next + step) % 1000}_${now}_${THEM}`,
+    offer_id: offer,
+    from_account_id: 1000000999,
+  }));
+  const sender = { id: ME, ingame_friends: JSON.stringify([THEM]), gift_sends: [] };
+  const recipient = { id: THEM, gifts: held };
+  const gift = await sendGift({ sender, recipient, offerId: offer, now });
+  assert.equal(held.some((row) => row.request_id === gift.request_id), false, gift.request_id);
+  assert.match(gift.request_id, new RegExp(`^\\d+_${now}_${THEM}$`), "the shape the client knows");
+});

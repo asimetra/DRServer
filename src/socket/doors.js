@@ -20,8 +20,11 @@ import {
   entryErrorCodeFor,
   rememberMatchMakerGroup,
 } from "./matchmaker.js";
-import { joinDungeonMatch, leaveDungeonSession } from "./match-runtime.js";
+import { matchExecutor } from "./match-runtime.js";
 import { resolveMatchEntry } from "./match-entry.js";
+
+const joinMatch = (...args) => matchExecutor.join(...args);
+const leaveMatch = (...args) => matchExecutor.leave(...args);
 
 /**
  * The request a doorway makes on the player's behalf.
@@ -53,7 +56,7 @@ export const walkThrough = async (
   session,
   destination,
   // Injected so a test can watch a crossing without running a dungeon entry.
-  { resolve = resolveMatchEntry, join = joinDungeonMatch } = {}
+  { resolve = resolveMatchEntry, join = joinMatch, leave = leaveMatch } = {}
 ) => {
   const node = Number(destination);
   if (!Number.isFinite(node) || node <= 0) return false;
@@ -75,7 +78,7 @@ export const walkThrough = async (
      * This is the teardown the matchmaker uses when somebody leaves, which is
      * what walking out of a door is.
      */
-    leaveDungeonSession(connection, { notifyClient: true });
+    await leave(connection, { notifyClient: true });
 
     const request = requestFor(session, node);
     const result = await resolve(connection, request);
@@ -106,7 +109,7 @@ export const walkThrough = async (
     return true;
   } catch (problem) {
     error(`[${session.id}] door to ${node} failed: ${problem.stack ?? problem}`);
-    leaveDungeonSession(connection, { notifyClient: true });
+    await leave(connection, { notifyClient: true });
     connection.send(buildEntryResponse(connection.matchMakerDoid, ENTRY_ERROR.INTERNAL));
     return false;
   } finally {

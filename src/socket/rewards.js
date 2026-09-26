@@ -1,5 +1,5 @@
 import { legendaryDropBonus } from "../hero-stats.js";
-import { saveAccount, nextObjectId } from "../accounts.js";
+import { matchHost } from "./match-host.js";
 import { info, warn } from "../log.js";
 import { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 import { hitPointsUpdate } from "./combat.js";
@@ -51,7 +51,7 @@ export const queueAccountSave = (session) => {
   const account = session.dungeonAccount;
   if (!account) return null;
 
-  const persist = session.persistDungeonAccount ?? saveAccount;
+  const persist = session.persistDungeonAccount ?? matchHost().saveAccount;
   const previous = session.rewardSavePromise ?? Promise.resolve();
   const pending = previous
     .catch(() => undefined)

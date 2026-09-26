@@ -12,6 +12,7 @@ import { CLID } from "./opcodes.js";
 import { dooberGenerate, objectDisable } from "./objects.js";
 import { dooberSpawnFrom, pickByRarity } from "./drops.js";
 import { trackDoober } from "./pickups.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 /**
  * The Battle Chef's pots, and anything else whose timeline leaves something on
@@ -210,8 +211,10 @@ const cookOne = async (session, { action, origin, heading, random, share }) => {
 
   const lifetimeMs = Math.max(0, Number(action.timetolive ?? 0) * 1000);
   if (lifetimeMs) {
-    const timer = setTimeout(() => expireDoober(session, doid), lifetimeMs);
-    timer.unref?.();
+    const scope = session.floorScope;
+    const expire = () => expireDoober(session, doid);
+    const timer = scope ? scope.timeout(expire, lifetimeMs) : setTimeout(expire, lifetimeMs);
+    if (!scope) timer.unref?.();
     session.dooberTimers ??= new Map();
     session.dooberTimers.set(doid, timer);
   }
@@ -310,17 +313,17 @@ export const scheduleTimelineDoobers = async (session, attack, { origin, heading
   session.lootSettlesAt = Math.max(session.lootSettlesAt ?? 0, Date.now() + lastFrameMs);
 
   for (const action of actions) {
-    const timer = setTimeout(
-      () => {
+    const scope = session.floorScope;
+    const spawn = () => {
         session.powerupSpawnTimers?.delete(timer);
         if (!session.dungeonActive || session.floorDoid !== floorDoid) return;
         spawnPowerup(session, { origin: at, heading: facing, action, count: perAction }).catch(
           (error) => warn(`[${session.id}] doober spawn failed: ${error.message}`)
         );
-      },
-      (Number(action.frame ?? 0) / FRAMES_PER_SECOND) * 1000
-    );
-    timer.unref?.();
+      };
+    const delay = (Number(action.frame ?? 0) / FRAMES_PER_SECOND) * 1000;
+    const timer = scope ? scope.timeout(spawn, delay) : setTimeout(spawn, delay);
+    if (!scope) timer.unref?.();
     session.powerupSpawnTimers.add(timer);
   }
   return true;
@@ -331,8 +334,12 @@ export const schedulePowerup = (session, attack) => scheduleTimelineDoobers(sess
 
 /** Clears scheduled cooking and uncollected temporary pickup timers on teardown. */
 export const clearDungeonPowerups = (session) => {
-  for (const timer of session.powerupSpawnTimers ?? []) clearTimeout(timer);
+  for (const timer of session.powerupSpawnTimers ?? []) {
+    cancelScopedTimer(session.floorScope, timer, clearTimeout);
+  }
   session.powerupSpawnTimers?.clear();
-  for (const timer of session.dooberTimers?.values() ?? []) clearTimeout(timer);
+  for (const timer of session.dooberTimers?.values() ?? []) {
+    cancelScopedTimer(session.floorScope, timer, clearTimeout);
+  }
   session.dooberTimers?.clear();
 };

@@ -3,10 +3,14 @@ import test from "node:test";
 
 import {
   MATCH_WORLD_SHARED_FIELDS,
+  MatchMemberContext,
   broadcastWorld,
   createMatchWorld,
   heroMembersOf,
+  isMatchState,
+  matchStateOf,
   memberForHero,
+  memberSessionOf,
   membersOf,
   worldOf,
 } from "../src/socket/match-world.js";
@@ -57,19 +61,35 @@ test("shared fields route through the world and member fields stay local", () =>
 
   assert.equal(match.world, world);
   assert.equal(context, world.contextFor(joiner), "member contexts are cached");
+  assert.equal(context instanceof MatchMemberContext, true);
   assert.equal(context.world, world);
+  assert.equal(context.state, world.state);
   assert.equal(context.member, joiner);
+  assert.equal(isMatchState(world.state), true);
+  assert.equal(matchStateOf(context), world.state);
+  assert.equal(matchStateOf(world), world.state);
+  assert.equal(memberSessionOf(context), joiner);
+  assert.equal(memberSessionOf(joiner), joiner);
+  assert.equal(memberSessionOf(world), null);
   assert.equal(context.floorIndex, 3, "shared reads ignore the member-local shadow");
   assert.equal(context.dungeonRewards, joiner.dungeonRewards);
   assert.equal(context.objects, world.objects);
+  assert.equal(context.objects, world.state.objects);
   assert.equal(MATCH_WORLD_SHARED_FIELDS.has("floorIndex"), true);
 
   context.floorIndex = 7;
+  context.completeFloor = function completeFloor() { return this.floorIndex; };
+  assert.equal(context.completeFloor, context.completeFloor, "shared methods rebound on every read");
+  assert.equal(context.completeFloor(), 7, "shared method lost its MatchState owner");
   context.heroManaPoints = 40;
   context.summaryTimer = "shared-summary-timer";
   context.summaryDoid = 8080;
   assert.equal(world.floorIndex, 7);
+  assert.equal(world.state.floorIndex, 7);
   assert.equal(match.floorIndex, 7);
+  world.state.floorIndex = 8;
+  assert.equal(context.floorIndex, 8);
+  assert.equal(match.floorIndex, 8, "explicit state writes bypassed matchmaking state");
   assert.equal(joiner.floorIndex, 99);
   assert.equal(joiner.heroManaPoints, 40);
   assert.equal(world.heroManaPoints, undefined);
@@ -82,6 +102,32 @@ test("shared fields route through the world and member fields stay local", () =>
   assert.equal(world.signalValues, undefined);
   assert.ok(seed.signalValues instanceof Map, "deleting world state does not erase the seed member");
   assert.equal("heroManaPoints" in joiner, false);
+});
+
+test("a new floor disposes only the previous floor scope and match destroy ends the run", (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const seed = member(3);
+  const world = createMatchWorld({ id: 77, members: new Set([seed]) }, seed);
+  let firstHits = 0;
+  let secondHits = 0;
+
+  const first = world.beginFloorScope();
+  first.interval(() => firstHits++, 10);
+  t.mock.timers.tick(10);
+  assert.equal(firstHits, 1);
+
+  const second = world.beginFloorScope();
+  second.interval(() => secondHits++, 10);
+  assert.equal(first.disposed, true);
+  assert.equal(world.runScope.activeChildCount, 1);
+  t.mock.timers.tick(10);
+  assert.equal(firstHits, 1, "the previous floor kept ticking");
+  assert.equal(secondHits, 1);
+
+  world.destroy();
+  t.mock.timers.tick(20);
+  assert.equal(secondHits, 1, "destroyed match kept its floor alive");
+  assert.equal(world.runScope.disposed, true);
 });
 
 test("connection-scoped MatchMaker and Presence objects never enter the world", () => {
@@ -122,6 +168,34 @@ test("context send publishes framed world state while explicit direct send stays
   context.send(npc);
   assert.deepEqual(host.sent, ["party", npc]);
   assert.deepEqual(joiner.sent, ["direct", npc]);
+});
+
+test("output batches preserve per-member order and cork repeated socket writes", () => {
+  const socketOf = () => ({
+    destroyed: false,
+    corks: 0,
+    uncorks: 0,
+    cork() { this.corks++; },
+    uncork() { this.uncorks++; },
+  });
+  const host = member(14, { socket: socketOf() });
+  const peer = member(15, { socket: socketOf() });
+  const world = createMatchWorld({ id: 140, members: new Set([host, peer]) }, host);
+  const context = world.contextFor(host);
+  world.contextFor(peer);
+
+  world.beginOutputBatch();
+  context.broadcast("first");
+  context.broadcast("second");
+  assert.deepEqual(host.sent, []);
+  assert.deepEqual(peer.sent, []);
+  world.endOutputBatch();
+
+  assert.deepEqual(host.sent, ["first", "second"]);
+  assert.deepEqual(peer.sent, ["first", "second"]);
+  assert.deepEqual([host.socket.corks, host.socket.uncorks], [1, 1]);
+  assert.deepEqual([peer.socket.corks, peer.socket.uncorks], [1, 1]);
+  world.destroy();
 });
 
 test("shared allocation uses the seed allocator with the world as owner", () => {

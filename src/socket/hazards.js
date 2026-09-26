@@ -12,6 +12,8 @@ import {
 } from "./combat.js";
 import { objectDisable } from "./objects.js";
 import { CLID } from "./opcodes.js";
+import { cancelScopedTimer } from "./lifecycle-scope.js";
+import { matchStateOf, worldOf } from "./match-world.js";
 
 /**
  * What a raised trap does while it is up.
@@ -99,8 +101,23 @@ const announce = (session, doid, hazard) =>
   );
 
 const remember = (session, targetId, stop) => {
-  session.hazardBeats ??= new Map();
-  session.hazardBeats.set(targetId, stop);
+  const state = matchStateOf(session);
+  state.hazardBeats ??= new Map();
+  state.hazardBeats.set(targetId, stop);
+};
+
+const floorTimeout = (session, callback, delay) => {
+  const scope = matchStateOf(session).floorScope;
+  const timer = scope ? scope.timeout(callback, delay) : setTimeout(callback, delay);
+  if (!scope) timer.unref?.();
+  return { scope, timer };
+};
+
+const floorInterval = (session, callback, delay) => {
+  const scope = matchStateOf(session).floorScope;
+  const timer = scope ? scope.interval(callback, delay) : setInterval(callback, delay);
+  if (!scope) timer.unref?.();
+  return { scope, timer };
 };
 
 /**
@@ -117,13 +134,14 @@ const playSwing = (session, targetId, doid, hazard, beats) => {
   announce(session, doid, hazard);
 
   for (const { at, colliders } of beats) {
-    const timer = setTimeout(() => {
+    const { scope, timer } = floorTimeout(session, () => {
       if (session.dungeonActive) strike(session, doid, hazard, colliders);
     }, at);
-    timer.unref?.();
-    timers.push(timer);
+    timers.push({ scope, timer });
   }
-  remember(session, targetId, () => timers.forEach(clearTimeout));
+  remember(session, targetId, () => {
+    for (const { scope, timer } of timers) cancelScopedTimer(scope, timer, clearTimeout);
+  });
 };
 
 /**
@@ -153,22 +171,24 @@ const playSwing = (session, targetId, doid, hazard, beats) => {
  * which is the same report from the other side.
  */
 const retireSpentBomb = (session, targetId, doid, hazard) => {
-  if (session.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
+  const state = matchStateOf(session);
+  if (state.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
 
   const finish = () => {
-    if (session.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
+    if (state.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
     session.send(hitPointsUpdate(doid, CLID.DistributedNPCGameObject, 0));
     session.send(stateUpdate(doid, CLID.DistributedNPCGameObject, "dead"));
     session.send(objectDisable(doid));
-    session.objects.delete(doid);
-    session.actors?.delete(doid);
+    state.objects.delete(doid);
+    state.actors?.delete(doid);
   };
 
   const showing = frameMs(hazard?.timelineFrames ?? 0);
   if (!(showing > 0)) return finish();
-  const timer = setTimeout(finish, showing);
-  timer.unref?.();
-  remember(session, `${targetId}:spent`, () => clearTimeout(timer));
+  const { scope, timer } = floorTimeout(session, finish, showing);
+  remember(session, `${targetId}:spent`, () =>
+    cancelScopedTimer(scope, timer, clearTimeout)
+  );
 };
 
 /**
@@ -207,8 +227,10 @@ const nearEnoughToTrip = (session, hazard, now) => {
 };
 
 const holdZone = (session, targetId, doid, hazard, colliders) => {
+  const state = matchStateOf(session);
   const cooldownMs = Math.max(0, Number(hazard?.npc?.AttackTimer ?? 0) * 1000);
   const lastHitAt = new Map();
+  const scope = state.floorScope;
 
   /**
    * A sustained trap announces itself every time it bites.
@@ -252,7 +274,7 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
      * A trap that hurts on contact is different: it is *supposed* to catch what
      * is standing in it. Only the one-shot bombs wait.
      */
-    if (hazard.contactBomb && !session.floorSettled) return;
+    if (hazard.contactBomb && !state.floorSettled) return;
     /**
      * A bomb is tripped by being stepped near, and hurts much further than that.
      *
@@ -309,22 +331,31 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
    * One tick of latency is the whole cost, and 100ms is what the mode says it
    * should be.
    */
-  session.hazardContactZones ??= new Map();
-  session.hazardContactZones.set(targetId, touch);
-  if (!session.hazardContactTimer) {
-    session.hazardContactTimer = setInterval(() => {
-      if (!session.dungeonActive) return clearHazardBeats(session);
+  state.hazardContactZones ??= new Map();
+  state.hazardContactZones.set(targetId, touch);
+  if (!state.hazardContactTimer) {
+    const tick = () => {
+      if (!state.dungeonActive) return clearHazardBeats(session);
       const now = Date.now();
-      for (const run of session.hazardContactZones?.values() ?? []) run(now);
-    }, CONTACT_TICK_MS);
-    session.hazardContactTimer.unref?.();
+      const world = worldOf(session);
+      world?.beginOutputBatch();
+      try {
+        for (const run of state.hazardContactZones?.values() ?? []) run(now);
+      } finally {
+        world?.endOutputBatch();
+      }
+    };
+    state.hazardContactTimer = scope
+      ? scope.interval(tick, CONTACT_TICK_MS)
+      : setInterval(tick, CONTACT_TICK_MS);
+    if (!scope) state.hazardContactTimer.unref?.();
   }
   remember(session, targetId, () => {
-    session.hazardContactZones?.delete(targetId);
-    if (session.hazardContactZones?.size || !session.hazardContactTimer) return;
-    clearInterval(session.hazardContactTimer);
-    session.hazardContactTimer = null;
-    session.hazardVictimIndex = null;
+    state.hazardContactZones?.delete(targetId);
+    if (state.hazardContactZones?.size || !state.hazardContactTimer) return;
+    cancelScopedTimer(scope, state.hazardContactTimer, clearInterval);
+    state.hazardContactTimer = null;
+    state.hazardVictimIndex = null;
   });
 };
 
@@ -339,22 +370,24 @@ export const isChoreographed = (hazard) => {
 };
 
 export const stopHazardBeat = (session, targetId) => {
-  const stop = session.hazardBeats?.get(targetId);
+  const state = matchStateOf(session);
+  const stop = state.hazardBeats?.get(targetId);
   if (!stop) return;
   stop();
-  session.hazardBeats.delete(targetId);
+  state.hazardBeats.delete(targetId);
 };
 
 /** Stops every raised trap; dungeon teardown calls it. */
 export const clearHazardBeats = (session) => {
-  for (const stop of session.hazardBeats?.values() ?? []) stop();
-  session.hazardBeats?.clear();
-  session.hazardContactZones?.clear();
-  if (session.hazardContactTimer) clearInterval(session.hazardContactTimer);
-  session.hazardContactTimer = null;
-  session.hazardVictimIndex = null;
-  for (const stop of session.turretAims?.values() ?? []) stop();
-  session.turretAims?.clear();
+  const state = matchStateOf(session);
+  for (const stop of state.hazardBeats?.values() ?? []) stop();
+  state.hazardBeats?.clear();
+  state.hazardContactZones?.clear();
+  cancelScopedTimer(state.floorScope, state.hazardContactTimer, clearInterval);
+  state.hazardContactTimer = null;
+  state.hazardVictimIndex = null;
+  for (const stop of state.turretAims?.values() ?? []) stop();
+  state.turretAims?.clear();
 };
 
 /**
@@ -420,10 +453,9 @@ export const playDeathAttack = async (
   };
 
   for (const { at, colliders: frame } of beatsOf(hazard)) {
-    const timer = setTimeout(() => {
+    floorTimeout(session, () => {
       if (session.dungeonActive) strike(session, doid, hazard, frame);
     }, at);
-    timer.unref?.();
   }
   return true;
 };
@@ -530,8 +562,9 @@ const turned = (from, to) => Math.abs((((to - from) % 360) + 540) % 360 - 180);
  * damage anyway — one direction drawn, another one hit.
  */
 export const aimTurret = (session, targetId) => {
-  const doid = session.triggerableDoids?.get(targetId);
-  const hazard = session.triggerableHazards?.get(targetId);
+  const state = matchStateOf(session);
+  const doid = state.triggerableDoids?.get(targetId);
+  const hazard = state.triggerableHazards?.get(targetId);
   if (doid === undefined || !hazard?.position || !isTurret(hazard)) return false;
   const target = turretTarget(session, hazard);
   if (!target) {
@@ -554,26 +587,29 @@ export const aimTurret = (session, targetId) => {
 };
 
 export const startTurretAim = (session, targetId) => {
-  const doid = session.triggerableDoids?.get(targetId);
-  const hazard = session.triggerableHazards?.get(targetId);
+  const state = matchStateOf(session);
+  const doid = state.triggerableDoids?.get(targetId);
+  const hazard = state.triggerableHazards?.get(targetId);
   if (doid === undefined || !hazard?.position || !isTurret(hazard)) return false;
 
   const aim = () => {
-    if (!session.dungeonActive) return stopTurretAim(session, targetId);
+    if (!state.dungeonActive) return stopTurretAim(session, targetId);
     aimTurret(session, targetId);
   };
 
-  const timer = setInterval(aim, AIM_TICK_MS);
-  timer.unref?.();
-  session.turretAims ??= new Map();
-  session.turretAims.set(targetId, () => clearInterval(timer));
+  const { scope, timer } = floorInterval(session, aim, AIM_TICK_MS);
+  state.turretAims ??= new Map();
+  state.turretAims.set(targetId, () =>
+    cancelScopedTimer(scope, timer, clearInterval)
+  );
   aim();
   return true;
 };
 
 export const stopTurretAim = (session, targetId) => {
-  session.turretAims?.get(targetId)?.();
-  session.turretAims?.delete(targetId);
+  const state = matchStateOf(session);
+  state.turretAims?.get(targetId)?.();
+  state.turretAims?.delete(targetId);
 };
 
 /**
@@ -583,9 +619,10 @@ export const stopTurretAim = (session, targetId) => {
  * simulated rather than resolved on contact. Everything else starts running.
  */
 export const raiseHazard = (session, targetId) => {
-  const doid = session.triggerableDoids?.get(targetId);
+  const state = matchStateOf(session);
+  const doid = state.triggerableDoids?.get(targetId);
   if (doid === undefined) return false;
-  const hazard = session.triggerableHazards?.get(targetId);
+  const hazard = state.triggerableHazards?.get(targetId);
   if (!hazard) return false;
 
   if (hazard.attack?.Projectile) {
@@ -622,20 +659,21 @@ export const raiseHazard = (session, targetId) => {
      * state at all. That is the whole of "Loki is still broken".
      */
     const beatMs = Math.round(Number(hazard.npc?.AttackTimer ?? 0) * 1000);
-    if (beatMs > 0 && !session.hazardBeats?.has(targetId)) {
-      const timer = setInterval(() => {
-        if (!session.dungeonActive) return stopHazardBeat(session, targetId);
+    if (beatMs > 0 && !state.hazardBeats?.has(targetId)) {
+      const { scope, timer } = floorInterval(session, () => {
+        if (!state.dungeonActive) return stopHazardBeat(session, targetId);
         // A statue that cannot reach the hero stays quiet; see withinReach.
         if (!reaches()) return;
         aimTurret(session, targetId);
         performTrapAttack(session, doid, hazard);
       }, beatMs);
-      timer.unref?.();
-      remember(session, targetId, () => clearInterval(timer));
+      remember(session, targetId, () =>
+        cancelScopedTimer(scope, timer, clearInterval)
+      );
     }
     return true;
   }
-  if (session.hazardBeats?.has(targetId)) return true;
+  if (state.hazardBeats?.has(targetId)) return true;
 
   const beats = beatsOf(hazard);
   if (!beats.length) return false;

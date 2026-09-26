@@ -75,8 +75,37 @@ const tell = (session, accountId) => {
   session.send(friendState(session.presenceDoid, where !== undefined, accountId, where ?? 0));
 };
 
+/**
+ * Anyone outside this thread who keeps a copy of the roll.
+ *
+ * Match workers answer friend-list RPCs for players in their dungeons, and
+ * those answers say who is online and where. The roll itself stays here; the
+ * workers are told each change, which is rare — a login, a logout, a dungeon
+ * entered or left.
+ */
+let observer = null;
+
+export const observePresence = (next) => {
+  const previous = observer;
+  observer = next ?? null;
+  return previous;
+};
+
+/** Every account on the roll and where, for a copy starting from nothing. */
+export const presenceEntries = () => [...online.entries()];
+
+/**
+ * Applies one change seen elsewhere to this thread's copy. Nobody here is
+ * watching — a worker's copy only answers `isOnline` and `dungeonOf`.
+ */
+export const mirrorPresence = (accountId, where) => {
+  if (where === null || where === undefined) online.delete(Number(accountId));
+  else online.set(Number(accountId), Number(where) || 0);
+};
+
 /** And everybody who asked about this one. */
 const tellWatchers = (accountId) => {
+  observer?.(accountId, online.has(accountId) ? online.get(accountId) : null);
   for (const session of sessions) tell(session, accountId);
 };
 

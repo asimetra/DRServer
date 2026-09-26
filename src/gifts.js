@@ -118,6 +118,23 @@ let sequence = 0;
 export const mintRequestId = (toAccountId, now = Date.now()) =>
   `${sequence++ % 1000}_${now}_${Number(toAccountId)}`;
 
+/**
+ * One the recipient is not already holding.
+ *
+ * The counter is per thread, and with match workers a gift can be minted in more
+ * than one: two in the same millisecond can land on the same count. The client
+ * files gifts by this id, so a second one would hide the first. The recipient's
+ * pile only ever changes under its own lock, wherever that is held, so checking
+ * against it is exact; the pile is capped well below the counter's thousand.
+ */
+const unusedRequestId = (recipient, now) => {
+  const taken = new Set(pendingGiftsFor(recipient).map((row) => String(row.request_id)));
+  for (;;) {
+    const id = mintRequestId(recipient.id, now);
+    if (!taken.has(id)) return id;
+  }
+};
+
 export const requestIdNames = (requestId, accountId) =>
   String(requestId ?? "").endsWith(`_${Number(accountId)}`);
 
@@ -154,7 +171,7 @@ export const sendGift = async ({ sender, recipient, offerId, now = Date.now() })
     to_account_key: String(recipient.id),
     from_account_id: Number(sender.id),
     offer_id: offer,
-    request_id: mintRequestId(recipient.id, now),
+    request_id: unusedRequestId(recipient, now),
     created: new Date(now).toISOString(),
   };
 

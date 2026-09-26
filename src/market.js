@@ -1,4 +1,5 @@
 import {
+  accountInPlay,
   listAccountIds,
   loadAccount,
   saveAccount,
@@ -6,12 +7,12 @@ import {
   withAccountLock,
   withTwoAccountLocks,
 } from "./accounts.js";
-import { heldAccount } from "./account-registry.js";
 import { occupiedSlots, storageLimit } from "./inventory-space.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { ceilingFor, isBarred, shareOf, slotsFor } from "./market-rules.js";
 import { recordSale, saleRecord } from "./market-history.js";
 import { info } from "./log.js";
+import { defineAccountOperation } from "./account-operations.js";
 
 /**
  * A market, rather than a trade.
@@ -90,7 +91,7 @@ const listingIdOf = (value) => {
 
 /** Nobody rearranges their bag mid-run; the same rule the trade settle has. */
 const refuseIfPlaying = (id) => {
-  if (heldAccount(id)) throw refuse("in_dungeon", `account ${id} is in a dungeon`);
+  if (accountInPlay(id)) throw refuse("in_dungeon", `account ${id} is in a dungeon`);
 };
 
 const listingsOf = (account) => (account.market_listings ??= []);
@@ -103,7 +104,26 @@ const soldListings = (account) =>
 
 const BROWSE_CACHE_MS = 2000;
 let browseCache = null;
+
+/**
+ * Who else keeps a market list. A sale made on a match worker (see
+ * account-operations.js) empties that worker's cache; the list the web front end
+ * reads is kept on the main thread, which is told.
+ */
+let marketWriteObserver = null;
+export const observeMarketWrites = (next) => {
+  const previous = marketWriteObserver;
+  marketWriteObserver = next ?? null;
+  return previous;
+};
+
+export const invalidateMarketBrowse = () => {
+  browseCache = null;
+  return true;
+};
+
 const invalidateBrowse = () => {
+  marketWriteObserver?.();
   browseCache = null;
 };
 
@@ -188,7 +208,7 @@ const refuseIfNoRoom = (account) => {
  * The weapon leaves the bag in the same write that creates the listing, so
  * there is no moment at which it is in both places or in neither.
  */
-export const listForSale = async ({ sellerId, itemId, price } = {}) => {
+const listForSaleHere = async ({ sellerId, itemId, price } = {}) => {
   const seller = accountIdOf(sellerId);
   const asking = priceOf(price);
   const wanted = listingIdOf(itemId);
@@ -266,7 +286,7 @@ const sellerHolding = async (listingId) => {
  * and refusing while they play would make every listing unbuyable exactly when
  * its owner is most likely to be online.
  */
-export const buyListing = async ({ listingId, buyerId } = {}) => {
+const buyListingHere = async ({ listingId, buyerId } = {}) => {
   const wanted = listingIdOf(listingId);
   const buyer = accountIdOf(buyerId);
 
@@ -355,7 +375,7 @@ export const buyListing = async ({ listingId, buyerId } = {}) => {
  * Only while it is still up. A sold listing is not cancellable — the weapon is
  * somebody else's and the gold is owed; that is a claim, not a withdrawal.
  */
-export const cancelListing = async ({ listingId, sellerId } = {}) => {
+const cancelListingHere = async ({ listingId, sellerId } = {}) => {
   const wanted = listingIdOf(listingId);
   const seller = accountIdOf(sellerId);
 
@@ -388,7 +408,7 @@ export const cancelListing = async ({ listingId, sellerId } = {}) => {
  * is "what am I owed", not "what did each of these go for", and one write is
  * one write.
  */
-export const claimProceeds = async ({ sellerId } = {}) => {
+const claimProceedsHere = async ({ sellerId } = {}) => {
   const seller = accountIdOf(sellerId);
 
   refuseIfPlaying(seller);
@@ -425,6 +445,17 @@ export const claimProceeds = async ({ sellerId } = {}) => {
 };
 
 /** Everything that is up, newest first, before a caller chooses a page. */
+/**
+ * The four writes, each run where its accounts live — a sale to a seller who is
+ * in a dungeon on a match worker happens on that worker, against the run's own
+ * object. See account-operations.js.
+ */
+const marketErrors = { errors: [MarketRefused] };
+export const listForSale = defineAccountOperation("market.list", listForSaleHere, marketErrors);
+export const buyListing = defineAccountOperation("market.buy", buyListingHere, marketErrors);
+export const cancelListing = defineAccountOperation("market.cancel", cancelListingHere, marketErrors);
+export const claimProceeds = defineAccountOperation("market.claim", claimProceedsHere, marketErrors);
+
 export const browseAll = async () => {
   if (browseCache && Date.now() - browseCache.at < BROWSE_CACHE_MS) {
     return browseCache.rows;
