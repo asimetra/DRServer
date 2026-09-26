@@ -220,24 +220,41 @@ export const reportAuth = () => {
 export const checkDatabaseSchema = async () => {
   if (config.storage !== "postgres") return true;
 
-  const [{ schemaExpects, driftBetween, columnsInDatabase, isAdditiveOnly }, { default: pg }] =
-    await Promise.all([import("./storage/schema-check.js"), import("pg")]);
+  const [schemaCheck, { default: pg }] = await Promise.all([
+    import("./storage/schema-check.js"),
+    import("pg"),
+  ]);
+  const { schemaExpects, driftBetween, columnsInDatabase, isAdditiveOnly } = schemaCheck;
+  const { indexesExpected, missingIndexes, indexesInDatabase } = schemaCheck;
 
   const schemaFile = path.join(serverRoot, "db", "schema.sql");
   const sql = fs.readFileSync(schemaFile, "utf8");
   const expected = schemaExpects(sql);
+  const expectedIndexes = indexesExpected(sql);
 
   const client = new pg.Client({ connectionString: config.databaseUrl });
   try {
     await client.connect();
-    const drift = driftBetween(expected, await columnsInDatabase(client));
-    if (!drift.length) {
+    // An index on a table that is not there yet is that table's absence, told once.
+    const shortOf = async () => {
+      const tables = driftBetween(expected, await columnsInDatabase(client));
+      const absent = new Set(tables.filter(({ missing }) => missing === null).map(({ table }) => table));
+      const indexes = missingIndexes(expectedIndexes, await indexesInDatabase(client))
+        .filter(({ table }) => !absent.has(table));
+      return { tables, indexes, count: tables.length + indexes.length };
+    };
+
+    const drift = await shortOf();
+    if (!drift.count) {
       info(`database schema is current (${Object.keys(expected).length} tables)`);
       return true;
     }
 
-    for (const { table, missing } of drift) {
+    for (const { table, missing } of drift.tables) {
       info(missing === null ? `  database: no ${table} table` : `  database: ${table} has no ${missing.join(", ")}`);
+    }
+    for (const { index, table } of drift.indexes) {
+      info(`  database: ${table} has no index ${index}`);
     }
 
     if (config.migrate === false) {
@@ -266,13 +283,16 @@ export const checkDatabaseSchema = async () => {
      */
     await client.query("SELECT pg_advisory_lock($1)", [0x0d5_5c8e]);
     try {
-      const after = driftBetween(expected, await columnsInDatabase(client));
-      if (!after.length) {
+      const after = await shortOf();
+      if (!after.count) {
         info("database schema brought up to date by another server");
         return true;
       }
       await client.query(sql);
-      const remaining = driftBetween(expected, await columnsInDatabase(client));
+      const { tables: remaining, indexes: unindexed } = await shortOf();
+      for (const { index, table } of unindexed) {
+        warn(`db/schema.sql was applied and ${table} still has no index ${index}`);
+      }
       if (remaining.length) {
         /**
          * What running the file cannot fix.
@@ -296,8 +316,8 @@ export const checkDatabaseSchema = async () => {
         }
         return false;
       }
-      info(`database schema brought up to date (${drift.length} table(s) changed)`);
-      return true;
+      info(`database schema brought up to date (${drift.tables.length} table(s), ${drift.indexes.length} index(es))`);
+      return !unindexed.length;
     } finally {
       await client.query("SELECT pg_advisory_unlock($1)", [0x0d5_5c8e]).catch(() => undefined);
     }

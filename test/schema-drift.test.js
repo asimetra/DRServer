@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { schemaExpects, driftBetween, isAdditiveOnly } from "../src/storage/schema-check.js";
+import {
+  schemaExpects,
+  driftBetween,
+  isAdditiveOnly,
+  indexesExpected,
+  missingIndexes,
+} from "../src/storage/schema-check.js";
 
 /**
  * What the code expects of a database, read off the file that builds it.
@@ -73,6 +79,46 @@ test("a database that has everything drifts by nothing", () => {
   );
 
   assert.deepEqual(drift, [], "a column the code does not know about is not its business");
+});
+
+/**
+ * A database made by 6ca284a has every column of market_sold_listings and only
+ * the key its first version carried. The next version replaced that key with
+ * two indexes, and startup drops the key — so a check that read columns alone
+ * called the database current, never ran the file, and left the table with no
+ * index at all.
+ */
+test("an index the schema creates is expected, whichever form it is written in", () => {
+  const expected = indexesExpected(`
+CREATE INDEX IF NOT EXISTS market_sold_listings_account ON market_sold_listings(account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS market_sold_listings_sale
+    ON market_sold_listings(account_id, id, sold_at);
+CREATE INDEX IF NOT EXISTS users_email ON web.users (email);
+`);
+
+  assert.deepEqual(expected, {
+    market_sold_listings_account: "market_sold_listings",
+    market_sold_listings_sale: "market_sold_listings",
+    users_email: "users",
+  });
+});
+
+test("a table with every column but not its indexes is short of them", () => {
+  const missing = missingIndexes(
+    { market_sold_listings_account: "market_sold_listings", market_sold_listings_sale: "market_sold_listings" },
+    new Set(["market_sold_listings_pkey", "market_sold_listings_account"])
+  );
+
+  assert.deepEqual(missing, [{ index: "market_sold_listings_sale", table: "market_sold_listings" }]);
+});
+
+test("every index in the shipped schema is read", () => {
+  const sql = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8");
+  const written = sql.match(/CREATE (UNIQUE )?INDEX/g).length;
+  const expected = indexesExpected(sql);
+
+  assert.equal(Object.keys(expected).length, written, "an index is written in a shape the check cannot read");
+  assert.equal(expected.market_sold_listings_sale, "market_sold_listings");
 });
 
 /**
@@ -154,5 +200,39 @@ test("the shipped schema parses into something", () => {
       ),
       `${column} must reach existing accounts tables, not only new ones`
     );
+  }
+});
+
+/**
+ * The same, against a live database: the table as 97f6e8b left one made by
+ * 6ca284a — every column, its old key dropped, neither index made. Startup's
+ * check has to see that and run the file. PostgreSQL only.
+ */
+test("startup puts back the indexes a database is short of", {
+  skip: process.env.ODS_STORAGE !== "postgres" && "PostgreSQL only",
+}, async () => {
+  const { default: pg } = await import("pg");
+  const { checkDatabaseSchema } = await import("../src/preflight.js");
+  const client = new pg.Client({ connectionString: process.env.ODS_DATABASE_URL });
+  await client.connect();
+  const indexes = async () =>
+    (await client.query(
+      "SELECT indexname FROM pg_indexes WHERE tablename = 'market_sold_listings' ORDER BY indexname"
+    )).rows.map((row) => row.indexname);
+  try {
+    await client.query("DROP INDEX IF EXISTS market_sold_listings_account");
+    await client.query("DROP INDEX IF EXISTS market_sold_listings_sale");
+    assert.deepEqual(await indexes(), []);
+
+    assert.equal(await checkDatabaseSchema(), true);
+    assert.deepEqual(await indexes(), ["market_sold_listings_account", "market_sold_listings_sale"]);
+  } finally {
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS market_sold_listings_account ON market_sold_listings(account_id)"
+    );
+    await client.query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS market_sold_listings_sale ON market_sold_listings(account_id, id, sold_at)"
+    );
+    await client.end();
   }
 });

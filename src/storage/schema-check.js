@@ -74,6 +74,32 @@ export const driftBetween = (expected, actual) => {
 };
 
 /**
+ * The indexes a schema file creates, by name, with the table each is on.
+ *
+ * A column is not the only thing an old database can be short of. The table
+ * of sold listings first carried a key; its next version replaced that with
+ * two indexes, and a database made by the first version already had every
+ * column — so it was called current, the file was never run, and startup then
+ * dropped the old key with nothing in its place. Indexes are read and compared
+ * for the same reason columns are.
+ */
+export const indexesExpected = (sql) => {
+  const expected = {};
+  for (const [, name, table] of sql.matchAll(
+    /CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)\s+ON\s+(?:\w+\.)?(\w+)/g
+  )) {
+    expected[name] = table;
+  }
+  return expected;
+};
+
+/** The expected indexes the database lacks, as `{ index, table }`, or an empty list. */
+export const missingIndexes = (expected, present) =>
+  Object.entries(expected)
+    .filter(([name]) => !present.has(name))
+    .map(([index, table]) => ({ index, table }));
+
+/**
  * Whether this file only ever adds, and so may be run without being read.
  *
  * A server applying its own schema is a convenience that rests entirely on
@@ -117,4 +143,13 @@ export const columnsInDatabase = async (client, schemas = ["public", "web"]) => 
     (actual[row.table_name] ??= new Set()).add(row.column_name);
   }
   return actual;
+};
+
+/** The index names a live database has, in the shape `missingIndexes` wants. */
+export const indexesInDatabase = async (client, schemas = ["public", "web"]) => {
+  const { rows } = await client.query(
+    "SELECT indexname FROM pg_indexes WHERE schemaname = ANY($1)",
+    [schemas]
+  );
+  return new Set(rows.map((row) => row.indexname));
 };
