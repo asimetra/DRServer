@@ -151,11 +151,6 @@ test("a hero's side is placeables.js's, and nothing is called here for it", asyn
 });
 
 
-test("what an enemy leaves standing is not built by this", async () => {
-  const setup = makeSession();
-  assert.equal(await cast(setup, "EN_FIRE_DRAGON_LINE"), 0, "DRAGON_GROUND_FLAME does not walk");
-});
-
 test("timetolive ends one without paying for it", async () => {
   const setup = makeSession();
   let spawnedDoid = null;
@@ -330,6 +325,60 @@ const placeCaster = (session, position, constant) => {
     isEnemy: true,
   });
 };
+
+/**
+ * No recording has a red dragon, so this holds the enemy side to the hero
+ * side's measured rule turned round: the caster's team and level, the caster
+ * as master, and what it burns is the other side.
+ */
+test("a red dragon's line of fire is the dragon's, and burns the hero and not him", async () => {
+  const floor = await bossFloor();
+  const { session } = floor;
+  const hero = session.actors.get(HERO_DOID);
+  assert.ok(hero?.position, "the floor installs its hero");
+  // Past the spawn invulnerability every floor opens with.
+  clearBuffsOn(session, HERO_DOID);
+  // A hundred units behind the hero and facing him: the line's first flame,
+  // authored at offset 100, lands on him.
+  placeCaster(session, { x: hero.position.x - 100, y: hero.position.y }, "RED_DRAGON");
+  const before = hero.hitPoints;
+
+  await session.summon(CASTER, await attackForConstant("EN_FIRE_DRAGON_LINE"), 1);
+  await floor.runUntil(2000);
+
+  const flames = floor.generated("DRAGON_GROUND_FLAME");
+  assert.ok(flames.length > 0, "the flames are built");
+  for (const flame of flames) {
+    assert.equal(flame.team, TEAM.ENEMIES);
+    assert.equal(flame.level, 13);
+    assert.equal(flame.masterId, CASTER);
+  }
+  const flameDoids = new Set(flames.map((flame) => flame.doid));
+  const burns = floor.resultsOn(HERO_DOID).filter((frame) => flameDoids.has(frame.body.readUInt32LE(8)));
+  assert.ok(burns.length > 0, "a flame names itself as the attacker on the hero");
+  assert.ok(session.actors.get(HERO_DOID).hitPoints < before, "and the hero is hurt");
+  assert.equal(floor.resultsOn(CASTER).length, 0, "the dragon is not");
+});
+
+test("a heavy red specter leaves its last flame where it fell", async () => {
+  const floor = await bossFloor();
+  const { session } = floor;
+  const hero = session.actors.get(HERO_DOID);
+  // Somewhere the floor is open, so nothing has to push the flame aside.
+  const fell = { ...hero.position };
+  placeCaster(session, fell, "RED_SPECTER_HEAVY");
+
+  await session.summon(CASTER, await attackForConstant("SPECTER_FLAME_DIVE_EXPLOSION"), 1, {
+    dying: true,
+  });
+  session.actors.delete(CASTER);
+  await floor.runUntil(2000);
+
+  const [flame] = floor.generated("EXPLOSIVE_FLAME_SPECTER");
+  assert.ok(flame, "the specter is gone and its flame still comes");
+  assert.equal(flame.team, TEAM.ENEMIES);
+  assert.equal(Math.round(Math.hypot(flame.x - fell.x, flame.y - fell.y)), 0, "offset 0, on the spot");
+});
 
 /**
  * `IsAttackable 0` is nobody's target. Infinite's ice bomb is one: a death

@@ -763,6 +763,9 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
           origin,
           heading: spawnHeading,
         }).catch((error) => warn(`death loot ${doid}: ${error.message ?? error}`));
+        // And whatever it calls up as it goes — the heavy red specter's last
+        // flame. See summons.js.
+        session.summon?.(doid, deathAttack, 1, { dying: true });
       },
       /**
        * The first real hit on this actor, for `NPC_DAMAGE_TRIGGER`.
@@ -3034,11 +3037,12 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
    * What an enemy's attack calls up — see summons.js. Built here because an
    * enemy is built from the floor's own context, like every other one on it.
    */
-  session.summon = (casterDoid, attack, playSpeed) =>
+  session.summon = (casterDoid, attack, playSpeed, { dying = false } = {}) =>
     scheduleSummons(session, {
       casterDoid,
       attack,
       playSpeed,
+      dying,
       spawn: (constant, position, { level, heading }) =>
         spawnNpc(context, constant, position, undefined, {
           returnDoid: true,

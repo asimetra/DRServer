@@ -26,17 +26,23 @@
  *     and hunting at once — a clone swung 174ms after it appeared.
  *   - How long: `timetolive`, then `expireActor`.
  *
- * Only actors that walk are built here; they are ordinary enemies once they
- * exist and go through the same `spawnNpc` as the floor's own. What an enemy
- * leaves standing — a dragon's flames, a rival's mines — is a placeable on the
- * enemies' side, which placeables.js does not model yet.
+ * What walks is an ordinary enemy once it exists, and goes through the same
+ * `spawnNpc` as the floor's own. What stands — a dragon's flames, a rival's
+ * mines and garlic, a berserker's axe — is a placeable on the enemies' side,
+ * built by placeables.js with the caster as its owner. No recording has any of
+ * those casters, so that half follows the hero side's measured rule rather
+ * than a measurement of its own.
+ *
+ * A death attack calls from where its caster fell: the heavy red specter
+ * leaves an exploding flame as it dies, and by the flame's frame there is no
+ * specter left to ask.
  */
 import { npcForConstant, spawnNpcActions } from "../gamemaster.js";
 import { warn } from "../log.js";
 import { expireActor } from "./combat.js";
 import { isPositionBlocked, nearestClearPosition } from "./navigation.js";
 import { TEAM } from "./opcodes.js";
-import { placeablePosition, timelineDelayMs } from "./placeables.js";
+import { placeablePosition, spawnPlaceable, timelineDelayMs } from "./placeables.js";
 
 /** A timer on the floor's clock, so a floor change takes every pending one with it. */
 const later = (session, run, delay) => {
@@ -60,12 +66,21 @@ const clearOf = (session, npc, desired, origin) => {
   );
 };
 
-const summonOne = async (session, { casterDoid, floorDoid, npc, action, spawn }) => {
+const summonOne = async (session, { casterDoid, fallen, floorDoid, npc, action, spawn }) => {
   if (!session.dungeonActive || session.floorDoid !== floorDoid) return null;
-  const caster = session.actors?.get(casterDoid);
-  if (!caster || caster.dead || !caster.position) return null;
+  const living = session.actors?.get(casterDoid);
+  const caster = fallen ?? (living && !living.dead ? living : null);
+  if (!caster?.position) return null;
 
   const heading = Number(caster.heading) || 0;
+  if (!npc.IsMover) {
+    return spawnPlaceable(session, {
+      action,
+      origin: caster.position,
+      heading,
+      owner: { team: caster.team, masterDoid: casterDoid, level: caster.level },
+    });
+  }
   const position = clearOf(
     session,
     npc,
@@ -79,28 +94,38 @@ const summonOne = async (session, { casterDoid, floorDoid, npc, action, spawn })
 };
 
 /**
- * Schedules every walking actor `attack` calls up, from `casterDoid`.
+ * Schedules everything `attack` calls up, from `casterDoid`.
  *
- * `spawn(constant, position, { level, heading })` builds one and returns its
- * doid; the floor supplies it (see dungeon.js), because building an enemy
- * needs the floor's own context. Returns how many were scheduled.
+ * `spawn(constant, position, { level, heading })` builds a walking one and
+ * returns its doid; the floor supplies it (see dungeon.js), because building
+ * an enemy needs the floor's own context. `dying` is for a death attack, whose
+ * caster is taken as it stands now rather than asked after at each frame.
+ * Returns how many were scheduled.
  */
 export const scheduleSummons = async (
   session,
-  { casterDoid, attack, playSpeed = 1, spawn }
+  { casterDoid, attack, playSpeed = 1, spawn, dying = false }
 ) => {
   const actions = await spawnNpcActions(attack?.AttackTimeline);
   const caster = session.actors?.get(casterDoid);
   // A hero's summons, and a pet's, are placeables and belong to placeables.js.
   if (!actions.length || !caster || caster.team === TEAM.PLAYERS) return 0;
 
+  const fallen = dying && caster.position
+    ? {
+        position: { ...caster.position },
+        heading: caster.heading,
+        level: caster.level,
+        team: caster.team,
+      }
+    : null;
   const floorDoid = session.floorDoid;
   let scheduled = 0;
   for (const action of actions) {
     const npc = await npcForConstant(action.spawnname);
-    if (!npc?.IsMover) continue;
+    if (!npc) continue;
     const run = () =>
-      summonOne(session, { casterDoid, floorDoid, npc, action, spawn }).catch((error) =>
+      summonOne(session, { casterDoid, fallen, floorDoid, npc, action, spawn }).catch((error) =>
         warn(`summons: ${attack.Constant} -> ${npc.Constant} failed: ${error.message}`)
       );
     later(session, run, timelineDelayMs(action.frame, playSpeed));
