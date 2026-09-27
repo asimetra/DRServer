@@ -4,6 +4,7 @@ import {
   openChest,
   ChestError,
   PERMANENT_CHEST_REFUSAL,
+  generateWeapon,
 } from "../src/chests.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 
@@ -197,6 +198,24 @@ test("never awards enemy or legacy weapons", async () => {
     assert.ok(weapon.Constant.startsWith("HERO_"), `${weapon.Constant} is not a hero weapon`);
     assert.ok(!weapon.Constant.includes("LEGACY"), `${weapon.Constant} is retired`);
   }
+});
+
+/**
+ * A content pack's `<weapon>__<skin>` row is its base weapon as a skin draws it
+ * (content-packs.js), not a weapon of its own: it copies every column the pool
+ * reads, so only its name can keep it out.
+ */
+test("never awards a content pack's weapon variant", async () => {
+  const gm = await loadGameMaster();
+  const base = gm.raw.WeaponItem.find((entry) => entry.Constant === "HERO_LIGHT_KATANA");
+  const variant = { ...base, Id: 990001, Constant: "HERO_LIGHT_KATANA__MY_SKIN" };
+  const withVariant = { ...gm, raw: { ...gm.raw, WeaponItem: [...gm.raw.WeaponItem, variant] } };
+  const hero = gm.raw.Hero.find((entry) => entry.Id === GHOST_SAMURAI);
+  const rarity = gm.raw.Rarity[0];
+
+  // The variant is the pool's last entry; a roll just under 1 picks it if it is there.
+  const item = generateWeapon({ gm: withVariant, hero, rarity, level: 10, accountId: 1, id: 1, random: () => 0.9999 });
+  assert.notEqual(item.item_id, variant.Id);
 });
 
 /**

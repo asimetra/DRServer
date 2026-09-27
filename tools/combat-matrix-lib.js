@@ -474,6 +474,9 @@ const buildNpcCases = (gm) => {
 const buildWeaponCases = (gm) => {
   const cases = [];
   for (const weapon of gm.raw.WeaponItem ?? []) {
+    // A content pack's `<weapon>__<skin>` swings attacks whose timelines only
+    // its clients have; the server plays the base it dresses (content-packs.js).
+    if (weapon.Constant.includes("__")) continue;
     for (const [slot, attack] of Object.entries(weapon)) {
       if (!attack || !WEAPON_ATTACK_COLUMN.test(slot)) continue;
       cases.push({

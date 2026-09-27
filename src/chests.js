@@ -165,11 +165,16 @@ const acceptedModifierTypes = (weapon) =>
  * player weapon: every one of the fifty weapons that does is a HERO_ item, and
  * the rest are enemy gear or retired HERO_LEGACY_* pieces that should never
  * drop from a chest.
+ *
+ * Nor does a content pack's `<weapon>__<skin>` row: it is its base weapon as
+ * a skin draws it (content-packs.js), copied column for column, so it passes
+ * every other test here.
  */
 const eligibleWeapons = (gm, hero) => {
   const mastery = new Set(masteryTypes(hero).map((type) => `${type}_TYPE`));
   return gm.raw.WeaponItem.filter(
     (weapon) =>
+      !weapon.Constant.includes("__") &&
       weapon.Mastertype &&
       mastery.has(weapon.Mastertype) &&
       weapon.Power > 0 &&
