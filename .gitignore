@@ -54,3 +54,6 @@ logs-fresh/
 
 # Assets this server hands to clients; local to a deployment, not to the repo.
 /content/
+
+# Which of those content packs a deployment withholds from clients without them.
+/config/content-packs.json

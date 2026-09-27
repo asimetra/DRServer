@@ -1,3 +1,4 @@
+import path from "node:path";
 import "./rpc-handlers.js";
 import { start as startWebServices } from "./http.js";
 import { activeSocketSessions, start as startGameSocket } from "./socket/index.js";
@@ -17,6 +18,7 @@ import {
 import { error, info } from "./log.js";
 import { createGracefulShutdown, installProcessHandlers } from "./shutdown.js";
 import { acquireProcessLock } from "./process-lock.js";
+import { keepDeclarationsIn, readyContentPacks } from "./content-packs.js";
 import { closeMatchWorkers, startMatchWorkers } from "./socket/match-worker-service.js";
 
 info("Open Dungeon Server — web services + game socket");
@@ -42,6 +44,12 @@ reportAuth();
 await purgeLegacyExperienceBoard();
 await seedStandings();
 ensureSafeTransport();
+// Which skins and summons to withhold from clients that lack them; each worker
+// reads the same file for itself.
+await readyContentPacks();
+// What each account's client said it has, kept across restarts: the first
+// thing a launching client asks for is its own account, before it says.
+keepDeclarationsIn(path.join(config.dataDir, "content-declarations.json"));
 await startMatchWorkers();
 
 const listeners = [startWebServices(), startInternalApi(), startGameSocket()];

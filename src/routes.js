@@ -5,12 +5,33 @@ import { info, warn } from "./log.js";
 import { serveContent } from "./content.js";
 import { tokenProblem } from "./auth.js";
 import { gameStatusFor } from "./game-status.js";
+import { declare, declaredView, jsonFor, viewForOwnAccount, viewFromDemographics } from "./content-packs.js";
+import { sessionHolding } from "./socket/presence.js";
 
 const json = (body, status = 200) => ({
   status,
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
+
+/** The same, with every skin named in it in terms this client said it can draw. */
+const jsonAs = (view, body, status = 200) => ({
+  status,
+  headers: { "Content-Type": "application/json" },
+  body: jsonFor(body, view),
+});
+
+/**
+ * The calls that carry the client's Demographics, and where, as a real client
+ * sends them. The daily reward is asked a moment after login, the friend list
+ * soon after, and the lists before those are answered from what was declared
+ * last (content-packs.js).
+ */
+const DECLARING = new Map([
+  ["store/AskAboutDailyReward", 2],
+  ["leaderboard/getFriendData", 1],
+  ["store/PurchaseOffer", 4],
+]);
 
 /**
  * Who this caller is, proved — or the refusal to send back.
@@ -88,7 +109,10 @@ const accountDetails = async (req) => {
    * server does not change — so it is left out rather than sent and hoped over.
    */
   const { market_listings, market_barred, ...forTheClient } = account;
-  return json(forTheClient);
+  // The first question a launching client asks, before it has said what it
+  // has: answered in its last declaration, until this launch confirms it.
+  const view = viewForOwnAccount(accountId, { connected: Boolean(sessionHolding(accountId)) });
+  return jsonAs(view, forTheClient);
 };
 
 /**
@@ -99,9 +123,15 @@ const rpcCall = async (req, [service, method]) => {
   if (refusal) return refusal;
 
   const id = req.json?.id ?? null;
+  const accountId = accountIdOf(req);
+  const declaredAt = DECLARING.get(`${service}/${method}`);
+  if (declaredAt !== undefined && accountId !== null) {
+    const view = viewFromDemographics(req.json?.params?.[declaredAt]);
+    if (view) declare(accountId, view);
+  }
   try {
     const result = await dispatch(service, method, req.json?.params, callerOf(req));
-    return json({ jsonrpc: "2.0", id, result });
+    return jsonAs(declaredView(accountId), { jsonrpc: "2.0", id, result });
   } catch (err) {
     return json({
       jsonrpc: "2.0",

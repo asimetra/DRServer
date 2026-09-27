@@ -2,6 +2,7 @@ import { config } from "../config.js";
 import { info, warn } from "../log.js";
 import { ENTRY_ERROR, FLID, buildEntryResponse, readEntryRequest } from "./entry-protocol.js";
 import { transitionsOf } from "./session-transitions.js";
+import { declare, viewFromDemographics } from "../content-packs.js";
 
 export {
   ENTRY_ERROR,
@@ -17,6 +18,21 @@ export {
  * run, the teardown and every answer — is the session's transition controller
  * (session-transitions.js); this only reads the wire.
  */
+/**
+ * What the client says it has, from the Demographics it sends with every entry
+ * request (content-packs.js). Before anything of the run is generated, so the
+ * first hero it is shown is already one it can draw.
+ */
+const noteDeclaration = (session, demographics) => {
+  const view = viewFromDemographics(demographics);
+  if (!view) return;
+  if (session.contentView?.key !== view.key) {
+    info(`[${session.id}] declares content packs: ${view.key || "none"}`);
+  }
+  session.contentView = view;
+  declare(session.accountId, view);
+};
+
 export const handleField = (session, fieldId, reader) => {
   switch (fieldId) {
     case FLID.ClientRequestEntry: {
@@ -26,6 +42,7 @@ export const handleField = (session, fieldId, reader) => {
           `mapId=${request.mapId} friendId=${request.friendId} ` +
           `friendOnly=${request.friendOnly} group="${request.matchMakerGroup}"`
       );
+      noteDeclaration(session, request.demographics);
 
       if (!config.dungeonsEnabled) {
         warn(

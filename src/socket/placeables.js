@@ -21,6 +21,7 @@ import { CLID, TEAM } from "./opcodes.js";
 import { isPlausiblePosition } from "./coordinates.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { npcGenerate, objectDisable } from "./objects.js";
+import { variantFor } from "../content-packs.js";
 import { npcHeadingUpdate } from "./ai.js";
 import { npcAttackChoices, npcAttackSpeed } from "./npc-attacks.js";
 import { membersOf } from "./match-world.js";
@@ -459,6 +460,22 @@ const placerFor = async (session, owner) => {
 };
 
 /**
+ * The NPC a hero's summon becomes for the skin the hero is wearing.
+ *
+ * A timeline names its summon once for every skin of a hero, and the client
+ * draws a summon from that NPC's own GameMaster row — the Ghost Samurai's
+ * Iron Legion clones wear the default samurai whatever skin cast them. A
+ * GameMaster that carries a row named `<summon>__<skin constant>` gives that
+ * skin a summon of its own; without one the timeline's summon stands.
+ *
+ * Only a variant a content pack owns and that plays exactly like its base, as
+ * content-packs.js checks: that is what lets a client without the pack be sent
+ * the base in its place. Any other `__` row would reach it unchanged, and a
+ * client whose GameMaster lacks the row does not survive being told about it.
+ */
+export const summonForSkin = async (constant, skinType) => variantFor(constant, skinType) ?? constant;
+
+/**
  * Builds one placeable and starts its clock.
  *
  * `owner` is for one an enemy leaves — `{ team, masterDoid, level }`, from
@@ -472,7 +489,10 @@ export const spawnPlaceable = async (
   session,
   { action, origin, heading, weaponPower, heroWeapon = null, placementGroup, owner = null }
 ) => {
-  const npc = await npcForConstant(action.spawnname);
+  const constant = owner
+    ? action.spawnname
+    : await summonForSkin(action.spawnname, session.heroSpawn?.skinType);
+  const npc = await npcForConstant(constant);
   if (!npc) {
     warn(`placeables: ${action.spawnname} names no GameMaster NPC`);
     return null;

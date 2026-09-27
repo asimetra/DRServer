@@ -9,6 +9,7 @@
 import { CLID, OP } from "./opcodes.js";
 import { LifecycleScope } from "./lifecycle-scope.js";
 import { warn } from "../log.js";
+import { keepPresentation } from "../content-packs.js";
 
 const MATCH_WORLD = Symbol("match-world");
 const MATCH_STATE = Symbol("match-state");
@@ -467,7 +468,9 @@ export const createMatchWorld = (match, seedSession) => {
         const clid = body.readUInt16LE(10);
         const doid = body.readUInt32LE(12);
         if (isMemberClass(clid)) return false;
-        this.snapshotCreates.set(doid, { frame: Buffer.from(frame), doid, clid, parent, zone });
+        // The copy keeps how to present it: a late joiner without a pack must
+        // get the NPC its variant dresses, not the variant.
+        this.snapshotCreates.set(doid, { frame: keepPresentation(frame, Buffer.from(frame)), doid, clid, parent, zone });
         return true;
       }
 

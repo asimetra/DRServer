@@ -114,6 +114,68 @@ For compatibility, a deliberately trusted LAN can opt into a remote cleartext
 bind with `ODS_ALLOW_INSECURE_REMOTE=1`. Without that acknowledgement startup
 refuses any non-loopback bind.
 
+## Custom skins (optional)
+
+Nothing here is needed to run the game. A server with no custom skins needs no
+setting, file or step from this section.
+
+A skin is data on both sides, grouped into a **content pack**; no server code
+changes:
+
+1. **Client:** the skin's preprocessed bundles in the client's `lib/` folder —
+   one for the body, one per weapon model the hero can hold, and optionally a
+   portrait and an icon bundle. The C++ client reads a skin only from these
+   bundles, so they cannot be served by this server.
+2. **Both GameMasters:** the same rows in the server's
+   `content/Resources/Levels/DB_GameMaster.json` (start from a copy of the
+   game's own file if there is none) and in the client's
+   `Resources/Levels/DB_GameMaster.json`, which the client reads from its own
+   disk:
+   - a `Skins` row with a new `Id`, its `ForHero`, and its own
+     `AssetClassName`, `SwfFilepath`, `PortraitName`, `IconSwfFilepath`,
+     `UISwfFilepath`, `IconName` and `CardName`;
+   - to sell it, an `Offers` row (`Tab: "SKIN"`, `Location: "STORE"`) and an
+     `OfferDetails` row carrying its `SkinId`;
+   - optionally, an `Npc` row named `<summon>__<skin Constant>` for any NPC the
+     hero summons (for example `GHOST_SAMURAI_CLONE__MY_SKIN`). Heroes wearing
+     that skin get this row instead of the one their attack timeline names. It
+     may change only how the summon looks — `Name`, `AssetClassName`,
+     `SwfFilepath` and the icon columns — never how it plays; a variant that
+     differs anywhere else is refused at startup.
+3. **The client's declaration:** the pack's installer also adds to the client's
+   `DbConfiguration/Config.json`
+   ```json
+   "Demographics": { "contentPacks": ["my-pack@1"] }
+   ```
+   The client forwards that object unread with every dungeon entry and with its
+   friend list request, which is how the server learns what it can draw.
+4. **The server's pack list,** `config/content-packs.json` (or
+   `ODS_CONTENT_PACKS`), local to the deployment like `content/`:
+   ```json
+   { "packs": { "my-pack": { "version": 1, "skins": ["MY_SKIN"] } } }
+   ```
+   A skin added in a later version of the pack is listed as
+   `{ "constant": "MY_SKIN_2", "since": 2 }`.
+5. **Restart the server**, which reads the GameMaster and the pack list once at
+   startup and logs what it withholds. Players buy the skin in the tavern, or
+   an administrator grants its offer with `node tools/grant.js --offer <id>`
+   while the server is stopped.
+
+**Players without the pack are safe.** A client whose GameMaster lacks a skin
+id segfaults the moment it is told about one (tested against the real client).
+So the server tells each client only about the packs it declared: everyone
+else sees a pack's skin as its hero's default skin, and a pack's summon as the
+NPC it dresses — in dungeons, on the report screen, in friend lists, boards
+and requests, and in the account's own details. The game state is unchanged;
+only what each client is told differs. A client that declares a pack it does
+not have crashes only itself. See `src/content-packs.js`.
+
+A skin listed in no pack is sent to everybody as it is, so list every skin a
+deployment adds.
+
+`content/` is also served at `/content/*`, so keep anything that must not be
+downloadable out of it.
+
 ## The internal API
 
 A web front end — a sign-up page, a trade screen, a lobby browser — needs this

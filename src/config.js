@@ -284,6 +284,17 @@ export const loadServerConfig = (environment = process.env) => {
     }),
 
     /**
+     * Skins and summons some players have and others do not; see
+     * src/content-packs.js. Local to a deployment, like its content, and
+     * optional: without the file every client is sent the game's own content.
+     */
+    contentPacksFile: configuredPath({
+      environmentValue: setting(environment, "CONTENT_PACKS"),
+      defaultValue: defaults.contentPacksFile ?? "content-packs.json",
+      configDir,
+    }),
+
+    /**
      * Dungeons are served by default now that entry is verified end to end.
      * Set DR_DUNGEON=0 to refuse entry instead — useful when working on the
      * lobby, since a refusal returns the client to town cleanly rather than

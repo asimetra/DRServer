@@ -134,6 +134,8 @@ const memberSnapshot = (session) => ({
   presenceDoid: session.presenceDoid,
   matchMakerGroup: session.matchMakerGroup ?? "",
   infiniteEpoch: session.infiniteEpoch,
+  // What the client said it has (content-packs.js), so the worker sends it nothing else.
+  contentView: session.contentView?.key ?? "",
   // The connection's strikes, so leaving and re-entering does not reset them.
   securityStrikes: [...(session.securityStrikes ?? [])],
 });

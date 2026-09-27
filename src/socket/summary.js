@@ -9,6 +9,7 @@ import { awardDungeonCompletion } from "./rewards.js";
 import { rankable } from "../leaderboard.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { countsAsKill } from "./actor-roles.js";
+import { presentSkin } from "../content-packs.js";
 
 /**
  * Takes the hero off the floor, once.
@@ -238,9 +239,11 @@ export const projectDungeonReports = (session, recipient, success) => {
       (member) => member !== recipient && !privileged?.has(member)
     ),
   ];
-  return ordered.slice(0, 4).map((member) =>
-    buildDungeonReport(member.world?.contextFor(member) ?? member, success)
-  );
+  // Each peer's skin as this recipient can draw it (content-packs.js).
+  return ordered.slice(0, 4).map((member) => {
+    const report = buildDungeonReport(member.world?.contextFor(member) ?? member, success);
+    return { ...report, skinType: presentSkin(recipient?.contentView, report.skinType) };
+  });
 };
 
 /**

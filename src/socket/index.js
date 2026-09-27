@@ -27,6 +27,7 @@ import { createDistributedObjectIdAllocator } from "./doids.js";
 import { loadGameMaster } from "../gamemaster.js";
 import { infiniteMapDetails } from "../infinite.js";
 import { handleGameplayField } from "./gameplay-fields.js";
+import { declaredView, frameFor } from "../content-packs.js";
 
 const MAX_LOGIN_VERSION_LENGTH = 128;
 
@@ -94,6 +95,8 @@ const handleLogin = async (session, reader) => {
 
   const displaced = sessionHolding(login.accountId);
   session.completeAuthentication(login.accountId, login.token);
+  // What this client said over HTTP before it connected: its packs, if any.
+  session.contentView = declaredView(login.accountId);
   // Claim the account before the first awaited content load. Otherwise two
   // sockets logging in together both observe "nobody here", then both become
   // present after GameMaster resolves and neither displaces the other.
@@ -336,8 +339,10 @@ export const onConnection = (socket) => {
      * output into unbounded allocation. Reading stops until it drains, which
      * also stops us generating more to send.
      */
-    send: (frame) => {
+    send: (outgoing) => {
       if (session.closed || socket.destroyed) return false;
+      // Pack content in the viewer's terms; everything else is `outgoing` itself.
+      const frame = frameFor(outgoing, session.contentView);
       const bufferedBytes = Number(socket.writableLength ?? 0);
       if (bufferedBytes + frame.length > config.maxOutboundBufferBytes) {
         warn(

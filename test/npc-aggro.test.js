@@ -6,8 +6,10 @@ import { npcAwarenessProfile } from "../src/socket/dungeon.js";
 
 test("every moving combatant keeps its authored awareness and leash", async () => {
   const gm = await loadGameMaster();
+  // A `<summon>__<skin>` row (see summonForSkin) is another look for an audited
+  // NPC, not another combatant; a local GameMaster may carry some.
   const moving = gm.raw.Npc.filter(
-    (npc) => npc.IsMover && ["ENEMY", "BEAST", "PET"].includes(npc.CharType)
+    (npc) => npc.IsMover && ["ENEMY", "BEAST", "PET"].includes(npc.CharType) && !npc.Constant.includes("__")
   );
 
   assert.equal(moving.length, 107, "the audited moving-combatant roster changed");

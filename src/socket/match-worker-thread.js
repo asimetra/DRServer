@@ -51,6 +51,7 @@ import { deliverGlobalLine } from "./global-chat.js";
 import { installFriendshipRelay, mirrorPresence } from "./presence.js";
 import { RULE, flushViolations, noteViolation } from "./security-events.js";
 import { createWorkerChannel, deferred } from "./worker-channel.js";
+import { frameFor, readyContentPacks, viewFromKey } from "../content-packs.js";
 
 if (!parentPort) throw new Error("the match worker needs a parent port");
 
@@ -621,9 +622,10 @@ const createMember = ({ sid, gen, member: details }) => {
   });
   if (details.infiniteEpoch !== undefined) member.infiniteEpoch = details.infiniteEpoch;
   if (details.securityStrikes?.length) member.securityStrikes = new Map(details.securityStrikes);
+  member.contentView = viewFromKey(details.contentView);
   member.send = (frame) => {
     if (member.closed) return false;
-    return enqueueFrame(member, frame);
+    return enqueueFrame(member, frameFor(frame, member.contentView));
   };
   member.close = (why, { flush = false } = {}) =>
     enqueueControl(member, { c: "close", why: String(why ?? "closed"), flush: Boolean(flush) });
@@ -842,5 +844,7 @@ process.on("unhandledRejection", (problem) =>
   error(`${label}: unhandled rejection: ${problem?.stack ?? problem}`)
 );
 
+// Before any member: the first hero this thread generates may wear a pack.
+await readyContentPacks({ quiet: true });
 info(`${label} ready`);
 channel.post({ t: "ready" });

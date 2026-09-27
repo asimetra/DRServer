@@ -1,6 +1,7 @@
 import { PacketWriter } from "./packet.js";
 import { config } from "../config.js";
 import { isOverridden } from "../content.js";
+import { isCustomNpc, isCustomSkin, presentNpc, presentSkin, presentable } from "../content-packs.js";
 import { CLID, OP, TEAM } from "./opcodes.js";
 
 /**
@@ -566,7 +567,7 @@ const heroFields = ({
   return fields.body();
 };
 
-export const heroOwnerGenerate = ({ doid, parent = 0, zone = 10, ...hero }) =>
+const buildHeroOwnerGenerate = ({ doid, parent = 0, zone = 10, ...hero }) =>
   generateOwner({
     clid: CLID.HeroGameObject,
     doid,
@@ -575,8 +576,7 @@ export const heroOwnerGenerate = ({ doid, parent = 0, zone = 10, ...hero }) =>
     fields: heroFields(hero),
   });
 
-/** HeroGameObject (non-owner) uses the identical required-field body. */
-export const heroGenerate = ({ doid, parent = 0, zone = 10, ...hero }) =>
+const buildHeroGenerate = ({ doid, parent = 0, zone = 10, ...hero }) =>
   generateVisible({
     clid: CLID.HeroGameObject,
     doid,
@@ -584,6 +584,27 @@ export const heroGenerate = ({ doid, parent = 0, zone = 10, ...hero }) =>
     zone,
     fields: heroFields(hero),
   });
+
+/**
+ * A hero wearing a pack's skin is drawn in its hero's default for a client that
+ * did not declare the pack: the real client segfaults on a skin id its own
+ * GameMaster lacks (see content-packs.js). Its owner is no exception — the same
+ * account may be playing from a client without the pack.
+ */
+const withSkinFor = (build) => (details) => {
+  const frame = build(details);
+  return isCustomSkin(details.skinType)
+    ? presentable(frame, (view) => {
+        const shown = presentSkin(view, details.skinType);
+        return shown === details.skinType ? frame : build({ ...details, skinType: shown });
+      })
+    : frame;
+};
+
+export const heroOwnerGenerate = withSkinFor(buildHeroOwnerGenerate);
+
+/** HeroGameObject (non-owner) uses the identical required-field body. */
+export const heroGenerate = withSkinFor(buildHeroGenerate);
 
 /**
  * DistributedNPCGameObject (clid 27). Field order from
@@ -649,7 +670,7 @@ const LAYER_BY_NAME = {
 export const layerFor = (row, placedLayer) =>
   LAYER_BY_NAME[placedLayer] ?? LAYER_SORTED;
 
-export const npcGenerate = ({
+const buildNpcGenerate = ({
   doid,
   parent = 0,
   npcType,
@@ -708,6 +729,17 @@ export const npcGenerate = ({
     parent,
     fields: fields.body(),
   });
+};
+
+/** A pack's summon variant goes out as the NPC it dresses to a client without the pack. */
+export const npcGenerate = (details) => {
+  const frame = buildNpcGenerate(details);
+  return isCustomNpc(details.npcType)
+    ? presentable(frame, (view) => {
+        const shown = presentNpc(view, details.npcType);
+        return shown === details.npcType ? frame : buildNpcGenerate({ ...details, npcType: shown });
+      })
+    : frame;
 };
 
 /**
