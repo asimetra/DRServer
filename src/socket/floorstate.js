@@ -7,6 +7,7 @@ import { awardInfiniteFloor } from "./rewards.js";
 import { membersOf } from "./match-world.js";
 import { matchHost } from "./match-host.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
+import { holdsFloor } from "./actor-roles.js";
 
 /**
  * Floor outcome.
@@ -376,7 +377,9 @@ export const checkFloorCleared = (session) => {
   let enemies = 0;
   let alive = 0;
   for (const actor of session.actors.values()) {
-    if (!actor.isEnemy) continue;
+    // Barrels and props do not hold it, and neither does an enemy the floor
+    // did not stock — see actor-roles.js.
+    if (!holdsFloor(actor)) continue;
     enemies++;
     if (!actor.dead) alive++;
   }

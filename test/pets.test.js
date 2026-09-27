@@ -341,6 +341,37 @@ test("a pet returns to its owner when idle and chooses an enemy instead of its o
   assert.equal(reader.u32(), enemyDoid, "the choreography targets the enemy");
 });
 
+/**
+ * What the client would never let anybody hit is not a pet's to chase either.
+ * Infinite's lightning orb is an ENEMY row authored `IsAttackable 0`.
+ */
+test("a pet leaves an unattackable enemy alone", async (t) => {
+  const { session, context } = await contextWithPet(75);
+  t.after(() => {
+    cancelPetRespawn(session);
+    for (const stop of session.hazardBeats?.values?.() ?? []) stop();
+  });
+  const petDoid = await spawnEquippedPet(context, session);
+  const pet = session.actors.get(petDoid);
+
+  const orbDoid = 9100;
+  session.objects.set(orbDoid, CLID.DistributedNPCGameObject);
+  session.actors.set(orbDoid, {
+    hitPoints: 1,
+    maxHitPoints: 1,
+    collisionRadius: 25,
+    constant: "LIGHTNING_ORB_SHOOTER",
+    isEnemy: true,
+    attackable: false,
+    position: { x: 1000, y: 840 },
+    team: TEAM.ENEMIES,
+  });
+  await tickNpcAi(session, 3000, 0.1);
+
+  assert.notEqual(pet.ai.targetDoid, orbDoid);
+  assert.notEqual(pet.ai.state, "attack");
+});
+
 test("a dead pet returns as a new object and plays its teleport-in timeline", async (t) => {
   const { gm, session, context } = await contextWithPet(75);
   const wolf = gm.npcByConstant.get("WOLF_PET");

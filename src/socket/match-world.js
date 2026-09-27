@@ -132,6 +132,7 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "reportFloorFailed",
   "killAllEnemies",
   "advanceFloor",
+  "summon",
 ]);
 
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);

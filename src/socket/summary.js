@@ -8,6 +8,7 @@ import { settleDungeonAccount } from "./settle-account.js";
 import { awardDungeonCompletion } from "./rewards.js";
 import { rankable } from "../leaderboard.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
+import { countsAsKill } from "./actor-roles.js";
 
 /**
  * Takes the hero off the floor, once.
@@ -159,7 +160,7 @@ export const buildDungeonReport = (session, success = false) => {
   const account = session.dungeonAccount ?? {};
   const avatar = session.dungeonAvatar ?? {};
   const kills = session.dungeonContribution?.kills ??
-    [...(session.actors?.values() ?? [])].filter((actor) => actor.isEnemy && actor.dead).length;
+    [...(session.actors?.values() ?? [])].filter((actor) => countsAsKill(actor) && actor.dead).length;
 
   return {
     name: account.name ?? "Player",

@@ -139,6 +139,7 @@ import { spawnNpcRewards, spawnBossReward } from "./drops.js";
 import { clearDungeonBuffs, grantBuff } from "./buffs.js";
 import { clearDungeonPowerups, scheduleTimelineDoobers } from "./powerups.js";
 import { clearDungeonPlaceables, clearPlacementPermits } from "./placeables.js";
+import { scheduleSummons } from "./summons.js";
 import { clearCooldowns } from "./cooldowns.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import {
@@ -672,9 +673,30 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
               session.send(npcCreateFrame(position, heading, current?.hitPoints ?? hitPoints));
             }
           : null,
-      // Only real enemies gate floor completion; smashing every barrel is not
-      // what finishes a dungeon.
-      isEnemy: npc.CharType === "ENEMY" && options.countsForFloor !== false,
+      /**
+       * Two questions, and they used to share one answer. Whether this is an
+       * enemy is what pets hunt, what the hero's bombs and fissures catch, what
+       * FLOOR_KILL_ALL_NPCS takes and what counts on the report. Whether it
+       * holds the floor open is only the floor's question — a boss's clones and
+       * an Infinite modifier's spawns are enemies it did not stock.
+       *
+       * Answered together, a summoned clone was nobody's target but the hero's
+       * sword. The official counts it: its solo samurai run reports 29 kills,
+       * which is the 28 ordinary enemies and the one clone the hero killed,
+       * and not the two its pet killed.
+       */
+      isEnemy: npc.CharType === "ENEMY",
+      holdsFloor: npc.CharType === "ENEMY" && options.countsForFloor !== false,
+      /**
+       * And a third: whether anything may pick it as a target. `IsAttackable`
+       * is the client's own answer — `isAttackable = IsAttackable &&
+       * triggerState` — so a hero is never offered one to hit. Thirty ENEMY
+       * rows say no: every placeable, Infinite's ice bombs and lightning orbs,
+       * and the lava golem boss. A pet chasing an orb, or a hero's bomb putting
+       * out an ice bomb before it goes off, is this server choosing a target
+       * the client never could.
+       */
+      attackable: Boolean(npc.IsAttackable),
       // A moving BEAST is a neutral third-party combatant. Static BEAST rows
       // are traps/placeables and must never enter NPC target selection.
       isBeast: npc.CharType === "BEAST" && Boolean(npc.IsMover),
@@ -3008,6 +3030,25 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
     revealSecretRoom(context, floor, floorDoid, placementId).catch((error) =>
       warn(`secret reveal ${placementId}: ${error.message ?? error}`)
     );
+  /**
+   * What an enemy's attack calls up — see summons.js. Built here because an
+   * enemy is built from the floor's own context, like every other one on it.
+   */
+  session.summon = (casterDoid, attack, playSpeed) =>
+    scheduleSummons(session, {
+      casterDoid,
+      attack,
+      playSpeed,
+      spawn: (constant, position, { level, heading }) =>
+        spawnNpc(context, constant, position, undefined, {
+          returnDoid: true,
+          level,
+          heading,
+          engaged: true,
+          countsForFloor: false,
+          suppressTriggerReporting: true,
+        }),
+    }).catch((error) => warn(`summons from ${casterDoid}: ${error.message ?? error}`));
 
   let petsBuilt = 0;
   for (const member of party) {

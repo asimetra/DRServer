@@ -13,6 +13,7 @@ import {
   suicideDelayMs,
 } from "../gamemaster.js";
 import { netAttackDamage, npcStats, statOffsetsFor } from "../combat-damage.js";
+import { countsAsKill, isHuntable } from "./actor-roles.js";
 import { partyStatMultiplier } from "../npc-stats.js";
 import {
   STAT_NAMES,
@@ -517,6 +518,30 @@ const removeActor = (session, doid) => {
   clearBuffsOn(session, doid);
   session.objects?.delete(doid);
   session.send(objectDisable(doid));
+  return true;
+};
+
+/**
+ * The end of a summoned actor's `timetolive`: it dies, and nobody killed it.
+ *
+ * The official's own summons show the shape. Of the Shaman Imp's ice imps left
+ * alone for their authored ten seconds, 43 of 43 read `hitPoints 0 -> state
+ * dead -> disable` at 10.1-10.2s, and none drops the experience and gold a
+ * killed one does — 50 of 69 leave nothing at all, and the rest only what
+ * something dying beside them left. So this is the death announcement without
+ * the death: no `onDeath`, which is where the rewards and the trigger reports
+ * live, and no blast, since nothing hit it.
+ */
+export const expireActor = (session, doid) => {
+  const actor = session.actors?.get(doid);
+  const clid = session.objects?.get(doid);
+  if (!actor || actor.dead || !HITPOINTS_FIELD_BY_CLID[clid]) return false;
+  actor.dead = true;
+  actor.hitPoints = 0;
+  session.send(hitPointsUpdate(doid, clid, 0));
+  session.send(stateUpdate(doid, clid, "dead"));
+  removeActor(session, doid);
+  actor.onGone?.(doid);
   return true;
 };
 
@@ -1520,7 +1545,7 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
     const hitPointsBefore = actor.hitPoints ?? 0;
     // Hit points first, then the floater — the order every captured tick shows.
     if (!applyDamage(session, victimDoid, perTick)) return;
-    if (actor.isEnemy) {
+    if (countsAsKill(actor)) {
       session.dungeonContribution ??= { kills: 0, damage: 0 };
       session.dungeonContribution.damage += Math.min(perTick, hitPointsBefore);
       if (actor.dead) {
@@ -1630,7 +1655,8 @@ export const placeableVictims = (session, attackerDoid, colliders = []) => {
      * it, and a bomb thrown past a barrel rack was spending itself on the
      * furniture.
      */
-    if (!victim.actor.isEnemy) continue;
+    // Nor what nothing may target — an Infinite ice bomb is not put out by one.
+    if (!isHuntable(victim.actor)) continue;
     const clid = session.objects?.get(victim.doid);
     if (victim.actor.dead || !RECEIVE_FIELD_BY_CLID[clid]) continue;
     // The same authored-shape test a floor trap uses, so a placed hazard and a
@@ -1767,7 +1793,7 @@ export const performPlaceableAttack = async (
        * fought with bombs or a fissure weapon finished the floor having, by the
        * server's reckoning, done very little.
        */
-      if (victim.actor.isEnemy) {
+      if (countsAsKill(victim.actor)) {
         session.dungeonContribution ??= { kills: 0, damage: 0 };
         session.dungeonContribution.damage += Math.min(damage, before);
         if (!wasDead && victim.actor.dead) {
@@ -2151,6 +2177,11 @@ export const performNpcAttack = async (
       playSpeed: attackSpeed,
     })
   );
+
+  // Whatever the attack calls onto the floor — see summons.js. Before the
+  // no-contact return below, because a summon is exactly an attack that
+  // touches nobody.
+  session.summon?.(attackerDoid, attack, attackSpeed);
 
   /**
    * A shot is put in the air and resolved by where it gets to; a swing is
@@ -3519,7 +3550,7 @@ const applyProposals = async (session, proposals) => {
           random: session.random ?? Math.random,
         });
       }
-      if (actor.isEnemy) {
+      if (countsAsKill(actor)) {
         session.dungeonContribution ??= { kills: 0, damage: 0 };
         session.dungeonContribution.damage += Math.min(damage, hitPointsBefore);
         if (!wasDead && actor.dead) {

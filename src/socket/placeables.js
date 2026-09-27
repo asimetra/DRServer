@@ -109,7 +109,7 @@ export const timelineDelayMs = (frame, playSpeed = 1) => {
  * garlic and three clones all landed on one spot in front of the caster instead
  * of surrounding him.
  */
-const placeablePosition = (origin, heading, action) =>
+export const placeablePosition = (origin, heading, action) =>
   inFrontOf(
     origin,
     heading,

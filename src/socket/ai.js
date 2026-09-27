@@ -3,6 +3,7 @@ import { FRAMES_PER_SECOND } from "../gamemaster.js";
 import { info, warn } from "../log.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
+import { isHuntable } from "./actor-roles.js";
 import { performNpcAttack } from "./combat.js";
 import { buffMultiplierFor, hasAbility } from "./buffs.js";
 import { heroMembersOf, matchStateOf, worldOf } from "./match-world.js";
@@ -855,8 +856,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   const heroByDoid = new Map(heroes.map((candidate) => [candidate.doid, candidate]));
   const petByDoid = new Map(pets.map((candidate) => [candidate.doid, candidate]));
   const beastByDoid = new Map(beasts.map((candidate) => [candidate.doid, candidate]));
-  const petTargets = [...enemies, ...beasts];
-  const beastTargets = [...heroes, ...pets, ...enemies];
+  const huntable = enemies.filter(({ actor }) => isHuntable(actor));
+  const petTargets = [...huntable, ...beasts];
+  const beastTargets = [...heroes, ...pets, ...huntable];
   const petAggressors = new Map();
   for (const { actor } of enemies) {
     if (!petByDoid.has(actor.ai?.targetDoid)) continue;
