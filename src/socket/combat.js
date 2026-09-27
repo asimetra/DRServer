@@ -23,6 +23,7 @@ import {
 } from "../hero-stats.js";
 import {
   buffColorTypeFor,
+  buffEffectAbilityFor,
   buffEffectReport,
   buffMultiplierFor,
   clearBuffsOn,
@@ -797,7 +798,7 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
 
   if (attack?.DoPercentHealthDamage) {
     const shield = legendaryShieldFor(weapons, attack.AttackType);
-    return spared(
+    const damage = spared(
       Math.max(
         1,
         Math.round(
@@ -807,8 +808,9 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
         )
       )
     );
+    return { damage, neutral: damage, effectiveness: 0 };
   }
-  const priced = await computeDamage(
+  const priced = await priceHit(
     session,
     { attacker: attackerDoid, attackee: victimDoid },
     attack,
@@ -817,7 +819,7 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
   /**
    * `||` cannot tell "could not price it" from "priced it at nothing".
    *
-   * Zero is a real answer: it is what `computeDamage` returns when the victim's
+   * Zero is a real answer: it is what `priceHit` returns when the victim's
    * defence meets the hit, and the corpus sends it — 299 combat results carry a
    * damage of zero, across 39 attack types including plain monster swings like
    * EN_ARROW_SHOT and EN_MACE_CHOP. Flooring it back up contradicts that.
@@ -830,7 +832,12 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
    * measurement to settle which the game did, and the cross-wired defence
    * columns above make this a bad place to guess.
    */
-  return spared(priced || Math.max(1, Math.round(Math.abs(attack?.DamageMod ?? -1))));
+  const floor = Math.max(1, Math.round(Math.abs(attack?.DamageMod ?? -1)));
+  return {
+    damage: spared(priced.damage || floor),
+    neutral: spared(priced.neutral || floor),
+    effectiveness: priced.effectiveness,
+  };
 };
 
 /**
@@ -969,7 +976,14 @@ const applyTrapHit = async (
   const victim = session.actors?.get(victimDoid);
   const clid = session.objects?.get(victimDoid);
   if (!victim || victim.dead || !attack || !RECEIVE_FIELD_BY_CLID[clid]) return false;
-  const damage = await trapDamage(session, attackerDoid, attack, victimDoid, victim, weaponPower);
+  const { damage, neutral, effectiveness } = await trapDamage(
+    session,
+    attackerDoid,
+    attack,
+    victimDoid,
+    victim,
+    weaponPower
+  );
 
   const reaction = encodeCombatResults({
     doid: attackerDoid,
@@ -983,6 +997,7 @@ const applyTrapHit = async (
         damage: -damage,
         attackType: attack.Id,
         targetActorDoid: 0,
+        effectiveness,
         ...staggerFor(attack, damage),
       },
     ],
@@ -1008,7 +1023,7 @@ const applyTrapHit = async (
     attack,
     victimDoid,
     attackerDoid,
-    damage,
+    damage: neutral,
   });
 
   /**
@@ -1510,9 +1525,27 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
    * itself is priced with.
    */
   const share = Number(buff.PercentDamage);
-  const perTick = Number.isFinite(share) && share > 0
-    ? Math.max(1, Math.round(damage * share))
-    : damage;
+  const portion = Number.isFinite(share) && share > 0 ? damage * share : damage;
+
+  /**
+   * And twice that on a monster weak to its element, which is the only thing
+   * that moves a tick.
+   *
+   * The official's fire ticks are one number per burning hero — 194 on
+   * knights, lions, yetis, a shaman imp rated exactly like an ice imp — and
+   * 387 on the rows authoring `WEAK_FIRE`: the ice and freeze imps, the imp
+   * miniboss, the frost troll miniboss. 98 of 98, each carrying effectiveness
+   * +2, the client's "sweet" flash. Doubled before rounding: 2 × 193.5.
+   *
+   * `WEAK_<element>` rather than naming fire, because that is how the rows
+   * say it; fire is the only damaging element any row is weak to today. The
+   * `RESIST_` rows are immune rather than halved — see isEffectImmune — and
+   * none of their ticks is on the wire.
+   */
+  const element = buffEffectAbilityFor(buff);
+  const weak = Boolean(element) && hasAbility(session, victimDoid, `WEAK_${element}`);
+  const perTick = Math.max(1, Math.round(portion * (weak ? 2 : 1)));
+  const effectiveness = weak ? 2 : 0;
 
   /**
    * One clock per distributed buff object. New stacks get new clocks; a grant
@@ -1559,6 +1592,7 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
         actorDoid: victimDoid,
         amount: -perTick,
         colorType,
+        effectiveness,
       })
     );
   };
@@ -1709,7 +1743,11 @@ export const performPlaceableAttack = async (
      * echoes against 11 proposals, and 13 `THROW_GARLIC` echoes against 7,
      * those extra six being the cloud ticking on its own.
      */
-    const plainDamage = await computeDamage(
+    const {
+      damage: plainDamage,
+      neutral,
+      effectiveness,
+    } = await priceHit(
       session,
       { attacker: session.heroDoid, attackee: victim.doid, attackType: attack.Id },
       attack,
@@ -1737,6 +1775,7 @@ export const performPlaceableAttack = async (
       ? { critical: false, multiplier: 1 }
       : critRollFor(await loadGameMaster(), weapon, session.random ?? Math.random);
     const damage = critical ? Math.round(plainDamage * multiplier) : plainDamage;
+    const ticksFrom = critical ? Math.round(neutral * multiplier) : neutral;
 
     const reaction = receiveCombatResult(
       victim.doid,
@@ -1752,6 +1791,7 @@ export const performPlaceableAttack = async (
             attackType: attack.Id,
             targetActorDoid: 0,
             criticalHit: critical ? 1 : 0,
+            effectiveness,
             ...staggerFor(attack, damage),
           },
         ],
@@ -1825,7 +1865,7 @@ export const performPlaceableAttack = async (
         attack,
         victimDoid: victim.doid,
         attackerDoid,
-        damage,
+        damage: ticksFrom,
       });
       /**
        * And what the weapon that threw this leaves on whatever the fire caught.
@@ -1881,17 +1921,17 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
 
   const dealsDamage = Number(attack?.DamageMod ?? 0) < 0;
   if (dealsDamage && isInvulnerable(session, victimDoid)) return false;
-  const petResult = dealsDamage && attacker?.isPet
-    ? await computePetDamage(session, attackerDoid, victimDoid, attack, weaponPower)
-    : null;
-  const damage = dealsDamage
-    ? petResult?.damage ?? await computeDamage(
-        session,
-        { attacker: attackerDoid, attackee: victimDoid },
-        attack,
-        weaponPower
-      )
-    : 0;
+  const priced = !dealsDamage
+    ? { damage: 0, neutral: 0, effectiveness: 0 }
+    : attacker?.isPet
+      ? await computePetDamage(session, attackerDoid, victimDoid, attack, weaponPower)
+      : await priceHit(
+          session,
+          { attacker: attackerDoid, attackee: victimDoid },
+          attack,
+          weaponPower
+        );
+  const { damage } = priced;
 
   /**
    * Monster attacks use the same authored effects as every other hit. Official
@@ -1903,7 +1943,7 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
     attack,
     victimDoid,
     attackerDoid,
-    damage,
+    damage: priced.neutral,
   });
 
   // Roars, taunts and self-buff moves author DamageMod zero. The official sends
@@ -1923,7 +1963,7 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
           damage: -damage,
           attackType,
           targetActorDoid: 0,
-          effectiveness: petResult?.effectiveness ?? 0,
+          effectiveness: priced.effectiveness,
           ...staggerFor(attack, damage),
         },
       ],
@@ -2395,7 +2435,7 @@ const MAX_TRAINED_REDUCTION = 0.5;
  * 62%, not 75%. Only a source that is itself all of it gets to all of it, and
  * the trained half is capped well below that in any case.
  *
- * A function rather than four lines inside `computeDamage` because `/stats`
+ * A function rather than four lines inside `priceHit` because `/stats`
  * reports this number to the player, and a second copy of the formula written
  * to read it out is a copy that drifts from the one that charges for it.
  */
@@ -2448,7 +2488,17 @@ export const damageTurnedAside = (session, doid, stats, offsets) => {
 const isHealing = (attack) =>
   Number(attack?.DamageMod ?? 0) > 0 && !attack?.DoPercentHealthDamage;
 
-const computeDamage = async (session, proposal, attack, weaponPower, weapon = null) => {
+/**
+ * One hit, priced: what lands, what would have landed against a neutral target,
+ * and the `effectiveness` the result carries — see `categoryFor`.
+ *
+ * `neutral` is what a damage-over-time the hit applies is priced from. The
+ * official's fire ticks are one number for every monster a hero burns, 194
+ * against knights, lions, yetis and imps rated every which way; only
+ * `WEAK_FIRE` changes them (see startDamageOverTime). A tick priced from the
+ * categorised hit would carry the category into it.
+ */
+const priceHit = async (session, proposal, attack, weaponPower, weapon = null) => {
   const offsets = statOffsetsFor(attack);
   const gm = await loadGameMaster();
   const attacker = session.actors?.get(proposal.attacker);
@@ -2462,7 +2512,16 @@ const computeDamage = async (session, proposal, attack, weaponPower, weapon = nu
       ? partyStatMultiplier(gm, partySize, STAT_NAMES[offsets.offence]) *
         (1 + Math.max(0, Number(session.npcDamageDepthBonus) || 0))
       : 1;
-  const defender = await statsFor(session, proposal.attackee);
+  /**
+   * A monster's defence is its category, not a number. Its three ratings are
+   * ±1 and nothing more (no level growth), and the official reads them as a
+   * half or a double — see `categoryFor` — and not also as a point of flat
+   * defence and a trained reduction, which is what reading them as a hero's
+   * stats did: a Knight Fortress knight rated +1 against melee stood behind
+   * both. Only a hero's defence stats are a hero's defence.
+   */
+  const category = await categoryFor(session, proposal.attacker, proposal.attackee, attack);
+  const defender = category.rated ? undefined : await statsFor(session, proposal.attackee);
   const signed = netAttackDamage({
     gm,
     attack,
@@ -2492,7 +2551,15 @@ const computeDamage = async (session, proposal, attack, weaponPower, weapon = nu
     defenderBuff: 1,
   });
 
-  if (signed >= 0) return 0; // a heal is `computeHealing`'s to price
+  /**
+   * Nothing landed, so nothing is said about how well. The official's hits
+   * that do no damage — a thrown garlic or firebomb striking before its cloud
+   * does the work, a buff pulse — carry zero whatever the rating: THROW_GARLIC
+   * on a KNIGHT_BOXERS weak to magic, eleven such hits on rated monsters, all
+   * zero. The client would otherwise play StrongHit for a hit that did nothing.
+   */
+  const none = { damage: 0, neutral: 0, effectiveness: 0 };
+  if (signed >= 0) return none; // a heal is `computeHealing`'s to price
   const raw = -signed / generationFalloff(proposal.generation);
 
   /**
@@ -2515,7 +2582,7 @@ const computeDamage = async (session, proposal, attack, weaponPower, weapon = nu
   const reduction = damageTurnedAside(session, proposal.attackee, defender, offsets);
   // All of it is all of it. The floor of one exists so a hit that lands is felt,
   // and a hit that is entirely turned aside did not land.
-  if (reduction >= 1) return 0;
+  if (reduction >= 1) return none;
   /**
    * NPC-authored damage rounds upward when it crosses the integer wire.
    * Captured results pin the distinction repeatedly: BABY_YETI L59 computes
@@ -2526,36 +2593,80 @@ const computeDamage = async (session, proposal, attack, weaponPower, weapon = nu
   const round = session.objects?.get(proposal.attacker) === CLID.DistributedNPCGameObject
     ? Math.ceil
     : Math.round;
-  return Math.max(1, round(raw * (1 - reduction)));
+  // Multiplied before it is rounded: KATANA_SHADOW_SLASH lands 1133 on a
+  // neutral target and 2265 on a weak one, not 2266.
+  return {
+    damage: Math.max(1, round(raw * category.multiplier * (1 - reduction))),
+    neutral: Math.max(1, round(raw * (1 - reduction))),
+    effectiveness: category.effectiveness,
+  };
 };
 
-const PET_DEFENCE_FIELD = {
+/**
+ * How well a hit lands on a monster, by the monster's rating for its type.
+ *
+ * Every NPC row rates itself against the three attack types — `MELEE_DEF`,
+ * `SHOOT_DEF`, `MAGIC_DEF` — at +1 (resists), 0 or -1 (weak), and the
+ * official halves or doubles the hit by it and says so: the result's
+ * `effectiveness` is the inverse of the rating, which is what the client
+ * draws as the pale or the orange number, the weak or the super flash, and
+ * the WeakAttack or StrongHit sound. Across 15721 hero hits on monsters
+ * 15717 carry exactly that; the same hero's `AXE_COMBO_1` lands 944, 1887
+ * and 3774 on resistant, neutral and weak targets, and `KATANA_SOUL_BANG`
+ * 5237 and 10474. The columns are read straight — melee against `MELEE_DEF`
+ * — which the cross-wired stat offsets do not, and fit none of it.
+ *
+ * Everything that hits a monster is judged so — heroes, pets, a hero's
+ * placeables, a floor's mines, and monsters hitting pets and beasts — except
+ * the floor's own PROP traps and barrels, whose 3000 recorded hits all carry
+ * zero. A hero is not rated and is never judged.
+ *
+ * `IgnoreResistances` on the attacker's buffs — the two mushroom potions —
+ * takes the category away and the client is told it landed well: 135 of 135
+ * hits under the star mushroom carry +1, and land at 1.5 times the neutral
+ * hit whatever the rating, which is the buff's own attack multiplier.
+ */
+const DEFENCE_FIELD = {
   MELEE: "MELEE_DEF",
   SHOOTING: "SHOOT_DEF",
   MAGIC: "MAGIC_DEF",
 };
 
-/**
- * Pet results use an authored categorical defence, not the hero's trained
- * fractional defence path above. A target rating of +1 resists (half damage),
- * zero is neutral, and -1 is weak (double damage); the result carries the
- * inverse value so the client draws the matching effectiveness floater.
- */
-const petEffectivenessAgainst = async (victim, attack) => {
-  const field = PET_DEFENCE_FIELD[attack?.AttackType];
-  if (!field || !victim?.constant) return 0;
-  const row = await npcForConstant(victim.constant);
-  const rating = Math.round(Number(row?.[field] ?? 0));
-  return Math.max(-2, Math.min(2, -rating));
+const NOT_RATED = Object.freeze({ rated: false, multiplier: 1, effectiveness: 0 });
+
+const rowOf = async (session, doid) => {
+  const constant = session.actors?.get(doid)?.constant ?? session.trapNames?.get(doid)?.constant;
+  return constant ? npcForConstant(constant) : null;
+};
+
+const ignoresResistances = (session, doid) => {
+  for (const active of session.activeBuffs?.values() ?? []) {
+    if (active.affectedActor === doid && active.buff?.IgnoreResistances) return true;
+  }
+  return false;
+};
+
+const categoryFor = async (session, attackerDoid, victimDoid, attack) => {
+  const field = DEFENCE_FIELD[attack?.AttackType];
+  if (!field) return NOT_RATED;
+  if (session.objects?.get(victimDoid) !== CLID.DistributedNPCGameObject) return NOT_RATED;
+  const victim = await rowOf(session, victimDoid);
+  if (!victim) return NOT_RATED;
+  if (session.objects?.get(attackerDoid) === CLID.DistributedNPCGameObject) {
+    const attacker = await rowOf(session, attackerDoid);
+    if (attacker?.CharType === "PROP") return NOT_RATED;
+  }
+  if (ignoresResistances(session, attackerDoid)) {
+    return { rated: true, multiplier: 1, effectiveness: 1 };
+  }
+  const effectiveness = Math.max(-2, Math.min(2, -Math.round(Number(victim[field] ?? 0))));
+  return { rated: true, multiplier: 2 ** effectiveness, effectiveness };
 };
 
 /** Prices one persistent pet hit exactly as the official pet corpus does. */
 const computePetDamage = async (session, attackerDoid, victimDoid, attack, weaponPower) => {
   const offsets = statOffsetsFor(attack);
-  const effectiveness = await petEffectivenessAgainst(
-    session.actors?.get(victimDoid),
-    attack
-  );
+  const { effectiveness, multiplier } = await categoryFor(session, attackerDoid, victimDoid, attack);
   const signed = netAttackDamage({
     gm: await loadGameMaster(),
     attack,
@@ -2568,17 +2679,17 @@ const computePetDamage = async (session, attackerDoid, victimDoid, attack, weapo
       : 1,
     defenderBuff: 1,
   });
-  if (signed >= 0) return { damage: 0, effectiveness };
+  if (signed >= 0) return { damage: 0, neutral: 0, effectiveness: 0 };
 
   const buffed = offsets
     ? damageReductionFor(session, victimDoid, STAT_NAMES[offsets.defence])
     : 0;
-  if (buffed >= 1) return { damage: 0, effectiveness };
+  if (buffed >= 1) return { damage: 0, neutral: 0, effectiveness: 0 };
   // The official rounds the neutral pet hit first, then applies the categorical
   // half/double. L75 Wolf bite is 287.56 -> 288 -> 144/288/576.
   const neutral = Math.round(-signed);
-  const damage = Math.max(1, Math.round(neutral * (2 ** effectiveness) * (1 - buffed)));
-  return { damage, effectiveness };
+  const damage = Math.max(1, Math.round(neutral * multiplier * (1 - buffed)));
+  return { damage, neutral: Math.max(1, Math.round(neutral * (1 - buffed))), effectiveness };
 };
 
 /**
@@ -2761,6 +2872,17 @@ const withKnockback = (bytes, enabled = true) => {
 const withCrit = (bytes, enabled = true) => {
   const copy = Buffer.from(bytes);
   copy.writeUInt8(enabled ? 1 : 0, CRITICAL_HIT_BYTE);
+  return copy;
+};
+
+/**
+ * How well it landed, which the client proposes as zero and the server
+ * decides — see `categoryFor`. The last byte before `selfDamage`.
+ */
+const EFFECTIVENESS_BYTE = 27;
+const withEffectiveness = (bytes, effectiveness) => {
+  const copy = Buffer.from(bytes);
+  copy.writeInt8(effectiveness, EFFECTIVENESS_BYTE);
   return copy;
 };
 
@@ -3387,9 +3509,10 @@ const applyProposals = async (session, proposals) => {
       ? Math.min(claimedPowerMultiplier, maxPowerMultiplier)
       : 1;
 
-    const plain = proposal.blocked
-      ? 0
-      : await computeDamage(session, proposal, attack, weaponPower * powerMultiplier, swung);
+    const priced = proposal.blocked
+      ? { damage: 0, neutral: 0, effectiveness: 0 }
+      : await priceHit(session, proposal, attack, weaponPower * powerMultiplier, swung);
+    const plain = priced.damage;
 
     /**
      * And whether the weapon's own modifiers turned it into a crit, which is
@@ -3405,6 +3528,7 @@ const applyProposals = async (session, proposals) => {
       ? critRollFor(await loadGameMaster(), swung, session.random ?? Math.random)
       : { critical: false, multiplier: 1 };
     const damage = critical ? Math.round(plain * multiplier) : plain;
+    const ticksFrom = critical ? Math.round(priced.neutral * multiplier) : priced.neutral;
 
     const authoredShove = proposal.blocked ? 0 : knockbackFor(await loadGameMaster(), swung);
     const shoveAbility = authoredShove < 0 ? "PULL_IMMUNE" : "KNOCKBACK_IMMUNE";
@@ -3435,6 +3559,7 @@ const applyProposals = async (session, proposals) => {
     // the authoritative echo when the corresponding effect was refused.
     let bytes = withPowerMultiplier(proposal.bytes, powerMultiplier);
     bytes = withCrit(bytes, critical);
+    bytes = withEffectiveness(bytes, priced.effectiveness);
     if (proposal.blocked) bytes = withKnockback(bytes, false);
     else if (shove) bytes = withKnockback(bytes);
     const echo = receiveCombatResult(proposal.attackee, fieldId, withDamage(bytes, -damage));
@@ -3460,7 +3585,7 @@ const applyProposals = async (session, proposals) => {
         attack,
         victimDoid: proposal.attackee,
         attackerDoid: proposal.attacker,
-        damage,
+        damage: ticksFrom,
       });
       /**
        * And what the weapon itself leaves behind, which is a different thing

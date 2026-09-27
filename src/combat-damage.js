@@ -35,6 +35,11 @@ import { statVector, STAT_NAMES } from "./hero-stats.js";
  * literal indices into it. It reads like an original bug; either way the client
  * shipped with it and a server that "corrects" it would disagree with every
  * damage number the game ever produced.
+ *
+ * That is a hero's defence. A monster's three ratings are not read through
+ * these offsets at all: they are a category, read straight — melee against
+ * MELEE_DEF — and applied as a half or a double (see `categoryFor` in
+ * socket/combat.js), which is what the official's recorded hits fit.
  */
 const OFFSETS_BY_ATTACK_TYPE = {
   MELEE: { speed: 8, offence: 2, defence: 5, type: 0 },
