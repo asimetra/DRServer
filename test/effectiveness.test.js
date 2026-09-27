@@ -28,13 +28,14 @@ const readEcho = (frame) => ({
   effectiveness: frame.readInt8(37),
 });
 
-const heroHit = async (constant, attackId, { activeBuffs } = {}) => {
+const heroHit = async (constant, attackId, { activeBuffs, weapon = { power: 500 }, after } = {}) => {
   const sent = [];
   const session = {
     id: 91,
     heroDoid: HERO,
     floorDoid: 400,
-    heroWeapons: [{ power: 500 }],
+    dungeonActive: true,
+    heroWeapons: [weapon],
     objects: new Map([
       [HERO, CLID.HeroGameObject],
       [VICTIM, CLID.DistributedNPCGameObject],
@@ -56,7 +57,9 @@ const heroHit = async (constant, attackId, { activeBuffs } = {}) => {
   );
   const echo = sent.find((frame) => frame.readUInt32LE(4) === VICTIM && frame.readUInt16LE(8) === 144);
   assert.ok(echo, "the hit is echoed on the victim");
-  return { ...readEcho(echo), taken: 9_000_000 - session.actors.get(VICTIM).hitPoints };
+  const taken = 9_000_000 - session.actors.get(VICTIM).hitPoints;
+  await after?.();
+  return { ...readEcho(echo), taken, ticked: 9_000_000 - session.actors.get(VICTIM).hitPoints - taken };
 };
 
 test("a hero's hit is halved on a resistant monster and doubled on a weak one, and says so", async () => {
@@ -118,6 +121,25 @@ test("a hit that deals nothing carries no effectiveness", async () => {
   const hit = await heroHit("KNIGHT_BOXERS", garlic.Id);
   assert.equal(hit.damage, 0);
   assert.equal(hit.effectiveness, 0);
+});
+
+/**
+ * The burn a weapon's own modifier leaves is the same burn: BURNING_1 is
+ * FIRE_L1, the one the official ticks at 194 on every monster whatever its
+ * rating. It is priced from the neutral hit like the attack's own debuffs.
+ */
+test("a Burning weapon ticks the same on a neutral, a weak and a resistant monster", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const weapon = { power: 500, modifier1: 70081 };
+  const tickOnce = () => t.mock.timers.tick(1000);
+  const neutral = await heroHit("BRUTE", ATTACK.AXE_COMBO_1, { weapon, after: tickOnce });
+  const weak = await heroHit("BABY_YETI", ATTACK.AXE_COMBO_1, { weapon, after: tickOnce });
+  const resisted = await heroHit("PURPLE_SPECTER", ATTACK.AXE_COMBO_1, { weapon, after: tickOnce });
+
+  assert.ok(neutral.ticked > 0, "the weapon burns");
+  assert.equal(weak.damage, neutral.damage * 2, "the hit itself is judged");
+  assert.equal(weak.ticked, neutral.ticked, "its burn is not");
+  assert.equal(resisted.ticked, neutral.ticked);
 });
 
 /** The floor's own traps and barrels are not judged: all of their 3000 recorded hits carry zero. */

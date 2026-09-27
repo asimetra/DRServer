@@ -1617,6 +1617,12 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
  * Kept separate because a weapon may contribute two modifier buffs in addition
  * to the attack's own pair. Stacking remains `grantBuff`'s decision in both
  * paths; its authored `MaxStacks` is the single source of truth.
+ *
+ * `damage` here and in `applyTargetBuff` is what a tick is priced from, and it
+ * is the *neutral* hit — `priceHit`'s `neutral`, times the crit — never the
+ * categorised one. The official's burn is one number on every monster a hero
+ * sets alight, whatever they are rated; only `WEAK_<element>` moves it (see
+ * startDamageOverTime). A Burning weapon's FIRE_L1 is exactly that burn.
  */
 const applyModifierBuffs = async (session, { weapon, victimDoid, attackerDoid, damage }) => {
   const effects = onHitBuffEffectsFor(await loadGameMaster(), weapon);
@@ -1888,7 +1894,7 @@ export const performPlaceableAttack = async (
           weapon,
           victimDoid: victim.doid,
           attackerDoid,
-          damage,
+          damage: ticksFrom,
         });
       }
     }
@@ -3598,7 +3604,7 @@ const applyProposals = async (session, proposals) => {
         weapon: swung,
         victimDoid: proposal.attackee,
         attackerDoid: proposal.attacker,
-        damage,
+        damage: ticksFrom,
       });
     }
 
