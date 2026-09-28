@@ -259,12 +259,21 @@ const keptOutOfHeroes = (target, actor, heroes) => {
 /**
  * The attacks it could use from here, right now.
  *
- * Three things have to hold, and all three are authored on the attack row.
- * `MinRange` and `Range` are the band — a spear throw with a MinRange of 400 is
- * not a thing an imp does to someone standing on its toes — and `AI_RechargeT`
- * is that attack's own cooldown, which is what makes a shaman's fifteen-second
- * summon rare among its three-second bolts. The band's top is widened to the
- * bodies for the same reason `heroReach` is.
+ * `Range` is the most it may reach, widened to the bodies for the same reason
+ * `heroReach` is, and `AI_RechargeT` is that attack's own cooldown, which is
+ * what makes a shaman's fifteen-second summon rare among its three-second bolts.
+ *
+ * `MinRange` is not a floor for a monster. It reads like one — a spear throw at
+ * 400 to 700 — and the official ignores it: the ice imp's throw, authored
+ * MinRange 400, went out below 400 on 53% of 1123 recorded casts (median 349,
+ * a tenth under 135), its headbutt below 200 on 21%, Infinite's lightning orb
+ * below 300 on 96%. The top is kept to: the throw's p90 is 637 against 700, the
+ * back-off's 479 against 500. Treating it as a floor left an imp that had
+ * hopped back and walked in again with nothing but another hop, so ours threw
+ * 16% of the time against the official's 36% and hopped 48% against 27%.
+ *
+ * A pet keeps it: a ranged pet backs out to its projectile's MinRange (see the
+ * standoff in tickNpcAi), which is measured on pets and is theirs.
  *
  * An `ai` built before this existed, or by a test, has its single attack
  * promoted into the same shape rather than being special-cased below.
@@ -279,10 +288,11 @@ const usableAttacks = (ai, distance, contact, now) => {
       readyAt: 0,
     },
   ];
+  const honoursMinRange = ai.kind === "pet";
   return ai.attacks.filter(
     (attack) =>
       now >= (attack.readyAt ?? 0) &&
-      distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0) &&
+      (!honoursMinRange || distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0)) &&
       distance <= Math.max(attack.range ?? 0, contact) + ATTACK_RANGE_EPSILON
   );
 };

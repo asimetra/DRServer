@@ -26,17 +26,21 @@ const availableAt = (ai, named, distance, now = 0) => {
   return [...found].sort();
 };
 
-test("Freeze Imp selection follows its three authored distance bands", async () => {
+/**
+ * Only the top of a band closes a move to a monster; `MinRange` does not — see
+ * usableAttacks. The official's imps threw their 400-to-700 spear from 135.
+ */
+test("Freeze Imp selection is closed only by each move's reach", async () => {
   const { ai, named } = await choicesFor("FREEZE_IMP");
 
-  assert.deepEqual(availableAt(ai, named, 100), ["EN_FREEZE_IMP_ATTACK"]);
   assert.deepEqual(
-    availableAt(ai, named, 300),
-    ["EN_FREEZE_IMP_ATTACK", "EN_ICE_IMP_ATTACK_SHOWOFF"]
+    availableAt(ai, named, 100),
+    ["EN_FREEZE_IMP_ATTACK", "EN_ICE_IMP_ATTACK", "EN_ICE_IMP_ATTACK_SHOWOFF"]
   );
   assert.deepEqual(
     availableAt(ai, named, 500),
-    ["EN_ICE_IMP_ATTACK", "EN_ICE_IMP_ATTACK_SHOWOFF"]
+    ["EN_ICE_IMP_ATTACK", "EN_ICE_IMP_ATTACK_SHOWOFF"],
+    "the freeze attack reaches 400"
   );
 });
 
@@ -51,20 +55,22 @@ test("Lion selection opens roar, tackle, and claw at their authored ranges", asy
   );
 });
 
-test("Mini Boss Imp exposes the right move set at close, middle, and far range", async () => {
+test("Mini Boss Imp has every move up close and loses the short ones far off", async () => {
   const { ai, named } = await choicesFor("MINI_BOSS_IMP");
 
-  assert.deepEqual(
-    availableAt(ai, named, 100),
-    ["EN_AREA_PULL_PULSE_ATTACK", "EN_ICE_IMP_ATTACK_BACKOFF"]
-  );
-  assert.deepEqual(
-    availableAt(ai, named, 300),
-    ["EN_AREA_PULL_PULSE_ATTACK", "EN_ICE_IMP_ATTACK_BACKOFF", "EN_ICE_IMP_ATTACK_SHOWOFF"]
-  );
+  const all = [
+    "EN_AREA_PULL_PULSE_ATTACK",
+    "EN_ICE_IMP_ATTACK",
+    "EN_ICE_IMP_ATTACK_BACKOFF",
+    "EN_ICE_IMP_ATTACK_SHOWOFF",
+  ];
+  // Five fixed rolls over four moves reach every one of them.
+  assert.deepEqual(availableAt(ai, named, 100), all);
+  assert.deepEqual(availableAt(ai, named, 300), all);
   assert.deepEqual(
     availableAt(ai, named, 600),
-    ["EN_ICE_IMP_ATTACK", "EN_ICE_IMP_ATTACK_SHOWOFF"]
+    ["EN_ICE_IMP_ATTACK", "EN_ICE_IMP_ATTACK_SHOWOFF"],
+    "the pulse reaches 400 and the back-off 500"
   );
 });
 

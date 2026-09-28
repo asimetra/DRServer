@@ -1042,11 +1042,12 @@ test("a monster with three attacks uses more than the first one", async () => {
 });
 
 /**
- * `MinRange` is the bottom of an attack's band. EN_ICE_IMP_ATTACK is a spear
- * throw with a MinRange of 400, so it is not a thing an imp does to someone
- * standing on its toes.
+ * `MinRange` is not a floor for a monster. EN_ICE_IMP_ATTACK authors 400, and
+ * the official's ice imps threw it below 400 on 53% of 1123 recorded casts —
+ * median 349, a tenth under 135. Treating it as a floor left an imp that had
+ * hopped back and walked in again with nothing to throw.
  */
-test("an attack with a MinRange is not used from inside it", async () => {
+test("a monster uses an attack from inside its MinRange", async () => {
   const { session, knightDoid, sent } = makeSession();
   const npc = session.actors.get(knightDoid);
   npc.position = { x: 60, y: 0 };
@@ -1067,8 +1068,8 @@ test("an attack with a MinRange is not used from inside it", async () => {
       packet.reader.u8();
       return packet.reader.u32();
     });
-  assert.ok(used.length > 0, "it still attacks with the one that fits");
-  assert.ok(!used.includes(920163), "but never with the one it is stood inside the range of");
+  assert.ok(used.includes(920050));
+  assert.ok(used.includes(920163), "the throw goes out at 60 as the official's does");
 });
 
 /**
