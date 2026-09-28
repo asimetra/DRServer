@@ -3542,8 +3542,16 @@ const applyProposals = async (session, proposals) => {
      * what actually landed rather than what was swung. Nothing measured
      * separates the two — the recordings hold no crit against a buffed defender
      * — but this is the order the rest of the pricing already runs in.
+     *
+     * Only for an attack that is a swing, a shot or a spell. The health and
+     * party bombs are proposed as slot 0 and not consumable — 461 of 461 of the
+     * official's — and priced from that slot's weapon (116 × 1.5 = 174), so the
+     * slot's crit modifier reached them too: a katana's CRIT_DAMAGE_4 turned a
+     * health bomb into 8946. The official's SUPPORT hits, 628 of them, never
+     * crit; its melee, shooting and magic ones do.
      */
     const { critical, multiplier } = plain &&
+      statOffsetsFor(attack) &&
       !hasAbility(session, proposal.attackee, "CRIT_IMMUNE")
       ? critRollFor(await loadGameMaster(), swung, session.random ?? Math.random)
       : { critical: false, multiplier: 1 };
