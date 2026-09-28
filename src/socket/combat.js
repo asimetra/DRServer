@@ -2274,48 +2274,62 @@ export const performNpcAttack = async (
   const report = (error) =>
     warn(`npc attack ${attackerDoid}: ${error.stack ?? error.message ?? error}`);
 
-  if (shots.length) {
-    /**
-     * Every action the timeline authors, each on its own frame. A gatling
-     * statue looses six between frames 35 and 54 and a specter's triple cast
-     * three on one frame; taking only the first left five sixths of the burst
-     * drawn by the client and unknown to the server.
-     */
-    for (const launch of shots) {
-      later(frameMs(launch.frame), () =>
-        launchNpcProjectile(session, attackerDoid, ai, attack, launch)
-      );
-    }
-  } else {
-    /**
-     * A moving or persistent attack authors one collider set per active frame.
-     * Flattening those sets and resolving their union on the first frame made
-     * later zones hurt early, then left nothing able to hit a hero who entered
-     * while the animation was actually passing through that zone.
-     *
-     * The client permits one hit on a body for these NPC casts, so every frame
-     * gets its authored shape while `alreadyHit` keeps a stationary victim from
-     * being charged again by the later windows of the same cast.
-     */
-    const byFrame = new Map();
-    for (const collider of shape) {
-      const frame = Math.max(0, Number(collider.frame ?? 0));
-      const colliders = byFrame.get(frame) ?? [];
-      colliders.push(collider);
-      byFrame.set(frame, colliders);
-    }
-    const alreadyHit = new Set();
-    for (const [frame, colliders] of byFrame) {
-      later(frameMs(frame), () =>
-        landNpcSwing(
-          session,
-          attackerDoid,
-          ai,
-          attack,
-          colliders,
-          victimDoid,
-          alreadyHit
-        )
+  /**
+   * Every shot the timeline authors, each on its own frame. A gatling statue
+   * looses six between frames 35 and 54 and a specter's triple cast three on
+   * one frame; taking only the first left five sixths of the burst drawn by
+   * the client and unknown to the server.
+   *
+   * And its colliders as well, not instead: two attacks author both. The Mini
+   * Boss Imp's pulse pulls with a 500-unit circle on frame 0 and then looses
+   * sixteen bolts, and the official's hero took up to seventeen hits from one
+   * cast — the circle and every bolt. Ours fired the bolts and dropped the
+   * circle.
+   */
+  for (const launch of shots) {
+    later(frameMs(launch.frame), () =>
+      launchNpcProjectile(session, attackerDoid, ai, attack, launch)
+    );
+  }
+
+  /**
+   * Each collider frame is its own hit. A moving or persistent attack authors
+   * one collider set per active frame, and the client builds a CombatGameObject
+   * per collider action with its own hit map — so a body standing in three
+   * frames of a scratch is scratched three times, not once.
+   *
+   * Across the official corpus the most hits one cast landed on one hero equals
+   * the attack's collider frame count for all 40 monster attacks with any:
+   * BABY_YETI_SCRATCH 3 of 3 frames (349 casts once, 119 twice, 152 three
+   * times), YETI_PUNCH 2, FART 2, TROLL_DRILL 4, SHADOW_SLASH 6, every
+   * single-frame swing 1. This server allowed one hit per cast, so every
+   * multi-frame attack — most of what makes a boss or a miniboss hit hard —
+   * landed a fraction of itself. Several shapes on one frame are still one hit:
+   * CLONE_BLITZ's three together landed once.
+   *
+   * A collider authoring `lifeTime` stays that many frames and, with
+   * `hitDelayPerObject`, strikes again every that many: the green warthog's
+   * puke three times twenty frames every five, the flame dive ten every five.
+   */
+  const byFrame = new Map();
+  for (const collider of shape) {
+    const frame = Math.max(0, Number(collider.frame ?? 0));
+    const colliders = byFrame.get(frame) ?? [];
+    colliders.push(collider);
+    byFrame.set(frame, colliders);
+  }
+  for (const [frame, colliders] of byFrame) {
+    const lifetime = Math.max(1, ...colliders.map((collider) => Number(collider.lifeTime) || 1));
+    const rehit = Math.max(0, ...colliders.map((collider) => Number(collider.hitDelayPerObject) || 0));
+    const step = rehit || 1;
+    let hitMap = new Set();
+    for (let offset = 0; offset < lifetime; offset += step) {
+      // A re-hit delay opens the body up again; without one, a lingering
+      // collider catches whoever walks in, once.
+      if (rehit) hitMap = new Set();
+      const hits = hitMap;
+      later(frameMs(frame + offset), () =>
+        landNpcSwing(session, attackerDoid, ai, attack, colliders, victimDoid, hits)
       );
     }
   }
