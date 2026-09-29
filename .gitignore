@@ -37,6 +37,10 @@ logs-fresh/
 !/docs/combat-conformance.md
 !/docs/content-packs.md
 !/docs/dc-schema.json
+# Public README artwork, listed explicitly so capture-derived images remain local.
+!/docs/images/
+!/docs/images/the-knight-custom-skin.webp
+!/docs/images/the-knight-icon.png
 
 # Local audit reports are built from private capture evidence.
 /reports/
