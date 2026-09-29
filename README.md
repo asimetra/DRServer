@@ -8,8 +8,6 @@ client.
 <p align="center">
   <img src="docs/images/the-knight-custom-skin.webp"
        alt="The Knight optional custom Ghost Samurai skin" width="320">
-  <img src="docs/images/the-knight-icon.png"
-       alt="The Knight custom skin icon" width="180">
 </p>
 <p align="center"><em>The Knight — an optional custom skin demonstrating the
 content-pack compatibility layer. The skin and its source assets are not
