@@ -250,6 +250,41 @@ test("open refuses rather than hangs when it cannot award", async () => {
   );
 });
 
+test("a failed keep save restores the chest claim so it can be retried", async () => {
+  const session = sessionWith({
+    persistDungeonAccount: async () => {
+      throw new Error("storage offline");
+    },
+  });
+
+  await handleTakeChest(session, request(0));
+
+  assert.equal(readResponse(session.sent[0]).succeeded, 0);
+  assert.deepEqual(session.dungeonAccount.account_chests, []);
+  assert.equal(session.dungeonTreasures[0].settled, undefined);
+
+  session.persistDungeonAccount = async () => {};
+  session.sent.length = 0;
+  await handleTakeChest(session, request(0));
+  assert.equal(readResponse(session.sent[0]).succeeded, 1, "the same slot remains retryable");
+  assert.equal(session.dungeonAccount.account_chests.length, 1);
+});
+
+test("a failed open save rolls back the key, item, chest, and report slot", async () => {
+  const session = sessionWith({
+    persistDungeonAccount: async () => {
+      throw new Error("storage offline");
+    },
+  });
+  const before = structuredClone(session.dungeonAccount);
+
+  await handleOpenChest(session, request(0));
+
+  assert.equal(readResponse(session.sent[0]).succeeded, 0);
+  assert.deepEqual(session.dungeonAccount, before);
+  assert.equal(session.dungeonTreasures[0].settled, undefined);
+});
+
 test("the field ids are the ones the client sends", () => {
   assert.equal(FLID_OPEN_CHEST, 282);
   assert.equal(FLID_TAKE_CHEST, 283);

@@ -148,14 +148,37 @@ const grantChest = async (account, treasure) => {
  * client's own refetch against the write and hand it back the state it already
  * had.
  */
-const settle = async (session, succeeded, reward) => {
+const settle = async (session, succeeded, reward, rollback = () => {}) => {
   try {
     await queueAccountSave(session);
   } catch (problem) {
+    rollback();
     warn(`[${session.id}] chest transaction could not be saved: ${problem.message}`);
     return respond(session, false);
   }
   return respond(session, succeeded, reward);
+};
+
+/** Restore an account transaction without replacing the account object itself. */
+const accountRollback = (session, snapshot) => () => {
+  const account = session.dungeonAccount;
+  const activeAvatar = session.dungeonAvatar;
+  const activeAvatarId = activeAvatar?.id;
+  for (const key of Object.keys(account)) delete account[key];
+  Object.assign(account, structuredClone(snapshot));
+
+  // Other dungeon systems hold this object directly. Keep that identity while
+  // putting its fields and its place in account_avatars back as they were.
+  if (activeAvatar && activeAvatarId != null) {
+    const restored = (account.account_avatars ?? []).find((avatar) => avatar.id === activeAvatarId);
+    if (restored) {
+      for (const key of Object.keys(activeAvatar)) delete activeAvatar[key];
+      Object.assign(activeAvatar, restored);
+      account.account_avatars = account.account_avatars.map((avatar) =>
+        avatar.id === activeAvatarId ? activeAvatar : avatar
+      );
+    }
+  }
 };
 
 /**
@@ -178,13 +201,25 @@ export const handleTakeChest = async (session, reader) => {
     return respond(session, false);
   }
 
-  treasure.settled = "kept";
-  const chest = await grantChest(request.account, treasure);
-  info(
-    `[${session.id}] kept chest ${treasure.chestId} from report slot ${request.slot} ` +
-      `— instance ${chest.id}`
-  );
-  return settle(session, true);
+  const rollbackAccount = accountRollback(session, structuredClone(request.account));
+  const rollback = () => {
+    rollbackAccount();
+    delete treasure.settled;
+  };
+  try {
+    treasure.settled = "pending";
+    const chest = await grantChest(request.account, treasure);
+    treasure.settled = "kept";
+    info(
+      `[${session.id}] kept chest ${treasure.chestId} from report slot ${request.slot} ` +
+        `— instance ${chest.id}`
+    );
+    return settle(session, true, undefined, rollback);
+  } catch (problem) {
+    rollback();
+    warn(`[${session.id}] could not keep chest ${treasure.chestId}: ${problem.message}`);
+    return respond(session, false);
+  }
 };
 
 /**
@@ -247,9 +282,15 @@ export const handleOpenChest = async (session, reader) => {
    * player exactly where they started rather than out a chest they never got
    * to open.
    */
-  const chest = await grantChest(request.account, treasure);
+  const rollbackAccount = accountRollback(session, structuredClone(request.account));
+  const rollback = () => {
+    rollbackAccount();
+    delete treasure.settled;
+  };
 
   try {
+    treasure.settled = "pending";
+    const chest = await grantChest(request.account, treasure);
     const reward = await openChest({
       account: request.account,
       chestInstanceId: chest.id,
@@ -261,10 +302,15 @@ export const handleOpenChest = async (session, reader) => {
       `[${session.id}] opened chest ${treasure.chestId} from report slot ${request.slot} ` +
         `— item ${reward.WeaponId}`
     );
-    return settle(session, true, {
-      offerId: Number(reward.OfferId ?? 0),
-      weaponId: Number(reward.WeaponId ?? 0),
-    });
+    return settle(
+      session,
+      true,
+      {
+        offerId: Number(reward.OfferId ?? 0),
+        weaponId: Number(reward.WeaponId ?? 0),
+      },
+      rollback
+    );
   } catch (problem) {
     /**
      * Taken back off again. The grant above was only so `openChest` had
@@ -272,9 +318,7 @@ export const handleOpenChest = async (session, reader) => {
      * the report screen has already cleared from its slot, which they would
      * then never see again.
      */
-    request.account.account_chests = (request.account.account_chests ?? []).filter(
-      (entry) => entry.id !== chest.id
-    );
+    rollback();
     const why = problem instanceof ChestError ? problem.message : `unexpected: ${problem.message}`;
     warn(`[${session.id}] could not open chest ${treasure.chestId}: ${why}`);
     return respond(session, false);
