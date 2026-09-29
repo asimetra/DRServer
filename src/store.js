@@ -280,7 +280,15 @@ const applyDetail = async ({ account, detail, gm, nextId, granted }) => {
     }
   }
 
-  if (detail.SkinId) {
+  /**
+   * Owned once, like a hero. A second row grants nothing, and a purchase that
+   * grants nothing is refused below before it is charged — a client that did
+   * not see its skin arrive bought it seven more times at full price.
+   */
+  const ownsSkin = (account.account_skins ?? []).some(
+    (row) => Number(row.skin_type) === Number(detail.SkinId)
+  );
+  if (detail.SkinId && !ownsSkin) {
     account.account_skins = [
       ...(account.account_skins ?? []),
       { id: await nextId(), account_id: account.id, skin_type: detail.SkinId },

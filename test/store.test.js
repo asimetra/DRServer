@@ -298,3 +298,22 @@ test("a weapon in use leaves its slot free to buy into", async () => {
   assert.ok(touched.includes("account_items"), "the purchase goes through");
   assert.equal(target.account_items.length, 2);
 });
+
+/**
+ * A skin is owned once. The shop sold one over and over when the client did
+ * not believe it had arrived — eight rows of the same skin and 350 gems each on
+ * an account, the client never learning otherwise — so the second purchase
+ * grants nothing and is refused before anything is charged.
+ */
+const BRAVESCAR_OFFER = 51502; // 350 PREMIUM, grants skin 161
+
+test("a skin already owned is not sold again", async () => {
+  const target = account({ premium_currency: 1000, account_skins: [] });
+  await buy(target, BRAVESCAR_OFFER);
+  assert.equal(target.premium_currency, 650);
+  assert.equal(target.account_skins.length, 1);
+
+  await assert.rejects(() => buy(target, BRAVESCAR_OFFER), (error) => error instanceof StoreError && error.code === REFUSED);
+  assert.equal(target.premium_currency, 650, "nothing charged");
+  assert.equal(target.account_skins.length, 1, "no second row");
+});
