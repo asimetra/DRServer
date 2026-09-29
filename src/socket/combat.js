@@ -855,9 +855,9 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
  * Which is what the wire shows, once it is read at the right offset. Every
  * damaging trap result carries both, near enough always: 123 of 123 cave mace
  * results against monsters, 67 of 67 crusher, 50 of 50 blade, 261 of 273
- * arrows. The hero shrugs some of them off — 119 of 153 spike hits — but
- * nothing in a capture says what decides that, and `canBeKnockedBack` is the
- * client's own business.
+ * arrows. The hero shrugs some of them off, and what decides that turned out
+ * to be timing: a trap hit within 0.3s of the last one does not stagger — see
+ * `trapStaggerFor`.
  *
  * Two things do decide it here, and both are measured:
  *
@@ -965,6 +965,36 @@ const staggerFor = (attack, damage) =>
         knockback: Number(attack.Knockback ?? 0) !== 0 ? 1 : 0,
       };
 
+/**
+ * How soon after one trap hit the hero shrugs off the next one's stagger.
+ *
+ * The official's 332 damaging `TRAP_SPIKES` hits on heroes, sorted by the time
+ * since that hero's previous trap hit: within 0.3s only 15% of 95 carry suffer
+ * and knockback; 0.3 to 0.7s, 81%; after that 81 to 88%. It is the beds of a
+ * row biting together — the first throws the hero, the rest land on a hero
+ * already thrown. Here every one of them threw.
+ *
+ * The same holds for every floor trap the corpus has — mace 0% against 94%,
+ * blade 25% against 89%, arrows 0% against 97% — so it is the rule for the
+ * floor's traps, not for spikes. Heroes only, because that is what was
+ * measured; on monsters the official staggers near enough every hit. And
+ * floor traps only: enemy placeables land here too, and nothing measured them.
+ */
+const TRAP_STAGGER_GRACE_MS = 300;
+
+const trapStaggerFor = (session, attack, damage, victimDoid) => {
+  const stagger = staggerFor(attack, damage);
+  if (session.objects?.get(victimDoid) !== CLID.HeroGameObject || damage <= 0) return stagger;
+  if (!/^TRAP_/.test(String(attack?.Constant ?? ""))) return stagger;
+  session.lastTrapHitAt ??= new Map();
+  const now = Date.now();
+  const previous = session.lastTrapHitAt.get(victimDoid);
+  session.lastTrapHitAt.set(victimDoid, now);
+  return previous !== undefined && now - previous < TRAP_STAGGER_GRACE_MS
+    ? { suffer: 0, knockback: 0 }
+    : stagger;
+};
+
 /** Publishes the authoritative result only after an area/projectile contact. */
 const applyTrapHit = async (
   session,
@@ -998,7 +1028,7 @@ const applyTrapHit = async (
         attackType: attack.Id,
         targetActorDoid: 0,
         effectiveness,
-        ...staggerFor(attack, damage),
+        ...trapStaggerFor(session, attack, damage, victimDoid),
       },
     ],
   });
