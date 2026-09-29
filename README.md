@@ -1,6 +1,6 @@
-# Open Dungeon Server
+# DR Server
 
-An independent HTTP and game-socket compatibility server for a dungeon-crawler
+An independent HTTP and game-socket compatibility server for a dungeon-rampage
 client.
 
 Server code only: no client, no assets, no game data. You supply those locally
