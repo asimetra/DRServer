@@ -177,6 +177,98 @@ test("a refusal once the account is held tears down, gives the place back, and n
   assert.deepEqual(answersIn(session), [`entry:${ENTRY_ERROR.UNAUTHORIZED_MAP}`]);
 });
 
+test("an unexpected admission failure answers instead of leaving the client loading", async () => {
+  const session = connect();
+  const transitions = transitionsOf(session);
+
+  assert.equal(
+    await transitions.requestEntry(
+      { mapNodeId: 50002 },
+      {
+        admit: async () => {
+          throw new Error("database unavailable");
+        },
+      }
+    ),
+    false
+  );
+
+  assert.deepEqual(answersIn(session), [`entry:${ENTRY_ERROR.INTERNAL}`]);
+  assert.equal(transitions.phase, "town");
+});
+
+test("a door admission failure answers after leaving the old floor", async () => {
+  const session = connect();
+  const transitions = transitionsOf(session);
+  const leaves = [];
+
+  assert.equal(
+    await transitions.walkThrough(50009, {
+      check: async () => null,
+      leave: async (_connection, options) => leaves.push(options),
+      admit: async () => {
+        throw new Error("database unavailable");
+      },
+    }),
+    false
+  );
+
+  assert.equal(leaves.length, 2, "the second leave cleans up a partially admitted destination");
+  assert.deepEqual(answersIn(session), [`entry:${ENTRY_ERROR.INTERNAL}`]);
+  assert.equal(transitions.phase, "town");
+});
+
+test("an exit whose teardown fails lets the run go and closes, rather than sending the client home", async () => {
+  const registry = new DungeonMatchRegistry();
+  const { steps, executor, admit } = stage(registry);
+  const session = connect();
+  const closes = [];
+  session.close = (why) => closes.push(why);
+  const transitions = transitionsOf(session);
+  steps.admitted.open();
+  steps.joined.open();
+  assert.equal(await transitions.requestEntry({ mapNodeId: 50002 }, { admit, executor }), true);
+
+  // A world as the registry's own: detaching a member unbinds it.
+  const match = session.dungeonMatch;
+  const world = {
+    detachMember(member) {
+      match.members.delete(member);
+      if (member.world === this) member.world = null;
+    },
+    destroy() {},
+  };
+  match.world = world;
+  session.world = world;
+  session.sent.length = 0;
+
+  const broken = {
+    leave: async () => {
+      throw new Error("teardown threw halfway");
+    },
+  };
+  assert.equal(await transitions.requestExit({ executor: broken, registry }), false);
+
+  assert.equal(session.dungeonMatch, undefined, "no longer the match's member");
+  assert.equal(session.world, null, "nor bound to its world");
+  assert.equal(match.members.has(session), false);
+  assert.equal(registry.matchByAccount.get(session.accountId), undefined);
+  assert.equal(registry.matches.size, 0, "the match it was alone in closed");
+  assert.deepEqual(answersIn(session), [], "no ExitComplete over disables that were never sent");
+  assert.deepEqual(closes, ["exit teardown failed"]);
+});
+
+test("a disconnect whose teardown throws does not take the close handler with it", async () => {
+  const session = connect();
+  const transitions = transitionsOf(session);
+  const throwing = {
+    leave: () => {
+      throw new Error("teardown threw");
+    },
+  };
+  assert.equal(await transitions.disconnect({ executor: throwing }), false);
+});
+
 test("a floor context and its connection share one controller", () => {
   const connection = connect();
   assert.equal(transitionsOf({ member: connection }), transitionsOf(connection));

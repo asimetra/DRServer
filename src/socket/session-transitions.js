@@ -34,6 +34,7 @@ import {
 } from "./entry-protocol.js";
 import { EntryRefusedError, admitEntry, checkDestination } from "./match-entry.js";
 import { matchExecutor } from "./match-runtime.js";
+import { dungeonMatches } from "./matches.js";
 
 const controllers = new WeakMap();
 
@@ -116,7 +117,17 @@ export class SessionTransitions {
       return null;
     }
     return this.run("entry", "admitting", async (transition) => {
-      const result = await admit(this.connection, request);
+      let result;
+      try {
+        result = await admit(this.connection, request);
+      } catch (problem) {
+        if (transition.cancelled) return false;
+        const refusal = refusalCodeOf(problem);
+        if (refusal) warn(`[${this.connection.id}] refusing entry with ${refusal}: ${problem.message}`);
+        else error(`[${this.connection.id}] entry admission failed: ${problem.stack ?? problem}`);
+        this.answer(refusal ?? ENTRY_ERROR.INTERNAL);
+        return false;
+      }
       if (transition.cancelled) {
         result.reservation?.abort();
         return false;
@@ -135,8 +146,14 @@ export class SessionTransitions {
    * RequestExit. Cancels whatever is under way and is the one that answers:
    * the run's teardown, then ExitComplete. A second exit while one is leaving
    * waits for the first.
+   *
+   * A teardown that throws has stopped somewhere unknown: the disables may not
+   * all have gone, and ExitComplete over live dungeon objects is what crashes
+   * the native client in town. So there is no ExitComplete then. What this
+   * thread holds of the run is let go, so no match keeps a member who has
+   * left, and the connection closes; its disconnect retries the teardown.
    */
-  requestExit({ executor = matchExecutor } = {}) {
+  requestExit({ executor = matchExecutor, registry = dungeonMatches } = {}) {
     if (this.current?.kind === "exit") return this.current.done;
     const cancelled = this.current;
     if (cancelled) cancelled.cancelled = true;
@@ -147,11 +164,35 @@ export class SessionTransitions {
         warn(`[${this.connection.id}] exiting after reward persistence failed: ${problem.message}`);
       }
       // The disables first, wherever the dungeon runs; ExitComplete after.
-      await executor.leave(this.connection, { notifyClient: true });
+      try {
+        await executor.leave(this.connection, { notifyClient: true });
+      } catch (problem) {
+        error(`[${this.connection.id}] exit teardown failed: ${problem.stack ?? problem}`);
+        this.abandon(registry);
+        this.connection.close?.("exit teardown failed");
+        await cancelled?.done;
+        return false;
+      }
       this.connection.send(buildExitComplete(this.connection.matchMakerDoid));
       await cancelled?.done;
       return true;
     });
+  }
+
+  /** Out of the match and its world as far as this thread is concerned, after a teardown that did not finish. */
+  abandon(registry) {
+    const { connection } = this;
+    try {
+      registry.remove(connection);
+    } catch (problem) {
+      error(`[${connection.id}] could not leave the match registry: ${problem.stack ?? problem}`);
+    }
+    try {
+      connection.world?.detachMember?.(connection);
+    } catch (problem) {
+      error(`[${connection.id}] could not leave the match world: ${problem.stack ?? problem}`);
+    }
+    connection.world = null;
   }
 
   /**
@@ -195,7 +236,24 @@ export class SessionTransitions {
 
       transition.phase = "admitting";
       const request = doorRequest(this.connection, node);
-      const result = await admit(this.connection, request);
+      let result;
+      try {
+        result = await admit(this.connection, request);
+      } catch (problem) {
+        if (transition.cancelled) return false;
+        const refusal = refusalCodeOf(problem);
+        if (refusal) warn(`[${this.connection.id}] refusing door to ${node} with ${refusal}: ${problem.message}`);
+        else error(`[${this.connection.id}] door admission to ${node} failed: ${problem.stack ?? problem}`);
+        try {
+          // Admission may have failed after reserving or partially routing the
+          // connection. A second leave is idempotent and clears either case.
+          await leave(this.connection, { notifyClient: true });
+        } catch (cleanupProblem) {
+          error(`[${this.connection.id}] door admission cleanup failed: ${cleanupProblem.stack ?? cleanupProblem}`);
+        }
+        this.answer(refusal ?? ENTRY_ERROR.INTERNAL);
+        return false;
+      }
       if (transition.cancelled) {
         result.reservation?.abort();
         return false;
@@ -217,7 +275,16 @@ export class SessionTransitions {
   /** The socket is gone: whatever was under way stops, and the run is let go. */
   disconnect({ executor = matchExecutor } = {}) {
     if (this.current) this.current.cancelled = true;
-    return executor.leave(this.connection);
+    // Called from socket close handlers, which have nothing above them to catch.
+    const failed = (problem) => {
+      error(`[${this.connection.id}] disconnect teardown failed: ${problem?.stack ?? problem}`);
+      return false;
+    };
+    try {
+      return Promise.resolve(executor.leave(this.connection)).catch(failed);
+    } catch (problem) {
+      return Promise.resolve(failed(problem));
+    }
   }
 
   /**
