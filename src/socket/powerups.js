@@ -228,7 +228,7 @@ const cookOne = async (session, { action, origin, heading, random, share }) => {
  */
 export const spawnPowerup = async (
   session,
-  { origin = session.heroPosition, heading = session.heroHeading, action, count } = {}
+  { origin = session.heroPosition, heading = session.heroHeading ?? 0, action, count } = {}
 ) => {
   if (!session.floorDoid || !origin || !action) return null;
 
@@ -287,7 +287,7 @@ export const scheduleTimelineDoobers = async (session, attack, { origin, heading
 
   const floorDoid = session.floorDoid;
   const at = { ...from };
-  const facing = heading ?? session.heroHeading;
+  const facing = heading ?? session.heroHeading ?? 0;
   session.powerupSpawnTimers ??= new Set();
 
   /**

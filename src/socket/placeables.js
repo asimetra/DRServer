@@ -139,9 +139,18 @@ export const placeablePosition = (origin, heading, action) =>
  *
  * A row may have neither — the Ranger's decoy — and then it stands there and
  * does nothing, which is exactly what a decoy is for.
+ *
+ * The hammers' cracks, FISSURE_SMASH and FISSURE_SLOW_SMASH, name one attack as
+ * both, and the official plays them as it plays the axe's: hit points 0 and the
+ * choreography together on the next turn, once, whether or not anyone is
+ * standing there. All thirteen captured say so. Read as a trap that also bursts
+ * on the way out, the crack showed nothing when it landed on empty floor,
+ * showed itself again as it was removed, and stood at 10 hit points meanwhile.
+ * The same attack twice is one burst.
  */
 const attacksOf = async (npc) => ({
-  living: npc.Attack1 ? await attackForConstant(npc.Attack1) : null,
+  living:
+    npc.Attack1 && npc.Attack1 !== npc.DeathAttack ? await attackForConstant(npc.Attack1) : null,
   death: npc.DeathAttack ? await attackForConstant(npc.DeathAttack) : null,
 });
 
@@ -460,6 +469,32 @@ const placerFor = async (session, owner) => {
 };
 
 /**
+ * The weapon a placeable is generated holding.
+ *
+ * Its type is always the row's own — EN_FISSURE_SMASH_WEAPON on a crack,
+ * EN_PLACABLE_TRAPS_WEAPON on the traps — but what a hero puts down carries the
+ * rest of the weapon that put it there: power, level, rarity and modifiers. 88
+ * of 105 official hero-placed generates match one of the hero's own slots on
+ * all of those, and the other 17 are garlic whose power alone differs. An
+ * enemy's, a walking pet's and anything placed without a weapon (a consumable)
+ * keep the row's weapon as it is.
+ */
+const placedWeaponDetails = (weapon, nativePower, { owner, mobileSummon, heroWeapon, weaponPower }) => {
+  if (owner || mobileSummon || !heroWeapon) {
+    return { type: weapon.Id, power: nativePower, requiredlevel: 1, rarity: 1 };
+  }
+  return {
+    type: weapon.Id,
+    power: weaponPower ?? heroWeapon.power,
+    requiredlevel: heroWeapon.requiredlevel,
+    rarity: heroWeapon.rarity,
+    modifier1: heroWeapon.modifier1,
+    modifier2: heroWeapon.modifier2,
+    legendarymodifier: heroWeapon.legendarymodifier,
+  };
+};
+
+/**
  * The NPC a hero's summon becomes for the skin the hero is wearing.
  *
  * A timeline names its summon once for every skin of a hero, and the client
@@ -615,7 +650,14 @@ export const spawnPlaceable = async (
       scale: npc.Scale ?? 1,
       hitPoints,
       weapons: weapon
-        ? [{ type: weapon.Id, power: nativeWeaponPower, requiredlevel: 1, rarity: 1 }]
+        ? [
+            placedWeaponDetails(weapon, nativeWeaponPower, {
+              owner,
+              mobileSummon,
+              heroWeapon,
+              weaponPower,
+            }),
+          ]
         : [],
       // Whoever placed it owns it. Not the row's CharType — see above.
       team,
@@ -782,7 +824,13 @@ export const spawnPlaceable = async (
       if (session.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
       live.deathStarted = true;
       const actor = session.actors?.get(doid);
-      if (actor) actor.hitPoints = 0;
+      // Dead, not only at zero: victims are chosen by `dead`, and a crack left at
+      // zero took monsters' swings for the rest of its life. The official sends
+      // none to one.
+      if (actor) {
+        actor.hitPoints = 0;
+        actor.dead = true;
+      }
       session.send(hitPointsUpdate(doid, CLID.DistributedNPCGameObject, 0));
       runSafely(
         strike(session, doid, live, deathAttack, { always: true }),
@@ -1028,7 +1076,7 @@ export const handleProposeCreateNPC = async (session, reader) => {
       timetolive: await spawnLifetimeFor(npc.Constant),
     },
     origin: { x, y },
-    heading: session.heroHeading,
+    heading: session.heroHeading ?? 0,
     weaponPower: session.heroWeapons?.[weaponSlot]?.power,
     heroWeapon: session.heroWeapons?.[weaponSlot],
   });
@@ -1064,7 +1112,10 @@ export const schedulePlaceables = async (
 
   const floorDoid = session.floorDoid;
   const origin = { ...session.heroPosition };
-  const heading = session.heroHeading;
+  // Zero until the client turns: the hero is generated facing it, and 51 of 417
+  // official floors swing before any heading arrives. Undefined here was a
+  // crack facing NaN that hit nobody.
+  const heading = session.heroHeading ?? 0;
   const placementGroup = { positions: [] };
 
   for (const action of actions) {

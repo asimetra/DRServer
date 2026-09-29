@@ -140,6 +140,8 @@ const installHeroActor = (member, world, position) => {
     partyBombsUsed: member.partyBombsUsed ?? 0,
   });
   member.heroPosition = { ...position };
+  // Generated facing 0; see dungeon.js.
+  member.heroHeading = 0;
   member.reportedHeroPosition = { ...position };
   member.heroPositionAt = Date.now();
   member.reportedHeroPositionAt = member.heroPositionAt;

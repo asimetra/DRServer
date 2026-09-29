@@ -2447,6 +2447,9 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
     member.objects?.set(member.heroDoid, CLID.HeroGameObject);
     session.playerActors.add(member.heroDoid);
     context.heroPosition = { ...at };
+    // The generate says heading 0, and the client reports one only once it
+    // turns, so the last floor's facing is not this hero's.
+    context.heroHeading = 0;
     context.reportedHeroPosition = { ...at };
     context.heroPositionAt = Date.now();
     context.reportedHeroPositionAt = context.heroPositionAt;

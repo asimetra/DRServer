@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { spawnNpcActions } from "../src/gamemaster.js";
+import { attackForConstant, spawnNpcActions } from "../src/gamemaster.js";
+import { dealTrapHit } from "../src/socket/combat.js";
 import { handleProposeAttackChoreography } from "../src/socket/buster.js";
 import { CLID, OP, TEAM } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
@@ -12,6 +13,7 @@ import {
   timelineDelayMs,
 } from "../src/socket/placeables.js";
 import { tickNpcAi } from "../src/socket/ai.js";
+import { decodeGenerate } from "../tools/wire.js";
 
 /** The poison pot's own action, as authored on TM_COOKING_COOLDOWN_POISON. */
 const POISON_ACTION = {
@@ -477,6 +479,111 @@ test("the crack is drawn the way it is dealt", async () => {
   await new Promise((resolve) => setTimeout(resolve, 900));
   assert.ok(session.actors.get(700).hitPoints < 900, "and that is the way it runs");
   assert.equal(session.actors.get(701).hitPoints, 900, "not the way it used to be drawn");
+});
+
+/**
+ * The hammers' cracks name one attack twice, as Attack1 and as DeathAttack, and
+ * the official plays them exactly as it plays the axe's, which names it once.
+ * Every captured FISSURE_SMASH and FISSURE_SLOW_SMASH (13) says: hit points 0
+ * and the choreography together 56-85ms after the generate, once, whoever is
+ * standing there; then "dead" and removal at 1057-1093ms and 1414-1450ms. Read
+ * as a trap, ours played nothing when the crack landed on empty floor, played
+ * it again as the crack was removed, and stood at 10 hit points for monsters to
+ * hit meanwhile.
+ */
+for (const [constant, frames] of [["FISSURE_SMASH", 22], ["FISSURE_SLOW_SMASH", 30]]) {
+  test(`${constant} plays once when it lands, on empty floor too`, async () => {
+    const session = sessionWith();
+    const doid = await spawnPlaceable(session, {
+      action: { spawnname: constant, offset: 20, timetolive: 0.02, frame: 6 },
+      origin: { x: 1000, y: 1000 },
+      heading: 0,
+    });
+    const fieldCount = (field) =>
+      session.sent.filter((packet) => packet.length >= 10 && packet.readUInt16LE(8) === field).length;
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    assert.equal(fieldCount(143), 1, "its crack is shown as it lands, with nobody there");
+    assert.equal(fieldCount(136), 1, "and it has no hit points left to be struck at");
+
+    const animationMs = (frames / 24) * 1000;
+    await new Promise((resolve) => setTimeout(resolve, animationMs + 150));
+    assert.equal(session.objects.get(doid), undefined, "gone once the crack has run");
+    assert.equal(fieldCount(143), 1, "and not shown a second time on the way out");
+    assert.equal(fieldCount(136), 1);
+  });
+}
+
+/**
+ * Once its hit points are gone a crack is not there to be hit. The official
+ * never sends a combat result to one; ours took a monster's swing on the axe's
+ * crack (7 in 100 swings) and on the slow one, whose field 144 showed it
+ * losing 6 of its 10.
+ */
+test("a crack that has gone off cannot be hit", async () => {
+  const session = sessionWith();
+  const doid = await spawnPlaceable(session, {
+    action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
+    origin: { x: 1000, y: 1000 },
+    heading: 0,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const swing = await attackForConstant("EN_SWORD_SLASH_NO_KB");
+  assert.equal(await dealTrapHit(session, 701, swing, doid, 10), false);
+  clearDungeonPlaceables(session);
+});
+
+/**
+ * What a hero puts down carries the hero's weapon. Its type stays the row's own
+ * — EN_FISSURE_SMASH_WEAPON, EN_PLACABLE_TRAPS_WEAPON — but the power, level,
+ * rarity and modifiers are the weapon that placed it: 88 of 105 official
+ * hero-placed generates match one of the hero's own slots exactly, and the
+ * rest are garlic whose power alone differs. Ours sent the row's bare weapon,
+ * power 1 at level 1 with nothing on it.
+ */
+test("a hero's crack carries the weapon that made it", async () => {
+  const session = sessionWith();
+  const heroWeapon = {
+    type: 11003, power: 1335, requiredlevel: 100, rarity: 4,
+    modifier1: 70055, modifier2: 70004, legendarymodifier: 6,
+  };
+  const doid = await spawnPlaceable(session, {
+    action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
+    origin: { x: 1000, y: 1000 },
+    heading: 0,
+    weaponPower: 1335,
+    heroWeapon,
+  });
+  const generate = session.sent.find(
+    (packet) => opcodeOf(packet) === OP.CLIENT_CREATE_OBJECT_REQUIRED_RESP && packet.readUInt32LE(14) === doid
+  );
+  const { fields } = decodeGenerate(generate.subarray(2));
+  assert.deepEqual(fields.weaponDetails[0], [27090, 1335, 100, 4, 70055, 70004, 6]);
+  clearDungeonPlaceables(session);
+});
+
+/**
+ * A hero is generated facing 0 and the client only reports a heading when it
+ * turns — 51 of 417 official floors, and 140 of ours, swing before any. With
+ * no heading on record the crack went out facing NaN and its colliders with
+ * it, so it was drawn askew and hit nobody.
+ */
+test("a crack swung before the hero ever turned runs the way the hero was made facing", async () => {
+  const session = sessionWith({
+    heroHeading: undefined,
+    heroWeapons: [{ type: 11503, power: 30, requiredlevel: 20, rarity: 3 }],
+  });
+  // The hammer's crack reaches 50 to 200 units past where it lands, 20 out.
+  knightAt(session, 700, 1170, 1000);
+  const attack = await attackForConstant("FISSURE_HAMMER");
+  await schedulePlaceables(session, attack, 0);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  const aimed = session.sent.filter((packet) => packet.length >= 14 && packet.readUInt16LE(8) === 133);
+  assert.equal(aimed.length, 1);
+  assert.equal(aimed[0].readFloatLE(10), 0, "facing east, as generated, not NaN");
+  assert.ok(session.actors.get(700).hitPoints < 900, "and it reaches what stands there");
+  clearDungeonPlaceables(session);
 });
 
 /** A knight standing on the spot a placeable will land. */
