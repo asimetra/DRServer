@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { loadFloor } from "../src/socket/floors.js";
+import { loadFloor, readPlacements } from "../src/socket/floors.js";
 import {
   addNavigationObstacle,
   createNavigationState,
@@ -10,6 +10,7 @@ import {
   hasLineOfSight,
   isOnAuthoredTile,
   isPositionBlocked,
+  loadNavigationLibrary,
   moveWithNavigation,
   removeNavigationObstacle,
   segmentStaysOnAuthoredTiles,
@@ -86,7 +87,7 @@ test("tutorial smashables retain their authored, transformed collision shapes", 
   );
 
   assert.deepEqual(barrel.navigationColliders, [
-    { type: "circle", x: 2130, y: 5916, radius: 27 },
+    { type: "circle", x: 2130, y: 5916, radius: 27, facing: 0 },
   ]);
   assert.deepEqual(woodenBox.navigationColliders, [
     {
@@ -96,6 +97,7 @@ test("tutorial smashables retain their authored, transformed collision shapes", 
       halfWidth: 36.00000000000001,
       halfHeight: 36.00000000000001,
       angle: 0,
+      facing: 0,
     },
   ]);
 });
@@ -236,34 +238,185 @@ test("actor obstacles update only their own collider index entries", () => {
   assert.equal(navigation.colliders, colliders);
 });
 
-test("generator release paths leave a rotated trigger enclosure through its local mouth", () => {
+test("a cage lets its prisoners out of the front it faces, whatever angle its pieces sit at", () => {
+  /**
+   * An Aztec jail is three slanted boxes. Taking each box's own local front led
+   * nowhere; the mouth is the cage object's front. Here the object is turned a
+   * quarter, so its front faces -x, and its one piece sits at yet another angle.
+   */
+  const piece = { ...rectangle(300, 300, 60, 40, 2.5), facing: Math.PI / 2 };
   const navigation = createNavigationState({
     bounds: { minX: 0, minY: 0, maxX: 600, maxY: 600 },
-    triggerColliders: new Map([
-      [
-        "jail",
-        {
-          initialOn: true,
-          onColliders: [rectangle(300, 300, 30, 105, Math.PI / 2)],
-          offColliders: [rectangle(300, 300, 30, 105, Math.PI / 2)],
-        },
-      ],
-    ]),
+    triggerColliders: new Map([["jail", { initialOn: true, onColliders: [piece], offColliders: [piece] }]]),
   });
   const origin = { x: 300, y: 300 };
-  const hero = { x: 530, y: 300 };
-  const release = findCageReleasePath(navigation, origin, 20, hero);
+  // The player is off to the cage's right.
+  const release = findCageReleasePath(navigation, origin, 20, { x: 530, y: 300 });
 
-  assert.ok(release, "expected a release point outside the rotated enclosure");
+  assert.ok(release, "expected a way out");
   assert.equal(isPositionBlocked(navigation, release.target, 20), false);
-  assert.equal(hasLineOfSight(navigation, origin, release.target, 20), false);
+  assert.equal(hasLineOfSight(navigation, origin, release.target, 20, release), true);
+  assert.ok(release.target.x < origin.x && Math.abs(release.target.y - origin.y) < 1, `not out of its front: ${JSON.stringify(release.target)}`);
+});
+
+test("the mirrored Aztec jails let their prisoners out of the front too", async () => {
+  // Their pieces are slanted boxes; the front is the object's, not a box's.
+  await loadNavigationLibrary();
+  const floor = await readPlacements("Resources/Levels/jungle/aztec/tiles.json", [
+    { x: 0, y: 0, tileId: "1224.1335299112781" },
+  ]);
+  const navigation = createNavigationState(floor.navigation);
+  const generator = floor.placements.generator.find((placement) => placement.id.endsWith("19.1335892533301"));
+  const release = findCageReleasePath(navigation, generator, 35, null);
+  assert.ok(release, "no way out of the mirrored Aztec jail");
+  assert.ok(release.target.y > generator.y && Math.abs(release.target.x - generator.x) < 1, `not out of its front: ${JSON.stringify(release.target)}`);
+});
+
+test("offset Aztec jail mouths still provide a release after the preferred front", async () => {
+  await loadNavigationLibrary();
+  const cases = [
+    ["360.1336411380154", "0:467.1337129318634"],
+    ["74.1336164313583", "0:336.1337199659564"],
+  ];
+
+  for (const [tileId, generatorId] of cases) {
+    const floor = await readPlacements("Resources/Levels/jungle/aztec/tiles.json", [
+      { x: 0, y: 0, tileId },
+    ]);
+    const navigation = createNavigationState(floor.navigation);
+    const generator = floor.placements.generator.find(({ id }) => id === generatorId);
+    assert.ok(generator, `missing generator ${generatorId} on tile ${tileId}`);
+
+    const release = findCageReleasePath(navigation, generator, 35, null);
+    assert.ok(release, `no release for generator ${generatorId} on tile ${tileId}`);
+    assert.equal(isPositionBlocked(navigation, release.target, 35), false);
+    assert.equal(
+      hasLineOfSight(navigation, generator, release.target, 35, release),
+      true,
+      `release for ${generatorId} crosses non-cage geometry`
+    );
+  }
+});
+
+test("the bridge-tile jail lets its knights out of the front, with the player on the bridge", async () => {
+  /**
+   * The Knight Fortress tile with a jail either side of a bridge. With the
+   * player on the bridge, the side of the east jail was nearer them than its
+   * front, so its wave walked out through that wall into the gap between the
+   * jail and the water, and jammed there. The official releases 242 of 242
+   * from these jails by the front.
+   */
+  await loadNavigationLibrary();
+  const floor = await readPlacements("Resources/Levels/castle/arena/tiles.json", [
+    { x: 0, y: 0, tileId: "145.1334089164200" },
+  ]);
+  const navigation = createNavigationState(floor.navigation);
+  const bridge = { x: 480, y: 430 };
+  const knight = 42;
+
+  for (const generator of floor.placements.generator) {
+    const release = findCageReleasePath(navigation, generator, knight, bridge);
+    assert.ok(release, `no way out of the jail at ${generator.x}`);
+    // Each jail's block spans 90 either side of its centre and ends at y 198.
+    assert.ok(release.target.y >= 198 + knight, `not out of the front: ${JSON.stringify(release.target)}`);
+    assert.ok(Math.abs(release.target.x - generator.x) <= 90, `off to one side: ${JSON.stringify(release.target)}`);
+  }
+});
+
+test("a doorway a body fits through is found wherever it falls on the grid", () => {
+  /**
+   * A cell used to be open only if a body fit at its centre, so a gap was
+   * found or not by where the grid happened to cut it: a knight's doorway with
+   * 16 units to spare was found at 6 of 20 alignments.
+   */
+  const radius = 42;
+  const width = 100;
+  let found = 0;
+  for (let shift = 0; shift < 60; shift += 3) {
+    const from = 600 + shift;
+    const navigation = createNavigationState({
+      bounds: { minX: 0, minY: 0, maxX: 1500, maxY: 1200 },
+      staticColliders: [
+        rectangle(from / 2, 580, from / 2, 20),
+        rectangle((from + width + 1500) / 2, 580, (1500 - from - width) / 2, 20),
+      ],
+    });
+    const path = findPath(navigation, { x: 300, y: 300 }, { x: 1200, y: 900 }, radius);
+    if (path.length) found += 1;
+    for (const [index, point] of path.entries()) {
+      const previous = index ? path[index - 1] : { x: 300, y: 300 };
+      assert.equal(hasLineOfSight(navigation, previous, point, radius), true, `leg ${index} at shift ${shift} cuts a wall`);
+    }
+  }
+  assert.equal(found, 20);
+});
+
+test("a route never runs between two clear centres through a thin board", () => {
+  // A board standing between the centres of two neighbouring cells; both centres are clear of it.
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    staticColliders: [rectangle(360, 450, 30, 2, Math.PI / 2)],
+  });
+  const start = { x: 400, y: 450 };
+  const path = findPath(navigation, start, { x: 290, y: 452 }, 10);
+  assert.ok(path.length, "expected a way round the board");
+  path.forEach((point, index) => {
+    const previous = index ? path[index - 1] : start;
+    assert.equal(hasLineOfSight(navigation, previous, point, 10), true, `leg ${index} goes through the board`);
+  });
+});
+
+test("a step into something round slides round it", () => {
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    staticColliders: [{ type: "circle", x: 450, y: 450, radius: 40 }],
+  });
+  // A knight touching a statue's circle a little off its axis, walking straight at the player behind it.
+  const from = { x: 460, y: 367 };
+  const radius = 42;
+  let position = from;
+  for (let step = 0; step < 10; step++) position = moveWithNavigation(navigation, position, { x: 0, y: 18 }, radius);
+  assert.ok(position.x > from.x + 20, `it stood against the statue at ${JSON.stringify(position)}`);
+  assert.equal(isPositionBlocked(navigation, position, radius), false);
+});
+
+test("a body already in the scenery may step out of it, and only out", () => {
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    staticColliders: [rectangle(804, 108, 90, 90)],
+  });
+  // A knight 19 units into the bottom of a jail whose face is at y 198.
+  const buried = { x: 773, y: 221 };
+  const radius = 42;
+  assert.equal(isPositionBlocked(navigation, buried, radius), true);
+
+  const out = moveWithNavigation(navigation, buried, { x: 0, y: 18 }, radius);
+  assert.ok(out.y > buried.y, "a step out of the jail is taken, though it ends still touching");
+  assert.deepEqual(moveWithNavigation(navigation, buried, { x: 0, y: -18 }, radius), buried, "never deeper");
+  assert.deepEqual(moveWithNavigation(navigation, buried, { x: 18, y: 0 }, radius), buried, "nor along the bars");
+
+  const clear = { x: 773, y: 260 };
+  const stopped = moveWithNavigation(navigation, clear, { x: 0, y: -40 }, radius);
+  assert.equal(isPositionBlocked(navigation, stopped, radius), false, "and a body on open ground is not let in");
+});
+
+test("escaping one collider cannot spend that progress by entering another", () => {
+  const first = rectangle(200, 200, 100, 100);
+  const second = rectangle(220, 105, 100, 10, 0.1);
+  const definition = { bounds: { minX: 0, minY: 0, maxX: 600, maxY: 600 } };
+  const navigation = createNavigationState({ ...definition, staticColliders: [first, second] });
+  const firstOnly = createNavigationState({ ...definition, staticColliders: [first] });
+  const secondOnly = createNavigationState({ ...definition, staticColliders: [second] });
+  const from = { x: 265, y: 130 };
+  const radius = 10;
+
+  assert.equal(isPositionBlocked(firstOnly, from, radius), true);
+  assert.equal(isPositionBlocked(secondOnly, from, radius), false);
+  const moved = moveWithNavigation(navigation, from, { x: 40, y: 0 }, radius);
   assert.equal(
-    hasLineOfSight(navigation, origin, release.target, 20, release),
-    true
-  );
-  assert.ok(
-    release.target.x > origin.x,
-    `expected the hero-facing side, got ${JSON.stringify(release.target)}`
+    isPositionBlocked(secondOnly, moved, radius),
+    false,
+    `escape entered the neighbouring collider at ${JSON.stringify(moved)}`
   );
 });
 

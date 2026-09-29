@@ -6,7 +6,7 @@ import {
   stackableById,
 } from "../gamemaster.js";
 import { info, warn } from "../log.js";
-import { presentAttack, presentable, skinDressesAttacks } from "../content-packs.js";
+import { baseAttackOf, presentAttack, presentable, skinDressesAttacks } from "../content-packs.js";
 import { buffMultiplierFor, grantBuff, hasAbility } from "./buffs.js";
 import { statOffsetsFor } from "../combat-damage.js";
 import { STAT_NAMES } from "../hero-stats.js";
@@ -36,6 +36,35 @@ export const FLID_STOP_CHOREOGRAPHY = 179;
 
 /** Where a choreography names its attack: after the weapon slot and the consumable flag. */
 export const CHOREOGRAPHY_ATTACK_AT = 2;
+const CHOREOGRAPHY_RESULTS_LENGTH_AT = 19;
+const CHOREOGRAPHY_RESULTS_AT = CHOREOGRAPHY_RESULTS_LENGTH_AT + 2;
+const COMBAT_RESULT_BYTES = 37;
+const COMBAT_RESULT_ATTACK_AT = 14;
+
+/** Names the outer and embedded attacks in terms this viewer can draw. */
+const choreographyForView = (payload, skinType, view) => {
+  const offsets = [CHOREOGRAPHY_ATTACK_AT];
+  if (payload.length >= CHOREOGRAPHY_RESULTS_AT) {
+    const byteLength = payload.readUInt16LE(CHOREOGRAPHY_RESULTS_LENGTH_AT);
+    const end = CHOREOGRAPHY_RESULTS_AT + byteLength;
+    if (end <= payload.length && byteLength % COMBAT_RESULT_BYTES === 0) {
+      for (let at = CHOREOGRAPHY_RESULTS_AT; at < end; at += COMBAT_RESULT_BYTES) {
+        offsets.push(at + COMBAT_RESULT_ATTACK_AT);
+      }
+    }
+  }
+
+  let copy = null;
+  for (const at of offsets) {
+    if (at + 4 > payload.length) continue;
+    const named = payload.readUInt32LE(at);
+    const shown = presentAttack(view, skinType, baseAttackOf(named));
+    if (shown === named) continue;
+    copy ??= Buffer.from(payload);
+    copy.writeUInt32LE(shown, at);
+  }
+  return copy ?? payload;
+};
 
 const buildRemoteChoreography = (heroDoid, payload) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
@@ -52,12 +81,9 @@ const buildRemoteChoreography = (heroDoid, payload) =>
 export const remoteAttackChoreography = (heroDoid, payload, skinType) => {
   const frame = buildRemoteChoreography(heroDoid, payload);
   if (!skinDressesAttacks(skinType) || payload.length < CHOREOGRAPHY_ATTACK_AT + 4) return frame;
-  const attack = payload.readUInt32LE(CHOREOGRAPHY_ATTACK_AT);
   return presentable(frame, (view) => {
-    const shown = presentAttack(view, skinType, attack);
-    if (shown === attack) return frame;
-    const dressed = Buffer.from(payload);
-    dressed.writeUInt32LE(shown, CHOREOGRAPHY_ATTACK_AT);
+    const dressed = choreographyForView(payload, skinType, view);
+    if (dressed === payload) return frame;
     return buildRemoteChoreography(heroDoid, dressed);
   });
 };

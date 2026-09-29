@@ -175,3 +175,104 @@ test("a sale written in both tables is read, moved and paid once", {
   assert.equal(claimed.gold - before, claimed.claimed);
   assert.equal(claimed.listings.length, 1, "paid for once");
 });
+
+test("duplicate rows inside the sold table are paid once", {
+  skip: process.env.ODS_STORAGE !== "postgres" && "PostgreSQL only",
+}, async () => {
+  const { default: pg } = await import("pg");
+  const { claimProceeds } = await import("../src/market.js");
+  const weapon = base + 500;
+  const seller = await account(base + 51, weapon);
+  const buyer = await account(base + 52, base + 521);
+  await listForSale({ sellerId: seller, itemId: weapon, price: 100 });
+  await buyListing({ listingId: weapon, buyerId: buyer });
+
+  const client = new pg.Client({ connectionString: process.env.ODS_DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query("DROP INDEX IF EXISTS market_sold_listings_sale");
+    await client.query(
+      "INSERT INTO market_sold_listings SELECT * FROM market_sold_listings WHERE account_id = $1",
+      [seller]
+    );
+    const loaded = (await loadAccount(seller)).market_listings.filter((row) => row.sold_to);
+    assert.equal(loaded.length, 1, "the defensive read exposes one payable sale");
+
+    const before = (await loadAccount(seller)).basic_currency;
+    const claimed = await claimProceeds({ sellerId: seller });
+    assert.equal(claimed.gold - before, claimed.claimed);
+    assert.equal(claimed.listings.length, 1, "the duplicated sale is paid once");
+  } finally {
+    await client.query(
+      `DELETE FROM market_sold_listings AS duplicate
+       USING market_sold_listings AS original
+       WHERE duplicate.ctid > original.ctid
+         AND duplicate.account_id = original.account_id
+         AND duplicate.id = original.id
+         AND duplicate.sold_at IS NOT DISTINCT FROM original.sold_at`
+    );
+    await client.query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS market_sold_listings_sale ON market_sold_listings(account_id, id, sold_at)"
+    );
+    await client.end();
+  }
+});
+
+test("schema repair removes duplicate sales before restoring the unique index", {
+  skip: process.env.ODS_STORAGE !== "postgres" && "PostgreSQL only",
+}, async () => {
+  const { default: pg } = await import("pg");
+  const { checkDatabaseSchema } = await import("../src/preflight.js");
+  const weapon = base + 600;
+  const seller = await account(base + 61, weapon);
+  const buyer = await account(base + 62, base + 621);
+  await listForSale({ sellerId: seller, itemId: weapon, price: 100 });
+  await buyListing({ listingId: weapon, buyerId: buyer });
+
+  const client = new pg.Client({ connectionString: process.env.ODS_DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query("DROP INDEX IF EXISTS market_sold_listings_sale");
+    await client.query(
+      "INSERT INTO market_sold_listings SELECT * FROM market_sold_listings WHERE account_id = $1",
+      [seller]
+    );
+    assert.equal(
+      (await client.query(
+        "SELECT count(*)::int AS n FROM market_sold_listings WHERE account_id = $1 AND id = $2",
+        [seller, weapon]
+      )).rows[0].n,
+      2
+    );
+
+    assert.equal(await checkDatabaseSchema(), true);
+    assert.equal(
+      (await client.query(
+        "SELECT count(*)::int AS n FROM market_sold_listings WHERE account_id = $1 AND id = $2",
+        [seller, weapon]
+      )).rows[0].n,
+      1,
+      "repair leaves one logical sale"
+    );
+    assert.equal(
+      (await client.query(
+        "SELECT count(*)::int AS n FROM pg_indexes WHERE indexname = 'market_sold_listings_sale'"
+      )).rows[0].n,
+      1,
+      "repair restores the uniqueness guard"
+    );
+  } finally {
+    await client.query(
+      `DELETE FROM market_sold_listings AS duplicate
+       USING market_sold_listings AS original
+       WHERE duplicate.ctid > original.ctid
+         AND duplicate.account_id = original.account_id
+         AND duplicate.id = original.id
+         AND duplicate.sold_at IS NOT DISTINCT FROM original.sold_at`
+    );
+    await client.query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS market_sold_listings_sale ON market_sold_listings(account_id, id, sold_at)"
+    );
+    await client.end();
+  }
+});

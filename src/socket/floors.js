@@ -54,7 +54,12 @@ export const facingOf = (object) => {
 };
 
 /** Mirrors FloorObject's scale/flip/rotation transform for authored colliders. */
-const transformColliders = (object, worldPosition, colliders = []) => {
+const transformColliders = (
+  object,
+  worldPosition,
+  colliders = [],
+  { includeFacing = true } = {}
+) => {
   const objectAngle = degreesToRadians(object.rotation ?? 0);
   const objectCosine = Math.cos(objectAngle);
   const objectSine = Math.sin(objectAngle);
@@ -75,6 +80,7 @@ const transformColliders = (object, worldPosition, colliders = []) => {
         type: "circle",
         ...center,
         radius: Math.abs((collider.radius ?? 0) * scale),
+        ...(includeFacing ? { facing: objectAngle } : {}),
       };
     }
 
@@ -89,6 +95,9 @@ const transformColliders = (object, worldPosition, colliders = []) => {
       halfWidth: Math.abs((collider.halfWidth ?? 0) * scale),
       halfHeight: Math.abs((collider.halfHeight ?? 0) * scale),
       angle: Math.atan2(worldAxisY, worldAxisX),
+      // Which way the object it belongs to faces, whatever angle this piece of it
+      // sits at: a cage's mouth is the object's front, not a piece's.
+      ...(includeFacing ? { facing: objectAngle } : {}),
     };
   });
 };
@@ -648,7 +657,8 @@ export const readPlacements = async (libraryPath, tiles) => {
           placement.combatColliders = transformColliders(
             object,
             worldPosition,
-            navigationEntry.combatCollisions
+            navigationEntry.combatCollisions,
+            { includeFacing: false }
           );
         }
         const room = withheld.get(instance);

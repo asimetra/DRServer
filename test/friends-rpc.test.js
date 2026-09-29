@@ -622,6 +622,54 @@ test("a friend named in addFriends is told where they are", async (t) => {
   assert.deepEqual(me.told, [{ online: true, who: THEM, where: 50021 }]);
 });
 
+test("an old addFriends validation cannot restore a friendship that ended while it waited", async (t) => {
+  await reset();
+  presence.clearPresence();
+  t.after(presence.clearPresence);
+  const them = online(THEM, 728);
+  presence.setPresenceLocation(them.session, 50021);
+  const me = online(ME, 729);
+  me.session.watchedFriends = new Set([THEM]);
+
+  let finishValidation;
+  const validation = new Promise((resolve) => {
+    finishValidation = resolve;
+  });
+  const writer = new PacketWriter().u16(4).u32(THEM);
+  const pending = presence.handleAddFriends(
+    me.session,
+    new PacketReader(writer.body()),
+    { followable: () => validation }
+  );
+
+  presence.friendshipChanged(ME, THEM, false);
+  assert.equal(me.session.watchedFriends.has(THEM), false, "the relationship change removes it now");
+  me.told.length = 0;
+  finishValidation([THEM]);
+  await pending;
+
+  assert.equal(me.session.watchedFriends.has(THEM), false, "the stale positive result stays cancelled");
+  assert.equal(me.session.presenceWatchRevisions, undefined, "settled validation state is released");
+  presence.setPresenceLocation(them.session, 50022);
+  assert.deepEqual(me.told, [], "the former friend no longer receives presence updates");
+});
+
+test("relationship churn with no validation in flight retains no revision history", (t) => {
+  presence.clearPresence();
+  t.after(presence.clearPresence);
+  const session = { accountId: ME };
+  presence.enterPresence(session);
+
+  for (let accountId = 2; accountId < 10_002; accountId += 1) {
+    presence.friendshipChanged(ME, accountId, true);
+    presence.friendshipChanged(ME, accountId, false);
+  }
+
+  assert.equal(session.watchedFriends.size, 0);
+  assert.equal(session.presenceWatchRevisions, undefined);
+  assert.equal(session.presencePendingWatches, undefined);
+});
+
 test("neither a blocked friend nor a one-sided listing is watched", async (t) => {
   await reset();
   await befriendBoth();

@@ -223,6 +223,7 @@ const rebuildActiveColliders = (navigation) => {
 const invalidatePathfinding = (navigation) => {
   navigation.revision++;
   navigation.pathfinding.blockedCellsByRadius.clear();
+  navigation.pathfinding.linksByRadius.clear();
 };
 
 /** Creates mutable per-session state from a cached floor navigation definition. */
@@ -242,7 +243,7 @@ export const createNavigationState = (definition) => {
     // A route search lazily records which grid cells are blocked for a given
     // actor radius. The geometry only changes when navigation revision does,
     // so later NPCs do not repeat the same collider checks.
-    pathfinding: { blockedCellsByRadius: new Map() },
+    pathfinding: { blockedCellsByRadius: new Map(), linksByRadius: new Map() },
   };
 
   for (const [id, group] of definition.triggerColliders ?? []) {
@@ -377,6 +378,128 @@ const overlapsRectangle = (
 const overlapsCircle = (point, radius, collider) =>
   squaredDistance(point, collider) < (radius + collider.radius) ** 2;
 
+/** Inside the floor's bounds and on one of its tiles; colliders aside. */
+const isWithinFloor = (navigation, point, radius) => {
+  const { bounds } = navigation;
+  return (
+    point.x - radius >= bounds.minX &&
+    point.x + radius <= bounds.maxX &&
+    point.y - radius >= bounds.minY &&
+    point.y + radius <= bounds.maxY &&
+    isOnAuthoredTile(navigation, point)
+  );
+};
+
+/** How far an actor circle reaches into one collider; 0 or less when it does not. */
+const depthInto = (point, radius, collider) => {
+  if (collider.type === "circle") {
+    return radius + collider.radius - Math.sqrt(squaredDistance(point, collider));
+  }
+  if (collider.type !== "rectangle") return 0;
+  const cosine = Math.cos(-collider.angle);
+  const sine = Math.sin(-collider.angle);
+  const offsetX = point.x - collider.x;
+  const offsetY = point.y - collider.y;
+  const localX = offsetX * cosine - offsetY * sine;
+  const localY = offsetX * sine + offsetY * cosine;
+  const outsideX = Math.abs(localX) - collider.halfWidth;
+  const outsideY = Math.abs(localY) - collider.halfHeight;
+  if (outsideX <= 0 && outsideY <= 0) return radius - Math.max(outsideX, outsideY);
+  return radius - Math.hypot(Math.max(0, outsideX), Math.max(0, outsideY));
+};
+
+/** The colliders whose boxes an actor circle at `point` could reach, through the index when there is one. */
+const collidersNear = (navigation, point, radius, { ignoredColliders } = {}) => {
+  const reaches = (box) =>
+    !(
+      point.x + radius < box.minX ||
+      point.x - radius > box.maxX ||
+      point.y + radius < box.minY ||
+      point.y - radius > box.maxY
+    );
+  const cached = navigation.colliderIndex;
+  const index = cached?.forColliders === navigation.colliders ? cached.cells : null;
+  if (!index) {
+    return navigation.colliders.filter(
+      (collider) => !ignoredColliders?.has(collider) && reaches(boundsOf(collider))
+    );
+  }
+  const found = new Set();
+  for (let x = Math.floor((point.x - radius) / INDEX_CELL); x <= Math.floor((point.x + radius) / INDEX_CELL); x++) {
+    for (let y = Math.floor((point.y - radius) / INDEX_CELL); y <= Math.floor((point.y + radius) / INDEX_CELL); y++) {
+      for (const entry of index.get(`${x},${y}`) ?? []) {
+        if (!ignoredColliders?.has(entry.collider) && reaches(entry.box)) found.add(entry.collider);
+      }
+    }
+  }
+  return [...found];
+};
+
+/** The way out of a collider's surface nearest `point`, as a unit vector; null inside its core. */
+const surfaceNormal = (point, collider) => {
+  if (collider.type === "circle") {
+    const dx = point.x - collider.x;
+    const dy = point.y - collider.y;
+    const length = Math.hypot(dx, dy);
+    return length < 0.001 ? null : { x: dx / length, y: dy / length };
+  }
+  const cosine = Math.cos(-collider.angle);
+  const sine = Math.sin(-collider.angle);
+  const offsetX = point.x - collider.x;
+  const offsetY = point.y - collider.y;
+  const localX = offsetX * cosine - offsetY * sine;
+  const localY = offsetX * sine + offsetY * cosine;
+  const dx = localX - Math.max(-collider.halfWidth, Math.min(collider.halfWidth, localX));
+  const dy = localY - Math.max(-collider.halfHeight, Math.min(collider.halfHeight, localY));
+  const length = Math.hypot(dx, dy);
+  if (length < 0.001) return null;
+  const worldCosine = Math.cos(collider.angle);
+  const worldSine = Math.sin(collider.angle);
+  return {
+    x: (dx * worldCosine - dy * worldSine) / length,
+    y: (dx * worldSine + dy * worldCosine) / length,
+  };
+};
+
+/**
+ * A refused step, turned to run along the surface it hit.
+ *
+ * Axis slides alone cannot get round anything round: a body walking straight
+ * at a statue's circle, or at a slanted box, is refused on both axes and stands
+ * against it for good. The step keeps its part along the collider it would
+ * reach deepest into and loses the part into it.
+ */
+const slideAlongSurface = (navigation, position, step, radius, options) => {
+  const attempted = { x: position.x + step.x, y: position.y + step.y };
+  let deepest = null;
+  let deepestDepth = 0;
+  for (const collider of collidersNear(navigation, attempted, radius, options)) {
+    const depth = depthInto(attempted, radius, collider);
+    if (depth > deepestDepth) {
+      deepest = collider;
+      deepestDepth = depth;
+    }
+  }
+  const normal = deepest && surfaceNormal(position, deepest);
+  if (!normal) return null;
+  const into = step.x * normal.x + step.y * normal.y;
+  if (into >= 0) return null;
+  const along = { x: step.x - into * normal.x, y: step.y - into * normal.y };
+  if (Math.hypot(along.x, along.y) < 0.01) return null;
+  const slid = { x: position.x + along.x, y: position.y + along.y };
+  return isPositionBlocked(navigation, slid, radius, options) ? null : slid;
+};
+
+/** Each collider an actor reaches into and its penetration depth. */
+const penetrationsAt = (navigation, point, radius, options) => {
+  const penetrations = new Map();
+  for (const collider of collidersNear(navigation, point, radius, options)) {
+    const depth = depthInto(point, radius, collider);
+    if (depth > 0) penetrations.set(collider, depth);
+  }
+  return penetrations;
+};
+
 /** True when an actor circle would overlap authored navigation geometry. */
 export const isPositionBlocked = (
   navigation,
@@ -385,16 +508,7 @@ export const isPositionBlocked = (
   { ignoredColliders } = {}
 ) => {
   if (!navigation) return false;
-  const { bounds } = navigation;
-  if (
-    point.x - radius < bounds.minX ||
-    point.x + radius > bounds.maxX ||
-    point.y - radius < bounds.minY ||
-    point.y + radius > bounds.maxY ||
-    !isOnAuthoredTile(navigation, point)
-  ) {
-    return true;
-  }
+  if (!isWithinFloor(navigation, point, radius)) return true;
 
   /**
    * Only the colliders whose bucket the query circle touches.
@@ -502,6 +616,23 @@ const activeTriggerCollidersAt = (navigation, point, radius) => {
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 
+/** The active colliders of every trigger group one of `colliders` belongs to: the whole cage. */
+const cagesHolding = (navigation, colliders) => {
+  const cage = new Set();
+  for (const group of navigation.triggerGroups.values()) {
+    const active = group.on ? group.onColliders : group.offColliders;
+    if (active.some((collider) => colliders.includes(collider))) {
+      for (const collider of active) cage.add(collider);
+    }
+  }
+  return cage;
+};
+
+/** How far a release looks along one direction for ground outside the cage. */
+const RELEASE_REACH = 600;
+const RELEASE_STEP = 8;
+
+/** Standable points just beyond each face of one cage piece. */
 const rectangleReleaseCandidates = (origin, radius, collider) => {
   const cosine = Math.cos(-collider.angle);
   const sine = Math.sin(-collider.angle);
@@ -509,7 +640,7 @@ const rectangleReleaseCandidates = (origin, radius, collider) => {
   const offsetY = origin.y - collider.y;
   const localX = offsetX * cosine - offsetY * sine;
   const localY = offsetX * sine + offsetY * cosine;
-  const gap = radius + 8;
+  const gap = radius + RELEASE_STEP;
   const candidates = [
     { x: collider.halfWidth + gap, y: clamp(localY, -collider.halfHeight, collider.halfHeight) },
     { x: -collider.halfWidth - gap, y: clamp(localY, -collider.halfHeight, collider.halfHeight) },
@@ -529,10 +660,12 @@ const circleReleaseCandidates = (origin, radius, collider, target) => {
   const targetAngle = target
     ? Math.atan2(target.y - collider.y, target.x - collider.x)
     : sourceAngle;
-  const baseAngle = Number.isFinite(sourceAngle) && Math.hypot(origin.x - collider.x, origin.y - collider.y) > 0.001
-    ? sourceAngle
-    : targetAngle;
-  const distance = collider.radius + radius + 8;
+  const baseAngle =
+    Number.isFinite(sourceAngle) &&
+    Math.hypot(origin.x - collider.x, origin.y - collider.y) > 0.001
+      ? sourceAngle
+      : targetAngle;
+  const distance = collider.radius + radius + RELEASE_STEP;
   return Array.from({ length: 8 }, (_, index) => {
     const angle = baseAngle + (index * Math.PI) / 4;
     return {
@@ -545,28 +678,70 @@ const circleReleaseCandidates = (origin, radius, collider, target) => {
 /**
  * Finds the mouth of the triggerable enclosure that contains a generator.
  *
- * The work is intentionally local and bounded: a rectangle supplies four
- * faces and a circle eight directions. Unlike a radial map scan, this never
- * runs A* while a wave is being created. The returned collider set is only
- * ignored during that NPC's short exit movement; it is not a global door
- * override.
+ * The mouth is the cage's front: every monster the official lets out of one
+ * leaves that way — 242 of 242 from the Knight Fortress jails, 6 of 6 from a
+ * mirrored Aztec one whose generator sits to one side. The front is the facing
+ * of the cage object, not of any piece of it: an Aztec jail is three slanted
+ * boxes, and taking each box's own "front" led nowhere. Nothing in the data
+ * marks a door, and taking whichever face was nearest the player walked a wave
+ * out through the side of the bridge-tile jail into the gap by the water, where
+ * it jammed.
+ *
+ * So the release walks straight out along the facing to the first ground a
+ * body fits on, through the whole cage — every piece of its trigger group,
+ * which is all the walk ignores. A front shut by something else falls back to
+ * the sides, the one nearer the player first, and last to the back.
  */
 export const findCageReleasePath = (navigation, origin, radius = 0, target = null) => {
   if (!navigation || !origin) return null;
   const enclosedBy = activeTriggerCollidersAt(navigation, origin, radius);
   if (!enclosedBy.length) return null;
+  const ignoredColliders = cagesHolding(navigation, enclosedBy);
 
-  const ignoredColliders = new Set(enclosedBy);
+  const facing = Number(enclosedBy[0].facing ?? 0);
+  const front = { x: -Math.sin(facing), y: Math.cos(facing) };
+  const sides = [
+    { x: front.y, y: -front.x },
+    { x: -front.y, y: front.x },
+  ];
+  if (target) {
+    const toward = (direction) => (target.x - origin.x) * direction.x + (target.y - origin.y) * direction.y;
+    sides.sort((left, right) => toward(right) - toward(left));
+  }
+  const back = { x: -front.x, y: -front.y };
+
+  for (const direction of [front, ...sides, back]) {
+    for (let distance = RELEASE_STEP; distance <= RELEASE_REACH; distance += RELEASE_STEP) {
+      const point = { x: origin.x + direction.x * distance, y: origin.y + direction.y * distance };
+      // Something that is not the cage stands in the way: not this direction.
+      if (isPositionBlocked(navigation, point, radius, { ignoredColliders })) break;
+      if (isPositionBlocked(navigation, point, radius)) continue;
+      // Out of the cage, with a step's room, as the doorway is not the wall.
+      const beyond = { x: point.x + direction.x * RELEASE_STEP, y: point.y + direction.y * RELEASE_STEP };
+      const release = isPositionBlocked(navigation, beyond, radius) ? point : beyond;
+      if (hasLineOfSight(navigation, origin, release, radius, { ignoredColliders })) {
+        return { target: release, ignoredColliders };
+      }
+      break;
+    }
+  }
+
+  /**
+   * Some Aztec cages put an offset generator behind slanted pieces, so none of
+   * the four object axes passes through the narrow mouth. Keep the authored
+   * front as first refusal above, then fall back to the enclosing pieces' faces.
+   * A candidate must be outside the complete cage, and its walk may ignore only
+   * that cage; unrelated floor geometry still rejects it.
+   */
   const candidates = enclosedBy.flatMap((collider) =>
     collider.type === "circle"
       ? circleReleaseCandidates(origin, radius, collider, target)
       : rectangleReleaseCandidates(origin, radius, collider)
   );
-  candidates.sort((left, right) => {
-    const reference = target ?? origin;
-    return squaredDistance(left, reference) - squaredDistance(right, reference);
-  });
-
+  const reference = target ?? origin;
+  candidates.sort(
+    (left, right) => squaredDistance(left, reference) - squaredDistance(right, reference)
+  );
   for (const candidate of candidates) {
     if (isPositionBlocked(navigation, candidate, radius)) continue;
     if (hasLineOfSight(navigation, origin, candidate, radius, { ignoredColliders })) {
@@ -640,7 +815,38 @@ const nearestOpenCell = (cell, columns, rows, blocked) => {
   return null;
 };
 
-/** A* over the authored floor collision geometry, returning compressed world waypoints. */
+/**
+ * Where in a cell a body may stand, nearest its centre first, in fractions of
+ * the cell: a 5 by 5 lattice, 12 units apart on the usual 60-unit cell.
+ */
+/**
+ * How far an anchor keeps clear of what it stands beside. At exactly a body's
+ * width the walk to it rounds a hair into the wall and every step is refused.
+ */
+const ANCHOR_MARGIN = 2;
+
+/** A link between two anchors needing no corner; shared, since most are. */
+const DIRECT_LINK = Object.freeze({ via: null });
+
+const ANCHOR_OFFSETS = (() => {
+  const steps = [-0.4, -0.2, 0, 0.2, 0.4];
+  return steps
+    .flatMap((dx) => steps.map((dy) => [dx, dy]))
+    .sort(([ax, ay], [bx, by]) => ax * ax + ay * ay - (bx * bx + by * by));
+})();
+
+/**
+ * A* over the authored floor collision geometry, returning compressed world waypoints.
+ *
+ * A cell is open when a body fits somewhere in it, not only at its centre, and
+ * the route runs through that spot — the cell's anchor. Asking the centre alone
+ * closed any gap the grid happened to straddle: a doorway a knight fits with 26
+ * units to spare was found at 9 of 20 alignments to the grid, and the monster
+ * stood at it, "blocked", with the player on the other side. Anchors find a gap
+ * 12 units wider than the body at every alignment. An open floor costs what it
+ * did, since a cell whose centre is clear stops there; the extra probes are
+ * spent in cells against a wall.
+ */
 export const findPath = (navigation, start, goal, radius = 0) => {
   if (!navigation) return [goal];
   if (hasLineOfSight(navigation, start, goal, radius)) return [{ ...goal }];
@@ -659,16 +865,80 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   });
   const keyFor = (x, y) => y * columns + x;
   const radiusKey = String(radius);
-  const blockedCache =
-    navigation.pathfinding.blockedCellsByRadius.get(radiusKey) ?? new Map();
-  navigation.pathfinding.blockedCellsByRadius.set(radiusKey, blockedCache);
-  const blocked = (x, y) => {
+  /**
+   * Per radius, per cell: 0 not yet asked, 1 shut, 2 open at its centre, 3 open
+   * off-centre, with the off-centre anchors beside it. Arrays rather than maps,
+   * since the search asks about every neighbour of every cell it opens.
+   */
+  let cells = navigation.pathfinding.blockedCellsByRadius.get(radiusKey);
+  if (!cells || cells.state.length !== columns * rows) {
+    cells = { state: new Uint8Array(columns * rows), anchors: new Map() };
+    navigation.pathfinding.blockedCellsByRadius.set(radiusKey, cells);
+  }
+  const SHUT = 1;
+  const CENTRED = 2;
+  const stateOf = (x, y) => {
     const key = keyFor(x, y);
-    if (!blockedCache.has(key)) {
-      blockedCache.set(key, isPositionBlocked(navigation, toWorld(x, y), radius));
+    if (cells.state[key] === 0) {
+      const centreX = bounds.minX + x * cellSize + cellSize / 2;
+      const centreY = bounds.minY + y * cellSize + cellSize / 2;
+      cells.state[key] = SHUT;
+      for (const [dx, dy] of ANCHOR_OFFSETS) {
+        const point = { x: centreX + dx * cellSize, y: centreY + dy * cellSize };
+        if (isPositionBlocked(navigation, point, radius + ANCHOR_MARGIN)) continue;
+        if (dx === 0 && dy === 0) {
+          cells.state[key] = CENTRED;
+        } else {
+          cells.state[key] = 3;
+          cells.anchors.set(key, point);
+        }
+        break;
+      }
     }
-    return blockedCache.get(key);
+    return cells.state[key];
   };
+  /** Where a body can stand in this cell, or null when nowhere in it. */
+  const anchorOf = (x, y) => {
+    const state = stateOf(x, y);
+    if (state === SHUT) return null;
+    return state === CENTRED ? toWorld(x, y) : cells.anchors.get(keyFor(x, y));
+  };
+  const blocked = (x, y) => stateOf(x, y) === SHUT;
+  /**
+   * How to get from one cell's anchor to its neighbour's: `{ via }`, or null
+   * when a body cannot.
+   *
+   * The step between two anchors has to be walkable, centres included: a thin
+   * slanted board can run between two clear centres. Answers are kept per
+   * radius until the floor's colliders change, so each is worked out once. When
+   * the straight step clips the wall — the
+   * anchor in a doorway sits to one side of the centres above and below it — a
+   * right-angled one is tried through either corner of the pair, which is the
+   * walk into a doorway and out of it.
+   */
+  const linkCache = navigation.pathfinding.linksByRadius.get(radiusKey) ?? new Map();
+  navigation.pathfinding.linksByRadius.set(radiusKey, linkCache);
+  const linkBetween = (from, to) => {
+    const linkKey = keyFor(from.x, from.y) * columns * rows + keyFor(to.x, to.y);
+    if (!linkCache.has(linkKey)) linkCache.set(linkKey, walkBetween(from, to));
+    return linkCache.get(linkKey);
+  };
+  const walkBetween = (from, to) => {
+    const a = anchorOf(from.x, from.y);
+    const b = anchorOf(to.x, to.y);
+    if (hasLineOfSight(navigation, a, b, radius)) return DIRECT_LINK;
+    for (const corner of [{ x: a.x, y: b.y }, { x: b.x, y: a.y }]) {
+      if (
+        !isPositionBlocked(navigation, corner, radius) &&
+        hasLineOfSight(navigation, a, corner, radius) &&
+        hasLineOfSight(navigation, corner, b, radius)
+      ) {
+        return { via: corner };
+      }
+    }
+    return null;
+  };
+  const viaInto = new Map();
 
   const startCell = toCell(start);
   const goalCell = nearestOpenCell(toCell(goal), columns, rows, blocked);
@@ -710,12 +980,21 @@ export const findPath = (navigation, start, goal, radius = 0) => {
       if (dx !== 0 && dy !== 0 && (blocked(current.x + dx, current.y) || blocked(current.x, current.y + dy))) {
         continue;
       }
+      // A start cell with no anchor holds no body but this one, which is already
+      // there; one that has an anchor is left through it like any other.
+      let via = null;
+      if (current.key !== startKey || !blocked(startCell.x, startCell.y)) {
+        const link = linkBetween(current, { x, y });
+        if (!link) continue;
+        via = link.via;
+      }
 
       const key = keyFor(x, y);
       const nextCost = cost.get(current.key) + stepCost;
       if (nextCost >= (cost.get(key) ?? Number.POSITIVE_INFINITY)) continue;
       cost.set(key, nextCost);
       cameFrom.set(key, current.key);
+      viaInto.set(key, via);
       open.push({
         key,
         x,
@@ -730,22 +1009,37 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   const raw = [];
   let key = goalKey;
   while (key !== startKey) {
-    raw.unshift(toWorld(key % columns, Math.floor(key / columns)));
+    const anchor = anchorOf(key % columns, Math.floor(key / columns));
+    raw.unshift({ x: anchor.x, y: anchor.y });
+    const via = viaInto.get(key);
+    if (via) raw.unshift({ ...via });
     key = cameFrom.get(key);
     if (key === undefined) return [];
+  }
+  /**
+   * The body's own cell first. It stands somewhere in that cell, not at its
+   * anchor, and in a doorway the step from where it stands to the next cell can
+   * clip the wall the anchor is clear of. Dropped below when it can be seen past.
+   */
+  if (!blocked(startCell.x, startCell.y)) {
+    const anchor = anchorOf(startCell.x, startCell.y);
+    raw.unshift({ x: anchor.x, y: anchor.y });
   }
 
   const compressed = [];
   let anchor = start;
   let index = 0;
   while (index < raw.length) {
-    let farthest = index;
+    let farthest = -1;
     for (let candidate = raw.length - 1; candidate >= index; candidate--) {
       if (hasLineOfSight(navigation, anchor, raw[candidate], radius)) {
         farthest = candidate;
         break;
       }
     }
+    // Not even the next point can be walked to: this is no route, and handing
+    // it out would send the body through whatever is in the way.
+    if (farthest < 0) return [];
     compressed.push(raw[farthest]);
     anchor = raw[farthest];
     index = farthest + 1;
@@ -760,7 +1054,17 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   return compressed;
 };
 
-/** Applies a swept move, falling back to axis sliding when separation nudges into a wall. */
+/**
+ * Applies a swept move, falling back to axis sliding when separation nudges into a wall.
+ *
+ * A body already in the scenery may still move out of it. A step that ends
+ * blocked is refused, and for a body that starts blocked every step does: a
+ * knight left 19 units into a jail by its release, a monster a closing gate
+ * came down on, a cage member whose exit was given up on — each stood where it
+ * was for the rest of the floor, facing a player it could see. So a step is
+ * also taken when it leaves the body less buried than it was. It never lets a
+ * body into anything: it only lets one out.
+ */
 export const moveWithNavigation = (
   navigation,
   from,
@@ -787,10 +1091,46 @@ export const moveWithNavigation = (
       continue;
     }
 
+    // Asked only once a step is refused: this is the hot path.
+    const buried =
+      isPositionBlocked(navigation, position, radius, options) &&
+      isWithinFloor(navigation, position, radius)
+        ? penetrationsAt(navigation, position, radius, options)
+        : new Map();
+    const canStand = (point) => {
+      if (!isPositionBlocked(navigation, point, radius, options)) return true;
+      if (!buried.size || !isWithinFloor(navigation, point, radius)) return false;
+
+      const next = penetrationsAt(navigation, point, radius, options);
+      let improved = false;
+      for (const [collider, depth] of next) {
+        const before = buried.get(collider);
+        // Escaping one wall never pays for entering another or moving deeper
+        // into a wall the body was already touching.
+        if (before === undefined || depth > before + 0.01) return false;
+        if (depth < before - 0.01) improved = true;
+      }
+      for (const collider of buried.keys()) {
+        if (!next.has(collider)) improved = true;
+      }
+      return improved;
+    };
+    if (buried.size && canStand(full)) {
+      position.x = full.x;
+      position.y = full.y;
+      continue;
+    }
+    const slid = buried.size ? null : slideAlongSurface(navigation, position, step, radius, options);
+    if (slid) {
+      position.x = slid.x;
+      position.y = slid.y;
+      continue;
+    }
+
     const xOnly = { x: position.x + step.x, y: position.y };
     const yOnly = { x: position.x, y: position.y + step.y };
-    const canX = !isPositionBlocked(navigation, xOnly, radius, options);
-    const canY = !isPositionBlocked(navigation, yOnly, radius, options);
+    const canX = canStand(xOnly);
+    const canY = canStand(yOnly);
     if (canX && (!canY || Math.abs(step.x) >= Math.abs(step.y))) position.x = xOnly.x;
     else if (canY) position.y = yOnly.y;
     else break;

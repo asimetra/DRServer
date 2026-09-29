@@ -7,7 +7,7 @@ import { clearDungeonBuffs, grantBuff } from "../src/socket/buffs.js";
 import { performNpcAttack, tickTrapProjectiles } from "../src/socket/combat.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
-import { createNavigationState, isPositionBlocked } from "../src/socket/navigation.js";
+import { addNavigationObstacle, createNavigationState, isPositionBlocked } from "../src/socket/navigation.js";
 import { createMatchWorld } from "../src/socket/match-world.js";
 
 const readUpdate = (frame) => {
@@ -401,6 +401,194 @@ test("release movement exits only its enclosing cage before normal AI starts", a
   await tickNpcAi(session, 1100, 0.2);
   assert.equal(knight.ai.release, null);
   assert.equal(isPositionBlocked(session.navigation, knight.position, 20), false);
+});
+
+test("a monster goes round a statue with room beside it rather than waiting behind it", async () => {
+  /**
+   * A 60-unit statue in the middle of a corridor, the player behind it, and
+   * 100 units either side of it — 16 more than a knight. It stood behind the
+   * statue at most placements: the grid read the sides as shut, and a step at
+   * the statue could only slide along an axis.
+   */
+  const rectangle = (x0, y0, x1, y1) => ({ type: "rectangle", x: (x0 + x1) / 2, y: (y0 + y1) / 2, halfWidth: (x1 - x0) / 2, halfHeight: (y1 - y0) / 2, angle: 0 });
+  for (const shift of [0, 7, 19, 26, 38, 44, 53]) {
+    const { session, knightDoid } = makeSession();
+    const knight = session.actors.get(knightDoid);
+    const left = 470 + shift;
+    const hero = { x: left + 130, y: 950 };
+    session.heroPosition = hero;
+    session.actors.get(session.heroDoid).position = hero;
+    session.navigation = createNavigationState({
+      bounds: { minX: 0, minY: 0, maxX: 1500, maxY: 1200 },
+      staticColliders: [rectangle(0, 0, left, 1200), rectangle(left + 260, 0, 1500, 1200)],
+    });
+    addNavigationObstacle(session.navigation, "statue", [rectangle(left + 100, 570, left + 160, 630)]);
+    knight.position = { x: hero.x, y: 300 };
+    knight.ai.collisionRadius = 42;
+    knight.ai.moveSpeed = 180;
+    knight.ai.aggroRadius = 3000;
+    knight.ai.disengageDistance = 5000;
+    knight.ai.nextAttackAt = Number.MAX_SAFE_INTEGER;
+    for (let tick = 0; tick < 150; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    const distance = Math.hypot(knight.position.x - hero.x, knight.position.y - hero.y);
+    assert.ok(distance < 150, `at shift ${shift} it waited at ${JSON.stringify(knight.position)}, ${Math.round(distance)} away`);
+  }
+});
+
+test("a monster in the scenery gets out before it fights, however near the player", async () => {
+  // Clear of the box needs x <= 105; the player is just beyond, in reach of a swing.
+  const { session, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  knight.position = { x: 150, y: 150 };
+  knight.ai.collisionRadius = 20;
+  knight.ai.moveSpeed = 180;
+  knight.ai.engaged = true;
+  session.heroPosition = { x: 50, y: 150 };
+  session.actors.get(session.heroDoid).position = session.heroPosition;
+  session.navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 400, maxY: 300 },
+    staticColliders: [{ type: "rectangle", x: 175, y: 150, halfWidth: 50, halfHeight: 50, angle: 0 }],
+  });
+  for (let tick = 0; tick < 20; tick++) {
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    if (isPositionBlocked(session.navigation, knight.position, 20)) {
+      assert.notEqual(knight.ai.state, "attack", `it fought from inside the box at ${JSON.stringify(knight.position)}`);
+    }
+  }
+  assert.equal(isPositionBlocked(session.navigation, knight.position, 20), false, `still in the box at ${JSON.stringify(knight.position)}`);
+});
+
+test("a cage exit aimed at a point still in the cage does not end there", async () => {
+  // The release point is short of the face (clear needs x >= 195); being near it is not being out.
+  const { session, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  knight.position = { x: 150, y: 150 };
+  knight.ai.collisionRadius = 20;
+  knight.ai.moveSpeed = 180;
+  session.heroPosition = { x: 280, y: 150 };
+  session.actors.get(session.heroDoid).position = session.heroPosition;
+  session.navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 400, maxY: 300 },
+    triggerColliders: new Map([
+      [
+        "jail",
+        {
+          initialOn: true,
+          onColliders: [{ type: "rectangle", x: 150, y: 150, halfWidth: 25, halfHeight: 80, angle: 0 }],
+          offColliders: [{ type: "rectangle", x: 150, y: 150, halfWidth: 25, halfHeight: 80, angle: 0 }],
+        },
+      ],
+    ]),
+  });
+  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  knight.ai.release = { target: { x: 190, y: 150 }, ignoredColliders: new Set([jail]), startsAt: 0 };
+  for (let tick = 0; tick < 40; tick++) {
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    if (!knight.ai.release && tick < 39) {
+      // Once the plan is gone the body is out, or on its way out by escape.
+      assert.ok(knight.ai.state !== "idle" || !isPositionBlocked(session.navigation, knight.position, 20));
+    }
+  }
+  assert.equal(isPositionBlocked(session.navigation, knight.position, 20), false, `left in the cage at ${JSON.stringify(knight.position)}`);
+});
+
+/** The bridge-tile jail: one solid block, 180 square, its front at y 198. */
+const bridgeJail = () =>
+  createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    triggerColliders: new Map([
+      [
+        "jail",
+        {
+          initialOn: true,
+          onColliders: [{ type: "rectangle", x: 804, y: 108, halfWidth: 90, halfHeight: 90, angle: 0 }],
+          offColliders: [{ type: "rectangle", x: 804, y: 108, halfWidth: 90, halfHeight: 90, angle: 0 }],
+        },
+      ],
+    ]),
+  });
+
+test("a cage exit lasts until the body is out of the cage, the player in sight or not", async () => {
+  /**
+   * A sight line drawn from a body half in the bars reads clear, and the exit
+   * used to end on it: the knight stopped 19 units into the jail, facing a
+   * player in plain view, and every step of its chase was refused from then on.
+   */
+  const { session, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  knight.position = { x: 804, y: 174 };
+  knight.ai.collisionRadius = 42;
+  knight.ai.moveSpeed = 180;
+  session.heroPosition = { x: 800, y: 520 };
+  session.actors.get(session.heroDoid).position = session.heroPosition;
+  session.navigation = bridgeJail();
+  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  knight.ai.release = { target: { x: 804, y: 248 }, ignoredColliders: new Set([jail]), startsAt: 0 };
+
+  for (let tick = 0; tick < 30; tick++) {
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    if (!knight.ai.release) {
+      assert.equal(
+        isPositionBlocked(session.navigation, knight.position, 42),
+        false,
+        `the exit ended with the knight still in the jail at ${JSON.stringify(knight.position)}`
+      );
+    }
+  }
+  assert.ok(knight.position.y > 300, `the knight never went after the player: ${JSON.stringify(knight.position)}`);
+});
+
+test("a monster left inside its cage walks out of the front and on to the player", async () => {
+  // An exit given up on, or a cage shut on it: it is in the bars with no plan to leave.
+  const { session, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  knight.position = { x: 804, y: 150 };
+  knight.ai.collisionRadius = 42;
+  knight.ai.moveSpeed = 180;
+  session.heroPosition = { x: 560, y: 330 };
+  session.actors.get(session.heroDoid).position = session.heroPosition;
+  session.navigation = bridgeJail();
+
+  let firstClear = null;
+  for (let tick = 0; tick < 40; tick++) {
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    if (!firstClear && !isPositionBlocked(session.navigation, knight.position, 42)) firstClear = { ...knight.position };
+  }
+  assert.ok(firstClear, `it never left the jail: ${JSON.stringify(knight.position)}`);
+  assert.ok(firstClear.y >= 240, `it left by a side: ${JSON.stringify(firstClear)}`);
+  const distance = Math.hypot(knight.position.x - 560, knight.position.y - 330);
+  assert.ok(distance < 150, `it did not reach the player: ${Math.round(distance)} away`);
+});
+
+test("a monster buried in scenery chooses an exit the hero does not block", async () => {
+  const { session, heroDoid, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  knight.position = { x: 150, y: 150 };
+  knight.ai.collisionRadius = 20;
+  knight.ai.moveSpeed = 180;
+  session.heroPosition = { x: 60, y: 150 };
+  session.actors.get(heroDoid).position = session.heroPosition;
+  session.navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 300, maxY: 300 },
+    staticColliders: [
+      { type: "rectangle", x: 150, y: 150, halfWidth: 25, halfHeight: 80, angle: 0 },
+    ],
+  });
+
+  let firstClear = null;
+  for (let tick = 0; tick < 100; tick++) {
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    if (!isPositionBlocked(session.navigation, knight.position, 20)) {
+      firstClear = { ...knight.position };
+      break;
+    }
+  }
+
+  assert.ok(
+    firstClear,
+    `the hero held the monster in the wall at ${JSON.stringify(knight.position)} ` +
+      `with escape ${JSON.stringify(knight.ai.escape)}`
+  );
 });
 
 test("an overlapping cage wave stays on release AI until every member is outside", async () => {

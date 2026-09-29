@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fsNative from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,15 +14,18 @@ const { config } = await import("../src/config.js");
 const { register } = await import("../src/rpc.js");
 const { routes } = await import("../src/routes.js");
 const { loadAccount, saveAccount } = await import("../src/accounts.js");
+const { enterPresence, leavePresence } = await import("../src/socket/presence.js");
 
 const {
   buildRegistry,
   declare,
   declaredView,
   forgetDeclaration,
+  flushDeclarations,
   frameFor,
   installContentPacks,
   jsonFor,
+  keepDeclarationsIn,
   keepPresentation,
   officialView,
   presentNpc,
@@ -240,7 +244,7 @@ test("getFriendData declares the client's packs, and every list after it is answ
   assert.equal(without[0].active_skin, DEFAULT_SAMURAI, "a client with no pack says so and is believed");
 });
 
-test("the account's own skin reaches a client without the pack as its hero's default", async (t) => {
+test("a remembered pack keeps an owned skin owned on the next account load", async (t) => {
   await withPack(t);
   const previous = config.authEnabled;
   config.authEnabled = false;
@@ -259,8 +263,11 @@ test("the account's own skin reaches a client without the pack as its hero's def
   assert.equal((await loadAccount(ME)).account_avatars[0].skin_type, KNIGHT, "only the answer changes");
 
   declare(ME, viewFromKey("knight@2"));
-  const packed = JSON.parse((await detailsRoute.handler({ headers: { "x-account-id": String(ME) } })).body);
-  assert.equal(packed.account_avatars[0].skin_type, KNIGHT);
+  const nextLaunch = JSON.parse((await detailsRoute.handler({ headers: { "x-account-id": String(ME) } })).body);
+  assert.equal(nextLaunch.account_avatars[0].skin_type, KNIGHT);
+  assert.equal(nextLaunch.account_skins[0].skin_type, KNIGHT,
+    "the store sees the entitlement and does not offer the owned skin again");
+  assert.equal(declaredView(ME).key, "knight@2", "socket login uses the same remembered view");
 });
 
 // --- The socket -----------------------------------------------------------------
@@ -295,49 +302,90 @@ test("an entry request's Demographics declare the client's packs; a door's empty
 /**
  * A launching client asks for its own account before anything it sends says
  * what it has — and a client without the pack does not survive its own hero in
- * the pack's skin either (tested). So the account's last declaration answers
- * that first question, and the launch has to confirm it.
+ * the pack's skin either (tested). The last declaration answers that first
+ * question so ownership stays visible, and the launch must then confirm it.
  */
-test("an account's own details go out in its last declaration, confirmed by the launch", async (t) => {
+test("an account's own details use its last declaration until the launch confirms it", async (t) => {
   await withPack(t);
   t.after(() => forgetDeclaration(ME));
   const { viewForOwnAccount } = packs;
 
   declare(ME, viewFromKey("knight@2"));
-  assert.equal(viewForOwnAccount(ME).key, "knight@2", "a launch starts from what was said last time");
+  assert.equal(viewForOwnAccount(ME).key, "knight@2", "the first account response preserves ownership");
+  assert.equal(declaredView(ME).key, "knight@2", "the following socket login agrees");
   declare(ME, viewFromKey("knight@2")); // the launch's own daily-reward request
-  assert.equal(viewForOwnAccount(ME).key, "knight@2", "and the next launch too, once this one confirmed it");
+  assert.equal(viewForOwnAccount(ME, { connected: true }).key, "knight@2",
+    "a refresh inside the confirmed client keeps its pack view");
 
-  assert.equal(viewForOwnAccount(ME, { connected: true }).key, "knight@2", "a refresh inside a running client");
-  assert.equal(viewForOwnAccount(ME, { connected: true }).key, "knight@2", "is not a new launch");
-
-  // This launch never confirms: the client died of the guess.
-  assert.equal(viewForOwnAccount(ME).key, "", "the launch after it gets the game's own content");
-  assert.equal(declaredView(ME), officialView(), "and nothing is guessed until it declares again");
-  assert.equal(viewForOwnAccount(ME).key, "");
+  // A launch that never confirms is assumed to have died on the remembered
+  // custom id. Its retry gets the official view rather than another crash.
+  assert.equal(viewForOwnAccount(ME).key, "knight@2", "a later launch gets one remembered attempt");
+  assert.equal(viewForOwnAccount(ME), officialView(), "an unconfirmed retry falls back safely");
+  assert.equal(declaredView(ME), officialView());
 });
 
-test("declarations survive a restart", async (t) => {
+test("declarations persist asynchronously for the next account load", async (t) => {
   const { keepDeclarationsIn } = packs;
   const file = path.join(process.env.DR_DATA_DIR, "declarations.json");
-  t.after(() => keepDeclarationsIn(null));
+  t.after(async () => {
+    await flushDeclarations();
+    keepDeclarationsIn(null);
+  });
   keepDeclarationsIn(file);
   declare(ME, viewFromKey("knight@2"));
-  declare(ME + 1, officialView());
+  declare(ME + 1, viewFromKey("knight@1"));
+  declare(ME + 1, viewFromKey("knight@2"));
+
+  await assert.rejects(fs.access(file), { code: "ENOENT" }, "the request path performs no synchronous write");
+  assert.equal(await flushDeclarations(), true);
 
   keepDeclarationsIn(file);
-  assert.equal(declaredView(ME).key, "knight@2");
-  assert.equal(declaredView(ME + 1), officialView());
+  assert.equal(declaredView(ME).key, "knight@2", "the next launch can preserve owned pack content");
+  assert.equal(declaredView(ME + 1).key, "knight@2", "the coalesced snapshot kept the last change");
   forgetDeclaration(ME);
+  await flushDeclarations();
   keepDeclarationsIn(file);
   assert.equal(declaredView(ME), officialView(), "and forgetting is kept too");
+});
+
+test("a transient declaration write failure remains retryable", async (t) => {
+  const file = path.join(process.env.DR_DATA_DIR, "declarations-retry.json");
+  t.after(async () => {
+    await flushDeclarations();
+    keepDeclarationsIn(null);
+  });
+  keepDeclarationsIn(file);
+
+  const writeFile = fsNative.promises.writeFile.bind(fsNative.promises);
+  let failNext = true;
+  t.mock.method(fsNative.promises, "writeFile", async (...args) => {
+    if (failNext) {
+      failNext = false;
+      throw new Error("temporary write failure");
+    }
+    return writeFile(...args);
+  });
+
+  declare(ME, viewFromKey("knight@2"));
+  assert.equal(await flushDeclarations(), false, "the failed snapshot is reported");
+  await assert.rejects(fs.access(file), { code: "ENOENT" });
+
+  assert.equal(await flushDeclarations(), true, "a later flush retries the dirty revision");
+  assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), { [ME]: "knight@2" });
 });
 
 test("the daily reward question declares, a moment after login", async (t) => {
   await withPack(t);
   const previous = config.authEnabled;
   config.authEnabled = false;
+  const session = {
+    accountId: ME,
+    token: "token",
+    contentView: officialView(),
+  };
+  enterPresence(session);
   t.after(() => {
+    leavePresence(session);
     config.authEnabled = previous;
     forgetDeclaration(ME);
   });
@@ -345,6 +393,7 @@ test("the daily reward question declares, a moment after login", async (t) => {
   forgetDeclaration(ME);
   await call("store", "AskAboutDailyReward", [ME, "token", { contentPacks: ["knight@2"] }]);
   assert.equal(declaredView(ME).key, "knight@2");
+  assert.equal(session.contentView.key, "knight@2", "the already-open socket changes view with the HTTP declaration");
 });
 
 // --- A skin's own attacks ----------------------------------------------------------
@@ -499,15 +548,26 @@ test("an attack is read as its base and relayed to each peer in its own terms", 
   await withArms(t);
   const { withBaseAttack } = await import("../src/socket/combat.js");
   const { remoteAttackChoreography, CHOREOGRAPHY_ATTACK_AT } = await import("../src/socket/buster.js");
-  const proposed = Buffer.alloc(16);
-  proposed.writeUInt32LE(COMBO_VARIANT, CHOREOGRAPHY_ATTACK_AT);
+  const { PacketWriter } = await import("../src/socket/packet.js");
+  const embedded = new PacketWriter()
+    .u32(500).u32(600).i32(0).i8(0).u8(0).u32(COMBO_VARIANT).u32(600)
+    .u8(0).u8(0).u8(0).u8(0).u8(0).i8(0).i32(0).f32(1).u8(0)
+    .body();
+  const proposed = new PacketWriter()
+    .u8(0).u8(0).u32(COMBO_VARIANT).u32(600).u8(0).f32(1).f32(1)
+    .u16(embedded.length).raw(embedded)
+    .body();
   const base = withBaseAttack(proposed, CHOREOGRAPHY_ATTACK_AT);
   assert.equal(base.readUInt32LE(CHOREOGRAPHY_ATTACK_AT), COMBO, "the server hears the base");
   assert.equal(proposed.readUInt32LE(CHOREOGRAPHY_ATTACK_AT), COMBO_VARIANT, "without changing what it was given");
 
   const relayed = remoteAttackChoreography(500, base, KNIGHT);
-  assert.ok(hasU32(frameFor(relayed, viewFromKey("knight@2")), COMBO_VARIANT));
-  assert.ok(hasU32(frameFor(relayed, officialView()), COMBO) && !hasU32(frameFor(relayed, officialView()), COMBO_VARIANT));
+  const packed = frameFor(relayed, viewFromKey("knight@2")).subarray(10);
+  const official = frameFor(relayed, officialView()).subarray(10);
+  assert.equal(packed.readUInt32LE(CHOREOGRAPHY_ATTACK_AT), COMBO_VARIANT);
+  assert.equal(packed.readUInt32LE(21 + 14), COMBO_VARIANT, "the embedded result uses the same variant");
+  assert.equal(official.readUInt32LE(CHOREOGRAPHY_ATTACK_AT), COMBO);
+  assert.equal(official.readUInt32LE(21 + 14), COMBO, "a packless peer never sees the embedded variant");
   assert.equal(remoteAttackChoreography(500, base, DEFAULT_SAMURAI).forView, undefined, "other skins take the fast path");
 });
 

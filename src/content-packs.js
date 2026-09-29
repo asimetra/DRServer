@@ -509,46 +509,117 @@ export const keepPresentation = (from, copy) => {
 /**
  * The last declaration each account made, kept across launches and restarts.
  *
- * It has to be. The first thing a client asks for is its own account, before
- * any request that carries its Demographics, and a client without a pack does
- * not survive its own account naming the pack's skin either — tested: the
- * player's own hero in the Knight segfaulted a client lacking the row about a
- * second after login. So that first answer is given in the terms the account's
- * client used last time, and a player who bought a skin sees it as theirs
- * instead of being offered it again.
+ * It has to be remembered. The first thing a client asks for is its own
+ * account, before any request carries its Demographics. Hiding a custom skin
+ * from that answer also hides the ownership row: the store then offers the
+ * already-owned skin and the server correctly refuses the duplicate purchase.
  *
- * Last time is a guess about this time — the same account may be launched from
- * a machine without the pack — so a launch's guess stands only once the launch
- * confirms it with a declaration of its own. One that asks for its account
- * again without having said anything, with no connection up in between, is
- * taken to have died of the guess, and gets the game's own content instead: a
- * wrong guess costs one crash, never a loop of them.
+ * Last time is still only a guess about this launch. A remembered view is used
+ * once and must then be confirmed by one of the client's declaring calls. If
+ * account details are requested again before that happens, the guess is
+ * dropped and the game's own content is used, so a packs-free client cannot
+ * get stuck in a crash loop.
  */
 const declarations = new Map();
 const unconfirmed = new Set();
 let declarationsFile = null;
+const DECLARATION_SAVE_DELAY_MS = 25;
+let declarationRevision = 0;
+let attemptedDeclarationRevision = 0;
+let persistedDeclarationRevision = 0;
+let declarationPersistenceEpoch = 0;
+let declarationSaveTimer = null;
+let declarationSaveChain = Promise.resolve();
 
-const saveDeclarations = () => {
-  if (!declarationsFile) return;
-  try {
-    const temporary = `${declarationsFile}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify(Object.fromEntries([...declarations].map(([id, view]) => [id, view.key]))));
-    fs.renameSync(temporary, declarationsFile);
-  } catch (problem) {
-    warn(`content packs: could not save declarations to ${declarationsFile} — ${problem.message}`);
+/** Queues one atomic snapshot behind any write already in flight. */
+const enqueueDeclarationSave = () => {
+  if (!declarationsFile || attemptedDeclarationRevision >= declarationRevision) {
+    return declarationSaveChain;
   }
+
+  const file = declarationsFile;
+  const epoch = declarationPersistenceEpoch;
+  const revision = declarationRevision;
+  const body = JSON.stringify(
+    Object.fromEntries([...declarations].map(([id, view]) => [id, view.key]))
+  );
+  attemptedDeclarationRevision = revision;
+  declarationSaveChain = declarationSaveChain.then(async () => {
+    if (epoch !== declarationPersistenceEpoch || file !== declarationsFile) return;
+    const temporary = `${file}.tmp`;
+    try {
+      await fs.promises.writeFile(temporary, body);
+      if (epoch !== declarationPersistenceEpoch || file !== declarationsFile) {
+        await fs.promises.rm(temporary, { force: true });
+        return;
+      }
+      await fs.promises.rename(temporary, file);
+      if (epoch === declarationPersistenceEpoch && file === declarationsFile) {
+        persistedDeclarationRevision = Math.max(persistedDeclarationRevision, revision);
+      }
+    } catch (problem) {
+      // Leave the current revision dirty so a later flush can retry a transient
+      // disk failure. Do not rewind past a newer snapshot already queued behind
+      // this one; that snapshot is the retry and contains this change too.
+      if (
+        epoch === declarationPersistenceEpoch &&
+        file === declarationsFile &&
+        attemptedDeclarationRevision === revision
+      ) {
+        attemptedDeclarationRevision = persistedDeclarationRevision;
+      }
+      warn(`content packs: could not save declarations to ${file} — ${problem.message}`);
+    }
+  });
+  return declarationSaveChain;
+};
+
+/** Marks memory dirty and coalesces bursts into one asynchronous snapshot. */
+const saveDeclarations = () => {
+  declarationRevision += 1;
+  if (!declarationsFile) {
+    attemptedDeclarationRevision = declarationRevision;
+    persistedDeclarationRevision = declarationRevision;
+    return;
+  }
+  if (declarationSaveTimer) return;
+  declarationSaveTimer = setTimeout(() => {
+    declarationSaveTimer = null;
+    void enqueueDeclarationSave();
+  }, DECLARATION_SAVE_DELAY_MS);
+  declarationSaveTimer.unref?.();
+};
+
+/** Waits until every declaration change visible now has had a write attempt. */
+export const flushDeclarations = async () => {
+  const targetRevision = declarationRevision;
+  if (declarationSaveTimer) {
+    clearTimeout(declarationSaveTimer);
+    declarationSaveTimer = null;
+  }
+  await enqueueDeclarationSave();
+  return persistedDeclarationRevision >= targetRevision;
 };
 
 /** Where declarations are kept between runs; the main thread's, read once at startup. */
 export const keepDeclarationsIn = (file) => {
+  if (declarationSaveTimer) clearTimeout(declarationSaveTimer);
+  declarationSaveTimer = null;
+  declarationPersistenceEpoch += 1;
   declarationsFile = file;
   declarations.clear();
   unconfirmed.clear();
+  declarationRevision = 0;
+  attemptedDeclarationRevision = 0;
+  persistedDeclarationRevision = 0;
   if (!file || !fs.existsSync(file)) return;
   try {
     for (const [id, key] of Object.entries(JSON.parse(fs.readFileSync(file, "utf8")))) {
       const view = viewFromKey(key);
-      if (view !== OFFICIAL) declarations.set(Number(id), view);
+      if (view !== OFFICIAL) {
+        const accountId = Number(id);
+        declarations.set(accountId, view);
+      }
     }
   } catch (problem) {
     warn(`content packs: could not read ${file} — ${problem.message}; starting without declarations`);
@@ -574,9 +645,9 @@ export const forgetDeclaration = (accountId) => {
 };
 
 /**
- * The view an account's own details go out in. `connected` is whether a socket
- * of this account is up: then this is a refresh inside a running client, which
- * has already said what it has, not the first question of a launch.
+ * The view an account's own details go out in. `connected` means the request's
+ * credential belongs to the socket already holding the account, so this is a
+ * refresh inside a running client rather than another launch.
  */
 export const viewForOwnAccount = (accountId, { connected = false } = {}) => {
   const id = Number(accountId);

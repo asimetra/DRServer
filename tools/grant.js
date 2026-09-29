@@ -35,7 +35,7 @@ import { generateWeapon } from "../src/chests.js";
 import { experienceForLevel, statPointsEarned, maxLevel } from "../src/progression.js";
 import { config } from "../src/config.js";
 import { purchaseOffer } from "../src/store.js";
-import { acquireProcessLock } from "../src/process-lock.js";
+import { acquireProcessLock, initializeProcessStorage } from "../src/process-lock.js";
 
 const argument = (name, fallback) => {
   const index = process.argv.indexOf(`--${name}`);
@@ -435,6 +435,10 @@ const grant = async () => {
 const main = async () => {
   const releaseProcessLock = await acquireProcessLock();
   try {
+    // PostgreSQL's shared object-id sequence is repaired at server startup,
+    // but this tool is also an exclusive allocator and may be the first process
+    // run after an import. Initialize it under the same lock before any grant.
+    await initializeProcessStorage();
     await grant();
   } finally {
     await releaseProcessLock();

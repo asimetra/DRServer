@@ -54,6 +54,25 @@ test("graceful shutdown closes listeners and waits for dungeon/account writes", 
   ]);
 });
 
+test("a failed write flush still releases the process lock and closes storage", async () => {
+  const events = [];
+  const failure = new Error("declarations stayed dirty");
+  const shutdown = createGracefulShutdown({
+    servers: () => [],
+    sessions: () => [],
+    closeServices: async () => events.push("services"),
+    waitForWrites: async () => {
+      events.push("flush");
+      throw failure;
+    },
+    releaseProcessLock: async () => events.push("unlock"),
+    closeStorage: async () => events.push("storage"),
+  });
+
+  await assert.rejects(shutdown("test failure"), failure);
+  assert.deepEqual(events, ["services", "flush", "unlock", "storage"]);
+});
+
 test("process handlers route both signals through the idempotent shutdown", async () => {
   const processObject = new EventEmitter();
   processObject.exitCode = 0;

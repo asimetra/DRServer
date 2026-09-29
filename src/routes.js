@@ -69,6 +69,14 @@ export const authorise = (req) => {
   return json({ error: "invalid account or validation token" }, 401);
 };
 
+/** The live socket proved by the same credential as this HTTP request. */
+const sessionForRequest = (accountId, req) => {
+  const session = sessionHolding(accountId);
+  if (!session) return null;
+  if (config.authEnabled === false) return session;
+  return session.token === req.headers?.["x-validation-token"] ? session : null;
+};
+
 /**
  * GET /game-status/service-discovery
  * config/ServiceDiscoveryLoader.hx requires webServicesUrl, gameSocketAddress
@@ -111,7 +119,9 @@ const accountDetails = async (req) => {
   const { market_listings, market_barred, ...forTheClient } = account;
   // The first question a launching client asks, before it has said what it
   // has: answered in its last declaration, until this launch confirms it.
-  const view = viewForOwnAccount(accountId, { connected: Boolean(sessionHolding(accountId)) });
+  const view = viewForOwnAccount(accountId, {
+    connected: Boolean(sessionForRequest(accountId, req)),
+  });
   return jsonAs(view, forTheClient);
 };
 
@@ -127,7 +137,14 @@ const rpcCall = async (req, [service, method]) => {
   const declaredAt = DECLARING.get(`${service}/${method}`);
   if (declaredAt !== undefined && accountId !== null) {
     const view = viewFromDemographics(req.json?.params?.[declaredAt]);
-    if (view) declare(accountId, view);
+    if (view) {
+      declare(accountId, view);
+      // This declaration normally arrives just after socket login. Keep the
+      // live connection in the same view as its HTTP answers immediately;
+      // dungeon entry will repeat it, but the town/store flow must not wait.
+      const session = sessionForRequest(accountId, req);
+      if (session) session.contentView = view;
+    }
   }
   try {
     const result = await dispatch(service, method, req.json?.params, callerOf(req));

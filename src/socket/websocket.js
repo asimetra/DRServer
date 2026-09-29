@@ -37,9 +37,13 @@ export const SNIFF_TIMEOUT_MS = 10_000;
 const MAX_HANDSHAKE_BYTES = 8192;
 /** Far above anything the game sends (a login is ~110 bytes); a bound on what one frame can make us hold. */
 export const MAX_FRAME_BYTES = 1 << 20;
+export const MAX_CONTROL_FRAMES_PER_WINDOW = 64;
+export const CONTROL_FRAME_WINDOW_MS = 10_000;
+/** Small reads are copied once into slabs instead of retained as one Buffer object each. */
+const DECODER_SLAB_BYTES = 4 * 1024;
 
 const OP = { continuation: 0x0, text: 0x1, binary: 0x2, close: 0x8, ping: 0x9, pong: 0xa };
-const CLOSE = { normal: 1000, protocolError: 1002, unsupportedData: 1003, tooBig: 1009 };
+const CLOSE = { normal: 1000, protocolError: 1002, unsupportedData: 1003, policyViolation: 1008, tooBig: 1009 };
 
 export const looksLikeHttpUpgrade = (chunk) =>
   chunk.length >= 4 && chunk.toString("latin1", 0, 4) === "GET ";
@@ -74,45 +78,171 @@ const closePayload = (code) => {
 };
 
 /**
- * Reads whole frames off the front of `buffer`.
- * Returns `{ frames, rest }`, or `{ error: closeCode }` for a stream that
- * cannot be read further.
+ * An offset queue for TCP chunks. Incomplete frames stay as their original
+ * chunks; only a completed payload is copied, once, so a frame arriving in
+ * many small reads remains O(n) rather than repeatedly copying its prefix.
  */
-export const decodeFrames = (buffer) => {
-  const frames = [];
-  let at = 0;
-  while (buffer.length - at >= 2) {
-    const first = buffer[at];
-    const second = buffer[at + 1];
+class FrameDecoder {
+  constructor() {
+    this.chunks = [];
+    this.head = 0;
+    this.offset = 0;
+    this.length = 0;
+  }
+
+  push(chunk) {
+    if (!chunk.length) return;
+    this.length += chunk.length;
+    if (chunk.length >= DECODER_SLAB_BYTES) {
+      this.chunks.push({ buffer: chunk, length: chunk.length, owned: false });
+      return;
+    }
+
+    let sourceOffset = 0;
+    while (sourceOffset < chunk.length) {
+      let tail = this.chunks.at(-1);
+      if (!tail?.owned || tail.length === tail.buffer.length) {
+        tail = { buffer: Buffer.allocUnsafe(DECODER_SLAB_BYTES), length: 0, owned: true };
+        this.chunks.push(tail);
+      }
+      const take = Math.min(chunk.length - sourceOffset, tail.buffer.length - tail.length);
+      chunk.copy(tail.buffer, tail.length, sourceOffset, sourceOffset + take);
+      tail.length += take;
+      sourceOffset += take;
+    }
+  }
+
+  peek(length) {
+    if (this.length < length) return null;
+    const first = this.chunks[this.head];
+    if (first.length - this.offset >= length) {
+      return first.buffer.subarray(this.offset, this.offset + length);
+    }
+    const result = Buffer.allocUnsafe(length);
+    let chunkIndex = this.head;
+    let chunkOffset = this.offset;
+    let written = 0;
+    while (written < length) {
+      const chunk = this.chunks[chunkIndex];
+      const take = Math.min(length - written, chunk.length - chunkOffset);
+      chunk.buffer.copy(result, written, chunkOffset, chunkOffset + take);
+      written += take;
+      chunkIndex += 1;
+      chunkOffset = 0;
+    }
+    return result;
+  }
+
+  read(length) {
+    const result = Buffer.allocUnsafe(length);
+    let written = 0;
+    while (written < length) {
+      const chunk = this.chunks[this.head];
+      const take = Math.min(length - written, chunk.length - this.offset);
+      chunk.buffer.copy(result, written, this.offset, this.offset + take);
+      written += take;
+      this.offset += take;
+      this.length -= take;
+      if (this.offset === chunk.length) {
+        this.head += 1;
+        this.offset = 0;
+      }
+    }
+    this.compact();
+    return result;
+  }
+
+  discard(length) {
+    let left = length;
+    while (left > 0) {
+      const chunk = this.chunks[this.head];
+      const take = Math.min(left, chunk.length - this.offset);
+      left -= take;
+      this.offset += take;
+      this.length -= take;
+      if (this.offset === chunk.length) {
+        this.head += 1;
+        this.offset = 0;
+      }
+    }
+    this.compact();
+  }
+
+  compact() {
+    if (this.head === this.chunks.length) {
+      this.chunks = [];
+      this.head = 0;
+    } else if (this.head >= 1024 && this.head * 2 >= this.chunks.length) {
+      this.chunks = this.chunks.slice(this.head);
+      this.head = 0;
+    }
+  }
+
+  remaining() {
+    if (this.length === 0) return Buffer.alloc(0);
+    const result = Buffer.allocUnsafe(this.length);
+    let written = 0;
+    for (let index = this.head; index < this.chunks.length; index += 1) {
+      const chunk = this.chunks[index];
+      const from = index === this.head ? this.offset : 0;
+      chunk.buffer.copy(result, written, from, chunk.length);
+      written += chunk.length - from;
+    }
+    return result;
+  }
+
+  next() {
+    const start = this.peek(2);
+    if (!start) return null;
+    const first = start[0];
+    const second = start[1];
     const fin = (first & 0x80) !== 0;
     const opcode = first & 0x0f;
     const masked = (second & 0x80) !== 0;
     if ((first & 0x70) !== 0 || !masked) return { error: CLOSE.protocolError };
 
     let length = second & 0x7f;
-    let offset = at + 2;
+    let headerLength = 2;
     if (length === 126) {
-      if (buffer.length - offset < 2) break;
-      length = buffer.readUInt16BE(offset);
-      offset += 2;
+      const header = this.peek(4);
+      if (!header) return null;
+      length = header.readUInt16BE(2);
+      headerLength = 4;
     } else if (length === 127) {
-      if (buffer.length - offset < 8) break;
-      const long = buffer.readBigUInt64BE(offset);
+      const header = this.peek(10);
+      if (!header) return null;
+      const long = header.readBigUInt64BE(2);
       if (long > BigInt(MAX_FRAME_BYTES)) return { error: CLOSE.tooBig };
       length = Number(long);
-      offset += 8;
+      headerLength = 10;
     }
     if (length > MAX_FRAME_BYTES) return { error: CLOSE.tooBig };
     if (opcode >= 0x8 && (!fin || length > 125)) return { error: CLOSE.protocolError };
-    if (buffer.length - offset < 4 + length) break;
+    if (this.length < headerLength + 4 + length) return null;
 
-    const mask = buffer.subarray(offset, offset + 4);
-    const payload = Buffer.from(buffer.subarray(offset + 4, offset + 4 + length));
+    this.discard(headerLength);
+    const mask = this.read(4);
+    const payload = this.read(length);
     for (let i = 0; i < payload.length; i += 1) payload[i] ^= mask[i & 3];
-    frames.push({ fin, opcode, payload });
-    at = offset + 4 + length;
+    return { frame: { fin, opcode, payload } };
   }
-  return { frames, rest: buffer.subarray(at) };
+}
+
+/**
+ * Reads whole frames off the front of `buffer`.
+ * Returns `{ frames, rest }`, or `{ error: closeCode }` for a stream that
+ * cannot be read further.
+ */
+export const decodeFrames = (buffer) => {
+  const decoder = new FrameDecoder();
+  const frames = [];
+  decoder.push(buffer);
+  while (true) {
+    const decoded = decoder.next();
+    if (!decoded) return { frames, rest: decoder.remaining() };
+    if (decoded.error) return { error: decoded.error };
+    frames.push(decoded.frame);
+  }
 };
 
 /** A browser's connection, shaped like the `net.Socket` the session code expects. */
@@ -121,11 +251,22 @@ export class WebSocketStream extends EventEmitter {
     super();
     this.socket = socket;
     this.remoteAddress = socket.remoteAddress;
-    this.pending = Buffer.alloc(0);
+    this.decoder = new FrameDecoder();
     this.closing = false;
     this.messageIsBinary = false;
+    this.controlBackpressured = false;
+    this.externallyPaused = false;
+    this.controlWindowStartedAt = Date.now();
+    this.controlFrames = 0;
     socket.on("data", (chunk) => this.receive(chunk));
-    socket.on("drain", () => this.emit("drain"));
+    socket.on("drain", () => {
+      this.emit("drain");
+      if (!this.controlBackpressured || this.closing) return;
+      this.controlBackpressured = false;
+      if (this.externallyPaused) return;
+      this.drainFrames();
+      if (!this.controlBackpressured && !this.externallyPaused && !this.socket.destroyed) this.socket.resume();
+    });
     socket.on("error", (err) => this.emit("error", err));
     socket.on("timeout", () => this.emit("timeout"));
     socket.on("close", () => this.emit("close"));
@@ -140,15 +281,25 @@ export class WebSocketStream extends EventEmitter {
   }
 
   receive(chunk) {
-    this.pending = this.pending.length ? Buffer.concat([this.pending, chunk]) : chunk;
-    const { frames, rest, error } = decodeFrames(this.pending);
-    if (error) {
-      this.fail(error);
-      return;
-    }
-    this.pending = rest;
-    for (const { opcode, payload } of frames) {
-      if (this.socket.destroyed) return;
+    if (this.closing || this.socket.destroyed) return;
+    this.decoder.push(chunk);
+    this.drainFrames();
+  }
+
+  drainFrames() {
+    while (
+      !this.controlBackpressured &&
+      !this.externallyPaused &&
+      !this.closing &&
+      !this.socket.destroyed
+    ) {
+      const decoded = this.decoder.next();
+      if (!decoded) return;
+      if (decoded.error) {
+        this.fail(decoded.error);
+        return;
+      }
+      const { opcode, payload } = decoded.frame;
       switch (opcode) {
         case OP.binary:
           this.messageIsBinary = true;
@@ -165,9 +316,11 @@ export class WebSocketStream extends EventEmitter {
           this.fail(CLOSE.unsupportedData);
           return;
         case OP.ping:
-          this.socket.write(encodeFrame(OP.pong, payload));
+          if (!this.allowControlFrame()) return;
+          if (!this.writePong(payload)) return;
           break;
         case OP.pong:
+          if (!this.allowControlFrame()) return;
           break;
         case OP.close:
           this.end();
@@ -177,6 +330,27 @@ export class WebSocketStream extends EventEmitter {
           return;
       }
     }
+  }
+
+  allowControlFrame(now = Date.now()) {
+    if (now - this.controlWindowStartedAt >= CONTROL_FRAME_WINDOW_MS) {
+      this.controlWindowStartedAt = now;
+      this.controlFrames = 0;
+    }
+    this.controlFrames += 1;
+    if (this.controlFrames <= MAX_CONTROL_FRAMES_PER_WINDOW) return true;
+    this.fail(CLOSE.policyViolation);
+    return false;
+  }
+
+  writePong(payload) {
+    const pong = encodeFrame(OP.pong, payload);
+    if (!this.socket.write(pong)) {
+      this.controlBackpressured = true;
+      this.socket.pause();
+      return false;
+    }
+    return true;
   }
 
   fail(code) {
@@ -209,12 +383,19 @@ export class WebSocketStream extends EventEmitter {
   }
 
   pause() {
+    this.externallyPaused = true;
     this.socket.pause();
     return this;
   }
 
   resume() {
-    this.socket.resume();
+    this.externallyPaused = false;
+    if (!this.controlBackpressured) {
+      this.drainFrames();
+      if (!this.controlBackpressured && !this.closing && !this.socket.destroyed) {
+        this.socket.resume();
+      }
+    }
     return this;
   }
 

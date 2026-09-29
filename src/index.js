@@ -17,8 +17,8 @@ import {
 } from "./preflight.js";
 import { error, info } from "./log.js";
 import { createGracefulShutdown, installProcessHandlers } from "./shutdown.js";
-import { acquireProcessLock } from "./process-lock.js";
-import { keepDeclarationsIn, readyContentPacks } from "./content-packs.js";
+import { acquireProcessLock, initializeProcessStorage } from "./process-lock.js";
+import { flushDeclarations, keepDeclarationsIn, readyContentPacks } from "./content-packs.js";
 import { closeMatchWorkers, startMatchWorkers } from "./socket/match-worker-service.js";
 
 info("Open Dungeon Server — web services + game socket");
@@ -28,11 +28,21 @@ if (config.permissive) {
 
 checkCompatibilityData();
 reportContentOverride();
-await checkDatabaseSchema();
 const releaseProcessLock = await acquireProcessLock();
-// Only once the storage is ours: an older server still running on it would
-// write moved rows straight back (see moveLegacyData).
-await moveLegacyData();
+try {
+  if (!(await checkDatabaseSchema())) {
+    throw new Error("database schema check failed; refusing to start with unsafe persistence");
+  }
+  // Only once the storage is ours: an older server still running on it would
+  // write moved rows straight back (see moveLegacyData).
+  await moveLegacyData();
+  // The schema and legacy rows are now current, so the shared id sequence can
+  // be raised once before any match worker starts allocating from it.
+  await initializeProcessStorage();
+} catch (problem) {
+  await releaseProcessLock().catch(() => undefined);
+  throw problem;
+}
 ensureTokenSecret();
 reportAuth();
 /**
@@ -53,10 +63,19 @@ keepDeclarationsIn(path.join(config.dataDir, "content-declarations.json"));
 await startMatchWorkers();
 
 const listeners = [startWebServices(), startInternalApi(), startGameSocket()];
+const waitForPersistentWrites = async () => {
+  const [, declarationsFlushed] = await Promise.all([
+    waitForAccountWrites(),
+    flushDeclarations(),
+  ]);
+  if (!declarationsFlushed) {
+    throw new Error("content declarations could not be persisted during shutdown");
+  }
+};
 const shutdown = createGracefulShutdown({
   servers: () => listeners,
   sessions: activeSocketSessions,
-  waitForWrites: waitForAccountWrites,
+  waitForWrites: waitForPersistentWrites,
   closeServices: closeMatchWorkers,
   releaseProcessLock,
   closeStorage: closeAccountStorage,

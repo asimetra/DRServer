@@ -2,7 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-import { CHILD_TABLES } from "../src/storage/postgres.js";
+import {
+  CHILD_TABLES,
+  deduplicateSoldListings,
+  initializeAccountObjectSequence,
+  mergeMarketListings,
+  nextId,
+} from "../src/storage/postgres.js";
+import { ACCOUNT_OBJECT_ID_FLOOR } from "../src/account-object-ids.js";
 
 /**
  * The two halves of the Postgres backend have to agree, and nothing makes them.
@@ -69,6 +76,58 @@ test("boosters are still unmodelled, on purpose", () => {
   assert.equal(CHILD_TABLES.account_boosters, undefined);
   assert.equal(columnsOf("account_boosters"), null);
   assert.match(schema, /account_boosters is still unmodelled/);
+});
+
+test("object ids are raised once at startup and allocated without resetting the sequence", async () => {
+  const setup = [];
+  await initializeAccountObjectSequence({
+    query: async (text, values) => {
+      setup.push({ text, values });
+      return { rows: [] };
+    },
+  });
+
+  assert.equal(setup.length, 1);
+  assert.match(setup[0].text, /setval/);
+  assert.deepEqual(setup[0].values, [ACCOUNT_OBJECT_ID_FLOOR]);
+  for (const table of [...Object.keys(CHILD_TABLES), "market_sold_listings"]) {
+    assert.match(setup[0].text, new RegExp(`MAX\\(id\\) AS id FROM ${table}\\b`));
+  }
+
+  const allocations = [];
+  const id = await nextId({
+    query: async (text) => {
+      allocations.push(text);
+      return { rows: [{ id: "1200000042" }] };
+    },
+  });
+  assert.equal(id, 1_200_000_042);
+  assert.deepEqual(allocations, ["SELECT nextval('account_object_id') AS id"]);
+});
+
+test("duplicate sold rows merge into one payable listing", () => {
+  const sale = { id: 7, sold_at: "2026-09-29T10:00:00.000Z", sold_to: 12, proceeds: 90 };
+  const open = { id: 8, sold_at: null, sold_to: null };
+  assert.deepEqual(
+    mergeMarketListings([{ ...sale }, open], [{ ...sale }, { ...sale }]),
+    [open, sale]
+  );
+});
+
+test("sold-listing cleanup keys duplicates by account, object and sale time", async () => {
+  const statements = [];
+  const removed = await deduplicateSoldListings({
+    query: async (text) => {
+      statements.push(text);
+      return { rowCount: 2 };
+    },
+  });
+  assert.equal(removed, 2);
+  assert.equal(statements.length, 2);
+  assert.match(statements[0], /LOCK TABLE market_sold_listings IN SHARE ROW EXCLUSIVE MODE/);
+  assert.match(statements[1], /duplicate\.account_id = original\.account_id/);
+  assert.match(statements[1], /duplicate\.id = original\.id/);
+  assert.match(statements[1], /duplicate\.sold_at IS NOT DISTINCT FROM original\.sold_at/);
 });
 
 /**

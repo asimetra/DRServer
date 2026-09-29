@@ -94,7 +94,7 @@ export const checkIdle = (session, at = Date.now()) => {
   }
   const idleFor = at - idle.lastActiveAt;
   const place = staysPut(session.mapPage);
-  if (!idle.marked && idleFor >= config.afkWarnMs) {
+  if (config.afkWarnMs > 0 && !idle.marked && idleFor >= config.afkWarnMs) {
     idle.marked = true;
     announce(session, true);
     if (!place && config.afkKickMs > config.afkWarnMs) tellAsServer(session, warningLine(), { warn: true });
@@ -118,10 +118,11 @@ export const startAfkWatch = (
   session,
   { now = Date.now, schedule = setInterval, cancel = clearInterval } = {}
 ) => {
-  if (!(config.afkWarnMs > 0)) return () => {};
+  const thresholds = [config.afkWarnMs, config.afkKickMs].filter((value) => value > 0);
+  if (!thresholds.length) return () => {};
   session.idleState = { lastActiveAt: now(), marked: false, sendingHome: false };
   // Never slower than the limit itself, so a short limit is still honoured.
-  const timer = schedule(() => checkIdle(session, now()), Math.min(CHECK_MS, config.afkWarnMs));
+  const timer = schedule(() => checkIdle(session, now()), Math.min(CHECK_MS, ...thresholds));
   timer?.unref?.();
   return () => {
     cancel(timer);

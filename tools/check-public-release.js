@@ -7,8 +7,21 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const run = promisify(execFile);
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = process.env.ODS_PUBLIC_RELEASE_ROOT
+  ? path.resolve(process.env.ODS_PUBLIC_RELEASE_ROOT)
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
+
+const insensitiveEre = (text) =>
+  [...text].map((character) => {
+    if (/[a-z]/i.test(character)) return `[${character.toLowerCase()}${character.toUpperCase()}]`;
+    return /[\\.^$*+?()[\]{}|]/.test(character) ? `\\${character}` : character;
+  }).join("");
+
+const legacyProduct = ["Dungeon", "Rampage"].join(" ");
+const legacyRepository = ["Dungeon", "Rampage"].join("-");
+const privateWorktree = ["DR", "Haxe"].join("");
+const localHome = ["", "home", "simetra", ""].join("/");
 
 const forbiddenDirectories = new Set([
   ".claude",
@@ -37,10 +50,26 @@ const forbiddenPrefixes = [
   "game-data/Resources/",
 ];
 const forbiddenText = [
-  { pattern: new RegExp(["Dungeon", "Rampage"].join(" "), "gi"), label: "legacy product name" },
-  { pattern: new RegExp(["Dungeon", "Rampage"].join("-"), "gi"), label: "legacy repository name" },
-  { pattern: new RegExp(["DR", "Haxe"].join(""), "g"), label: "private client-worktree name" },
-  { pattern: new RegExp(["", "home", "simetra", ""].join("/"), "g"), label: "developer-local absolute path" },
+  {
+    pattern: new RegExp(legacyProduct, "gi"),
+    label: "legacy product name",
+    history: ["--extended-regexp", "-G", insensitiveEre(legacyProduct)],
+  },
+  {
+    pattern: new RegExp(legacyRepository, "gi"),
+    label: "legacy repository name",
+    history: ["--extended-regexp", "-G", insensitiveEre(legacyRepository)],
+  },
+  {
+    pattern: new RegExp(privateWorktree, "g"),
+    label: "private client-worktree name",
+    history: ["-S", privateWorktree],
+  },
+  {
+    pattern: new RegExp(localHome, "g"),
+    label: "developer-local absolute path",
+    history: ["-S", localHome],
+  },
   /**
    * A validation token, by the shape only a real one has: an expiry and a
    * whole 64-character signature. The documented example keeps its signature
@@ -48,10 +77,25 @@ const forbiddenText = [
    * deliberately not matched — lockfiles and fixtures are full of them, and a
    * check that cries wolf is a check somebody turns off.
    */
-  { pattern: /(?<!\d)\d{9,}:[0-9a-f]{64}(?![0-9a-f])/g, label: "validation token" },
+  {
+    pattern: /(?<!\d)\d{9,}:[0-9a-f]{64}(?![0-9a-f])/g,
+    label: "validation token",
+    history: ["--extended-regexp", "-G", "[0-9]{9,}:[0-9a-f]{64}"],
+  },
 ];
 
 const files = [];
+let publicPaths = null;
+try {
+  const { stdout } = await run(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    { cwd: root, maxBuffer: 256 * 1024 * 1024 }
+  );
+  publicPaths = new Set(stdout.split("\0").filter(Boolean));
+} catch {
+  // A source archive has no index; in that case its filesystem is the release.
+}
 const walk = async (directory, relative = "") => {
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
     if (!relative && forbiddenDirectories.has(entry.name)) continue;
@@ -63,7 +107,9 @@ const walk = async (directory, relative = "") => {
     }
     const full = path.join(directory, entry.name);
     if (entry.isDirectory()) await walk(full, nextRelative);
-    else if (entry.isFile()) files.push({ full, relative: nextRelative });
+    else if (entry.isFile() && (!publicPaths || publicPaths.has(nextRelative))) {
+      files.push({ full, relative: nextRelative });
+    }
   }
 };
 
@@ -124,6 +170,24 @@ const historyPaths = async () => {
   return seen;
 };
 
+/** Paths of reachable historical blobs whose diffs introduced forbidden text. */
+const historyText = async () => {
+  const found = new Map();
+  for (const rule of forbiddenText) {
+    const { stdout } = await run(
+      "git",
+      ["log", "--all", "--format=", "--name-only", "--diff-filter=AM", ...rule.history],
+      { cwd: root, maxBuffer: 256 * 1024 * 1024 }
+    );
+    for (const recordedPath of stdout.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      const labels = found.get(recordedPath) ?? new Set();
+      labels.add(rule.label);
+      found.set(recordedPath, labels);
+    }
+  }
+  return found;
+};
+
 try {
   await run("git", ["rev-parse", "--git-dir"], { cwd: root });
 } catch {
@@ -169,6 +233,13 @@ try {
     failures.push(
       "history is not publishable: prune stale worktrees (git worktree prune), " +
         "drop old refs, then garbage-collect (git gc --prune=now)"
+    );
+  }
+
+  const historicalText = await historyText();
+  for (const [recordedPath, labels] of historicalText) {
+    failures.push(
+      `git history blob ${recordedPath}: contains ${[...labels].sort().join(", ")}`
     );
   }
 } catch (problem) {

@@ -109,6 +109,44 @@ test("a minute idle sends the player home, and asks only once", (t) => {
   assert.deepEqual(home, [3]);
 });
 
+test("disabling the warning still schedules and applies a positive kick", (t) => {
+  const previousWarn = config.afkWarnMs;
+  const previousKick = config.afkKickMs;
+  config.afkWarnMs = 0;
+  config.afkKickMs = 100;
+  t.after(() => {
+    config.afkWarnMs = previousWarn;
+    config.afkKickMs = previousKick;
+  });
+
+  const home = sentHome(t);
+  const { session, told, broadcast } = hero();
+  const start = 1_000_000;
+  let tick = null;
+  let interval = null;
+  const stop = startAfkWatch(session, {
+    now: () => start,
+    schedule: (fn, delay) => {
+      tick = fn;
+      interval = delay;
+      return 1;
+    },
+    cancel: () => {
+      tick = null;
+    },
+  });
+
+  assert.equal(interval, 100, "the remaining positive threshold drives the timer");
+  assert.equal(typeof tick, "function");
+  checkIdle(session, start + 99);
+  assert.deepEqual(home, []);
+  checkIdle(session, start + 100);
+  assert.deepEqual(home, [3]);
+  assert.deepEqual(broadcast, [], "warning zero disables the AFK marker");
+  assert.deepEqual(told, [], "and its warning chat line");
+  stop();
+});
+
 test("waiting to be revived, a finished run and the report are not idling", (t) => {
   const home = sentHome(t);
   for (const excuse of [

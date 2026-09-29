@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -7,7 +8,14 @@ import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
 
-import { acceptGameSocket, decodeFrames, encodeFrame, MAX_FRAME_BYTES } from "../src/socket/websocket.js";
+import {
+  acceptGameSocket,
+  decodeFrames,
+  encodeFrame,
+  MAX_CONTROL_FRAMES_PER_WINDOW,
+  MAX_FRAME_BYTES,
+  WebSocketStream,
+} from "../src/socket/websocket.js";
 import { serveWebClient } from "../src/web-client.js";
 
 /** A client frame: masked, as RFC 6455 requires of browsers. */
@@ -20,6 +28,51 @@ const clientFrame = (opcode, payload, { fin = true, mask = [1, 2, 3, 4] } = {}) 
   const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i & 3]));
   return Buffer.concat([header, Buffer.from(mask), masked]);
 };
+
+class StubSocket extends EventEmitter {
+  constructor() {
+    super();
+    this.remoteAddress = "127.0.0.1";
+    this.destroyed = false;
+    this.writableLength = 0;
+    this.writeResult = true;
+    this.writes = [];
+    this.paused = false;
+    this.ended = false;
+  }
+
+  write(bytes) {
+    this.writes.push(bytes);
+    return this.writeResult;
+  }
+
+  pause() {
+    this.paused = true;
+  }
+
+  resume() {
+    this.paused = false;
+  }
+
+  isPaused() {
+    return this.paused;
+  }
+
+  end() {
+    this.ended = true;
+  }
+
+  destroy(error) {
+    this.destroyed = true;
+    this.error = error;
+  }
+
+  destroySoon() {
+    this.destroyed = true;
+  }
+
+  setTimeout() {}
+}
 
 test("frames are unmasked, and a stream cut anywhere waits for the rest", () => {
   const one = clientFrame(0x2, Buffer.from([7, 0, 118, 0, 1, 2, 3]));
@@ -38,6 +91,98 @@ test("an unmasked or oversized client frame ends the connection", () => {
   const huge = Buffer.from([0x82, 0xff, 0, 0, 0, 0, 0, 0x20, 0, 0]);
   assert.equal(decodeFrames(huge).error, 1009);
   assert.ok(MAX_FRAME_BYTES < 0x200000);
+});
+
+test("an incomplete maximum-size frame is copied only when its payload is complete", (t) => {
+  const payload = Buffer.alloc(MAX_FRAME_BYTES, 9);
+  const frame = clientFrame(0x2, payload);
+  const originalConcat = Buffer.concat;
+  let concatInputBytes = 0;
+  t.mock.method(Buffer, "concat", (chunks, length) => {
+    concatInputBytes += chunks.reduce((total, chunk) => total + chunk.length, 0);
+    return originalConcat(chunks, length);
+  });
+
+  const socket = new StubSocket();
+  const stream = new WebSocketStream(socket);
+  const received = [];
+  stream.on("data", (chunk) => received.push(chunk));
+  for (let at = 0; at < frame.length; at += 1024) stream.receive(frame.subarray(at, at + 1024));
+
+  assert.deepEqual(received, [payload]);
+  assert.equal(concatInputBytes, 0, "partial prefixes were not repeatedly concatenated");
+});
+
+test("a bytewise frame is retained in bounded slabs rather than one Buffer per byte", () => {
+  const payload = Buffer.alloc(200_000, 9);
+  const frame = clientFrame(0x2, payload);
+  const socket = new StubSocket();
+  const stream = new WebSocketStream(socket);
+  const received = [];
+  stream.on("data", (chunk) => received.push(chunk));
+
+  for (let at = 0; at < frame.length - 1; at += 1) {
+    stream.receive(frame.subarray(at, at + 1));
+  }
+  assert.ok(stream.decoder.chunks.length < 64, `${stream.decoder.chunks.length} retained chunks`);
+
+  stream.receive(frame.subarray(-1));
+  assert.deepEqual(received, [payload]);
+});
+
+test("pong output stops at backpressure and resumes only after drain", () => {
+  const socket = new StubSocket();
+  socket.writeResult = false;
+  const stream = new WebSocketStream(socket);
+  const ping = clientFrame(0x9, Buffer.from("ping"));
+  stream.receive(Buffer.concat([ping, ping]));
+
+  assert.equal(socket.writes.length, 1, "the second pong was left queued in the decoder");
+  assert.equal(socket.paused, true);
+
+  socket.writeResult = true;
+  socket.emit("drain");
+  assert.equal(socket.writes.length, 2);
+  assert.equal(socket.paused, false);
+});
+
+test("control drain does not bypass an external session pause", () => {
+  const socket = new StubSocket();
+  socket.writeResult = false;
+  const stream = new WebSocketStream(socket);
+  const received = [];
+  stream.on("data", (chunk) => received.push(chunk));
+  const ping = clientFrame(0x9, Buffer.from("ping"));
+  const binary = clientFrame(0x2, Buffer.from("must-wait"));
+
+  stream.receive(Buffer.concat([ping, binary]));
+  stream.pause();
+  socket.writeResult = true;
+  socket.emit("drain");
+  assert.deepEqual(received, [], "decoded application bytes stay queued while externally paused");
+  assert.equal(socket.paused, true);
+
+  stream.resume();
+  assert.deepEqual(received, [Buffer.from("must-wait")]);
+  assert.equal(socket.paused, false);
+});
+
+test("control frames are rate-limited without treating application backlog as a pong flood", () => {
+  const flooding = new StubSocket();
+  const stream = new WebSocketStream(flooding);
+  const ping = clientFrame(0x9, Buffer.alloc(0));
+  stream.receive(Buffer.concat(Array.from({ length: MAX_CONTROL_FRAMES_PER_WINDOW + 1 }, () => ping)));
+
+  const opcodes = flooding.writes.map((frame) => frame[0] & 0x0f);
+  assert.equal(opcodes.filter((opcode) => opcode === 0xa).length, MAX_CONTROL_FRAMES_PER_WINDOW);
+  assert.equal(opcodes.at(-1), 0x8, "the flood ends with a policy close");
+  assert.equal(flooding.ended, true);
+
+  const applicationBacklog = new StubSocket();
+  applicationBacklog.writableLength = 4 * 1024 * 1024;
+  new WebSocketStream(applicationBacklog).receive(ping);
+  assert.deepEqual(applicationBacklog.writes.map((frame) => frame[0] & 0x0f), [0xa]);
+  assert.equal(applicationBacklog.ended, false, "a valid ping does not close an otherwise valid connection");
 });
 
 const echoServer = async () => {
@@ -92,14 +237,20 @@ test("a browser's WebSocket reaches the same session, binary both ways", async (
 test("the browser client is served from its folder and nothing outside it", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "web-client-"));
   const root = path.join(dir, "bin");
+  const linkedRoot = path.join(dir, "current");
   fs.mkdirSync(path.join(root, "lib"), { recursive: true });
   fs.writeFileSync(path.join(root, "index.html"), "<html>game</html>");
   fs.writeFileSync(path.join(root, "lib", "a.zip"), "PK");
+  fs.writeFileSync(path.join(root, "safe.zip"), "SAFE");
+  fs.writeFileSync(path.join(dir, "secret.zip"), "NOPE");
+  fs.symlinkSync(path.join(root, "safe.zip"), path.join(root, "race.zip"));
   fs.writeFileSync(path.join(dir, "secret.txt"), "no");
+  fs.symlinkSync(root, linkedRoot, "dir");
+  fs.symlinkSync(path.join(dir, "secret.txt"), path.join(root, "leak.txt"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
   const server = http.createServer((req, res) =>
-    serveWebClient(req, res, new URL(req.url, "http://x").pathname, root)
+    serveWebClient(req, res, new URL(req.url, "http://x").pathname, linkedRoot)
   );
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -124,7 +275,23 @@ test("the browser client is served from its folder and nothing outside it", asyn
   for (const escape of ["/play/..%2fsecret.txt", "/play/%2e%2e/secret.txt", "/play/lib/..%2f..%2fsecret.txt"]) {
     assert.equal((await fetch(`${base}${escape}`)).status, 404, escape);
   }
+  assert.equal((await fetch(`${base}/play/leak.txt`)).status, 404, "an inner symlink cannot escape the root");
   assert.equal((await fetch(`${base}/play/missing.js`)).status, 404);
+
+  const realpath = fs.promises.realpath.bind(fs.promises);
+  let swapped = false;
+  t.mock.method(fs.promises, "realpath", async (target) => {
+    const resolved = await realpath(target);
+    if (target === path.join(root, "race.zip") && !swapped) {
+      swapped = true;
+      fs.unlinkSync(target);
+      fs.symlinkSync(path.join(dir, "secret.zip"), target);
+    }
+    return resolved;
+  });
+  const raced = await fetch(`${base}/play/race.zip`);
+  assert.equal(raced.status, 200);
+  assert.equal(await raced.text(), "SAFE", "a symlink swap cannot change the already-validated target");
 });
 
 test("the browser client is revalidated rather than downloaded again, and text goes compressed", async (t) => {
@@ -186,7 +353,7 @@ test("players asking for a rebuilt script together share one compression of it",
   let reads = 0;
   let failNext = true;
   t.mock.method(fs.promises, "readFile", async (target, ...rest) => {
-    if (target === file) {
+    if (target === file || Number.isInteger(target?.fd)) {
       reads += 1;
       if (failNext) {
         failNext = false;

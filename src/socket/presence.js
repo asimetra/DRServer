@@ -248,11 +248,54 @@ const followableFor = async (accountId, ids) => {
   return followableAmong(await loadExistingAccount(accountId), ids);
 };
 
+/**
+ * A friendship can change while the storage-backed followability check is in
+ * flight. Revisions are per relationship so ending one friendship does not
+ * discard an otherwise valid batch result for every other friend in it.
+ */
+const watchRevision = (session, accountId) =>
+  (session?.member ?? session)?.presenceWatchRevisions?.get(Number(accountId)) ?? 0;
+
+const beginPendingWatch = (session, accountId) => {
+  const member = session?.member ?? session;
+  member.presencePendingWatches ??= new Map();
+  const id = Number(accountId);
+  member.presencePendingWatches.set(id, (member.presencePendingWatches.get(id) ?? 0) + 1);
+};
+
+const finishPendingWatch = (session, accountId) => {
+  const member = session?.member ?? session;
+  const id = Number(accountId);
+  const left = (member?.presencePendingWatches?.get(id) ?? 1) - 1;
+  if (left > 0) {
+    member.presencePendingWatches.set(id, left);
+    return;
+  }
+  member?.presencePendingWatches?.delete(id);
+  member?.presenceWatchRevisions?.delete(id);
+  if (member?.presencePendingWatches?.size === 0) delete member.presencePendingWatches;
+  if (member?.presenceWatchRevisions?.size === 0) delete member.presenceWatchRevisions;
+};
+
+const cancelPendingWatch = (session, accountId) => {
+  const member = session?.member ?? session;
+  if (!member) return;
+  const id = Number(accountId);
+  // With no validation in flight the relationship update itself is the whole
+  // state change; retaining a revision would grow one entry per account ever
+  // encountered for the rest of this connection.
+  if (!(member.presencePendingWatches?.get(id) > 0)) return;
+  member.presenceWatchRevisions ??= new Map();
+  member.presenceWatchRevisions.set(id, watchRevision(member, id) + 1);
+};
+
 export const handleAddFriends = (session, reader, { followable = followableFor } = {}) => {
   const byteLength = reader.u16();
   const asked = new Set();
   const count = Math.min(Math.floor(byteLength / 4), MAX_WATCHED);
   for (let index = 0; index < count; index++) asked.add(reader.u32());
+  const revisions = new Map([...asked].map((accountId) => [accountId, watchRevision(session, accountId)]));
+  for (const accountId of asked) beginPendingWatch(session, accountId);
 
   /**
    * Only friends, and the server says who they are.
@@ -263,11 +306,22 @@ export const handleAddFriends = (session, reader, { followable = followableFor }
    * anybody — a stranger, or somebody who had blocked them — and being told
    * from then on whether they were online and which dungeon they were in.
    */
-  return followable(session.accountId, [...asked])
-    .then((ids) => admitWatched(session, new Set(ids)))
+  return Promise.resolve()
+    .then(() => followable(session.accountId, [...asked]))
+    .then((ids) => {
+      const current = new Set(
+        ids.filter((accountId) =>
+          watchRevision(session, accountId) === revisions.get(Number(accountId))
+        )
+      );
+      return admitWatched(session, current);
+    })
     .catch((problem) => {
       warn(`[${session.id}] could not check who may be followed: ${problem.message}`);
       return false;
+    })
+    .finally(() => {
+      for (const accountId of asked) finishPendingWatch(session, accountId);
     });
 };
 
@@ -379,6 +433,9 @@ export const friendshipChanged = (first, second, made) => {
   for (const [who, other] of [[Number(first), Number(second)], [Number(second), Number(first)]]) {
     for (const session of sessions) {
       if (Number(session.accountId) !== who) continue;
+      // Invalidate storage checks started before this relationship change. In
+      // particular, an old positive answer must not undo an unfriend/block.
+      cancelPendingWatch(session, other);
       if (made) {
         session.watchedFriends ??= new Set();
         session.watchedFriends.add(other);

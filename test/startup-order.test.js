@@ -11,10 +11,39 @@ import fs from "node:fs/promises";
  * them back among the open ones: the sale existed twice and was paid twice.
  * Read from the entry point itself, because the order is the whole point.
  */
-test("the process lock is taken before any data is moved", async () => {
+test("the process lock is taken before schema repair or legacy data movement", async () => {
   const entry = await fs.readFile(new URL("../src/index.js", import.meta.url), "utf8");
   const lock = entry.indexOf("await acquireProcessLock()");
+  const schema = entry.indexOf("await checkDatabaseSchema()");
   const move = entry.indexOf("await moveLegacyData()");
-  assert.ok(lock > 0 && move > 0, "both steps are in the entry point");
-  assert.ok(lock < move, "the lock comes first");
+  const initialize = entry.indexOf("await initializeProcessStorage()");
+  assert.ok(lock > 0 && schema > 0 && move > 0 && initialize > 0, "all steps are in the entry point");
+  assert.ok(lock < schema && schema < move && move < initialize, "ownership precedes every mutation");
+});
+
+test("the standalone grant allocator initializes PostgreSQL while holding the process lock", async () => {
+  const grant = await fs.readFile(new URL("../tools/grant.js", import.meta.url), "utf8");
+  const lock = grant.indexOf("await acquireProcessLock()");
+  const initialize = grant.indexOf("await initializeProcessStorage()");
+  const mutate = grant.indexOf("await grant()", initialize);
+  const release = grant.indexOf("await releaseProcessLock()", mutate);
+  assert.ok(lock > 0 && initialize > lock && mutate > initialize && release > mutate);
+});
+
+test("startup refuses to open services after an unsafe schema check", async () => {
+  const entry = await fs.readFile(new URL("../src/index.js", import.meta.url), "utf8");
+  const schema = entry.indexOf("if (!(await checkDatabaseSchema()))");
+  const lock = entry.indexOf("await acquireProcessLock()");
+  const listeners = entry.indexOf("startWebServices()");
+  assert.ok(lock > 0 && schema > lock && listeners > schema);
+  assert.match(entry.slice(schema, listeners), /throw new Error\(/);
+  assert.match(entry.slice(schema, listeners), /await releaseProcessLock\(\)/);
+});
+
+test("graceful shutdown flushes content declarations with account writes", async () => {
+  const entry = await fs.readFile(new URL("../src/index.js", import.meta.url), "utf8");
+  assert.match(entry, /import \{[^}]*flushDeclarations[^}]*\} from "\.\/content-packs\.js"/);
+  assert.match(entry, /Promise\.all\(\[\s*waitForAccountWrites\(\),\s*flushDeclarations\(\),?\s*\]\)/);
+  assert.match(entry, /if \(!declarationsFlushed\) \{\s*throw new Error\(/);
+  assert.match(entry, /waitForWrites:\s*waitForPersistentWrites/);
 });

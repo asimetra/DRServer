@@ -590,10 +590,57 @@ const separateIdleNpc = (
   return true;
 };
 
-const routeToTarget = (session, actor, target, now) => {
+const routeToTarget = (session, actor, target, now, heroes = []) => {
   const { ai } = actor;
   const navigation = session.navigation;
   const radius = collisionRadius(actor);
+  /**
+   * A body in the scenery gets out before it goes anywhere.
+   *
+   * Neither route finds a way from inside a collider: a sight line skips its
+   * first point and so reads clear from a body half in the bars, and the grid
+   * search starts in a cell it can never leave. The first walked it along the
+   * face of the jail, one refused step at a time; the second gave up and left
+   * it "blocked" in the cage for the rest of the floor. So it is sent to open
+   * ground first — the cage's own mouth if it was let out of one, else the
+   * nearest clear spot towards its target — and `moveWithNavigation` lets a
+   * buried body take the steps that bring it out.
+   */
+  if (navigation && isPositionBlocked(navigation, actor.position, radius)) {
+    const escapableWithoutHeroes = (candidate) => {
+      const permitted = keptOutOfHeroes(candidate, actor, heroes);
+      if (isPositionBlocked(navigation, permitted, radius)) return false;
+      // Clear ground across the collider is not useful when the first step has
+      // to go deeper into it. `moveWithNavigation` permits only progress out.
+      const firstMove = moveWithNavigation(
+        navigation,
+        actor.position,
+        {
+          x: permitted.x - actor.position.x,
+          y: permitted.y - actor.position.y,
+        },
+        radius
+      );
+      return squaredDistanceTo(firstMove, actor.position) > 0.01;
+    };
+    // A way out the body does not fit at, or the player physically closes off,
+    // is no way out. Re-evaluate an old target as heroes move through the room.
+    if (
+      ai.escape &&
+      (isPositionBlocked(navigation, ai.escape, radius) || !escapableWithoutHeroes(ai.escape))
+    ) {
+      ai.escape = null;
+    }
+    ai.escape ??= nearestClearPosition(navigation, actor.position, radius, {
+      towards: target,
+      accept: escapableWithoutHeroes,
+    });
+    // Not direct: the walk is to the way out, however near the target is.
+    // Even when there is no exit, a body inside scenery must never attack.
+    return { waypoint: ai.escape, direct: false, escaping: true };
+  } else {
+    ai.escape = null;
+  }
   if (!navigation || hasLineOfSight(navigation, actor.position, target, radius)) {
     ai.path = null;
     ai.pathIndex = 0;
@@ -694,25 +741,6 @@ const advanceNpcRelease = (
   const radius = collisionRadius(actor);
 
   /**
-   * The walk out of the cage is for getting out of the cage. Once the player is
-   * in plain sight there is nothing left to get past, and every member of a wave
-   * shares one release point — so carrying on means the whole group crosses to
-   * the same spot before turning on the player, which is what makes them look
-   * like they are gathering somewhere first.
-   */
-  const hero = session.actors?.get(heroDoid);
-  if (
-    hero &&
-    !hero.dead &&
-    heroPosition &&
-    hasLineOfSight(session.navigation, actor.position, heroPosition, radius)
-  ) {
-    ai.release = null;
-    clearNpcTarget(actor);
-    return false;
-  }
-
-  /**
    * Out of the cage is enough; the release point is not a destination.
    *
    * Measured: a released monster walks 119 to 134 units to a point every member
@@ -721,8 +749,12 @@ const advanceNpcRelease = (
    * through a doorway, and the doorway is behind it as soon as its own cage no
    * longer holds it.
    *
-   * The line of sight above covers the open cases; this covers the ones where
-   * the player is round a corner, which is where the detour was visible.
+   * Out means the body clear of the cage, not the player in sight. A sight line
+   * is sampled from its first step on, so one drawn from a body still half in
+   * the bars reads clear. Ending the walk there left the body in the collider,
+   * where every step of the chase that followed was refused: a knight 19 units
+   * into the jail on the bridge tile, facing a player in plain view, never
+   * moved again.
    */
   if (!isPositionBlocked(session.navigation, actor.position, radius)) {
     ai.release = null;
@@ -730,13 +762,9 @@ const advanceNpcRelease = (
     return false;
   }
 
+  // Reaching the release point is not the end of it; being clear is (above).
+  // One still blocked at it walks on and, failing that, falls to the stall.
   const distance = distanceTo(actor.position, release.target);
-  const reachedDistance = Math.max(8, radius * 0.25);
-  if (distance <= reachedDistance) {
-    ai.release = null;
-    clearNpcTarget(actor);
-    return true;
-  }
 
   if (session.debugAi) {
     info(
@@ -757,10 +785,12 @@ const advanceNpcRelease = (
     ? boundedPush(separationDisplacement(doid, actor, spatialIndex, heroDoids), ai, deltaSeconds)
     : { x: 0, y: 0 };
   const movement = movementWithinBudget(
-    {
-      x: ((release.target.x - actor.position.x) / distance) * travel,
-      y: ((release.target.y - actor.position.y) / distance) * travel,
-    },
+    distance > 0.001
+      ? {
+          x: ((release.target.x - actor.position.x) / distance) * travel,
+          y: ((release.target.y - actor.position.y) / distance) * travel,
+        }
+      : { x: 0, y: 0 },
     separation,
     ai,
     deltaSeconds
@@ -803,6 +833,8 @@ const advanceNpcRelease = (
     release.stalledSince ??= now;
     if (now - release.stalledSince >= RELEASE_STALL_MS) {
       info(`[${session.id}] npc ${doid} gave up on its cage exit — chasing instead`);
+      // Still out through the mouth, if it is still in the cage; see routeToTarget.
+      ai.escape = release.target;
       ai.release = null;
       clearNpcTarget(actor);
       return false;
@@ -815,7 +847,7 @@ const advanceNpcRelease = (
     faceTarget(session, doid, actor, release.target);
     session.send(npcPositionUpdate(doid, actor.position));
   }
-  if (distanceTo(actor.position, release.target) <= reachedDistance) {
+  if (!isPositionBlocked(session.navigation, actor.position, radius)) {
     ai.release = null;
     clearNpcTarget(actor);
   }
@@ -1117,7 +1149,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const topSpeed = ai.moveSpeed * mobility;
     const attackLocked = now < (ai.attackLockedUntil ?? 0);
 
-    const route = routeToTarget(session, actor, target, now);
+    const route = routeToTarget(session, actor, target, now, heroes);
 
     // DR_DEBUG_AI=1 prints where each chaser is actually heading, which is the
     // only way to tell a legitimate detour around geometry from a detour to
@@ -1291,6 +1323,12 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
 
     if (followingOwner) {
       ai.state = "return";
+      continue;
+    }
+
+    // Nothing is fought from inside the scenery: out first. See routeToTarget.
+    if (route.escaping) {
+      ai.state = "escape";
       continue;
     }
 

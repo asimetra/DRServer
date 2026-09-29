@@ -58,25 +58,32 @@ const COMPRESSIBLE = new Set([".html", ".js", ".json", ".txt", ".xml", ".svg"]);
  */
 const compressed = new Map();
 
-const gzipped = (file, stamp) => {
+const gzipped = (file, stamp, handle) => {
   const held = compressed.get(file);
-  if (held?.stamp === stamp) return held.body;
+  if (held?.stamp === stamp) {
+    void handle.close().catch(() => undefined);
+    return held.body;
+  }
   const entry = { stamp, body: null };
   entry.body = fs.promises
-    .readFile(file)
+    .readFile(handle)
     .then((raw) => gzip(raw))
     .catch((problem) => {
       if (compressed.get(file) === entry) compressed.delete(file);
       throw problem;
-    });
+    })
+    .finally(() => handle.close().catch(() => undefined));
   compressed.set(file, entry);
   return entry.body;
 };
 
+const containedBy = (root, target) =>
+  target === root || target.startsWith(root + path.sep);
+
 const insideRoot = (root, rest) => {
   const base = path.resolve(root);
   const wanted = path.resolve(base, rest);
-  if (wanted !== base && !wanted.startsWith(base + path.sep)) return null;
+  if (!containedBy(base, wanted)) return null;
   return wanted;
 };
 
@@ -111,24 +118,49 @@ export const serveWebClient = async (req, res, pathname, root) => {
   }
   if (rest === "" || rest.endsWith("/")) rest += "index.html";
 
-  const file = insideRoot(root, rest);
-  if (!file) {
-    notFound(res);
-    return;
-  }
-  let stat;
+  let canonicalRoot;
   try {
-    stat = await fs.promises.stat(file);
-    if (!stat.isFile() || !insideRoot(root, await fs.promises.realpath(file))) {
-      notFound(res);
-      return;
-    }
+    canonicalRoot = await fs.promises.realpath(root);
   } catch {
     notFound(res);
     return;
   }
+  const file = insideRoot(canonicalRoot, rest);
+  if (!file) {
+    notFound(res);
+    return;
+  }
+  let canonicalFile;
+  let handle;
+  let stat;
+  try {
+    canonicalFile = await fs.promises.realpath(file);
+    if (!containedBy(canonicalRoot, canonicalFile)) throw new Error("outside web root");
+    handle = await fs.promises.open(
+      canonicalFile,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+    );
+    if (process.platform === "linux") {
+      // Validate what was actually opened, not a pathname that can be swapped
+      // between realpath/stat and the later read.
+      try {
+        const opened = await fs.promises.realpath(`/proc/self/fd/${handle.fd}`);
+        if (!containedBy(canonicalRoot, opened)) throw new Error("opened outside web root");
+      } catch (problem) {
+        if (problem.message === "opened outside web root") throw problem;
+        // A Linux sandbox may not mount /proc. O_NOFOLLOW still protects the
+        // final component and the canonical target is used below.
+      }
+    }
+    stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("not a regular file");
+  } catch {
+    await handle?.close().catch(() => undefined);
+    notFound(res);
+    return;
+  }
 
-  const extension = path.extname(file).toLowerCase();
+  const extension = path.extname(canonicalFile).toLowerCase();
   const stamp = `${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}`;
   const etag = `"${stamp}"`;
   const shared = {
@@ -145,6 +177,7 @@ export const serveWebClient = async (req, res, pathname, root) => {
     ? offered.split(",").some((tag) => tag.trim().replace(/^W\//, "") === etag)
     : Number.isFinite(since) && Math.floor(stat.mtimeMs / 1000) <= Math.floor(since / 1000);
   if (unchanged) {
+    await handle.close().catch(() => undefined);
     res.writeHead(304, shared);
     res.end();
     return;
@@ -154,7 +187,7 @@ export const serveWebClient = async (req, res, pathname, root) => {
   if (COMPRESSIBLE.has(extension) && /\bgzip\b/i.test(req.headers["accept-encoding"] ?? "")) {
     let body;
     try {
-      body = await gzipped(file, stamp);
+      body = await gzipped(canonicalFile, stamp, handle);
     } catch {
       notFound(res);
       return;
@@ -166,10 +199,11 @@ export const serveWebClient = async (req, res, pathname, root) => {
 
   res.writeHead(200, { ...shared, "Content-Type": type, "Content-Length": String(stat.size) });
   if (req.method === "HEAD") {
+    await handle.close().catch(() => undefined);
     res.end();
     return;
   }
-  const stream = fs.createReadStream(file);
+  const stream = handle.createReadStream({ autoClose: true });
   stream.on("error", () => res.destroy());
   stream.pipe(res);
 };

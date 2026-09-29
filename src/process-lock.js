@@ -95,3 +95,10 @@ export const acquireProcessLock = async () => {
   }
   return acquireFileProcessLock(config.dataDir);
 };
+
+/** Initializes backend state that requires both the current schema and ownership lock. */
+export const initializeProcessStorage = async () => {
+  if (config.storage !== "postgres") return;
+  const storage = await import("./storage/postgres.js");
+  await storage.initializeServerStorage();
+};

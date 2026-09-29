@@ -213,9 +213,9 @@ export const reportAuth = () => {
  * was added keeps its old shape however often it restarts, so this is not an
  * unusual state to be in — it is the ordinary consequence of pulling.
  *
- * It warns rather than refusing to start: a server whose market is short a
- * column still serves dungeons, and stopping the whole thing would be a worse
- * answer than saying which table to fix.
+ * The caller refuses to start when this returns false. Running with a schema
+ * that cannot enforce the server's persistence invariants is data corruption,
+ * not a degraded service mode.
  */
 export const checkDatabaseSchema = async () => {
   if (config.storage !== "postgres") return true;
@@ -288,7 +288,26 @@ export const checkDatabaseSchema = async () => {
         info("database schema brought up to date by another server");
         return true;
       }
-      await client.query(sql);
+      await client.query("BEGIN");
+      try {
+        /**
+         * One intermediate release dropped the sold-listing primary key before
+         * this sale-identity index existed. If duplicate rows landed in that
+         * window, CREATE UNIQUE INDEX cannot repair the schema by itself. The
+         * cleanup and index creation share a transaction, so no writer can put
+         * the duplicate back between them.
+         */
+        if (after.indexes.some(({ index }) => index === "market_sold_listings_sale")) {
+          const { deduplicateSoldListings } = await import("./storage/postgres.js");
+          const removed = await deduplicateSoldListings(client);
+          if (removed) info(`database: removed ${removed} duplicate sold market listing(s)`);
+        }
+        await client.query(sql);
+        await client.query("COMMIT");
+      } catch (problem) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw problem;
+      }
       const { tables: remaining, indexes: unindexed } = await shortOf();
       for (const { index, table } of unindexed) {
         warn(`db/schema.sql was applied and ${table} still has no index ${index}`);
@@ -322,11 +341,8 @@ export const checkDatabaseSchema = async () => {
       await client.query("SELECT pg_advisory_unlock($1)", [0x0d5_5c8e]).catch(() => undefined);
     }
   } catch (problem) {
-    /*
-     * A database this server may read but not alter is a legitimate way to run
-     * it — so this says what to run rather than refusing to start, which is the
-     * same choice every other check here makes.
-     */
+    // The entry point treats false as fatal, after this gives the operator the
+    // concrete repair command.
     warn(`could not bring the database up to date: ${problem.message}`);
     warn(`  apply it with: psql ... < ${schemaFile}`);
     return false;

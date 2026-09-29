@@ -61,10 +61,23 @@ export const createGracefulShutdown = ({
           warn(`shutdown: listener close failed: ${result.reason?.message ?? result.reason}`);
         }
       }
-      await closeServices?.();
-      await waitForWrites?.();
-      await releaseProcessLock?.();
-      await closeStorage?.();
+      let finalizationFailure = null;
+      const finalize = async (label, work) => {
+        try {
+          await work?.();
+        } catch (problem) {
+          finalizationFailure ??= problem;
+          warn(`shutdown: ${label} failed: ${problem.message ?? problem}`);
+        }
+      };
+      // A failed flush is reported to the caller, but it must not strand the
+      // process lock or storage pool and leave this otherwise-closed process
+      // alive forever.
+      await finalize("service close", closeServices);
+      await finalize("persistent write flush", waitForWrites);
+      await finalize("process-lock release", releaseProcessLock);
+      await finalize("storage close", closeStorage);
+      if (finalizationFailure) throw finalizationFailure;
       info("shutdown: listeners closed and account writes settled");
     })();
     return stopping;

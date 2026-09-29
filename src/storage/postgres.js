@@ -63,7 +63,9 @@ export const acquireServerProcessLock = async () => {
     }
     processLockClient = client;
   } catch (problem) {
-    client.release();
+    // A failed setup may already hold the session advisory lock. Destroying
+    // the connection releases it; returning it to the pool would not.
+    client.release(true);
     throw problem;
   }
 
@@ -129,6 +131,19 @@ export const CHILD_TABLES = {
  */
 const SOLD_LISTINGS = "market_sold_listings";
 const isSold = (listing) => listing?.sold_to !== undefined && listing?.sold_to !== null;
+const saleKey = (row) => `${row.id}|${row.sold_at}`;
+
+/** One logical sale, even if a failed migration left it in either table twice. */
+export const mergeMarketListings = (listings, soldListings) => {
+  const uniqueSold = [
+    ...new Map(soldListings.map((row) => [saleKey(row), row])).values(),
+  ];
+  const moved = new Set(uniqueSold.map(saleKey));
+  return [
+    ...listings.filter((row) => !isSold(row) || !moved.has(saleKey(row))),
+    ...uniqueSold,
+  ];
+};
 
 const ACCOUNT_COLUMNS = [
   "id", "name", "campaign", "ancestor_campaign", "demographic", "trophies",
@@ -234,12 +249,10 @@ export const loadAccount = async (id) => {
    * written by a server that predates the sold table, while this one runs or
    * after it moved it, is the same sale — and counted twice it is paid twice.
    */
-  const saleKey = (row) => `${row.id}|${row.sold_at}`;
-  const moved = new Set(sold.rows.map(fromRow).map(saleKey));
-  account.market_listings = [
-    ...account.market_listings.filter((row) => !isSold(row) || !moved.has(saleKey(row))),
-    ...sold.rows.map(fromRow),
-  ];
+  account.market_listings = mergeMarketListings(
+    account.market_listings,
+    sold.rows.map(fromRow)
+  );
 
   // Still unmodelled: nothing in this server writes a booster row, so there is
   // no shape to store (see db/schema.sql). Chests used to be lumped in with
@@ -352,6 +365,20 @@ export const saveAccounts = async (accounts) => {
   }
 };
 
+/** Caller supplies a transaction; the lock keeps the cleanup/index gap closed. */
+export const deduplicateSoldListings = async (client) => {
+  await client.query(`LOCK TABLE ${SOLD_LISTINGS} IN SHARE ROW EXCLUSIVE MODE`);
+  const removed = await client.query(
+    `DELETE FROM ${SOLD_LISTINGS} AS duplicate
+     USING ${SOLD_LISTINGS} AS original
+     WHERE duplicate.ctid > original.ctid
+       AND duplicate.account_id = original.account_id
+       AND duplicate.id = original.id
+       AND duplicate.sold_at IS NOT DISTINCT FROM original.sold_at`
+  );
+  return removed.rowCount;
+};
+
 /**
  * Puts sold listings where they belong, on a caller's client. Run at startup.
  *
@@ -367,11 +394,21 @@ export const moveSoldListingsOut = async (client) => {
   await client.query("BEGIN");
   try {
     await client.query(`ALTER TABLE ${SOLD_LISTINGS} DROP CONSTRAINT IF EXISTS ${SOLD_LISTINGS}_pkey`);
+    await deduplicateSoldListings(client);
     // A sale already there — written by this version and again by an older
     // one — is one sale, not two.
     await client.query(
       `INSERT INTO ${SOLD_LISTINGS} (${columns})
-       SELECT ${columns} FROM market_listings WHERE sold_to IS NOT NULL
+       SELECT ${columns}
+       FROM market_listings AS source
+       WHERE source.sold_to IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1
+           FROM ${SOLD_LISTINGS} AS destination
+           WHERE destination.account_id = source.account_id
+             AND destination.id = source.id
+             AND destination.sold_at IS NOT DISTINCT FROM source.sold_at
+         )
        ON CONFLICT DO NOTHING`
     );
     const moved = await client.query("DELETE FROM market_listings WHERE sold_to IS NOT NULL");
@@ -418,24 +455,45 @@ export const accountIdWithName = async (key) => {
   return rows.length ? Number(rows[0].id) : null;
 };
 
-let accountObjectSequenceReady = null;
+const OBJECT_ID_TABLES = [...Object.keys(CHILD_TABLES), SOLD_LISTINGS];
 
-const ensureAccountObjectSequence = () => {
-  accountObjectSequenceReady ??= connect().query(
+/**
+ * Brings the sequence above its floor and every persisted child id.
+ *
+ * The caller owns the server-wide process lock and invokes this before match
+ * workers exist. `setval` is deliberately absent from the hot allocation path:
+ * sequences are concurrency-safe, resetting one beside concurrent `nextval`
+ * calls is not.
+ */
+export const initializeAccountObjectSequence = async (client) => {
+  const assignedIds = OBJECT_ID_TABLES
+    .map((table) => `SELECT MAX(id) AS id FROM ${table}`)
+    .join(" UNION ALL ");
+  await client.query(
     `SELECT setval(
        'account_object_id',
-       GREATEST((SELECT last_value FROM account_object_id), $1),
+       GREATEST(
+         (SELECT last_value FROM account_object_id),
+         $1,
+         COALESCE((SELECT MAX(id) FROM (${assignedIds}) AS assigned), $1)
+       ),
        true
      )`,
     [ACCOUNT_OBJECT_ID_FLOOR]
   );
-  return accountObjectSequenceReady;
+};
+
+/** Initializes shared PostgreSQL state after schema repair, on the lock connection. */
+export const initializeServerStorage = async () => {
+  if (!processLockClient) {
+    throw new Error("Postgres process lock must be held before storage initialization");
+  }
+  await initializeAccountObjectSequence(processLockClient);
 };
 
 /** Server-assigned ids, from the shared sequence in the schema. */
-export const nextId = async () => {
-  await ensureAccountObjectSequence();
-  const { rows } = await connect().query("SELECT nextval('account_object_id') AS id");
+export const nextId = async (client = connect()) => {
+  const { rows } = await client.query("SELECT nextval('account_object_id') AS id");
   return Number(rows[0].id);
 };
 

@@ -209,12 +209,12 @@ export const loadServerConfig = (environment = process.env) => {
     contentDir: setting(environment, "CONTENT_DIR") ?? defaultContentDir(),
 
     /**
-     * The browser build of the client (DRHaxe's `bin/html5/bin`), served under
+     * The browser build of the client (`bin/html5/bin`), served under
      * /play/, or "" for none. Played from here its page, the discovery answer
      * and the web services share one origin, so the browser needs no CORS; the
      * game socket takes the browser's WebSocket on its usual port.
      *
-     *   ODS_WEB_CLIENT_DIR=/srv/drhaxe-web   then   http://host:8080/play/#account=…&token=…
+     *   ODS_WEB_CLIENT_DIR=/srv/web-client   then   http://host:8080/play/#account=…&token=…
      */
     webClientDir: setting(environment, "WEB_CLIENT_DIR") ?? "",
 
