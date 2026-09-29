@@ -5,6 +5,8 @@ client.
 
 [Gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw)
 
+**Contributions are welcome!** Feel free to open an issue or submit a pull request.
+
 Server code only: no client, no assets, no game data. You supply those locally
 from a copy you are lawfully entitled to use. Unaffiliated with the original
 game's developer, publisher, or trademark owners — see [NOTICE.md](NOTICE.md).
