@@ -3,15 +3,9 @@
 An independent HTTP and game-socket compatibility server for a dungeon-rampage
 client.
 
-[Gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw)
+![The Knight dashing through a Dungeon Rampage-style dungeon](docs/images/dr-server-banner.webp)
 
-<p align="center">
-  <img src="docs/images/the-knight-custom-skin.webp"
-       alt="The Knight optional custom Ghost Samurai skin" width="320">
-</p>
-<p align="center"><em>The Knight — an optional custom skin demonstrating the
-content-pack compatibility layer. The skin and its source assets are not
-distributed with this server.</em></p>
+[Gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw)
 
 **Contributions are welcome!** See [CONTRIBUTING.md](CONTRIBUTING.md), open an
 issue, or submit a pull request.
@@ -128,6 +122,14 @@ bind with `ODS_ALLOW_INSECURE_REMOTE=1`. Without that acknowledgement startup
 refuses any non-loopback bind.
 
 ## Custom skins (optional)
+
+<p align="center">
+  <img src="docs/images/the-knight-custom-skin.webp"
+       alt="The Knight optional custom Ghost Samurai skin" width="320">
+</p>
+<p align="center"><em>The Knight — an optional custom skin demonstrating the
+content-pack compatibility layer. The skin and its source assets are not
+distributed with this server.</em></p>
 
 Nothing here is needed to run the game. A server with no custom skins needs no
 setting, file or step from this section.
