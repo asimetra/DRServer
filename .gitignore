@@ -37,10 +37,12 @@ logs-fresh/
 !/docs/combat-conformance.md
 !/docs/content-packs.md
 !/docs/dc-schema.json
+!/docs/operations.md
 # Public README artwork, listed explicitly so capture-derived images remain local.
 !/docs/images/
 !/docs/images/the-knight-custom-skin.webp
 !/docs/images/dr-server-banner.webp
+!/docs/images/dr-server-social-preview.png
 
 # Local audit reports are built from private capture evidence.
 /reports/

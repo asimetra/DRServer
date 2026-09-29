@@ -1,26 +1,42 @@
 # DR Server
 
-An independent HTTP and game-socket compatibility server for a dungeon-rampage
-client.
-
 ![The Knight dashing through a Dungeon Rampage-style dungeon](docs/images/dr-server-banner.webp)
 
-[Gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw)
+An independent, server-only compatibility implementation for **Dungeon
+Rampage**, covering its HTTP services and multiplayer game socket.
 
-**Contributions are welcome!** See [CONTRIBUTING.md](CONTRIBUTING.md), open an
-issue, or submit a pull request.
+[Watch the gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw)
 
-Server code only: no client, no assets, no game data. You supply those locally
-from a copy you are lawfully entitled to use. Unaffiliated with the original
-game's developer, publisher, or trademark owners — see [NOTICE.md](NOTICE.md).
+> [!IMPORTANT]
+> This repository contains server code only. It does not distribute the client,
+> game assets, or game data; supply those locally from a copy you are lawfully
+> entitled to use. The project is unaffiliated with the original developer,
+> publisher, and trademark owners. See [NOTICE.md](NOTICE.md).
 
-## Requirements
+## Highlights
+
+- **Dungeon runtime:** generated and authored multi-floor maps, NPC AI, traps,
+  triggers, rewards, trophy completion, and infinite runs.
+- **Multiplayer:** public and private matches, parties, late joining, presence,
+  matchmaking, and shared floor state.
+- **Persistent accounts:** heroes, progression, inventory, skins, pets, chests,
+  trading, and market listings.
+- **Server authority:** combat pricing, movement containment, session checks,
+  signed account tokens, and deterministic protocol validation.
+- **Deployment options:** file or PostgreSQL storage, optional match workers,
+  internal account API, diagnostics, and synthetic load testing.
+- **Extensibility:** optional content packs can add skins, summons, and attack
+  effects without changing server code.
+
+## Quick start
+
+### Requirements
 
 - Node.js 20+
 - a locally available compatible client installation or worktree
-- the JSON compatibility data copied into the ignored `local-data/` directory
+- JSON compatibility data imported into the ignored `local-data/` directory
 
-Install dependencies and import local data:
+Install dependencies, import the required data, and verify it:
 
 ```bash
 npm install
@@ -28,98 +44,51 @@ npm run sync:data -- --source /path/to/your/client
 npm run check:data
 ```
 
-The import command reads only the files listed in `game-data/manifest.json` and
-copies them to `local-data/`, which is ignored.
+The importer copies only the files listed in `game-data/manifest.json`. Original
+game data remains under ignored `local-data/` and is never part of the public
+repository.
 
-## Run
+Start the server:
 
 ```bash
 npm start
 ```
 
-That listens on loopback, which is the right default for trying it out but not
-for letting anybody else in. Defaults:
+Default local services:
 
-- HTTP service: `127.0.0.1:8080`
-- game socket: `127.0.0.1:7198`
-- account storage: one JSON document per account under ignored `data/`
-- compatibility resources: ignored `local-data/Resources/`
+| Service | Address |
+|---|---|
+| HTTP compatibility service | `127.0.0.1:8080` |
+| Game socket | `127.0.0.1:7198` |
+| Account storage | ignored `data/` directory |
+| Compatibility resources | ignored `local-data/Resources/` |
 
-Point a compatible client at `http://127.0.0.1:8080` through its own
-configuration. The client executable and configuration are not part of this
-repository; see [docs/client-setup.md](docs/client-setup.md) for which keys in
-that file decide where it connects.
+File storage is the default and requires no database. PostgreSQL is optional;
+when `ODS_STORAGE=postgres` is selected, provide a compatible database or start
+the bundled local container before the server:
 
-## Running it for other people
+```bash
+npm run db:up
+ODS_STORAGE=postgres npm start
+```
 
-Two variables. Bind somewhere reachable, and advertise an address the players
-can actually resolve:
+Point a compatible client at `http://127.0.0.1:8080`. The executable and its
+configuration are not part of this repository; see
+[Client setup](docs/client-setup.md) for the required client-side keys.
+
+## Hosting multiplayer
+
+Remote players need both the HTTP service and game socket to be reachable, and
+the server must advertise an address they can resolve:
 
 ```bash
 ODS_HOST=0.0.0.0 ODS_PUBLIC_HOST=192.168.1.10 npm start
 ```
 
-`ODS_HOST` is where both the HTTP service and the game socket bind.
-`ODS_PUBLIC_HOST` is what the server hands out during service discovery, and
-getting it wrong is the usual first failure: the client is told to connect to
-`127.0.0.1`, tries to reach itself, and finds nothing. Check the startup log,
-which prints exactly what it is advertising:
-
-```
-INFO  web services listening on http://0.0.0.0:8080
-INFO  advertising webServicesUrl http://192.168.1.10:8080
-INFO  advertising game socket 192.168.1.10:7198
-```
-
-Both ports have to be open, not just the HTTP one. Anything derived from the
-public host follows it automatically, including the content-override URL, so
-there is usually nothing else to set.
-
-## Letting a player in
-
-The client has no login screen. It reads `AccountId` and `API_ValidationToken`
-from its own configuration and presents that pair on every request, so handing
-somebody those two values *is* the act of signing them up:
-
-```bash
-node tools/token.js 1000000005
-```
-
-That prints the two lines to paste into their client configuration. Tokens are
-signed with a secret written to `data/token-secret` on first run — keep it,
-because replacing it signs everybody out — or set `ODS_TOKEN_SECRET` yourself
-if you run more than one machine. Anything holding that secret can issue
-tokens, so a web page or a bot can take this tool's place later without the
-server changing.
-
-A token is signed rather than remembered, checked on both the HTTP service and
-the game socket, and one issued for an account opens no other. The client asks
-for a fresh one during play, so the only token you have to hand out is a
-player's first.
-
-If one is exposed, invalidate every token for that account and issue a new one:
-
-```bash
-node tools/token.js --revoke 1000000005
-node tools/token.js 1000000005
-```
-
-A running server observes the revocation within five seconds; an existing game
-socket is removed on its next heartbeat.
-
-`ODS_AUTH=0` turns the check off and accepts whatever a client claims, which is
-a reasonable choice for a machine nobody else can reach. A server running that
-way says so on startup.
-
-**Traffic is not encrypted.** Signed tokens stop anyone claiming an account
-they were not given, but the same bearer token crosses both HTTP and the raw
-game socket in the clear. TLS in front of only the HTTP port is therefore not
-enough. Bind the server to loopback and expose it through a trusted VPN or
-tunnel that protects both ports.
-
-For compatibility, a deliberately trusted LAN can opt into a remote cleartext
-bind with `ODS_ALLOW_INSECURE_REMOTE=1`. Without that acknowledgement startup
-refuses any non-loopback bind.
+Player tokens cross both listeners, so putting TLS in front of HTTP alone is
+not sufficient. Use a trusted VPN or tunnel when exposing the server beyond a
+trusted LAN. See [Operations](docs/operations.md) for remote binding, player
+tokens, the internal API, worker threads, storage ownership, and load testing.
 
 ## Custom skins (optional)
 
@@ -131,212 +100,49 @@ refuses any non-loopback bind.
 content-pack compatibility layer. The skin and its source assets are not
 distributed with this server.</em></p>
 
-Nothing here is needed to run the game. A server with no custom skins needs no
-setting, file or step from this section.
+Content packs can add skins and their associated summons or attack effects.
+Players without a pack can remain in the same match and receive the game's base
+equivalents instead. No custom content is required to run the server.
 
-Custom skins — and the summons and attack effects of heroes wearing them — are
-added as **content packs**: bundles in the client's `lib/`, the same rows in
-both GameMasters, one `Demographics` line in the client's `Config.json` saying
-which packs it has, and the pack's entry in `config/content-packs.json`. No
-server code changes.
+See [Content packs](docs/content-packs.md) for the client bundle, GameMaster,
+declaration, compatibility, and validation requirements.
 
-Players with and without a pack can play together. The real client segfaults
-on a skin id its own GameMaster lacks, so the server tells each client only
-about the packs it declared, and everyone else sees the game's own
-equivalents. See [docs/content-packs.md](docs/content-packs.md) for how it
-works, how to add a skin, a summon or a skin's own attack effects, and what the
-server refuses.
+## Development
 
-`content/` is also served at `/content/*`, so keep anything that must not be
-downloadable out of it.
-
-## The internal API
-
-A web front end — a sign-up page, a trade screen, a lobby browser — needs this
-server to act on accounts: to register one, to issue the validation token a
-player pastes into their client, to invalidate every token it has issued. It
-does not get to write the account tables itself. One process holds the accounts
-that are in play and serialises the writers, and both of those are local to it,
-so a second process writing the same rows would undo a change made while
-somebody was in a dungeon. This is the door instead.
-
-It is off until a secret is set, and it listens on a port of its own:
-
-```bash
-ODS_INTERNAL_TOKEN=$(openssl rand -hex 32) npm start
-```
-
-Loopback by default, deliberately. `ODS_HOST=0.0.0.0` above is how players are
-let in, and an internal API sharing that listener would be published by the
-same act. Callers present the secret as `X-Internal-Token`.
-
-| Route | Does |
-|---|---|
-| `POST /internal/v1/accounts` | Registers an account, answering with its id and a token |
-| `GET /internal/v1/accounts/:id` | The account as the client would receive it |
-| `POST /internal/v1/accounts/:id/token` | Issues a replacement token |
-| `DELETE /internal/v1/accounts/:id/token` | Invalidates every token issued for that account |
-| `POST /internal/v1/trades` | Moves weapons and gold between two accounts, all of it or none |
-| `GET /internal/v1/market` | Searchable/paged listings with item details and filter facets |
-
-Trading is one call because it has to be one transaction. The front end runs
-the negotiation — who offered what, who has agreed — and none of that is game
-state; this is the moment both sides said yes. The pair is locked in id order
-and written on a single transaction, so the weapon cannot end up on neither
-account or on both. A refusal carries a `reason` (`in_dungeon`, `equipped`,
-`not_owned`, `no_room`, `not_enough_gold`, `bad_offer`) because the trade screen
-has to act differently on each.
-
-Holding the secret is holding every account, so it belongs on the same machine
-or on a private network, never on the public interface. A non-loopback
-cleartext bind is refused unless `ODS_ALLOW_INSECURE_INTERNAL=1` explicitly
-acknowledges a trusted private network.
-
-The server is deliberately single-process. Its live-account registry, match
-state, and transaction queues are local memory, so startup claims an exclusive
-storage lock: `.server.lock` in file mode and a PostgreSQL advisory lock in
-database mode. A second server, `tools/grant.js`, an account-ID repair, or a
-write import refuses to run against the same live store. Use the internal API
-for account changes while players are connected; stop the server before using
-maintenance tools.
-
-## Configuration
-
-`ODS_*` is the public-facing environment prefix. Existing `DR_*` deployments
-remain supported as legacy aliases while the migration is completed.
-
-Settings can go on the command line or in a `.env` file beside `package.json`,
-which `npm start` reads when it is there and starts without when it is not.
-Copy [.env.example](.env.example) to begin; `.env` is ignored by git, which is
-where a deployment's secrets belong. Typing them out each time is how a value
-that has to match somewhere else — `ODS_INTERNAL_TOKEN` and the website's
-`ODW_GAME_INTERNAL_TOKEN` are the same string — quietly stops matching.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `ODS_HOST` / `ODS_PORT` | `127.0.0.1` / `8080` | Bind address |
-| `ODS_PUBLIC_HOST` | `127.0.0.1` | Host advertised to the client |
-| `ODS_ALLOW_INSECURE_REMOTE` | disabled | Permit acknowledged cleartext non-loopback binding |
-| `ODS_SERVER_NAME` | `Server` | Name the server answers commands under |
-| `ODS_SOCKET_PORT` | `7198` | Game socket port |
-| `ODS_SOCKET_LOGIN_TIMEOUT_MS` | `15000` | Maximum time to authenticate a new socket |
-| `ODS_SOCKET_IDLE_TIMEOUT_MS` | `120000` | Authenticated socket network-idle limit |
-| `ODS_SOCKET_CLOSE_GRACE_MS` | `2000` | Final-frame flush window before forced close |
-| `ODS_MAX_SOCKET_CONNECTIONS` | `2000` | Global simultaneous game-socket limit |
-| `ODS_MAX_SOCKET_CONNECTIONS_PER_IP` | `64` | Simultaneous game sockets allowed per source IP |
-| `ODS_RESOURCES_DIR` | `local-data/Resources` | User-supplied compatibility data |
-| `ODS_DATA_DIR` | `data/` | Local account storage |
-| `ODS_STORAGE` | `file` | `file` or `postgres` |
-| `ODS_ADMIN_ACCOUNTS` | empty | Bootstrap administrator account ids |
-| `ODS_AUTH` | enabled | Set `0` to accept whatever a client claims |
-| `ODS_TOKEN_SECRET` | written on first run | Key every validation token is signed with |
-| `ODS_INTERNAL_TOKEN` | empty | Shared secret (at least 32 characters); empty leaves the internal API off |
-| `ODS_INTERNAL_HOST` / `ODS_INTERNAL_PORT` | `127.0.0.1` / `8081` | Internal API bind address |
-| `ODS_ALLOW_INSECURE_INTERNAL` | disabled | Permit acknowledged cleartext internal binding outside loopback |
-| `ODS_DUNGEON` | enabled | Set `0` to refuse dungeon entry cleanly |
-| `ODS_AFK_WARN_MS` | `30000` | Idle time before a hero shows "Zzz..." to its party and the player is warned; `0` turns it off |
-| `ODS_AFK_KICK_MS` | `60000` | Idle time in a dungeon before the player is sent back to town; `0` turns it off |
-| `ODS_ACTIVITY_THRESHOLDS` | `1,5,9,17` | Players in a dungeon's open public runs at which the world map shows it Active, Popular, Bustling and Rampaging |
-| `ODS_MATCH_WORKERS` | `0` | Threads that run whole matches (at most 16); `auto` uses up to four, leaving one core to the main thread, and none on a single core |
-| `ODS_MATCH_WORKER_HANG_MS` | `5000` | How long a match worker may stop turning over before it is replaced and its players sent home |
-
-See [config/README.md](config/README.md) for the complete configuration model.
-
-With match workers, each dungeon runs whole in one worker thread: its world,
-AI, traps and rewards, and the account of every player in it, which is leased
-to that worker for the run. The main thread keeps the sockets, login, the
-MatchMaker and presence, forwards dungeon packets and writes back the frames in
-order. Under the load tool at 500 players in 200 dungeons, four workers took
-heartbeat p99 from 41 ms to 1–3 ms. It is off by default until it has been
-played on with the real client. The design and its limits are described at the top of
-`src/socket/match-worker-pool.js` and `src/socket/match-worker-thread.js`.
-
-## Tests
-
-The full conformance suite uses locally imported compatibility data:
+Run the complete local conformance suite after importing compatibility data:
 
 ```bash
 npm test
 ```
 
-The generated combat matrix executes every moving NPC attack authored by the
-imported GameMaster and audits every weapon/attack reference:
+Useful focused checks:
 
 ```bash
-npm run test:combat-matrix
-node tools/combat-matrix.js --json
-node tools/combat-matrix.js --owner SAVAGE_BOW
-node tools/combat-matrix.js --attack EN_POISON_ARROW --json
+npm run test:public          # fresh-clone suite; missing local data is skipped
+npm run test:combat-matrix   # execute and audit authored NPC attacks
+npm run audit:account-ids    # report persistent object-id collisions
+npm run check:public         # audit the working tree and history for private data
 ```
 
-Its JSON form is intended for agents and automation. See
-[docs/combat-conformance.md](docs/combat-conformance.md) for the checks and the
-remaining client-side boundary.
+See [Combat conformance](docs/combat-conformance.md) for the generated matrix
+and remaining client-side boundary. Load-test scenarios and SLO gating are in
+[Operations](docs/operations.md).
 
-Persistent inventory/avatar row IDs can be checked without loading, repairing,
-or rewriting accounts:
+## Documentation
 
-```bash
-npm run audit:account-ids
-```
+- [Client setup](docs/client-setup.md)
+- [Operations and deployment](docs/operations.md)
+- [Environment reference](.env.example)
+- [Configuration data contracts](config/README.md)
+- [Content packs](docs/content-packs.md)
+- [Combat conformance](docs/combat-conformance.md)
+- [Contributing](CONTRIBUTING.md)
 
-Without that data a large part of the suite cannot run, so a fresh clone should
-use:
+## Contributing
 
-```bash
-npm run test:public
-```
-
-That runs everything, reports the files that need imported data as skipped
-rather than failed, and still fails on a real defect. Once you have imported
-your own data it runs the full suite instead, so the two commands agree.
-
-To check that nothing unpublishable has reached the working tree or the history:
-
-```bash
-npm run check:public
-```
-
-## Load testing
-
-`tools/load-sim.js` drives a synthetic population from one process and measures
-the server from the players' side: heartbeat round trips (how long a player
-waits behind whatever the server is busy with), gaps between monster updates,
-time to enter a dungeon, and HTTP round trips per method. Give it the server's
-pid and it samples CPU and memory as well.
-
-```bash
-# a server of your own, with the movement rules reporting instead of expelling
-ODS_MOVEMENT_MODE=audit ODS_LOG_LEVEL=error \
-  ODS_MAX_SOCKET_CONNECTIONS_PER_IP=5000 npm start
-
-npm run load -- --players 500 --dungeons 200 --rpc --source-ips 50 \
-  --pid <server pid> --token-secret-file data/token-secret \
-  --slo "heartbeat.p99<200,npc.p95<400,entry.p95<3000"
-```
-
-Scenarios are `dungeon` (players spread over matches, fighting and starting new
-runs), `churn` (enter, stay `--stay` seconds, leave; `--reconnect` to log in
-afresh each time) and `lobby` (idle connections only). `--rpc` adds the HTTP
-calls a real client makes, at its measured rate; `--slow-readers 0.1` makes a
-tenth of the players stop reading, to check they cost nobody else. An SLO that
-is missed exits non-zero, so a run can gate CI. The tool only targets loopback
-unless `--allow-remote-target` is given, which is for a server you run.
-
-## Repository layout
-
-```text
-config/       server-owned defaults and account templates
-db/           optional Postgres schema
-docs/         setup notes, and dc-schema.json: a generated table of protocol
-              class names and field ids, with no implementation bodies
-src/          HTTP and game-socket server
-test/         unit and local conformance tests
-tools/        import, inspection and release utilities
-game-data/    tracked import manifest only; no original file contents
-local-data/   ignored user-supplied compatibility data
-```
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md), open an
+issue for a reproducible defect or proposal, or submit a focused pull request.
 
 ## License
 
-GPL-3.0-or-later.
+DR Server is licensed under [GPL-3.0-or-later](LICENSE).
