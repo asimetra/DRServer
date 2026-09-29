@@ -37,6 +37,7 @@ logs-fresh/
 !/docs/combat-conformance.md
 !/docs/content-packs.md
 !/docs/dc-schema.json
+!/docs/known-limitations.md
 !/docs/operations.md
 # Public README artwork, listed explicitly so capture-derived images remain local.
 !/docs/images/
