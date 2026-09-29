@@ -15,18 +15,37 @@ Rampage**, covering its HTTP services and multiplayer game socket.
 
 ## Highlights
 
-- **Dungeon runtime:** generated and authored multi-floor maps, NPC AI, traps,
-  triggers, rewards, trophy completion, and infinite runs.
-- **Multiplayer:** public and private matches, parties, late joining, presence,
-  matchmaking, and shared floor state.
-- **Persistent accounts:** heroes, progression, inventory, skins, pets, chests,
-  trading, and market listings.
-- **Server authority:** combat pricing, movement containment, session checks,
-  signed account tokens, and deterministic protocol validation.
-- **Deployment options:** file or PostgreSQL storage, optional match workers,
-  internal account API, diagnostics, and synthetic load testing.
-- **Extensibility:** optional content packs can add skins, summons, and attack
-  effects without changing server code.
+- **Reconstructed dungeon behaviour:** generated and authored multi-floor maps,
+  trigger graphs, scripted bosses, NPC AI, traps, rewards, trophy completion,
+  and infinite runs.
+- **Web-ready platform API:** an authenticated server-owned API covers account
+  registration, token lifecycle, player profiles, leaderboards, atomic trades,
+  and a searchable market with listing, buying, cancellation, sales history,
+  stalls, and proceeds — without giving another process direct database access.
+- **Crash-safe mixed clients:** content packs may add skins, summons, weapons,
+  and attack effects per client. Players without a pack receive verified base
+  equivalents instead of unknown IDs that can crash the native client, while
+  everyone remains in the same match.
+- **Worker-safe live state:** parties, late joins, presence, market operations,
+  and two-account writes follow the thread that currently owns each account
+  rather than racing a dungeon save.
+- **Evidence-driven conformance:** schema-based packet decoding, official-floor
+  replay, generated combat matrices, security audits, and synthetic load tests
+  keep compatibility claims measurable.
+
+## Project status
+
+DR Server is beyond a login-only emulator or protocol proof of concept. The
+main play loop works end to end: account creation and persistence, town
+services, matchmaking, shared dungeons, combat, NPC AI, traps, loot, rewards,
+progression, trading, and the player market.
+
+Most broad server systems are implemented. Remaining work is concentrated in
+content-specific fidelity — rare scripted encounters, specialised NPC
+behaviour, original-server sequences for which no capture exists, and edge
+cases discovered through live-client play. The project does not claim perfect
+parity; it aims to make the remaining gaps local and observable rather than
+leave core systems absent.
 
 ## Quick start
 

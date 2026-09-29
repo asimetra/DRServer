@@ -88,10 +88,20 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 |---|---|
 | `POST /internal/v1/accounts` | Register an account and return its id and token |
 | `GET /internal/v1/accounts/:id` | Read the account as the client receives it |
+| `GET /internal/v1/accounts/:id/summary` | Read a web-ready account and active-hero summary |
+| `GET /internal/v1/accounts/:id/inventory` | Read items eligible for web inventory/market views |
 | `POST /internal/v1/accounts/:id/token` | Issue a replacement token |
 | `DELETE /internal/v1/accounts/:id/token` | Invalidate the account's issued tokens |
+| `GET /internal/v1/players/:name` | Read a public player profile by name |
+| `GET /internal/v1/leaderboards/:metric` | Read a paged leaderboard |
 | `POST /internal/v1/trades` | Move weapons and gold atomically between two accounts |
 | `GET /internal/v1/market` | Search paged listings with item details and facets |
+| `POST /internal/v1/market` | List an inventory weapon for sale |
+| `POST /internal/v1/market/:id/buy` | Buy an active listing |
+| `POST /internal/v1/market/:id/cancel` | Withdraw an unsold listing |
+| `GET /internal/v1/accounts/:id/stall` | Read one seller's listings and proceeds |
+| `GET /internal/v1/accounts/:id/sales` | Read the account's market history |
+| `POST /internal/v1/accounts/:id/stall/claim` | Collect proceeds from sold listings |
 
 Trade refusals carry a machine-readable reason such as `in_dungeon`,
 `equipped`, `not_owned`, `no_room`, `not_enough_gold`, or `bad_offer` so a user
