@@ -18,7 +18,11 @@ import { CLID, TEAM } from "../src/socket/opcodes.js";
 const HERO = 10;
 const NPC = 20;
 
-const cast = async (constant, attackConstant, { heroAt = { x: 30, y: 0 } } = {}) => {
+const cast = async (
+  constant,
+  attackConstant,
+  { heroAt = { x: 30, y: 0 }, scheduleMovement = null } = {}
+) => {
   const gm = await loadGameMaster();
   const npc = gm.raw.Npc.find((row) => row.Constant === constant);
   const weapon = npc.Weapon1 ? await weaponForConstant(npc.Weapon1) : null;
@@ -49,6 +53,7 @@ const cast = async (constant, attackConstant, { heroAt = { x: 30, y: 0 } } = {})
     allocateDoid: () => 900,
   };
   await performNpcAttack(session, NPC, { ...chosen, attackHeading: 0 }, HERO);
+  scheduleMovement?.(session, timers);
   for (const timer of timers.sort((a, b) => a.delay - b.delay)) await timer.run();
   const results = sent.filter((frame) => frame.readUInt32LE(4) === HERO && frame.readUInt16LE(8) === 160);
   return { results: results.length, session };
@@ -62,6 +67,44 @@ test("a baby yeti's three-frame scratch lands three times on a hero standing in 
 test("a single-frame swing still lands once", async () => {
   const { results } = await cast("BRUTE", "EN_MACE_CHOP");
   assert.equal(results, 1);
+});
+
+test("a persistent collider catches a hero who enters between re-hit boundaries", async () => {
+  const { results } = await cast("RED_SPECTER_HEAVY", "SPECTER_FLAME_DIVE", {
+    heroAt: { x: 200, y: 0 },
+    scheduleMovement: (session, timers) => {
+      timers.push({
+        delay: 13.5 * (1000 / 24),
+        run: () => {
+          session.actors.get(HERO).position = { x: 0, y: 0 };
+        },
+      });
+    },
+  });
+  assert.equal(results, 1, "the collider is still alive through frame 16");
+});
+
+test("a late hit starts its own re-hit delay instead of using global frame windows", async () => {
+  const { results } = await cast("RED_SPECTER_HEAVY", "SPECTER_FLAME_DIVE", {
+    heroAt: { x: 200, y: 0 },
+    scheduleMovement: (session, timers) => {
+      timers.push(
+        {
+          delay: 10.5 * (1000 / 24),
+          run: () => {
+            session.actors.get(HERO).position = { x: 0, y: 0 };
+          },
+        },
+        {
+          delay: 12.5 * (1000 / 24),
+          run: () => {
+            session.actors.get(HERO).position = { x: 200, y: 0 };
+          },
+        }
+      );
+    },
+  });
+  assert.equal(results, 1, "frame 12 is only one frame after the actual hit on frame 11");
 });
 
 /**

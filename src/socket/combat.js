@@ -2321,13 +2321,17 @@ export const performNpcAttack = async (
   for (const [frame, colliders] of byFrame) {
     const lifetime = Math.max(1, ...colliders.map((collider) => Number(collider.lifeTime) || 1));
     const rehit = Math.max(0, ...colliders.map((collider) => Number(collider.hitDelayPerObject) || 0));
-    const step = rehit || 1;
-    let hitMap = new Set();
-    for (let offset = 0; offset < lifetime; offset += step) {
-      // A re-hit delay opens the body up again; without one, a lingering
-      // collider catches whoever walks in, once.
-      if (rehit) hitMap = new Set();
-      const hits = hitMap;
+    const eligibleAt = new Map();
+    const oneLifetimeHitMap = new Set();
+    for (let offset = 0; offset < lifetime; offset += 1) {
+      // Check overlap on every active frame. hitDelayPerObject controls when a
+      // body becomes eligible again; it is not the collider's polling rate.
+      const hits = rehit
+        ? {
+            has: (doid) => offset < (eligibleAt.get(doid) ?? 0),
+            add: (doid) => eligibleAt.set(doid, offset + rehit),
+          }
+        : oneLifetimeHitMap;
       later(frameMs(frame + offset), () =>
         landNpcSwing(session, attackerDoid, ai, attack, colliders, victimDoid, hits)
       );
