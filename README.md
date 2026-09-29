@@ -40,13 +40,6 @@ main play loop works end to end: account creation and persistence, town
 services, matchmaking, shared dungeons, combat, NPC AI, traps, loot, rewards,
 progression, trading, and the player market.
 
-Most broad server systems are implemented. Remaining work is concentrated in
-content-specific fidelity — rare scripted encounters, specialised NPC
-behaviour, original-server sequences for which no capture exists, and edge
-cases discovered through live-client play. The project does not claim perfect
-parity; it aims to make the remaining gaps local and observable rather than
-leave core systems absent.
-
 ## Quick start
 
 ### Requirements
