@@ -3,6 +3,8 @@
 An independent HTTP and game-socket compatibility server for a dungeon-rampage
 client.
 
+[Gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw)
+
 Server code only: no client, no assets, no game data. You supply those locally
 from a copy you are lawfully entitled to use. Unaffiliated with the original
 game's developer, publisher, or trademark owners — see [NOTICE.md](NOTICE.md).
