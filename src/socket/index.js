@@ -28,6 +28,7 @@ import { loadGameMaster } from "../gamemaster.js";
 import { infiniteMapDetails } from "../infinite.js";
 import { handleGameplayField } from "./gameplay-fields.js";
 import { declaredView, frameFor } from "../content-packs.js";
+import { acceptGameSocket } from "./websocket.js";
 
 const MAX_LOGIN_VERSION_LENGTH = 128;
 
@@ -265,7 +266,18 @@ const handlePacket = (session, body) => {
 
 let nextSessionId = 1;
 
-export const onConnection = (socket) => {
+/** Marks a raw socket already counted by `admitSocket`. */
+const ADMITTED = Symbol("admitted");
+
+/**
+ * Counts a connection against the global and per-address limits, or refuses it.
+ *
+ * Asked of the raw socket before its protocol is known. A browser's connection
+ * used to be counted only once its upgrade was answered, so a socket parked
+ * halfway through a handshake counted against nothing and one address could
+ * hold as many as the process would take.
+ */
+export const admitSocket = (socket) => {
   const remoteAddress = String(socket.remoteAddress ?? "unknown");
   const addressCount = activeSocketsByAddress.get(remoteAddress) ?? 0;
   if (
@@ -278,7 +290,7 @@ export const onConnection = (socket) => {
         `address ${addressCount}/${config.maxSocketConnectionsPerIp})`
     );
     socket.destroy();
-    return null;
+    return false;
   }
 
   activeSocketCount += 1;
@@ -293,6 +305,14 @@ export const onConnection = (socket) => {
     else activeSocketsByAddress.delete(remoteAddress);
   };
   socket.once("close", releaseAdmission);
+  socket[ADMITTED] = true;
+  return true;
+};
+
+export const onConnection = (socket) => {
+  // A browser arrives wrapped; the raw socket underneath is what was admitted.
+  const raw = socket.socket ?? socket;
+  if (!raw[ADMITTED] && !admitSocket(socket)) return null;
 
   const session = new MemberSession({
     id: nextSessionId++,
@@ -582,7 +602,10 @@ export const start = () => {
   // Registered here rather than on import so a test can build its own registry
   // without the shipped commands already occupying the names.
   registerBuiltinCommands();
-  const server = net.createServer(onConnection);
+  // A browser's connection arrives here too, as a WebSocket; see websocket.js.
+  const server = net.createServer((socket) => {
+    if (admitSocket(socket)) acceptGameSocket(socket, onConnection);
+  });
   server.maxConnections = config.maxSocketConnections;
 
   server.listen(config.gameSocketPort, config.host, () => {

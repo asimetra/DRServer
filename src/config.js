@@ -209,6 +209,16 @@ export const loadServerConfig = (environment = process.env) => {
     contentDir: setting(environment, "CONTENT_DIR") ?? defaultContentDir(),
 
     /**
+     * The browser build of the client (DRHaxe's `bin/html5/bin`), served under
+     * /play/, or "" for none. Played from here its page, the discovery answer
+     * and the web services share one origin, so the browser needs no CORS; the
+     * game socket takes the browser's WebSocket on its usual port.
+     *
+     *   ODS_WEB_CLIENT_DIR=/srv/drhaxe-web   then   http://host:8080/play/#account=…&token=…
+     */
+    webClientDir: setting(environment, "WEB_CLIENT_DIR") ?? "",
+
+    /**
      * Where the client should fetch overridden assets from, or "" to override
      * nothing. Set it and asset paths cross the wire as absolute URLs at this
      * base instead of as names the client resolves on its own disk.

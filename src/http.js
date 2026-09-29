@@ -2,6 +2,7 @@ import http from "node:http";
 import { config } from "./config.js";
 import { routes } from "./routes.js";
 import { error, info, truncate, unimplemented, warn } from "./log.js";
+import { isWebClientPath, serveWebClient } from "./web-client.js";
 
 /**
  * What one request may weigh.
@@ -142,8 +143,14 @@ const refuse = (res, status, message) => {
   res.end(JSON.stringify({ error: message }));
 };
 
-const handle = async (req, res, { routeTable, rateLimited }) => {
+const handle = async (req, res, { routeTable, rateLimited, webClientDir = "" }) => {
   const url = new URL(req.url, "http://localhost");
+
+  // The browser client's files: streamed, and ahead of the budget below — see web-client.js.
+  if (webClientDir && isWebClientPath(url.pathname)) {
+    await serveWebClient(req, res, url.pathname, webClientDir);
+    return;
+  }
 
   /**
    * Both of these come before the body is read, which is the whole point:
@@ -209,9 +216,9 @@ const handle = async (req, res, { routeTable, rateLimited }) => {
  * end is a single address making every call there is; measuring it against a
  * budget meant for one player would refuse it under ordinary load.
  */
-export const listen = ({ routeTable, host, port, rateLimited = true, onReady }) => {
+export const listen = ({ routeTable, host, port, rateLimited = true, webClientDir = "", onReady }) => {
   const server = http.createServer((req, res) => {
-    handle(req, res, { routeTable, rateLimited }).catch((err) => {
+    handle(req, res, { routeTable, rateLimited, webClientDir }).catch((err) => {
       error(`unhandled failure on ${req.method} ${req.url}: ${err.stack ?? err}`);
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json" });
@@ -236,7 +243,9 @@ export const start = () =>
     routeTable: routes,
     host: config.host,
     port: config.port,
+    webClientDir: config.webClientDir,
     onReady: () => {
+      if (config.webClientDir) info(`browser client at http://${config.publicHost}:${config.port}/play/`);
       info(`web services listening on http://${config.host}:${config.port}`);
       info(`advertising webServicesUrl http://${config.publicHost}:${config.port}`);
       info(`advertising game socket ${config.publicHost}:${config.gameSocketPort}`);
