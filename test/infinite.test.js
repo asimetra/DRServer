@@ -12,6 +12,8 @@ import {
   infiniteRewards,
 } from "../src/infinite.js";
 import { awardInfiniteFloor, noteInfiniteFloorReached } from "../src/socket/rewards.js";
+import { repairTrophyCount } from "../src/accounts.js";
+import { setMapNodeBit } from "../src/map-progress.js";
 import {
   dungeonFloorNumber,
   dungeonFloorGenerate,
@@ -181,6 +183,7 @@ test("cleared Infinite floors pay capped coins and authored milestones once", as
   assert.equal(account.basic_currency, 1000 + 600 + 1200 + 3000 + 3000);
   assert.equal(account.premium_currency, 25);
   assert.equal(account.trophies, 1);
+  assert.equal(account.infinite_progress.trophies, 1);
   assert.deepEqual(session.dungeonTreasures, [{ dooberType: 30104, chestId: 60005 }]);
   const progress = infiniteProgressFor(account, {
     nodeId: 50150,
@@ -195,6 +198,24 @@ test("cleared Infinite floors pay capped coins and authored milestones once", as
     [1, 0, 0, 0],
     "a new run offered an already claimed milestone again"
   );
+});
+
+test("the map-mask repair never erases trophies earned in Infinite", async () => {
+  const gm = await loadGameMaster();
+  const account = {
+    trophies: 1,
+    completed_mapnode_mask: "",
+    account_avatars: [],
+    infinite_progress: { trophies: 1 },
+  };
+  for (const row of gm.raw.MapPage.filter((entry) => entry.NodeType === "BOSS")) {
+    account.completed_mapnode_mask = setMapNodeBit(account.completed_mapnode_mask, row.BitIndex);
+  }
+  const maskTrophies = gm.raw.MapPage.filter((entry) => entry.NodeType === "BOSS").length;
+  account.trophies = maskTrophies + 1;
+
+  assert.equal(await repairTrophyCount(account), false);
+  assert.equal(account.trophies, maskTrophies + 1);
 });
 
 test("entering an Infinite room records it even when that room is lost", async () => {

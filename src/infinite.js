@@ -1,5 +1,9 @@
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Trophies earned outside boss-clear masks, kept with Infinite progress. */
+export const infiniteTrophiesFor = (account) =>
+  Math.max(0, Math.trunc(Number(account?.infinite_progress?.trophies ?? 0)));
+
 export const infiniteEpoch = (now = Date.now()) => Math.floor(Number(now) / WEEK_MS);
 
 export const infiniteDefinitionForNode = (gm, node) => {

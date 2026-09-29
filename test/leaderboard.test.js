@@ -242,6 +242,13 @@ test("the boards are seeded from the accounts themselves", async () => {
   assert.ok(trophies, "the mask's boss clears reached the trophies board");
   assert.equal(trophies.value, 12, "counted off the mask, not off the short column");
 
+  account.trophies = 13;
+  account.infinite_progress = { trophies: 1 };
+  await saveAccount(account);
+  await seedStandings();
+  const withInfinite = (await boardFor("trophies", {})).find((e) => e.account_id === veteran.id);
+  assert.equal(withInfinite.value, 13, "a trophy outside the boss mask is not erased by seeding");
+
   const fromRun = board.find((e) => e.account_id === 90);
   assert.equal(fromRun.value, 400_000, "a standing from a run is not lowered by the seed");
 });

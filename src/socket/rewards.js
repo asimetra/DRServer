@@ -6,7 +6,7 @@ import { hitPointsUpdate } from "./combat.js";
 import { CLID, OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 import { buffMultiplierFor } from "./buffs.js";
-import { infiniteFloorGold, infiniteProgressFor } from "../infinite.js";
+import { infiniteFloorGold, infiniteProgressFor, infiniteTrophiesFor } from "../infinite.js";
 
 export { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 
@@ -259,13 +259,16 @@ export const awardInfiniteFloor = (session) => {
 
   account.basic_currency = rewardAmount(account.basic_currency) + gold;
   account.premium_currency = rewardAmount(account.premium_currency) + gems;
-  account.trophies = rewardAmount(account.trophies) + trophy;
   const progress = infiniteProgressFor(account, {
     nodeId: session.mapNodeId,
     avatarDoid: session.dungeonAvatar?.id ?? session.heroDoid,
     epoch: session.infiniteEpoch,
     create: true,
   });
+  if (trophy) {
+    account.infinite_progress.trophies = infiniteTrophiesFor(account) + trophy;
+    account.trophies = rewardAmount(account.trophies) + trophy;
+  }
   // Reaching a room, rather than clearing it, owns the score. Keep this max as
   // a compatibility guard for callers that award a synthetic floor without
   // first building its world; production records it in noteInfiniteFloorReached.

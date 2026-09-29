@@ -3,6 +3,7 @@ import path from "node:path";
 import { config } from "./config.js";
 import { info, warn } from "./log.js";
 import { accountTrophies } from "./map-progress.js";
+import { infiniteTrophiesFor } from "./infinite.js";
 
 /**
  * What a finished run leaves behind, and the boards read off it.
@@ -356,7 +357,7 @@ const seedStandingsUnlocked = async () => {
       null
     );
     const experience = Number(best?.experience ?? 0);
-    const trophies = accountTrophies(account, gm);
+    const trophies = accountTrophies(account, gm) + infiniteTrophiesFor(account);
     if (experience) {
       await offer("hero_experience", id, {
         value: experience,

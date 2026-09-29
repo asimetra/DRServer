@@ -9,6 +9,7 @@ import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
 import { repairSpentPowerups } from "./powerup-slots.js";
 import { accountTrophies, getMapNodeBit } from "./map-progress.js";
+import { infiniteTrophiesFor } from "./infinite.js";
 import { info, warn } from "./log.js";
 import {
   ACCOUNT_OBJECT_ID_FLOOR,
@@ -277,7 +278,7 @@ export const repairAccountAttributes = async (account) => {
  */
 export const repairTrophyCount = async (account) => {
   const gm = await loadGameMaster();
-  const total = accountTrophies(account, gm);
+  const total = accountTrophies(account, gm) + infiniteTrophiesFor(account);
   if (Number(account.trophies ?? 0) === total) return false;
   account.trophies = total;
   return true;
