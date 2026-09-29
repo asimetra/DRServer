@@ -389,6 +389,15 @@ export const loadServerConfig = (environment = process.env) => {
       0.9,
       Math.max(0, Number(setting(environment, "MARKET_TAX_RATE") ?? defaults.marketTaxRate ?? 0.1))
     ),
+    /**
+     * How long a new listing waits before anybody else can see or buy it. The
+     * seller's stall shows it counting down and it can be taken back down
+     * meanwhile, so a wrong price is caught before somebody snaps it up.
+     */
+    marketListingDelaySeconds: Math.max(
+      0,
+      asInt(setting(environment, "MARKET_LISTING_DELAY_SECONDS"), defaults.marketListingDelaySeconds ?? 180)
+    ),
     allowInsecureInternal:
       setting(environment, "ALLOW_INSECURE_INTERNAL") === undefined
         ? defaults.allowInsecureInternal === true

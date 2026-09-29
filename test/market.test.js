@@ -6,6 +6,9 @@ import path from "node:path";
 
 const dataDir = await mkdtemp(path.join(tmpdir(), "ods-market-test-"));
 process.env.ODS_DATA_DIR = dataDir;
+// Most of these buy what they have just listed; the wait before a listing goes
+// up is switched on by the tests that are about it.
+process.env.ODS_MARKET_LISTING_DELAY_SECONDS = "0";
 
 const { loadAccount, saveAccount } = await import("../src/accounts.js");
 const { holdAccount, releaseAccount, forgetHeldAccounts } = await import(
@@ -334,6 +337,88 @@ test("browse cache is invalidated by list and sale mutations", async () => {
   const afterBuy = await browse({ limit: 200 });
   assert.ok(!afterBuy.some((listing) => listing.id === 7020), "a sold listing leaves immediately");
 });
+
+/* ------------------------------------------------------- the wait to go up - */
+
+/**
+ * A listing is the seller's alone for a few minutes: nobody else can find it or
+ * buy it, and a wrong price can be taken back down before anybody snaps it up.
+ */
+const withListingDelay = async (seconds, run) => {
+  const { config } = await import("../src/config.js");
+  const { invalidateMarketBrowse } = await import("../src/market.js");
+  config.marketListingDelaySeconds = seconds;
+  invalidateMarketBrowse();
+  try {
+    await run(invalidateMarketBrowse);
+  } finally {
+    config.marketListingDelaySeconds = 0;
+    invalidateMarketBrowse();
+  }
+};
+
+test("a new listing is nobody else's to see or buy until it goes up", async () =>
+  withListingDelay(180, async () => {
+    const seller = await anAccount({ items: [weapon(7030)] });
+    const buyer = await anAccount({ gold: 5000 });
+
+    const before = Date.now();
+    await listForSale({ sellerId: seller.id, itemId: 7030, price: 100 });
+
+    assert.ok(!(await browse({ limit: 200 })).some((listing) => listing.id === 7030), "not on the market");
+    await assert.rejects(
+      () => buyListing({ listingId: 7030, buyerId: buyer.id }),
+      (error) => error.reason === "gone"
+    );
+    assert.equal((await loadAccount(buyer.id)).basic_currency, 5000, "and nobody was charged");
+
+    const [waiting] = (await stallFor(seller.id)).listed;
+    assert.equal(waiting.id, 7030, "the seller sees it on their stall");
+    const wait = Date.parse(waiting.up_at) - before;
+    assert.ok(wait >= 179_000 && wait <= 181_000, `goes up in three minutes, not ${wait} ms`);
+  }));
+
+test("a listing waiting to go up can be taken back down", async () =>
+  withListingDelay(180, async () => {
+    const seller = await anAccount({ items: [weapon(7031)] });
+
+    await listForSale({ sellerId: seller.id, itemId: 7031, price: 100 });
+    await cancelListing({ listingId: 7031, sellerId: seller.id });
+
+    const account = await loadAccount(seller.id);
+    assert.ok(account.account_items.some((item) => Number(item.id) === 7031), "back in the bag");
+    assert.equal((await stallFor(seller.id)).listed.length, 0);
+  }));
+
+test("once its wait is over, a listing is up and sells", async () =>
+  withListingDelay(180, async (forgetBrowse) => {
+    const seller = await anAccount({ items: [weapon(7032)] });
+    const buyer = await anAccount({ gold: 5000 });
+
+    await listForSale({ sellerId: seller.id, itemId: 7032, price: 100 });
+    // Four minutes pass.
+    const account = await loadAccount(seller.id);
+    account.market_listings[0].listed_at = new Date(Date.now() - 240_000).toISOString();
+    await saveAccount(account);
+    forgetBrowse();
+
+    assert.ok((await browse({ limit: 200 })).some((listing) => listing.id === 7032), "on the market");
+    await buyListing({ listingId: 7032, buyerId: buyer.id });
+    assert.ok((await loadAccount(buyer.id)).account_items.some((item) => Number(item.id) === 7032));
+  }));
+
+test("a listing from before the wait existed is up", async () =>
+  withListingDelay(180, async (forgetBrowse) => {
+    const seller = await anAccount({ items: [weapon(7033)] });
+
+    await listForSale({ sellerId: seller.id, itemId: 7033, price: 100 });
+    const account = await loadAccount(seller.id);
+    delete account.market_listings[0].listed_at;
+    await saveAccount(account);
+    forgetBrowse();
+
+    assert.ok((await browse({ limit: 200 })).some((listing) => listing.id === 7033));
+  }));
 
 /* ---------------------------------------------------------- market rules - */
 

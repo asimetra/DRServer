@@ -14,6 +14,7 @@ import { ceilingFor, isBarred, shareOf, slotsFor } from "./market-rules.js";
 import { recordSale, saleRecord } from "./market-history.js";
 import { info } from "./log.js";
 import { defineAccountOperation } from "./account-operations.js";
+import { config } from "./config.js";
 
 /**
  * A market, rather than a trade.
@@ -118,6 +119,21 @@ const listingNamed = (account, id) => {
   return rows.find((row) => !row.sold_to) ?? rows[0];
 };
 
+/**
+ * When a listing goes up for everybody else: a while after it was put up.
+ *
+ * Worked out from `listed_at` rather than stored, so it needs no column of its
+ * own and a listing from before the wait existed is simply up. Until then the
+ * listing is the seller's alone — on their stall, counting down, and theirs to
+ * take back down — and nobody can find it or buy it.
+ */
+const upAt = (listing) => {
+  const listed = Date.parse(listing.listed_at ?? "");
+  if (!Number.isFinite(listed)) return 0;
+  return listed + Math.max(0, Number(config.marketListingDelaySeconds) || 0) * 1000;
+};
+const isUp = (listing, now = Date.now()) => upAt(listing) <= now;
+
 const BROWSE_CACHE_MS = 2000;
 let browseCache = null;
 
@@ -197,6 +213,7 @@ const asView = (listing, sellerId, sellerName) => ({
   item_id: listing.item_id,
   price: Number(listing.price),
   listed_at: listing.listed_at,
+  up_at: upAt(listing) ? new Date(upAt(listing)).toISOString() : listing.listed_at ?? null,
   power: listing.power ?? null,
   rarity: listing.rarity ?? null,
   requiredlevel: listing.requiredlevel ?? null,
@@ -332,6 +349,8 @@ const buyListingHere = async ({ listingId, buyerId } = {}) => {
        only the one that gets here first finds it unsold. */
     const listing = listingNamed(sellerAccount, wanted);
     if (!listing || listing.sold_to) throw refuse("gone", `listing ${wanted} is no longer up`);
+    // Waiting to go up is, to anybody but its seller, not being up at all.
+    if (!isUp(listing)) throw refuse("gone", `listing ${wanted} is not up yet`);
 
     const price = Number(listing.price);
     if (price > Number(buyerAccount.basic_currency ?? 0)) {
@@ -485,11 +504,12 @@ export const browseAll = async () => {
     return browseCache.rows;
   }
   const found = [];
+  const now = Date.now();
 
   for (const id of await listAccountIds()) {
     const account = await loadAccount(id);
     for (const listing of openListings(account)) {
-      found.push(asView(listing, id, account.name));
+      if (isUp(listing, now)) found.push(asView(listing, id, account.name));
     }
   }
 
@@ -511,6 +531,9 @@ export const stallFor = async (sellerId) => {
 
   return {
     account_id: seller,
+    // This server's clock, so a stall counting down to `up_at` can allow for
+    // the reader's clock being wrong.
+    now: new Date().toISOString(),
     listed: openListings(account).map((listing) => asView(listing, seller, account.name)),
     sold: soldListings(account).map((listing) => ({
       id: Number(listing.id),

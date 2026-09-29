@@ -19,6 +19,7 @@
   "internalToken": "",
   "allowInsecureInternal": false,
   "marketTaxRate": 0.1,
+  "marketListingDelaySeconds": 180,
   "storage": "file",
   "databaseUrl": "postgres://ods:ods@127.0.0.1:5432/open_dungeon",
   "resourcesDir": "../local-data/Resources",

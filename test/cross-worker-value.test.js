@@ -15,6 +15,9 @@ import path from "node:path";
  * removed.
  */
 process.env.ODS_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "dr-cross-worker-value-"));
+// These tests buy what they have just listed; the wait before a listing goes
+// up has tests of its own (market.test.js).
+process.env.ODS_MARKET_LISTING_DELAY_SECONDS = "0";
 
 const { MatchWorkerPool, installWorkerPool } = await import("../src/socket/match-worker-pool.js");
 const { installMatchExecutor, matchExecutor } = await import("../src/socket/match-runtime.js");
