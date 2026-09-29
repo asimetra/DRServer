@@ -4,6 +4,11 @@ import { config } from "../config.js";
 import { envSetting } from "../env.js";
 import { info, warn } from "../log.js";
 import {
+  attackForConstant,
+  FRAMES_PER_SECOND,
+  timelineControlActions,
+} from "../gamemaster.js";
+import {
   clearHazardBeats,
   initialTurretHeading,
   isChoreographed,
@@ -18,7 +23,7 @@ import { grantBuff } from "./buffs.js";
 import { matchHost } from "./match-host.js";
 import { checkDestination } from "./match-entry.js";
 import { collisionPointOf, setNavigationTriggerState } from "./navigation.js";
-import { applyDamage } from "./combat.js";
+import { applyDamage, npcAttackChoreography } from "./combat.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 // Re-exported: the dungeon builds and tears traps down through this module.
@@ -351,6 +356,100 @@ const scheduleFloorTimeout = (session, callback, delay) => {
 const cancelFloorTimeout = (session, timer) =>
   cancelScopedTimer(session.floorScope, timer, clearTimeout);
 
+const timelineDelayMs = (frame, playSpeed = 1) =>
+  (Math.max(0, Number(frame) || 0) * 1000) /
+  (FRAMES_PER_SECOND * Math.max(Number(playSpeed) || 1, Number.EPSILON));
+
+/** Publishes one named event from a particular authored NPC placement. */
+const fireNpcTimelineEvent = (session, placementId, eventName) => {
+  const triggers = session.npcEventTriggers?.get(placementId)?.get(eventName) ?? [];
+  let fired = false;
+  for (const trigger of triggers) {
+    fired = emitSignal(session, trigger.id, true) || fired;
+    // It is an event, not a held state. Dropping it arms a later occurrence as
+    // another rising edge, which is how the Golem's TOGGLE_GATE opens at the
+    // start of SUMMON and closes at its final SUMMON event.
+    fired = emitSignal(session, trigger.id, false) || fired;
+  }
+  return fired;
+};
+
+/**
+ * Runs the server-owned half of an NPC timeline.
+ *
+ * The client owns pictures and sounds. Named events and queued attacks change
+ * the floor, so the same timeline must advance them on the server clock too.
+ */
+const scheduleNpcTimelineControls = async (
+  session,
+  doid,
+  attack,
+  playSpeed = 1,
+  { scripted = false } = {}
+) => {
+  const placementId = session.npcPlacementIds?.get(doid);
+  if (!placementId || !session.npcEventTriggers?.has(placementId)) return false;
+
+  const controls = await timelineControlActions(attack?.AttackTimeline);
+  const speed = Math.max(Number(playSpeed) || 1, Number.EPSILON);
+  const durationMs = timelineDelayMs(controls.totalFrames, speed);
+  const actor = session.actors?.get(doid);
+  if (scripted && actor?.ai) {
+    const now = Date.now();
+    actor.ai.attackLockedUntil = Math.max(actor.ai.attackLockedUntil ?? 0, now + durationMs);
+    const random = session.random ?? Math.random;
+    const cadence = Math.max(
+      100,
+      (actor.ai.attackTimerMs ?? 1500) + random() * (actor.ai.attackRandMs ?? 0)
+    );
+    const current = Number.isFinite(actor.ai.nextAttackAt) ? actor.ai.nextAttackAt : 0;
+    actor.ai.nextAttackAt = Math.max(current, now + cadence);
+  }
+
+  for (const event of controls.events) {
+    const run = () => fireNpcTimelineEvent(session, placementId, event.event);
+    const delay = timelineDelayMs(event.frame, speed);
+    if (delay <= 0) run();
+    else scheduleFloorTimeout(session, run, delay);
+  }
+
+  // queueAttack means "after this timeline", even when the action is authored
+  // earlier. GOLEM_HURT queues SUMMON on frame 40 but the official begins it
+  // when the 91-frame hurt timeline ends, about 3.8 seconds later.
+  for (const queued of controls.queuedAttacks) {
+    scheduleFloorTimeout(
+      session,
+      () => {
+        playScriptedNpcAttack(session, placementId, queued).catch((error) =>
+          warn(`queued NPC attack ${queued}: ${error.message ?? error}`)
+        );
+      },
+      durationMs
+    );
+  }
+  return Boolean(controls.events.length || controls.queuedAttacks.length);
+};
+
+/** Sends one floor-scripted attack to the NPC placement it names. */
+const playScriptedNpcAttack = async (session, placementId, attackConstant) => {
+  const doid = session.npcDoids?.get(placementId);
+  const actor = doid !== undefined && session.actors?.get(doid);
+  const attack = attackConstant && (await attackForConstant(attackConstant));
+  if (doid === undefined || !actor || actor.dead || !attack) return false;
+
+  session.send(
+    npcAttackChoreography({
+      doid,
+      attackType: attack.Id,
+      targetActorDoid: session.heroDoid ?? 0,
+      playSpeed: 1,
+    })
+  );
+  await scheduleNpcTimelineControls(session, doid, attack, 1, { scripted: true });
+  info(`[${session.id}] ${actor.constant} plays ${attackConstant}`);
+  return true;
+};
+
 const startResetGate = (session, gate) => {
   const previous = session.logicGateTimers.get(gate.id);
   if (previous) cancelFloorTimeout(session, previous);
@@ -467,6 +566,16 @@ const VIRTUAL_TRIGGERABLES = {
     session.playFloorSound?.(session, triggerable);
     return true;
   },
+  /**
+   * Makes the named NPC placement play an authored attack timeline.
+   *
+   * The Lava Golem is not a drawable triggerable object: GOLEM_INTRO,
+   * GOLEM_HURT and GOLEM_DEATH are attack rows aimed at the BOSS_GOLEM
+   * placement. Treating this as an NPC row skipped all three and also skipped
+   * the queued GOLEM_SUMMON attacks that drive its monster generators.
+   */
+  TIMELINE_TRIGGERABLE: (session, triggerable) =>
+    playScriptedNpcAttack(session, triggerable.npcId, triggerable.textKey),
 };
 
 export const isVirtualTriggerable = (constant) =>
@@ -479,7 +588,9 @@ const runVirtualTriggerable = (session, targetId, on) => {
   // nothing to undo when switched off.
   if (on) {
     info(`[${session.id}] ${triggerable.constant} fired`);
-    VIRTUAL_TRIGGERABLES[triggerable.constant](session, triggerable);
+    Promise.resolve(VIRTUAL_TRIGGERABLES[triggerable.constant](session, triggerable)).catch(
+      (error) => warn(`${triggerable.constant}: ${error.message ?? error}`)
+    );
   }
   return true;
 };
@@ -939,6 +1050,17 @@ export const trackTriggers = (session, floor) => {
   // Kept on the run so combat/disconnect teardown can release a hero without
   // importing this module back through the doors -> match-runtime cycle.
   session.releaseProximityActor = releaseProximityActor;
+  session.npcEventTriggers = new Map();
+  for (const trigger of session.triggers) {
+    if (trigger.constant !== "NPC_EVENT_TRIGGER" || !trigger.npcId || !trigger.eventName) continue;
+    const byEvent = session.npcEventTriggers.get(trigger.npcId) ?? new Map();
+    const matching = byEvent.get(trigger.eventName) ?? [];
+    matching.push(trigger);
+    byEvent.set(trigger.eventName, matching);
+    session.npcEventTriggers.set(trigger.npcId, byEvent);
+  }
+  session.runNpcTimeline = (doid, attack, playSpeed) =>
+    scheduleNpcTimelineControls(session, doid, attack, playSpeed);
 
   /**
    * What a source is before anything has happened.

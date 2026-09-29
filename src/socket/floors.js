@@ -269,6 +269,8 @@ const PLACEMENT_READERS = {
           constant: object.constant,
           // Locale key for FLOOR_MESSAGE_TRIGGERABLE, empty on the rest.
           textKey: object.textKey || undefined,
+          // TIMELINE_TRIGGERABLE directs the named placement to play textKey.
+          npcId: object.npcId,
         },
 
   /**
@@ -282,6 +284,8 @@ const PLACEMENT_READERS = {
     ...at,
     id: object.id,
     constant: object.constant,
+    // NPC_EVENT_TRIGGER publishes named events from the watched NPC's timeline.
+    eventName: object.eventName,
     /**
      * NPC_LIFE_TRIGGER watches one specific actor and says which: the boss
      * tile's trigger carries the minotaur's own placement id. There is no
@@ -723,8 +727,16 @@ export const loadFloor = async (name = "arena_gauntlet") => {
   const parsed = JSON.parse(raw);
 
   const tiles = parsed.tiles.map((tile) => ({
-    x: tile.x,
-    y: tile.y,
+    /**
+     * Level Editor omits a coordinate when it is zero. The client reads an
+     * absent Number field as zero, and the wire writer does the same; keeping
+     * it as undefined here instead made every placement on that tile NaN.
+     * Twisted Jungle's first scripted floor puts its completion proximity
+     * trigger on one of those y=0 tiles, so the player could reach the visible
+     * endpoint but never satisfy the server-side distance check.
+     */
+    x: tile.x ?? 0,
+    y: tile.y ?? 0,
     tileId: tile.tileId,
   }));
 

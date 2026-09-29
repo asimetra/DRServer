@@ -2271,6 +2271,13 @@ export const performNpcAttack = async (
     })
   );
 
+  // Some boss timelines drive the floor itself. The floor installs this hook
+  // only for NPC placements watched by NPC_EVENT_TRIGGER, so ordinary attacks
+  // pay no behavioural cost and cannot accidentally start unrelated wiring.
+  Promise.resolve(session.runNpcTimeline?.(attackerDoid, attack, attackSpeed)).catch((error) =>
+    warn(`npc timeline ${attackerDoid}: ${error.message ?? error}`)
+  );
+
   // Whatever the attack calls onto the floor — see summons.js. Before the
   // no-contact return below, because a summon is exactly an attack that
   // touches nobody.
@@ -2449,6 +2456,10 @@ export const performNpcAttack = async (
 const statsFor = async (session, doid) => {
   const actor = session.actors?.get(doid);
   if (actor?.stats) return actor.stats;
+  // Floor traps with zero HP are intentionally absent from actors, but their
+  // attacks are still priced from the NPC row's levelled offence stat.
+  const trapStats = session.trapNames?.get(doid)?.stats;
+  if (trapStats) return trapStats;
   // For a hero installed before its stats were known, and for hand-built
   // sessions in tests that predate the actor carrying them.
   if (doid === session.heroDoid) return session.heroStats;

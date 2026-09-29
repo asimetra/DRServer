@@ -681,6 +681,7 @@ const routeToTarget = (session, actor, target, now, heroes = []) => {
 };
 
 const faceTarget = (session, doid, actor, target) => {
+  if (actor.ai?.lockRotation) return;
   const heading = (Math.atan2(target.y - actor.position.y, target.x - actor.position.x) * 180) / Math.PI;
   if (Math.abs(heading - actor.heading) < 0.5) return;
   actor.heading = heading;
@@ -1149,7 +1150,18 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const topSpeed = ai.moveSpeed * mobility;
     const attackLocked = now < (ai.attackLockedUntil ?? 0);
 
-    const route = routeToTarget(session, actor, target, now, heroes);
+    /**
+     * A stationary boss is deliberately embedded in its arena set piece.
+     * Route planning reads that as "inside scenery" and keeps it forever in
+     * escape state, which prevents the attack branch below from running. It
+     * authors IsNavigable=0 and LockRotation=true: it neither finds a route nor
+     * asks the scenery for line of sight; its attack timelines place their own
+     * colliders in the arena.
+     */
+    const stationary = ai.behavior === "STATIONARY_AI";
+    const route = stationary
+      ? { waypoint: null, direct: true, escaping: false }
+      : routeToTarget(session, actor, target, now, heroes);
 
     // DR_DEBUG_AI=1 prints where each chaser is actually heading, which is the
     // only way to tell a legitimate detour around geometry from a detour to
@@ -1342,7 +1354,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       continue;
     }
 
-    const clearAttack = hasLineOfSight(
+    const clearAttack = stationary || hasLineOfSight(
       state.navigation,
       actor.position,
       target,

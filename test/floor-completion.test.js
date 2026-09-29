@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { attackForConstant } from "../src/gamemaster.js";
 import {
   floorPlanForMapNode,
   loadFloor,
@@ -10,6 +11,7 @@ import {
   emitGeneratorRelease,
   reportNpcDeath,
   trackTriggers,
+  updateProximityTriggers,
 } from "../src/socket/triggers.js";
 
 /**
@@ -108,6 +110,105 @@ test("every trophy dungeon waits on its terminal reward chest generator", async 
       `node ${nodeId} classified the wrong generator(s) as its reward: ${rewards}`
     );
   }
+});
+
+test("Twisted Jungle's first scripted floor advances at its authored endpoint", async () => {
+  const plan = await floorPlanForMapNode(50020, { seed: 1 });
+  const floor = await loadFloorAt(plan, 1);
+  const completion = floor.placements.triggerable.find(
+    (triggerable) => triggerable.constant === "FLOOR_COMPLETE_TRIGGERABLE"
+  );
+  const endpoint = floor.placements.trigger.find(
+    (trigger) => floor.wiring.get(trigger.id)?.includes(completion?.id)
+  );
+
+  assert.ok(completion, "the scripted floor carries its completion action");
+  assert.equal(endpoint?.constant, "PROXIMITY_TRIGGER", "its endpoint drives completion");
+
+  const completed = [];
+  const session = {
+    id: 3,
+    send: () => {},
+    heroDoid: 300,
+    actors: new Map([[300, { constant: "TEST_HERO", dead: false }]]),
+    completeFloor: (_session, options) => completed.push(options),
+  };
+  trackTriggers(session, floor);
+  updateProximityTriggers(session, { x: endpoint.x, y: endpoint.y });
+
+  assert.deepEqual(completed, [{ immediate: true }]);
+});
+
+test("Twisted Jungle's Golem intro queues SUMMON and pulses all four wave generators", async (t) => {
+  const plan = await floorPlanForMapNode(50020, { seed: 1 });
+  const floor = await loadFloorAt(plan, 2);
+  const boss = floor.placements.npc.find((npc) => npc.constant === "BOSS_GOLEM");
+  const intro = floor.placements.triggerable.find(
+    (triggerable) =>
+      triggerable.constant === "TIMELINE_TRIGGERABLE" && triggerable.textKey === "GOLEM_INTRO"
+  );
+  const entrance = floor.placements.trigger.find(
+    (trigger) => floor.wiring.get(trigger.id)?.includes(intro?.id)
+  );
+  const waves = floor.placements.generator.filter(
+    (generator) => generator.spawnConstant !== "REWARD_CHEST_A"
+  );
+
+  assert.ok(boss && intro && entrance);
+  assert.equal(intro.npcId, boss.id, "the intro addresses the Golem placement");
+  assert.equal(waves.length, 4, "the scripted arena has four wave generators");
+
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  const sent = [];
+  const started = [];
+  const stopped = [];
+  const bossDoid = 900;
+  const session = {
+    id: 4,
+    send: (frame) => sent.push(frame),
+    heroDoid: 300,
+    actors: new Map([
+      [300, { constant: "TEST_HERO", dead: false }],
+      [bossDoid, {
+        constant: "BOSS_GOLEM",
+        dead: false,
+        ai: {
+          attackLockedUntil: 0,
+          nextAttackAt: Number.POSITIVE_INFINITY,
+          attackTimerMs: 4000,
+          attackRandMs: 0,
+        },
+      }],
+    ]),
+    npcDoids: new Map([[boss.id, bossDoid]]),
+    npcPlacementIds: new Map([[bossDoid, boss.id]]),
+    generatorStops: new Map(),
+    random: () => 0,
+  };
+  trackTriggers(session, floor);
+  for (const generator of waves) {
+    session.generatorHandlers.set(generator.id, () => started.push(generator.spawnConstant));
+    session.generatorStops.set(generator.id, () => stopped.push(generator.spawnConstant));
+  }
+
+  updateProximityTriggers(session, { x: entrance.x, y: entrance.y });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const introAttack = await attackForConstant("GOLEM_INTRO");
+  const summonAttack = await attackForConstant("GOLEM_SUMMON");
+  const attacksSent = () => sent
+    .filter((frame) => frame.readUInt16LE(2) === 124 && frame.readUInt16LE(8) === 143)
+    .map((frame) => frame.readUInt32LE(12));
+  assert.deepEqual(attacksSent(), [introAttack.Id]);
+  assert.deepEqual(started, [], "the wave waits for the queued summon");
+
+  t.mock.timers.tick(Math.ceil((109 / 24) * 1000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(attacksSent(), [introAttack.Id, summonAttack.Id]);
+  assert.equal(started.length, 4, "SUMMON's opening event starts every wave generator");
+
+  t.mock.timers.tick((90 / 24) * 1000);
+  assert.equal(stopped.length, 4, "SUMMON's closing event stops every wave generator");
 });
 
 test("a COMPLETE-style reward chest does not start its countdown when it appears", () => {

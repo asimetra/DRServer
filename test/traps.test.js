@@ -1238,6 +1238,44 @@ test("a slicer is priced by its own weapon, not by DamageMod", async () => {
   assert.ok(taken > 1, `a slicer took ${taken}, which is still the DamageMod fallback`);
 });
 
+test("the boss lava keeps its levelled offence when its weapon power is one", async (t) => {
+  const { buildFloor } = await import("./helpers/floor.js");
+  const { raiseHazard, clearHazardBeats } = await import("../src/socket/hazards.js");
+  const { clearDungeonBuffs } = await import("../src/socket/buffs.js");
+  const world = await buildFloor("jungle/tribal/db_floor_LAVA_GOLEM_BOSS_final.json", {
+    npcLevel: 19,
+  });
+  t.after(() => {
+    clearHazardBeats(world.session);
+    world.session.stopAi?.();
+    world.session.stopTriggers?.();
+    world.session.stopTrapProjectiles?.();
+  });
+
+  const placement = world.floor.placements.triggerable.find(
+    (triggerable) => triggerable.constant === "JURASSIC_TRIBAL_BOSS_TRAP_LAVA_A"
+  );
+  const doid = world.session.triggerableDoids.get(placement.id);
+  const hazard = world.session.triggerableHazards.get(placement.id);
+  const [shape] = hazard.combatColliders;
+  const hero = world.session.actors.get(world.session.heroDoid);
+  hero.hitPoints = 4000;
+  hero.maxHitPoints = 4000;
+  hero.position = { x: shape.x, y: shape.y + 22 };
+  world.session.heroPosition = { ...hero.position };
+  clearDungeonBuffs(world.session); // floor-entry invulnerability is not part of trap pricing
+  world.session.invulnerableUntil?.clear();
+
+  assert.equal(hazard.weaponPower, 1, "the weapon itself does not carry the damage");
+  assert.ok(world.session.trapNames.get(doid)?.stats?.get("MELEE_ATK") > 1);
+
+  raiseHazard(world.session, placement.id);
+  await contactTick();
+
+  const taken = 4000 - hero.hitPoints;
+  assert.ok(taken > 1, `boss lava still fell back to ${taken} damage`);
+});
+
 /**
  * A shot mounted inside its wall dies in it; one mounted flush against it does
  * not.

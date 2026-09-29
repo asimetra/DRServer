@@ -9,6 +9,7 @@ import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
 import { addNavigationObstacle, createNavigationState, isPositionBlocked } from "../src/socket/navigation.js";
 import { createMatchWorld } from "../src/socket/match-world.js";
+import { buildFloor, npcsNamed } from "./helpers/floor.js";
 
 const readUpdate = (frame) => {
   const reader = new PacketReader(frame.subarray(2));
@@ -66,6 +67,47 @@ const makeSession = () => {
     },
   };
 };
+
+test("the Lava Golem is stationary but still owns all six authored attacks", async (t) => {
+  const world = await buildFloor("jungle/tribal/db_floor_LAVA_GOLEM_BOSS_final.json", {
+    npcLevel: 19,
+  });
+  t.after(() => {
+    world.session.stopAi?.();
+    world.session.stopTriggers?.();
+    world.session.stopTrapProjectiles?.();
+  });
+
+  const generated = npcsNamed(world, "BOSS_GOLEM");
+  assert.equal(generated.length, 1);
+  const actor = world.session.actors.get(generated[0].doid);
+  assert.equal(actor.ai?.behavior, "STATIONARY_AI");
+  assert.equal(actor.ai?.moveSpeed, 0, "stationary means no routing or separation movement");
+  assert.equal(actor.ai?.lockRotation, true);
+  assert.equal(actor.ai?.attacks.length, 6);
+  assert.equal(
+    Number.isFinite(actor.ai?.nextAttackAt),
+    false,
+    "the intro timeline, not the first AI tick, wakes the boss"
+  );
+
+  const sent = [];
+  const authoredPosition = { ...actor.position };
+  world.session.send = (frame) => sent.push(frame);
+  world.session.random = () => 0; // select GOLEM_PUNCH_LEFT
+  actor.ai.nextAttackAt = 0;
+  actor.ai.attackLockedUntil = 0;
+  await tickNpcAi(world.session, Date.now(), 0.25);
+
+  assert.deepEqual(actor.position, authoredPosition, "attacking moved the stationary boss");
+  assert.ok(
+    sent.some((frame) =>
+      frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&
+      frame.readUInt32LE(4) === generated[0].doid &&
+      frame.readUInt16LE(8) === 143),
+    "the awakened boss sent no attack choreography"
+  );
+});
 
 const enableBuffs = (session) => {
   let nextDoid = 1000;

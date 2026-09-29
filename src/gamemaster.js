@@ -432,6 +432,40 @@ export const attackTimelineFrames = async (attackTimeline) => {
 };
 
 /**
+ * Server-owned control actions embedded in an attack timeline.
+ *
+ * Most timeline actions are visual and the client plays them after receiving
+ * the attack choreography. Two are different: `trigger_event` drives authored
+ * floor wiring, while `queueAttack` asks the server-owned NPC to begin another
+ * attack after the current timeline. The Lava Golem uses both to open and close
+ * its summon generators; dropping them leaves the boss animated as scenery and
+ * every monster generator permanently off.
+ */
+export const timelineControlActions = async (attackTimeline) => {
+  if (!attackTimeline) return { totalFrames: 0, events: [], queuedAttacks: [] };
+  const { timelines } = await load();
+  const timeline = timelines.get(attackTimeline);
+  if (!timeline) return { totalFrames: 0, events: [], queuedAttacks: [] };
+
+  const events = [];
+  const queuedAttacks = [];
+  for (const frame of timeline.frames ?? []) {
+    for (const action of frame.actions ?? []) {
+      if (action.type === "trigger_event" && action.event) {
+        events.push({ event: action.event, frame: Number(frame.frame ?? 0) });
+      } else if (action.type === "queueAttack" && action.attackName) {
+        queuedAttacks.push(action.attackName);
+      }
+    }
+  }
+  return {
+    totalFrames: Number(timeline.totalFrames ?? 0),
+    events,
+    queuedAttacks,
+  };
+};
+
+/**
  * Where a timeline's shot actually leaves from.
  *
  * `ProjectileAttackTimelineAction` does not fire from the actor's position. It

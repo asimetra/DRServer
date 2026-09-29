@@ -833,7 +833,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       heading: spawnHeading,
       ai:
         (["ENEMY", "BEAST"].includes(npc.CharType) || options.petOwnerDoid) &&
-        npc.IsMover &&
+        (npc.IsMover || (npc.IsBoss && npc.Aggro_AI_Type === "STATIONARY_AI")) &&
         nativeAttack
           ? {
               kind: options.petOwnerDoid
@@ -867,9 +867,12 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
               aggroRadius,
               // A pursuer must not disengage immediately after it aggroes.
               disengageDistance,
-              moveSpeed: npc.BaseMove ?? 180,
+              // A stationary boss participates in targeting and attack cadence
+              // without being separated or routed away from its authored spot.
+              moveSpeed: npc.IsMover ? (npc.BaseMove ?? 180) : 0,
               collisionRadius,
               behavior: npc.Aggro_AI_Type ?? "CHASE_AI",
+              lockRotation: Boolean(npc.LockRotation),
               fleeTimerMs: Math.max(0, Number(npc.FleeTimer ?? 0) * 1000),
               fleeRandMs: Math.max(0, Number(npc.FleeTimerRand ?? 0) * 1000),
               fleeArmed: true,
@@ -944,7 +947,12 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
                */
               attackTimerMs: Math.max(0, Number(npc.AttackTimer ?? 1.5) * 1000),
               attackRandMs: Math.max(0, Number(npc.AttackTimeRand ?? 0) * 1000),
-              nextAttackAt: 0,
+              // Its opening TIMELINE_TRIGGERABLE wakes it. Without this hold
+              // the first 250ms AI tick can attack before GOLEM_INTRO arrives.
+              nextAttackAt:
+                npc.Aggro_AI_Type === "STATIONARY_AI"
+                  ? Number.POSITIVE_INFINITY
+                  : 0,
               attackType: nativeAttack.Id,
               // The attacker's own weapon, so damage is not read off the hero's.
               weaponPower: nativeWeaponPower,
@@ -1332,6 +1340,8 @@ const buildNpcs = async (context, placements) => {
     if (doid) {
       session.npcDoids ??= new Map();
       session.npcDoids.set(placement.id, doid);
+      session.npcPlacementIds ??= new Map();
+      session.npcPlacementIds.set(doid, placement.id);
       /**
        * Anything the map says can talk, can. Registered here without asking
        * what it is, so that a keeper, a statue and a signpost are one case —
@@ -1718,8 +1728,11 @@ const spawnGeneratorWave = async (context, runtime) => {
   const { placement, maxSpawns } = runtime;
   const { intervalMs, maxPopulation } = generatorCadenceFor(placement);
 
-  for (let index = 0; index < maxSpawns; index++) {
-    if (index > 0 && intervalMs > 0) await generatorSleep(runtime, intervalMs);
+  const firstAttempt = runtime.attemptedSpawns;
+  while (runtime.attemptedSpawns < maxSpawns) {
+    if (runtime.attemptedSpawns > firstAttempt && intervalMs > 0) {
+      await generatorSleep(runtime, intervalMs);
+    }
     if (!context.isActive() || runtime.stopped) break;
 
     /**
@@ -1828,7 +1841,10 @@ const buildGenerators = async (context, placements) => {
     session.generators.set(placement.id, runtime);
 
     const start = () => {
-      if (!context.isActive() || runtime.started) return runtime.spawnPromise;
+      if (!context.isActive() || runtime.spawnPromise) return runtime.spawnPromise;
+      if (runtime.attemptedSpawns >= runtime.maxSpawns) return runtime.spawnPromise;
+      runtime.stopped = false;
+      runtime.completed = false;
       runtime.started = true;
 
       /**
@@ -1841,7 +1857,9 @@ const buildGenerators = async (context, placements) => {
        * own completion like its name says.
        */
       emitGeneratorRelease(session, placement);
-      runtime.spawnPromise = spawnGeneratorWave(context, runtime);
+      runtime.spawnPromise = spawnGeneratorWave(context, runtime).finally(() => {
+        runtime.spawnPromise = null;
+      });
       return runtime.spawnPromise;
     };
 
@@ -2100,7 +2118,19 @@ const buildTriggerables = async (context, placements) => {
      * hero" is a report nobody can act on. See dealTrapHit.
      */
     session.trapNames ??= new Map();
-    session.trapNames.set(doid, { constant: placement.constant, x: placement.x, y: placement.y });
+    session.trapNames.set(doid, {
+      constant: placement.constant,
+      x: placement.x,
+      y: placement.y,
+      /**
+       * Zero-HP traps are protocol objects rather than damageable actors, so
+       * they never enter session.actors. Their flat-damage attacks still use
+       * the NPC's offence stat: the boss lava has weapon power 1 but a
+       * level-19 MELEE_ATK of 30.2. Keeping the vector here lets priceHit use
+       * the same formula as any other NPC instead of falling back to one.
+       */
+      stats: npcStats(context.gm, npc, session.npcLevel ?? 1),
+    });
     if (attack) {
       session.triggerableAttacks.set(placement.id, attack.Id);
       session.triggerableHazards.set(placement.id, {
@@ -3012,6 +3042,10 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
     );
   session.floorFinished = false;
   session.floorSettled = false;
+  // Placement ids are floor-local. Keeping either direction across a floor
+  // change can aim a later NPC event at an actor that no longer exists.
+  session.npcDoids = new Map();
+  session.npcPlacementIds = new Map();
   trackTriggers(session, floor);
 
   const gm = await loadGameMaster();

@@ -46,6 +46,32 @@ test("a boss node lays out an approach, then loads its authored map", async () =
   assert.equal(boss.tiles.length, 5, "and the second is the authored five");
 });
 
+/**
+ * Measured from an official Twisted Jungle Boss run. The opening floor carried
+ * eight generated tiles from jungle/tribal/tiles.json. The next layout update
+ * had the same 789-byte size as db_floor_LAVA_GOLEM_BOSS_1 and all nineteen
+ * tile records retained by the client's 512-byte logger matched it exactly;
+ * the final update retained all nine records and matched the final file.
+ *
+ * Keep this explicit even though the generic boss census below also says GAA:
+ * it locks the two authored files to their positions in the run rather than
+ * merely proving that some two files followed some generated floor.
+ */
+test("Twisted Jungle runs one generated floor, then its two scripted floors", async () => {
+  const plan = await floorPlanForMapNode(50020, { seed: 1 });
+
+  assert.deepEqual(kinds(plan), ["generated", "authored", "authored"]);
+  assert.match(plan.floors[0].generated.tileLibrary, /jungle\/tribal\/tiles\.json$/);
+  assert.equal(plan.floors[0].generated.tileCount, 8);
+  assert.match(plan.floors[1].authored, /LAVA_GOLEM_BOSS_1\.json$/);
+  assert.match(plan.floors[2].authored, /LAVA_GOLEM_BOSS_final\.json$/);
+
+  const firstScripted = await loadFloorAt(plan, 1);
+  const final = await loadFloorAt(plan, 2);
+  assert.equal(firstScripted.tiles.length, 30);
+  assert.equal(final.tiles.length, 9);
+});
+
 test("a node whose tier asks for no approach is authored throughout", async () => {
   const plan = await floorPlanForMapNode(50005); // ARENA_BOSS reports MinFloors 0
 

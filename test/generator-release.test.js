@@ -4,6 +4,8 @@ import test from "node:test";
 import { generatorCadenceFor, generatorSpawn } from "../src/socket/dungeon.js";
 import { loadFloor } from "../src/socket/floors.js";
 import { createNavigationState, isPositionBlocked } from "../src/socket/navigation.js";
+import { emitSignal } from "../src/socket/triggers.js";
+import { buildFloor } from "./helpers/floor.js";
 
 const cageNavigation = () => createNavigationState({
   bounds: { minX: 0, minY: 0, maxX: 600, maxY: 600 },
@@ -104,4 +106,46 @@ test("a generator embedded in static scenery keeps the direct clear-ground fallb
   assert.equal(spawn.release, undefined);
   assert.notDeepEqual(spawn.position, placement, "a statically blocked origin was used anyway");
   assert.equal(isPositionBlocked(navigation, spawn.position, 20), false);
+});
+
+test("the Golem's toggled generators resume on a later SUMMON event", async (t) => {
+  const world = await buildFloor("jungle/tribal/db_floor_LAVA_GOLEM_BOSS_final.json", {
+    npcLevel: 19,
+  });
+  t.after(() => {
+    for (const stop of world.session.generatorStops.values()) stop();
+    world.session.stopAi?.();
+    world.session.stopTriggers?.();
+    world.session.stopTrapProjectiles?.();
+  });
+
+  const summonEvent = world.session.triggers.find(
+    (trigger) => trigger.constant === "NPC_EVENT_TRIGGER" && trigger.eventName === "SUMMON"
+  );
+  const waves = [...world.session.generators.values()].filter(
+    (runtime) => runtime.placement.spawnConstant !== "REWARD_CHEST_A"
+  );
+  const pulse = () => {
+    emitSignal(world.session, summonEvent.id, true);
+    emitSignal(world.session, summonEvent.id, false);
+  };
+  const settle = async (predicate) => {
+    for (let attempt = 0; attempt < 20 && !predicate(); attempt++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.ok(predicate(), "generator state did not settle");
+  };
+
+  assert.ok(summonEvent);
+  assert.equal(waves.length, 4);
+
+  pulse(); // opening SUMMON event
+  await settle(() => waves.every((runtime) => runtime.attemptedSpawns === 1));
+
+  pulse(); // closing SUMMON event
+  await settle(() => waves.every((runtime) => runtime.stopped && !runtime.spawnPromise));
+  for (const runtime of waves) runtime.alive = 0; // the first wave has been beaten
+
+  pulse(); // the next GOLEM_SUMMON opens the same generators again
+  await settle(() => waves.every((runtime) => runtime.attemptedSpawns === 2));
 });
