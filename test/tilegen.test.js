@@ -239,7 +239,8 @@ test("a secret room is never placed somewhere nothing shuts it", async () => {
     );
   const shutsTheRoomAbove = (tile) =>
     (tile?.LEObjects ?? []).some(
-      (object) => /WALL_SECRET/.test(object.constant ?? "") && Number(object.y) < 150
+      // A wall on the very edge is written without a y: zero, not NaN.
+      (object) => /WALL_SECRET/.test(object.constant ?? "") && Number(object.y ?? 0) < 150
     );
 
   let rooms = 0;
@@ -344,16 +345,32 @@ test("a secret wall always has a treasure room behind it", async () => {
    */
   const isWall = (object) =>
     object.type === "LENPC" && /WALL_SECRET/.test(object.constant ?? "");
+  /**
+   * The editor leaves a coordinate out when it is zero, so a wall standing on
+   * the very north edge has no `y` at all. Read as `Number(undefined)` that is
+   * NaN, which is below nothing: the catacombs' `430.1332889408700` holds its
+   * doorway shut that way, and ordinary rooms were hung off it behind a
+   * breakable wall. The official puts a treasure room there, 2 times of 2.
+   */
   const sealsNorth = (definition) =>
-    (definition?.LEObjects ?? []).some((object) => isWall(object) && Number(object.y) < 150);
+    (definition?.LEObjects ?? []).some((object) => isWall(object) && Number(object.y ?? 0) < 150);
 
   let walls = 0;
-  for (const theme of ["castle/arena", "castle/prison", "nordic/caves", "nordic/village"]) {
+  const themes = [
+    ["castle/arena", 1],
+    ["castle/prison", 1],
+    ["nordic/caves", 1],
+    ["nordic/village", 1],
+    // Dark Barrows: its nodes draw tiers 5 and 6, and later ones up to 10.
+    ["castle/catacombs", 5],
+    ["castle/catacombs", 10],
+  ];
+  for (const [theme, tier] of themes) {
     const lib = await library(`${theme}/tiles.json`);
     const byId = new Map((lib.LETiles ?? []).map((tile) => [String(tile.id), tile]));
 
     for (let seed = 1; seed <= 60; seed++) {
-      const floor = generateFloor(lib, { tier: 1, tileCount: 24, seed });
+      const floor = generateFloor(lib, { tier, tileCount: 24, seed });
       const at = new Map(
         floor.tiles.map((tile) => [`${tile.x},${tile.y}`, byId.get(String(tile.tileId))])
       );

@@ -106,7 +106,9 @@ const shutsItself = (tile) =>
 const shutsTheRoomAbove = (tile) =>
   Number(exitsOf(tile)[0]) > 0 &&
   (tile?.LEObjects ?? []).some(
-    (object) => /WALL_SECRET/.test(object.constant ?? "") && Number(object.y) < NORTH_DOORWAY
+    // The editor leaves a zero coordinate out, so a wall on the very edge has
+    // no y at all; Number(undefined) is NaN and would never count as a doorway.
+    (object) => /WALL_SECRET/.test(object.constant ?? "") && Number(object.y ?? 0) < NORTH_DOORWAY
   );
 
 /**

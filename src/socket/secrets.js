@@ -45,7 +45,8 @@ const isSecretWall = (object) =>
 /** Walls of this tile that shut the room to its north. */
 const doorwayWalls = (definition) =>
   (definition?.LEObjects ?? []).filter(
-    (object) => isSecretWall(object) && Number(object.y) < NORTH_DOORWAY
+    // A wall on the very edge is written with no y at all: zero, not NaN.
+    (object) => isSecretWall(object) && Number(object.y ?? 0) < NORTH_DOORWAY
   );
 
 /**
