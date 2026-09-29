@@ -5,7 +5,7 @@ import { CLID } from "./opcodes.js";
 import { dungeonSummaryGenerate, objectDisable } from "./objects.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { settleDungeonAccount } from "./settle-account.js";
-import { awardDungeonCompletion } from "./rewards.js";
+import { awardDungeonCompletion, completionTeamXpBonus } from "./rewards.js";
 import { rankable } from "../leaderboard.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { countsAsKill } from "./actor-roles.js";
@@ -76,28 +76,6 @@ const equippedWeaponFields = (weapons = []) => {
 };
 
 /**
- * The crew bonus: the share the account's own roster adds to a node's
- * completion bonus.
- *
- * Not the party. The client names it in DBFacebookBragFeedPost, which draws the
- * figure beside a crew icon as `getTotalHeroesOwned() - 2` — so it counts heroes
- * owned, and the first two do not count.
- *
- * Against the captures, a sixteenth of the bonus per hero past the second
- * reproduces two runs to the coin: 4665 and 4975 both on six-hero accounts gave
- * 1166 and 1243, and both come out exactly. A third, on a three-hero account,
- * gave 15 where this says 8 — so something else happens at the bottom of the
- * range that one data point cannot settle. Floored, as those two runs show, and
- * never more than the bonus itself.
- */
-const teamXpBonus = (node, account) => {
-  const bonus = Number(node?.CompletionXPBonus ?? 0);
-  const heroes = (account?.account_avatars ?? []).length;
-  const crew = Math.max(0, heroes - 2);
-  return Math.max(0, Math.min(bonus, Math.floor((bonus * crew) / 16)));
-};
-
-/**
  * What a finished run leaves for the boards.
  *
  * Everything but the clock was already being counted for the report screen —
@@ -160,27 +138,38 @@ const treasureFields = (treasures = []) => {
 export const buildDungeonReport = (session, success = false) => {
   const account = session.dungeonAccount ?? {};
   const avatar = session.dungeonAvatar ?? {};
+  const receivedTrophy = Number(session.receivedTrophy ?? 0);
+  const completionXp = success
+    ? Number(session.completionXpBonus ?? session.mapPage?.CompletionXPBonus ?? 0)
+    : 0;
+  const crewXp = success
+    ? Number(session.completionTeamXpBonus ?? completionTeamXpBonus(session.mapPage, account))
+    : 0;
   const kills = session.dungeonContribution?.kills ??
     [...(session.actors?.values() ?? [])].filter((actor) => countsAsKill(actor) && actor.dead).length;
 
   return {
     name: account.name ?? "Player",
-    trophyCount: account.trophies ?? 0,
+    // The client animates receivedTrophy by incrementing this baseline.
+    trophyCount: Math.max(0, Number(account.trophies ?? 0) - receivedTrophy),
     id: session.playerDoid ?? account.id ?? session.accountId ?? 0,
     type: avatar.avatar_id ?? 101,
     skinType: avatar.skin_type ?? 151,
     kills,
     /**
-     * Experience already banked, which is where the bar starts and what the
-     * bonus then ticks up from — DistributedDungeonSummary computes its running
-     * total as `report.xp + bonusTick`.
+     * Experience already banked before the completion and crew lines, which is
+     * where the bar starts and what those bonuses then tick up from —
+     * DistributedDungeonSummary computes its running total as
+     * `report.xp + bonusTick`.
      *
-     * It is the amount held *after* the run, not the baseline it entered with.
-     * A captured defeat reported 366773 while the account went 366408 → 366773
-     * across the same run, so the floor's own gold and experience are inside
-     * this figure by the time the report is drawn.
+     * It is not the baseline the run entered with: a captured defeat reported
+     * 366773 while the account went 366408 → 366773 across the same run, so the
+     * floor's own experience is inside this figure. A successful report starts
+     * immediately before the separately animated completion rewards.
      */
-    xp: avatar.experience ?? session.dungeonStart?.experience ?? 0,
+    xp: success && session.completionXpBase !== undefined
+      ? session.completionXpBase
+      : avatar.experience ?? session.dungeonStart?.experience ?? 0,
     // What the run picked up off the floor.
     xpEarned: session.dungeonRewards?.xp ?? 0,
     /**
@@ -193,14 +182,14 @@ export const buildDungeonReport = (session, success = false) => {
      * a node whose CompletionXPBonus is not, which is the difference between
      * what a run collected — kept either way — and what completing it pays.
      */
-    xpBonus: success ? Number(session.mapPage?.CompletionXPBonus ?? 0) : 0,
-    teamXpBonus: success ? teamXpBonus(session.mapPage, account) : 0,
+    xpBonus: completionXp,
+    teamXpBonus: crewXp,
     goldEarned: session.dungeonRewards?.gold ?? 0,
     gemsEarned: session.dungeonRewards?.gems ?? 0,
     boostXp: 1,
     boostGold: 1,
     // Set when the run was this node's first clear; the screen shows a trophy.
-    receivedTrophy: session.receivedTrophy ?? 0,
+    receivedTrophy,
     /**
      * The screen shows both sides of a treasure: what was picked up off the
      * floor (chest_type) and what it turned into (loot_type). A captured run

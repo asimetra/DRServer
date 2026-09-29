@@ -47,6 +47,26 @@ const rewardRatio = (value) =>
 const percentageAmount = (maximum, ratio) =>
   ratio > 0 ? Math.max(1, Math.round(maximum * ratio)) : 0;
 
+/**
+ * The completion share the account's roster adds: a sixteenth of the node's
+ * bonus for every hero owned past the second.
+ *
+ * Every solo run in the official corpus pays exactly this: a five-hero account
+ * on five nodes (2325 -> 435, 2220 -> 416, 2015 -> 377, …), a six-hero one on
+ * twenty, and nothing to accounts of one and two heroes. The client's battle
+ * popup says five percent per hero past the first, which the six-hero runs
+ * cannot tell apart and the five-hero runs disprove. Two cases pay more and
+ * are not modelled: parties (the same five-hero account got 465 beside a
+ * six-hero one) and one three-hero account (137 -> 15). In neither is this
+ * above what the official gave, so it never pays out more. Floored, and never
+ * more than the bonus itself.
+ */
+export const completionTeamXpBonus = (node, account) => {
+  const bonus = rewardAmount(node?.CompletionXPBonus);
+  const crew = Math.max(0, (account?.account_avatars ?? []).length - 2);
+  return Math.max(0, Math.min(bonus, Math.floor((bonus * crew) / 16)));
+};
+
 export const queueAccountSave = (session) => {
   const account = session.dungeonAccount;
   if (!account) return null;
@@ -317,13 +337,11 @@ export const awardDungeonCompletion = async (session) => {
   const bitIndex = Number.isFinite(node.BitIndex) ? Number(node.BitIndex) : null;
   const firstClear = bitIndex === null || !getMapNodeBit(account.completed_mapnode_mask, bitIndex);
 
-  /**
-   * Gold and experience are not paid here: they lie on the floor as the boss
-   * chest's drop and are credited when the player walks over them. Paying both
-   * would hand the node out twice.
-   */
+  // Coins are collected from the floor. Completion XP is paid here for every
+  // node type; boss chests therefore carry no second copy of it.
   const gold = 0;
-  const experience = 0;
+  const experience = rewardAmount(node.CompletionXPBonus);
+  const teamExperience = completionTeamXpBonus(node, account);
   const basicKeys = firstClear ? rewardAmount(node.BasicKeys) : 0;
   const premiumKeys = firstClear ? rewardAmount(node.PremiumKeys) : 0;
   /**
@@ -358,18 +376,23 @@ export const awardDungeonCompletion = async (session) => {
   // The summary screen has a slot for this; it reads as "new" only once.
   session.receivedTrophy = trophies;
 
-  if (avatar && experience) {
-    avatar.experience = (avatar.experience ?? 0) + experience;
+  session.completionXpBonus = experience;
+  session.completionTeamXpBonus = teamExperience;
+  if (avatar) {
+    session.completionXpBase = rewardAmount(avatar.experience);
+    avatar.experience = session.completionXpBase + experience + teamExperience;
+    if ((experience || teamExperience) && session.heroDoid) {
+      session.send?.(heroExperienceUpdate(session.heroDoid, avatar.experience));
+    }
   }
 
   session.dungeonRewards ??= { gold: 0, gems: 0, xp: 0 };
   session.dungeonRewards.gold += gold;
-  session.dungeonRewards.xp += experience;
 
   await queueAccountSave(session);
   info(
     `[${session.id}] ${firstClear ? "first clear of" : "replayed"} "${node.Name}" — ` +
-      `+${gold} gold, +${experience} xp, +${basicKeys} basic key(s), ` +
+      `+${gold} gold, +${experience} xp (+${teamExperience} crew), +${basicKeys} basic key(s), ` +
       `+${trophies} trophy, node bit ${node.BitIndex}`
   );
   return { gold, experience, basicKeys, trophies, firstClear };

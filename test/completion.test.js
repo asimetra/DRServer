@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { repairActiveAvatarProgress } from "../src/accounts.js";
 import { setMapNodeBit, awardDungeonCompletion } from "../src/socket/rewards.js";
+import { spawnBossReward } from "../src/socket/drops.js";
 
 /**
  * Finishing a dungeon has to leave a mark, or the player replays the first one
@@ -48,11 +49,11 @@ test("completing a node pays it out and records the bit", async () => {
   const target = session();
   const paid = await awardDungeonCompletion(target);
 
-  // Gold and experience are not credited here — they lie on the floor as the
-  // chest's drop and are picked up.
+  // Gold lies on the floor; the completion bonus is paid here so ordinary
+  // dungeons and boss dungeons use the same source of truth.
   assert.deepEqual(paid, {
     gold: 0,
-    experience: 0,
+    experience: 55,
     basicKeys: 1,
     trophies: 1,
     firstClear: true,
@@ -62,7 +63,8 @@ test("completing a node pays it out and records the bit", async () => {
   assert.equal(target.dungeonAccount.completed_dungeons, 1);
   assert.equal(target.dungeonAccount.completed_mapnode_mask.charCodeAt(0), 0x80);
   assert.equal(target.dungeonAvatar.completed_mapnode_mask.charCodeAt(0), 0x80);
-  assert.equal(target.dungeonAvatar.experience, 500, "untouched by completion");
+  assert.equal(target.dungeonAvatar.experience, 555);
+  assert.equal(target.completionXpBase, 500, "the report starts before the animated bonus");
 });
 
 test("legacy account progress unlocks the active avatar when every hero is empty", () => {
@@ -132,7 +134,7 @@ test("a replay pays gold and experience but no trophy or keys", async () => {
   assert.equal(replay.trophies, 0, "the trophy is not handed out twice");
   assert.equal(replay.basicKeys, 0);
   assert.equal(replay.gold, 0, "the chest pays the gold, not this");
-  assert.equal(replay.experience, 0);
+  assert.equal(replay.experience, 55);
   assert.equal(target.dungeonAccount.trophies, 1);
   assert.equal(target.dungeonAccount.basic_keys, 1);
   assert.equal(target.dungeonAccount.basic_currency, 100);
@@ -141,6 +143,57 @@ test("a replay pays gold and experience but no trophy or keys", async () => {
     0x80,
     "a legacy replay restores this hero's missing node bit without paying twice"
   );
+});
+
+test("the completion bonus and crew share are both persisted once", async () => {
+  const avatars = Array.from({ length: 6 }, (_, id) => ({ id: id + 1 }));
+  const target = session({
+    dungeonAccount: {
+      basic_currency: 100,
+      basic_keys: 0,
+      completed_dungeons: 0,
+      account_avatars: avatars,
+    },
+    dungeonAvatar: { id: 1, experience: 1_000 },
+    mapPage: {
+      Name: "Knight Fortress 1-1",
+      NodeType: "DUNGEON",
+      BitIndex: 4,
+      CompletionXPBonus: 110,
+      BasicKeys: 0,
+    },
+  });
+
+  await awardDungeonCompletion(target);
+
+  assert.equal(target.completionXpBonus, 110);
+  assert.equal(target.completionTeamXpBonus, 27);
+  assert.equal(target.dungeonAvatar.experience, 1_137);
+  assert.equal(await awardDungeonCompletion(target), null, "the bonus cannot be paid twice");
+});
+
+test("a boss chest carries coins and treasure, not a second completion bonus", () => {
+  const target = {
+    id: 7,
+    dungeonZone: 1,
+    allocateDoid: () => 900,
+    send: () => {},
+  };
+  const doid = spawnBossReward(target, {
+    floorDoid: 8,
+    origin: { x: 0, y: 0 },
+    node: {
+      Id: 50002,
+      BossRewardTreasureId: 30100,
+      TotalEnemyCoin: 750,
+      CompletionXPBonus: 55,
+    },
+    random: () => 0,
+  });
+
+  assert.equal(target.doobers.get(doid).gold, 750);
+  assert.equal(target.doobers.get(doid).xp, 0);
+  assert.equal(target.doobers.get(doid).treasure, 30100);
 });
 
 /**
@@ -360,4 +413,23 @@ test("the treasure range ends at the royal box", async () => {
 
   assert.equal(await awardTreasureChest(target, 30106), null, "one past the last box");
   assert.equal(await awardTreasureChest(target, 30099), null, "and one before the first chest");
+});
+
+const crewRoster = (count) => ({ account_avatars: Array.from({ length: count }, (_, id) => ({ id })) });
+
+test("the crew share is what the official paid on solo runs: a sixteenth per hero past the second", async () => {
+  const { completionTeamXpBonus } = await import("../src/socket/rewards.js");
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 4665 }, crewRoster(6)), 1166);
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 4975 }, crewRoster(6)), 1243);
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 2325 }, crewRoster(5)), 435);
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 2220 }, crewRoster(5)), 416);
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 55 }, crewRoster(5)), 10);
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 137 }, crewRoster(2)), 0, "the popup's five percent would pay 6");
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 55 }, crewRoster(1)), 0);
+});
+
+test("what the official paid beyond that is not modelled", { todo: "parties and one three-hero account pay more; the rule is unknown" }, async () => {
+  const { completionTeamXpBonus } = await import("../src/socket/rewards.js");
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 137 }, crewRoster(3)), 15, "a three-hero account, solo");
+  assert.equal(completionTeamXpBonus({ CompletionXPBonus: 2325 }, crewRoster(5)), 465, "beside a six-hero account");
 });

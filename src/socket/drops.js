@@ -165,7 +165,9 @@ export const spawnNpcRewards = (
  * The chest's own GameMaster row pays nothing — DooberProb and Exp are both
  * zero, deliberately, because a reward the client can see is a reward it can
  * forge. What it is worth belongs to the node: BossRewardTreasureId names the
- * pickup and TotalEnemyCoin and CompletionXPBonus say what it carries.
+ * pickup and TotalEnemyCoin says what it carries. CompletionXPBonus is paid
+ * for every node by awardDungeonCompletion, so putting it here would pay boss
+ * nodes twice and ordinary nodes not at all.
  */
 export const spawnBossReward = (session, { floorDoid, origin, node, random = Math.random }) => {
   if (!node || !floorDoid || !origin) return null;
@@ -178,7 +180,7 @@ export const spawnBossReward = (session, { floorDoid, origin, node, random = Mat
     ...landingPosition(origin, 0, 1, unitRandom(random) * Math.PI * 2, random),
     constant: `MAPNODE_${node.Id}_REWARD`,
     gold: rewardAmount(node.TotalEnemyCoin),
-    xp: rewardAmount(node.CompletionXPBonus),
+    xp: 0,
     crowd: 0,
     hpPercentage: 0,
     mpPercentage: 0,
@@ -196,7 +198,7 @@ export const spawnBossReward = (session, { floorDoid, origin, node, random = Mat
   );
   info(
     `[${session.id}] boss reward ${dooberType} dropped — ` +
-      `${rewardAmount(node.TotalEnemyCoin)} gold, ${rewardAmount(node.CompletionXPBonus)} xp`
+      `${rewardAmount(node.TotalEnemyCoin)} gold`
   );
   return doid;
 };

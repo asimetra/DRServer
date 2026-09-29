@@ -2551,6 +2551,9 @@ export const prepareDungeonMember = async (
   session.partyBombsUsed = 0;
   session.completionAwarded = false;
   session.receivedTrophy = 0;
+  session.completionXpBase = undefined;
+  session.completionXpBonus = 0;
+  session.completionTeamXpBonus = 0;
   session.playerDoid = session.accountId;
   session.objects.set(session.playerDoid, CLID.PlayerGameObject);
   if (sendPlayerOwner) {
@@ -2688,6 +2691,9 @@ export const enterDungeon = async (
   session.partyBombsUsed = 0;
   session.completionAwarded = false;
   session.receivedTrophy = 0;
+  session.completionXpBase = undefined;
+  session.completionXpBonus = 0;
+  session.completionTeamXpBonus = 0;
   /**
    * Whether this node is a file or a layout is the node's own business — twelve
    * of them name a CustomTileset and the rest do not. Everything past here
@@ -3488,6 +3494,9 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "accountSettled",
     "completionAwarded",
     "receivedTrophy",
+    "completionXpBase",
+    "completionXpBonus",
+    "completionTeamXpBonus",
     "heroConsumables",
     "heroStats",
     "heroSpawn",

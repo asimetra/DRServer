@@ -10,6 +10,7 @@ import {
 import { createMatchWorld } from "../src/socket/match-world.js";
 import { CLID, OP } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
+import { awardDungeonCompletion } from "../src/socket/rewards.js";
 
 const readReport = (reader) => {
   const report = {
@@ -493,6 +494,36 @@ test("the completion bonus is only paid for completing it", () => {
   assert.equal(lost.teamXpBonus, 0);
   assert.equal(lost.xpEarned, 365, "but the floor's own experience is kept");
   assert.equal(lost.xp, 500);
+});
+
+test("the report animates completion rewards from the persisted pre-bonus total", async () => {
+  const account = {
+    id: 5,
+    trophies: 7,
+    account_avatars: Array.from({ length: 6 }, (_, id) => ({ id: id + 1 })),
+  };
+  const session = {
+    id: 5,
+    dungeonAccount: account,
+    dungeonAvatar: { id: 1, experience: 1_000 },
+    mapPage: {
+      Name: "Boss",
+      NodeType: "BOSS",
+      BitIndex: 0,
+      CompletionXPBonus: 110,
+      BasicKeys: 0,
+    },
+    persistDungeonAccount: async () => {},
+  };
+
+  await awardDungeonCompletion(session);
+  const report = buildDungeonReport(session, true);
+
+  assert.equal(report.xp, 1_000);
+  assert.equal(report.xp + report.xpBonus + report.teamXpBonus, session.dungeonAvatar.experience);
+  assert.equal(report.trophyCount, 7, "the client adds receivedTrophy during the reveal");
+  assert.equal(report.receivedTrophy, 1);
+  assert.equal(account.trophies, 8, "the persisted total already includes the new trophy");
 });
 
 /**
