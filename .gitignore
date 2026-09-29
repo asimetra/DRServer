@@ -35,6 +35,7 @@ logs-fresh/
 /docs/official-vs-local-behavior-diff.md
 !/docs/client-setup.md
 !/docs/combat-conformance.md
+!/docs/content-packs.md
 !/docs/dc-schema.json
 
 # Local audit reports are built from private capture evidence.

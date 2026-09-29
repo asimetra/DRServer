@@ -1,7 +1,7 @@
 import { PacketWriter } from "./packet.js";
 import { config } from "../config.js";
 import { isOverridden } from "../content.js";
-import { isCustomNpc, isCustomSkin, presentNpc, presentSkin, presentable } from "../content-packs.js";
+import { isCustomNpc, isCustomSkin, presentNpc, presentSkin, presentWeapon, presentable } from "../content-packs.js";
 import { CLID, OP, TEAM } from "./opcodes.js";
 
 /**
@@ -593,12 +593,18 @@ const buildHeroGenerate = ({ doid, parent = 0, zone = 10, ...hero }) =>
  */
 const withSkinFor = (build) => (details) => {
   const frame = build(details);
-  return isCustomSkin(details.skinType)
-    ? presentable(frame, (view) => {
-        const shown = presentSkin(view, details.skinType);
-        return shown === details.skinType ? frame : build({ ...details, skinType: shown });
-      })
-    : frame;
+  if (!isCustomSkin(details.skinType)) return frame;
+  return presentable(frame, (view) => {
+    const skinType = presentSkin(view, details.skinType);
+    // And the skin's own version of each weapon, which swings the skin's own
+    // attacks and so its own effects, to a viewer with the pack.
+    const weapons = (details.weapons ?? []).map((weapon) =>
+      weapon ? { ...weapon, type: presentWeapon(view, details.skinType, weapon.type) } : weapon
+    );
+    const unchanged =
+      skinType === details.skinType && weapons.every((weapon, i) => weapon?.type === details.weapons[i]?.type);
+    return unchanged ? frame : build({ ...details, skinType, weapons });
+  });
 };
 
 export const heroOwnerGenerate = withSkinFor(buildHeroOwnerGenerate);

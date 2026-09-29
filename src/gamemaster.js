@@ -70,6 +70,33 @@ const load = async () => {
   const timelines = new Map(
     JSON.parse(await fs.readFile(timelineFile, "utf8")).attacks.map((row) => [row.attackName, row])
   );
+  /**
+   * A content pack's own timelines, beside the game's.
+   *
+   * A skin's attack variant names a timeline the client is given with the pack,
+   * and the server has to read it too, or it cannot tell a variant that only
+   * looks different from one that hits differently — see content-packs.js.
+   * Kept beside the pack's GameMaster rows in the content directory, as the
+   * floors are, and absent on a server with no packs.
+   *
+   * Only names the game does not have are taken. A shipped timeline is the
+   * rules: a pack row by the same name would change how an official attack
+   * hits for everybody, and every variant would then be checked against the
+   * replacement instead of the original. A copy of a shipped row is passed
+   * over; one that differs is refused, with a warning.
+   */
+  try {
+    const packTimelines = path.join(config.contentDir, "Resources", "Combat", "AttackTimeline.json");
+    for (const row of JSON.parse(await fs.readFile(packTimelines, "utf8")).attacks ?? []) {
+      const shipped = timelines.get(row.attackName);
+      if (!shipped) timelines.set(row.attackName, row);
+      else if (JSON.stringify(shipped) !== JSON.stringify(row)) {
+        warn(`gamemaster: ${packTimelines} redefines the game's timeline ${row.attackName}; keeping the game's`);
+      }
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   const customMapByConstant = new Map(
     (parsed.CustomMaps ?? []).map((custom) => [custom.Constant, custom])
   );

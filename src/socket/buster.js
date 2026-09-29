@@ -6,6 +6,7 @@ import {
   stackableById,
 } from "../gamemaster.js";
 import { info, warn } from "../log.js";
+import { presentAttack, presentable, skinDressesAttacks } from "../content-packs.js";
 import { buffMultiplierFor, grantBuff, hasAbility } from "./buffs.js";
 import { statOffsetsFor } from "../combat-damage.js";
 import { STAT_NAMES } from "../hero-stats.js";
@@ -33,12 +34,33 @@ export const FLID_PROPOSE_ATTACK_CHOREOGRAPHY = 172;
 export const FLID_RECEIVE_ATTACK_CHOREOGRAPHY = 159;
 export const FLID_STOP_CHOREOGRAPHY = 179;
 
-export const remoteAttackChoreography = (heroDoid, payload) =>
+/** Where a choreography names its attack: after the weapon slot and the consumable flag. */
+export const CHOREOGRAPHY_ATTACK_AT = 2;
+
+const buildRemoteChoreography = (heroDoid, payload) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
     .u32(heroDoid)
     .u16(FLID_RECEIVE_ATTACK_CHOREOGRAPHY)
     .raw(payload)
     .frame();
+
+/**
+ * A hero's attack for its peers. `payload` names the base attack; a peer with
+ * the pack of the skin the hero wears is told the skin's variant instead, and
+ * plays that timeline's effects (content-packs.js).
+ */
+export const remoteAttackChoreography = (heroDoid, payload, skinType) => {
+  const frame = buildRemoteChoreography(heroDoid, payload);
+  if (!skinDressesAttacks(skinType) || payload.length < CHOREOGRAPHY_ATTACK_AT + 4) return frame;
+  const attack = payload.readUInt32LE(CHOREOGRAPHY_ATTACK_AT);
+  return presentable(frame, (view) => {
+    const shown = presentAttack(view, skinType, attack);
+    if (shown === attack) return frame;
+    const dressed = Buffer.from(payload);
+    dressed.writeUInt32LE(shown, CHOREOGRAPHY_ATTACK_AT);
+    return buildRemoteChoreography(heroDoid, dressed);
+  });
+};
 
 /** Stops a remote hero's current timeline; the field deliberately has no body. */
 export const remoteStopChoreography = (heroDoid) =>

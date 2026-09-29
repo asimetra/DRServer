@@ -1,8 +1,8 @@
 import { config } from "../config.js";
 import { truncate, unimplemented } from "../log.js";
 import { OP } from "./opcodes.js";
-import { PacketWriter } from "./packet.js";
-import { handleProposeCombatResults, FLID_PROPOSE_COMBAT_RESULTS } from "./combat.js";
+import { PacketReader, PacketWriter } from "./packet.js";
+import { handleProposeCombatResults, FLID_PROPOSE_COMBAT_RESULTS, withBaseAttack } from "./combat.js";
 import { handleProposeCreateNPC, FLID_PROPOSE_CREATE_NPC } from "./placeables.js";
 import { collectNearby, FLID_HERO_POSITION } from "./pickups.js";
 import { updateProximityTriggers } from "./triggers.js";
@@ -18,6 +18,7 @@ import {
   FLID_STOP_CHOREOGRAPHY,
   handleProposeAttackChoreography,
   remoteAttackChoreography,
+  CHOREOGRAPHY_ATTACK_AT,
   remoteStopChoreography,
 } from "./buster.js";
 import { isPlausiblePosition } from "./coordinates.js";
@@ -321,12 +322,14 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
   }
 
   if (doid === session.heroDoid && fieldId === FLID_PROPOSE_ATTACK_CHOREOGRAPHY) {
-    const choreography = Buffer.from(reader.rest());
-    return handleProposeAttackChoreography(session, reader, {
+    // Read and relayed as the base attack when the client swung its skin's
+    // variant; each peer is then told the attack in terms it can draw.
+    const choreography = withBaseAttack(Buffer.from(reader.rest()), CHOREOGRAPHY_ATTACK_AT);
+    return handleProposeAttackChoreography(session, new PacketReader(choreography), {
       onAccepted: () => {
         if (!session.world) return;
         session.broadcast(
-          remoteAttackChoreography(session.heroDoid, choreography),
+          remoteAttackChoreography(session.heroDoid, choreography, session.heroSpawn?.skinType),
           { except: session.member }
         );
       },

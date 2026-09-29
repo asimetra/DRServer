@@ -1,3 +1,4 @@
+import { baseAttackOf } from "../content-packs.js";
 import { PacketWriter, PacketReader } from "./packet.js";
 import { CLID, OP, TEAM } from "./opcodes.js";
 import { config } from "../config.js";
@@ -200,6 +201,20 @@ const POWERUP_SLOTS = 2;
  * declared, so anything that does not divide is either a client this server
  * cannot read or one that is probing. Neither should be half-processed.
  */
+/** Where a combat result names its attack: attacker, attackee, damage, slot, consumable. */
+const RESULT_ATTACK_AT = 14;
+
+/** `bytes` with the attack at `at` as the base a variant dresses; the same bytes when it is one. */
+export const withBaseAttack = (bytes, at) => {
+  if (bytes.length < at + 4) return bytes;
+  const named = bytes.readUInt32LE(at);
+  const base = baseAttackOf(named);
+  if (base === named) return bytes;
+  const copy = Buffer.from(bytes);
+  copy.writeUInt32LE(base, at);
+  return copy;
+};
+
 const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
   const byteLength = reader.u16();
   const available = reader.buf.length - reader.pos;
@@ -226,7 +241,9 @@ const readProposals = (session, reader, limit = MAX_RESULTS_PER_PACKET) => {
 
   const results = [];
   for (let offset = 0; offset + COMBAT_RESULT_BYTES <= blob.length; offset += COMBAT_RESULT_BYTES) {
-    const bytes = blob.subarray(offset, offset + COMBAT_RESULT_BYTES);
+    // A skin's variant attack is the base it dresses, here and in the echo
+    // every client receives (content-packs.js).
+    const bytes = withBaseAttack(blob.subarray(offset, offset + COMBAT_RESULT_BYTES), RESULT_ATTACK_AT);
     const head = new PacketReader(bytes);
     const attacker = head.u32();
     const attackee = head.u32();
