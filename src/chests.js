@@ -3,14 +3,15 @@ import { purchaseOffer } from "./store.js";
 import { storageLimit, unequippedWeapons } from "./inventory-space.js";
 import { warn } from "./log.js";
 import { heroLevel, maxLevel } from "./progression.js";
+import { weaponPowerAt } from "./weapon-power.js";
 
 /**
  * Opening a chest.
  *
  * Most of this is a port rather than a design: the drop distribution, the
  * modifier roll and the pool of eligible weapons all come from GameMaster
- * tables and from one successful capture of the live server. The single number
- * that is *not* settled is the weapon's power — see `rollPower`.
+ * tables and from one successful capture of the live server. The weapon's
+ * power is the game's own curve — see `weapon-power.js`.
  *
  * Contract, from docs/private-server.md §3.0:
  *   request  [accountId, chestInstanceId, token, forHeroId, forHeroSkinId]
@@ -80,8 +81,8 @@ const KEY_COLUMN_BY_RARITY = {
  *   real level     5    10    20    30    50
  *   read as        9    22    57   100   100
  *
- * A level-30 player's chest therefore rolled a level-100 award — priced by
- * `rollPower` at level 100 too — and the client will not let them equip it
+ * A level-30 player's chest therefore rolled a level-100 award — priced at
+ * level 100 too — and the client will not let them equip it
  * until they have earned seventy more levels. The best thing the chest could
  * give them was the thing they could not use.
  */
@@ -215,24 +216,6 @@ const rollModifiers = (gm, rarity, weapon, random) => {
 };
 
 /**
- * Weapon power. **This is the one part that is not a port.**
- *
- * The single captured award was power 739 on a rarity-3 short sword at level
- * 99. That does not fall out of the obvious combinations of the constants
- * involved, and Rarity also carries LevelWeight/ModifierWeight that hint at a
- * split we cannot separate from one data point. Two candidates land within a
- * couple of percent:
- *
- *   Power × level × BasePowerScale + BasePowerConstant  -> 723
- *   (Power + ScalingFactor) × level                     -> 743
- *
- * The first is used because it lets rarity actually matter, which it must. It
- * is an approximation, and more captures at a known rarity would settle it.
- */
-const rollPower = (weapon, rarity, level) =>
-  Math.max(1, Math.round(weapon.Power * level * (rarity.BasePowerScale ?? 1) + (rarity.BasePowerConstant ?? 0)));
-
-/**
  * Item level tracks the opener's level with a small spread, reported from play
  * as roughly ±2 and consistent with the one capture.
  *
@@ -276,17 +259,21 @@ export const generateWeapon = ({ gm, hero, rarity, level, accountId, id, random 
 
   const weapon = pool[Math.floor(random() * pool.length)];
   const [modifier1 = 0, modifier2 = 0] = rollModifiers(gm, rarity, weapon, random);
+  const requiredlevel = rollItemLevel(level, random, maxLevel(gm, hero));
 
   return {
     id,
     item_id: weapon.Id,
     account_id: accountId,
-    power: rollPower(weapon, rarity, level),
+    // Priced at the level it carries, as the official's are: its one captured
+    // award, a level-99 rare short sword at 739, is the curve's 726 and its
+    // usual spread.
+    power: weaponPowerAt(weapon, rarity, requiredlevel),
     // Awards arrive unequipped; equipping is a separate call that fills these.
     avatar_id: null,
     avatar_slot: null,
     is_new: 1,
-    requiredlevel: rollItemLevel(level, random, maxLevel(gm, hero)),
+    requiredlevel,
     rarity: rarity.Id,
     modifier1,
     modifier2,
