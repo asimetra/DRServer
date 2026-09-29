@@ -7,6 +7,9 @@ import test, { after } from "node:test";
 
 const dataDir = await mkdtemp(path.join(tmpdir(), "ods-internal-api-"));
 process.env.ODS_DATA_DIR = dataDir;
+// These tests buy what they have just listed; the wait before a listing goes
+// up has tests of its own (market.test.js).
+process.env.ODS_MARKET_LISTING_DELAY_SECONDS = "0";
 process.env.ODS_TOKEN_SECRET = "0".repeat(64);
 process.env.ODS_INTERNAL_TOKEN = "a-shared-secret-the-front-end-holds";
 // Port 0: the OS picks one, so the suite cannot collide with a running server.
@@ -113,6 +116,32 @@ test("revoking invalidates the tokens already issued for that account", async ()
   const replacement = await call("POST", `/internal/v1/accounts/${accountId}/token`);
   const { token: fresh } = await replacement.json();
   assert.ok(verifyToken(accountId, fresh), "and a fresh one must work");
+});
+
+/**
+ * The browser client is launched from the website with a token in its link,
+ * which ends up in the browser's history. A kept token there would open the
+ * account for a year; a session one lasts the evening, and the client renews
+ * its own while it plays.
+ */
+test("a session token can be asked for, and lasts hours rather than a year", async () => {
+  const { accountId } = await call("POST", "/internal/v1/accounts").then((r) => r.json());
+  const before = Math.floor(Date.now() / 1000);
+
+  const session = await call("POST", `/internal/v1/accounts/${accountId}/token`, { body: { term: "session" } });
+  assert.equal(session.status, 200);
+  const { token, term } = await session.json();
+  assert.equal(term, "session");
+  assert.ok(verifyToken(accountId, token));
+  const expiry = Number(token.split(":")[0]);
+  assert.ok(expiry - before <= 6 * 60 * 60 + 5 && expiry - before >= 6 * 60 * 60 - 5);
+
+  const kept = await call("POST", `/internal/v1/accounts/${accountId}/token`).then((r) => r.json());
+  assert.equal(kept.term, "kept");
+  assert.ok(Number(kept.token.split(":")[0]) - before > 300 * 24 * 60 * 60);
+
+  const odd = await call("POST", `/internal/v1/accounts/${accountId}/token`, { body: { term: "forever" } });
+  assert.equal(odd.status, 400);
 });
 
 test("an account reads back as the payload the client would receive", async () => {

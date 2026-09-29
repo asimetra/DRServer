@@ -167,6 +167,11 @@ const checkNameFree = async (req, [capture]) => {
  * For "I lost my client configuration" and for handing a fresh one to somebody
  * who has just proved themselves on the website. It does not invalidate the
  * old one; that is what the DELETE is for.
+ *
+ * `{ "term": "session" }` asks for the short one (`SESSION_TTL_SECONDS`), which
+ * is what the website's play button puts in the link that opens the browser
+ * client: that link lands in the browser's history, and a kept token there
+ * would open the account for a year. The client renews its own as it plays.
  */
 const reissueToken = async (req, [capture]) => {
   const refusal = authorise(req);
@@ -176,11 +181,17 @@ const reissueToken = async (req, [capture]) => {
   if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
   if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
 
-  const token = issueToken(id);
-  info(`internal: reissued a token for account ${id}`);
+  const term = req.json?.term ?? "kept";
+  if (term !== "kept" && term !== "session") {
+    return json({ error: 'term must be "kept" or "session"' }, 400);
+  }
+
+  const token = issueToken(id, { term });
+  info(`internal: reissued a ${term} token for account ${id}`);
   return json({
     accountId: id,
     token,
+    term,
     expires: new Date(Number(token.split(":")[0]) * 1000).toISOString(),
   });
 };
