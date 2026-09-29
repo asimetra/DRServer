@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a focused server or contributor-experience improvement
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Explain the concrete limitation or contributor need.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: Describe the smallest useful outcome; implementation details are optional.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: List workarounds or different approaches, if any.
+  - type: checkboxes
+    id: redistribution
+    attributes:
+      label: Redistribution boundary
+      options:
+        - label: This proposal does not require committing a game client, assets, private compatibility data, captures, or decompiled client material.
+          required: true

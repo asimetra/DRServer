@@ -1,0 +1,54 @@
+name: Bug report
+description: Report reproducible incorrect server behavior
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve the server. Do not include tokens, account data, private logs, or client files.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the incorrect behavior and its impact.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can it be reproduced?
+      description: Give the smallest reliable sequence of steps.
+      placeholder: |
+        1. Start the server with ...
+        2. Connect ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Server commit
+      description: Paste the output of git rev-parse --short HEAD.
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage backend
+      options:
+        - File
+        - PostgreSQL
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant sanitized logs
+      description: Remove tokens, account identifiers, local paths, and private data before posting.
+      render: shell
