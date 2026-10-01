@@ -10,6 +10,8 @@ permissions:
 jobs:
   public-suite:
     runs-on: ubuntu-latest
+    # The suite takes a few minutes; a run that has not finished by now is stuck.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

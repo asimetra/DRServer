@@ -84,13 +84,60 @@ const onlyMissingData = (output) => {
   return missing.every((match) => path.resolve(match[3]).startsWith(resourcesDir));
 };
 
+/**
+ * How long one file may run before it is stopped and judged on what it said.
+ *
+ * A test waiting for something that missing data will never deliver does not
+ * fail, it waits — and this runner waited with it, for as long as anybody let
+ * it. On a fresh clone that was the whole suite stuck on its forty-second
+ * file, and a CI job with nothing to report until the platform killed it.
+ */
+const FILE_TIMEOUT_MS = Number(process.env.ODS_TEST_FILE_TIMEOUT_MS) || 60_000;
+
+/** The file being run, so that interrupting this runner stops it too. */
+let running = null;
+const stopGroup = (child) => {
+  try {
+    if (process.platform === "win32") child.kill("SIGKILL");
+    else process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+};
+// A child in a group of its own no longer hears the terminal's Ctrl-C.
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    if (running) stopGroup(running);
+    process.exit(130);
+  });
+}
+
 const runOne = (file) =>
   new Promise((resolve) => {
-    const child = spawn(process.execPath, ["--test", file], { cwd: root });
+    // The same per-file account directory the full runner gives each file, so
+    // this one does not write test accounts into a developer's own `data/`.
+    const child = spawn(
+      process.execPath,
+      ["--import", path.join(root, "tools", "test-environment.js"), "--test", file],
+      // Its own process group: the file runs in a child of this child, and
+      // stopping only the runner would leave the stuck one holding the pipes.
+      { cwd: root, detached: process.platform !== "win32" }
+    );
     let output = "";
+    let timedOut = false;
+    running = child;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stopGroup(child);
+    }, FILE_TIMEOUT_MS);
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
-    child.on("close", (code) => resolve({ file, code, output }));
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      running = null;
+      if (timedOut) output += `\n${file}: stopped after ${FILE_TIMEOUT_MS}ms without finishing\n`;
+      resolve({ file, code: timedOut ? 1 : code, output });
+    });
   });
 
 const passed = [];
