@@ -2,8 +2,8 @@
 
 This guide covers the parts of running DR Server that are deliberately kept
 out of the quick-start README: remote access, player credentials, the internal
-API, running as a service, backups, worker threads, storage ownership, and load
-testing.
+API, running as a service, monitoring, backups, worker threads, storage
+ownership, and load testing.
 
 ## Network model
 
@@ -232,6 +232,178 @@ What the server does with the signals a supervisor sends:
   default of ten seconds is too short — use `stop_grace_period: 30s`).
 - An exception nothing handled is logged, the same shutdown runs, and the exit
   status is 1, so `Restart=on-failure` brings the server back.
+
+## Monitoring
+
+The server answers questions about itself on a listener of its own,
+`127.0.0.1:8082` by default:
+
+| Route | Answers | Use it for |
+|---|---|---|
+| `GET /livez` | 200 as long as the process responds | Deciding whether to restart |
+| `GET /healthz` | 200 when every check passes, 503 naming the ones that do not; warnings ride along | A supervisor, a container health check, an uptime monitor |
+| `GET /status` | Version and commit, uptime, players, memory, event-loop delay, counters, and the health report | Looking at a running server |
+| `GET /players` | Who is connected: account, name, map node, how long, from where, when their token expires | Knowing who is on before a restart |
+| `GET /metrics` | The numbers of `/status` in the Prometheus text format | A monitoring system that keeps history, draws graphs and raises alerts |
+
+```bash
+curl -s http://127.0.0.1:8082/healthz
+# {"status":"ok","checks":{"web":"ok","socket":"ok","storage":"ok","workers":"ok","running":"ok"}}
+```
+
+### Checks
+
+A check failing means players cannot play, and turns `/healthz` into a 503:
+both player-facing listeners are accepting connections; the storage can be
+written and this server still holds its lock on it (for PostgreSQL, the
+database answers a query); at least one match worker is up when workers are
+enabled; and the server is not shutting down. A failing check carries its
+reason:
+
+```json
+{"status":"failing","checks":{"web":"ok","socket":"ok","storage":"the database does not answer: connect ECONNREFUSED 127.0.0.1:5432","workers":"ok","running":"ok"}}
+```
+
+`/livez` stays 200 through that: the database being away is not something a
+restart of the game server fixes.
+
+### Warnings
+
+A warning is something that is not a failure yet. It appears under `warnings`
+and leaves the status code alone:
+
+| Warning | Raised when |
+|---|---|
+| `disk` | The data directory's filesystem has under 5% or under 256 MB free |
+| `tokens` | A connected player's token expires within 14 days |
+| `workers` | Some match workers are down while others carry on |
+| `event_loop` | Timers have been firing more than 250 ms late (p99 over the last minute) |
+
+```json
+{"status":"ok","checks":{"...":"ok"},"warnings":{"tokens":"1 online player's token expires within 14 days: account 1000000005 in 5 days"}}
+```
+
+The server keeps no list of the tokens it has issued, so the token warning can
+only speak for players who are connected. Each login with a token that close to
+expiry is also logged.
+
+Whether or not anything is polling, the server looks at its own health every
+thirty seconds and writes a change to the log once, when it happens:
+
+```text
+ERROR health: storage is failing — the database does not answer: ...
+INFO  health: storage is ok again
+WARN  health: warning from disk — 3% free (1.2 GB) on /srv/dr-server/data
+```
+
+### Status and counters
+
+`event_loop_delay` in `/status` is how late the server's timers are firing over
+the last minute. Every dungeon runs on that loop, so a `p99_ms` in the hundreds
+is lag the players can feel.
+
+`counters` are totals since the server started, including what match workers
+counted. A monitor that wants a rate subtracts two readings.
+
+| Counter | Counts |
+|---|---|
+| `auth_refused` | Logins and requests refused for a missing, expired, revoked or forged token |
+| `sockets_refused` | Connections turned away at the connection limits |
+| `http_rate_limited` | Requests dropped by the per-address rate limit |
+| `http_errors` | Requests that ended in the server's own failure |
+| `packets_failed` | Game packets whose handler threw |
+| `saves_failed` | Dungeon saves that did not reach storage |
+| `timer_failures` | Gameplay timers that threw |
+| `unhandled_rejections` | Promise rejections nothing handled |
+| `database_connections_lost` | PostgreSQL connections closed from the other end |
+| `worker_restarts` | Match workers replaced after a crash or a hang |
+
+A rising `saves_failed` is the one to act on first: it is progress players
+were shown and did not keep.
+
+### Graphs, history and alerts
+
+The server says what is true now. It does not keep history, draw graphs or
+send notifications — that is what monitoring tools are for, and `/metrics` is
+the format they read. How much to set up depends on the server:
+
+- **A small server for friends.** Point any uptime monitor at `/healthz`: it
+  polls the URL, and tells you — by chat message, by e-mail — when the answer
+  stops being 200. Nothing else is needed.
+- **Graphs and history.** The repository carries a ready-made Prometheus and
+  Grafana pair:
+
+  ```bash
+  npm run monitor:up      # dashboard on http://127.0.0.1:3000/
+  npm run monitor:down    # stop; the collected history is kept
+  ```
+
+  Prometheus reads `/metrics` every fifteen seconds and keeps thirty days;
+  Grafana opens on a dashboard of health, players, event-loop delay, memory,
+  disk, and every counter. Both listen on loopback only, and Grafana is
+  read-only without a login; its administrator account still has Grafana's
+  default password, which is acceptable only because nothing off this machine
+  can reach it. Everything it uses is in `monitoring/`:
+
+  | File | What it is |
+  |---|---|
+  | `prometheus.yml` | What is collected and how often. Change the target here if the status listener is not on `127.0.0.1:8082`; add the status token here if one is set |
+  | `alerts.yml` | When something is worth attention: the server not answering, a failing check, a save that did not reach storage, sustained lag, a worker down, a standing warning |
+  | `grafana/dashboards/dr-server.json` | The dashboard |
+
+  `ODS_PROMETHEUS_PORT` and `ODS_GRAFANA_PORT` move them off 9090 and 3000.
+  After editing a file or a port, `./tools/monitor.sh recreate` restarts both
+  on the new configuration with the history intact.
+
+The alert rules fire inside Prometheus and show on the dashboard. They are not
+delivered anywhere: sending one to a phone or a chat channel needs an
+Alertmanager or Grafana's own alerting, configured for whoever should hear it.
+
+The containers run on the host's network, because the status listener is bound
+to loopback and a container's own network cannot reach that. This is a Linux
+arrangement; on other systems, run Prometheus where it can reach the listener
+and point it at `monitoring/prometheus.yml`.
+
+### Who may ask
+
+The routes need no credential by default, so the address they are bound to is
+the access control. That is why they are not on the players' port: behind a
+tunnel every player arrives from `127.0.0.1`. `ODS_STATUS_PORT=0` turns the
+listener off. If the port is already in use the server starts without the
+listener and says so.
+
+To watch the server from another machine, give it a token of its own and move
+the listener:
+
+```bash
+ODS_STATUS_HOST=0.0.0.0 ODS_STATUS_TOKEN=$(openssl rand -hex 32) npm start
+curl -s -H "X-Status-Token: $TOKEN" http://192.168.1.10:8082/status
+```
+
+With a token set, `/status`, `/players`, `/metrics` and the detail of `/healthz` require it
+(`X-Status-Token`, or `Authorization: Bearer`). `/livez` and the bare verdict of
+`/healthz` — the status code and `{"status":"ok"}` — do not, so a supervisor
+that can only read a code still works, without being told a path or a database
+address. The token is read-only: nothing on this listener changes anything. It
+must not be the internal token, which acts for every account, and it crosses
+the network in cleartext like everything else here, so the same advice applies
+— a trusted network or a tunnel. `ODS_ALLOW_REMOTE_STATUS=1` allows a
+non-loopback bind with no token at all, for a network that does the
+restricting itself.
+
+As a container health check:
+
+```bash
+podman run ... \
+  --health-cmd 'wget -q -O /dev/null http://127.0.0.1:8082/healthz' \
+  --health-interval 10s --health-retries 3 ...
+```
+
+One caveat: a server running as root can write to anything, so the storage
+check cannot notice a read-only data directory for it.
+
+Every log line starts with a full UTC timestamp, and the first line names the
+version and commit that is running.
 
 ## Backups
 

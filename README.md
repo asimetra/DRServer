@@ -72,6 +72,7 @@ Default local services:
 |---|---|
 | HTTP compatibility service | `127.0.0.1:8080` |
 | Game socket | `127.0.0.1:7198` |
+| Health and status | `127.0.0.1:8082` (`/healthz`, `/status`, `/players`) |
 | Account storage | ignored `data/` directory |
 | Compatibility resources | ignored `local-data/Resources/` |
 
