@@ -248,7 +248,7 @@ The server answers questions about itself on a listener of its own,
 
 ```bash
 curl -s http://127.0.0.1:8082/healthz
-# {"status":"ok","checks":{"web":"ok","socket":"ok","storage":"ok","workers":"ok","running":"ok"}}
+# {"status":"ok","checks":{"web":"ok","socket":"ok","storage":"ok","saves":"ok","workers":"ok","running":"ok"}}
 ```
 
 ### Checks
@@ -256,9 +256,9 @@ curl -s http://127.0.0.1:8082/healthz
 A check failing means players cannot play, and turns `/healthz` into a 503:
 both player-facing listeners are accepting connections; the storage can be
 written and this server still holds its lock on it (for PostgreSQL, the
-database answers a query); at least one match worker is up when workers are
-enabled; and the server is not shutting down. A failing check carries its
-reason:
+database answers a query); no dungeon save is waiting to reach storage; at
+least one match worker is up when workers are enabled; and the server is not
+shutting down. A failing check carries its reason:
 
 ```json
 {"status":"failing","checks":{"web":"ok","socket":"ok","storage":"the database does not answer: connect ECONNREFUSED 127.0.0.1:5432","workers":"ok","running":"ok"}}
@@ -312,14 +312,36 @@ counted. A monitor that wants a rate subtracts two readings.
 | `http_rate_limited` | Requests dropped by the per-address rate limit |
 | `http_errors` | Requests that ended in the server's own failure |
 | `packets_failed` | Game packets whose handler threw |
-| `saves_failed` | Dungeon saves that did not reach storage |
+| `saves_failed` | Attempts to write a dungeon save that storage refused, retries included |
 | `timer_failures` | Gameplay timers that threw |
 | `unhandled_rejections` | Promise rejections nothing handled |
 | `database_connections_lost` | PostgreSQL connections closed from the other end |
 | `worker_restarts` | Match workers replaced after a crash or a hang |
 
-A rising `saves_failed` is the one to act on first: it is progress players
-were shown and did not keep.
+A rising `saves_failed` is the one to act on first: storage is refusing
+writes, and progress is being kept in memory until it stops.
+
+### When storage refuses a save
+
+A full disk, a database that is away: the save a dungeon makes fails. The
+server does not drop it. The account stays in memory as the one in play, so
+nothing reads a stale copy, and the save is tried again after one second, then
+two, five, ten, and every thirty from then on, until it lands. Players already
+in a dungeon keep playing and are not told anything, because nothing they have
+is at risk while the server stays up.
+
+Meanwhile nobody new is let into a dungeon — the client is told the game cannot
+be entered — `/healthz` fails its `saves` check with the number of accounts
+waiting, and the log says so once per account:
+
+```text
+ERROR account 1000000005: dungeon save failed (ENOSPC: no space left on device); the account stays in memory and the save is retried
+INFO  account 1000000005: dungeon save landed after 3 retries
+```
+
+What cannot be kept is a server stopped while storage is still refusing: each
+waiting save gets one last attempt, and one that fails is reported as lost.
+Fix the storage before restarting the server, not after.
 
 ### Graphs, history and alerts
 
