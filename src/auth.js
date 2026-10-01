@@ -42,11 +42,27 @@ const generationsState = {
   checkedAt: 0,
   stamp: "",
   values: {},
+  /** Why the last read failed, for as long as it is the last read. */
+  unreadable: null,
 };
 
 const generationsFile = () => path.join(config.dataDir, "token-generations.json");
 
-/** Reloads external revocations at most once per five seconds. */
+/**
+ * Reloads external revocations at most once per five seconds.
+ *
+ * Two ways this used to forgive a token it should not have.
+ *
+ * A record that would not parse was refused once: the time of the attempt was
+ * noted before the read, so the failed read counted as fresh, and every check
+ * for the rest of the window went ahead on whatever was in memory — nothing,
+ * for a server that had just started. So the failure is remembered and
+ * rethrown until a read succeeds.
+ *
+ * And a record that had gone missing read as no revocations at all. A server
+ * that has loaded it knows better than that, and keeps what it loaded; only a
+ * server that never had one starts from none.
+ */
 const refreshGenerations = (force = false) => {
   const file = generationsFile();
   if (generationsState.file !== file) {
@@ -54,37 +70,83 @@ const refreshGenerations = (force = false) => {
     generationsState.checkedAt = 0;
     generationsState.stamp = "";
     generationsState.values = {};
+    generationsState.unreadable = null;
   }
 
   const now = Date.now();
-  if (!force && now - generationsState.checkedAt < 5000) return;
-  generationsState.checkedAt = now;
-
-  let stat;
-  try {
-    stat = fs.statSync(file);
-  } catch (problem) {
-    if (problem.code !== "ENOENT") throw problem;
-    generationsState.stamp = "";
-    generationsState.values = {};
+  if (!force && now - generationsState.checkedAt < 5000) {
+    if (generationsState.unreadable) throw generationsState.unreadable;
     return;
   }
+  generationsState.checkedAt = now;
 
-  const stamp = `${stat.mtimeMs}:${stat.size}`;
-  if (!force && stamp === generationsState.stamp) return;
-
-  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("token generation store must be a JSON object");
-  }
-  const values = {};
-  for (const [accountId, generation] of Object.entries(parsed)) {
-    if (/^[1-9]\d*$/.test(accountId) && Number.isSafeInteger(generation) && generation >= 0) {
-      values[accountId] = generation;
+  try {
+    let stat;
+    try {
+      stat = fs.statSync(file);
+    } catch (problem) {
+      if (problem.code !== "ENOENT") throw problem;
+      generationsState.unreadable = null;
+      return;
     }
+
+    const stamp = `${stat.mtimeMs}:${stat.size}`;
+    if (!force && stamp === generationsState.stamp && !generationsState.unreadable) return;
+
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("token generation store must be a JSON object");
+    }
+    const values = {};
+    for (const [accountId, generation] of Object.entries(parsed)) {
+      if (/^[1-9]\d*$/.test(accountId) && Number.isSafeInteger(generation) && generation >= 0) {
+        values[accountId] = generation;
+      }
+    }
+    generationsState.values = values;
+    generationsState.stamp = stamp;
+    generationsState.unreadable = null;
+  } catch (problem) {
+    generationsState.unreadable = problem;
+    throw problem;
   }
-  generationsState.values = values;
-  generationsState.stamp = stamp;
+};
+
+/**
+ * Replaces a small private file so that it is either the old one or the new
+ * one, and on disk before anybody is told it is.
+ *
+ * Synced, then renamed, then the directory synced. Without the syncs a power
+ * cut just after a revocation — or just after the signing secret was first
+ * written — could leave an empty file where it was, which reads as "revoke
+ * nobody" or "make a new secret", and signs every player out.
+ */
+export const writeDurably = (file, contents) => {
+  const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(descriptor, contents);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporary, file);
+  } catch (problem) {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    fs.rmSync(temporary, { force: true });
+    throw problem;
+  }
+  if (process.platform !== "win32") fs.chmodSync(file, 0o600);
+  let directory = null;
+  try {
+    directory = fs.openSync(path.dirname(file), "r");
+    fs.fsyncSync(directory);
+  } catch (problem) {
+    // Not every filesystem can sync a directory; the file itself is synced.
+    if (!["EINVAL", "ENOTSUP", "EBADF", "EISDIR", "EPERM", "EACCES"].includes(problem.code)) throw problem;
+  } finally {
+    if (directory !== null) fs.closeSync(directory);
+  }
 };
 
 const generationFor = (accountId) => {
@@ -126,12 +188,7 @@ export const revokeAccountTokens = (accountId) => {
 
   const file = generationsFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(generationsState.values, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  fs.renameSync(temporary, file);
-  if (process.platform !== "win32") fs.chmodSync(file, 0o600);
+  writeDurably(file, `${JSON.stringify(generationsState.values, null, 2)}\n`);
   const stat = fs.statSync(file);
   generationsState.file = file;
   generationsState.checkedAt = Date.now();
