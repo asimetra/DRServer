@@ -1,5 +1,5 @@
 import { config, publicBaseUrl } from "./config.js";
-import { loadAccount } from "./accounts.js";
+import { AccountLeasedError, loadAccount, saveAccount, withAccountLock } from "./accounts.js";
 import { dispatch } from "./rpc.js";
 import { info, warn } from "./log.js";
 import { serveContent } from "./content.js";
@@ -96,6 +96,49 @@ const serviceDiscovery = () =>
 /** GET /game-status — how busy each dungeon is, for the world map (game-status.js). */
 const gameStatus = async () => json(await gameStatusFor());
 
+/** Midnight UTC today, which is all of a login the official keeps. */
+const today = () => {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  ).toISOString();
+};
+
+/**
+ * The account, with `last_login` moved to today if this is the day's first
+ * launch.
+ *
+ * Nothing in the client reads the field, which is how it came to be written at
+ * creation and never again. The official moves it to the current date, and it
+ * is what whoever looks after a server reaches for to tell an account that left
+ * months ago from one that was on last night.
+ *
+ * By the day, as the official's is, so a launch is a write once and a read
+ * every other time. The write takes the account's lock like any other change —
+ * a launch that lands while a purchase is settling must not save a copy read
+ * from before it. An account in a dungeon on a match worker cannot be locked
+ * from here; it is plainly in use, so it is answered as it stands and stamped
+ * by its next launch.
+ */
+const accountAtLaunch = async (accountId) => {
+  const stamp = today();
+  const account = await loadAccount(accountId);
+  if (account.last_login === stamp) return account;
+  try {
+    return await withAccountLock(accountId, async () => {
+      const current = await loadAccount(accountId);
+      if (current.last_login !== stamp) {
+        current.last_login = stamp;
+        await saveAccount(current);
+      }
+      return current;
+    });
+  } catch (problem) {
+    if (!(problem instanceof AccountLeasedError)) throw problem;
+    return account;
+  }
+};
+
 /**
  * GET /api/dbAccountInfo/accountdetails
  * Headers: X-Account-Id, X-Validation-Token.
@@ -110,7 +153,7 @@ const accountDetails = async (req) => {
   if (accountId === null) {
     return json({ error: "missing or invalid X-Account-Id" }, 400);
   }
-  const account = await loadAccount(accountId);
+  const account = await accountAtLaunch(accountId);
   info(`api: served account details for ${accountId}`);
   /*
    * The market is this server's, not the client's. `market_listings` is a child
