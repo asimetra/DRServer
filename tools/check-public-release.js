@@ -49,16 +49,29 @@ const forbiddenExtensions = new Set([
 const forbiddenPrefixes = [
   "game-data/Resources/",
 ];
+/**
+ * Where the game may be named.
+ *
+ * The README has to say which game this server is compatible with, or nobody
+ * arriving at the repository can tell what it is for. That is one sentence in
+ * one file, and it is the only exception: source, tools and every other
+ * document keep to the server's own name. The README is still read for
+ * everything else — a token or a local path pasted into it fails like anywhere.
+ */
+const namesTheGame = new Set(["README.md"]);
+
 const forbiddenText = [
   {
     pattern: new RegExp(legacyProduct, "gi"),
     label: "legacy product name",
     history: ["--extended-regexp", "-G", insensitiveEre(legacyProduct)],
+    allowedIn: namesTheGame,
   },
   {
     pattern: new RegExp(legacyRepository, "gi"),
     label: "legacy repository name",
     history: ["--extended-regexp", "-G", insensitiveEre(legacyRepository)],
+    allowedIn: namesTheGame,
   },
   {
     pattern: new RegExp(privateWorktree, "g"),
@@ -130,6 +143,7 @@ for (const file of files) {
   if (data.includes(0)) continue;
   const text = data.toString("utf8");
   for (const rule of forbiddenText) {
+    if (rule.allowedIn?.has(file.relative)) continue;
     rule.pattern.lastIndex = 0;
     if (rule.pattern.test(text)) failures.push(`${file.relative}: contains ${rule.label}`);
   }
@@ -180,6 +194,7 @@ const historyText = async () => {
       { cwd: root, maxBuffer: 256 * 1024 * 1024 }
     );
     for (const recordedPath of stdout.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      if (rule.allowedIn?.has(recordedPath)) continue;
       const labels = found.get(recordedPath) ?? new Set();
       labels.add(rule.label);
       found.set(recordedPath, labels);
