@@ -4,7 +4,7 @@ import { tokenProblem } from "../auth.js";
 import { error, info, singleLine, truncate, unimplemented, warn } from "../log.js";
 import { CLID, DC_HASH, OP, opcodeName } from "./opcodes.js";
 import { MalformedPacketError, PacketReader, drainFrames } from "./packet.js";
-import { closeSessionCapture, recordReceived, recordSent } from "./capture.js";
+import { closeSessionCapture, recordReceived, recordSent, withoutCredentials } from "./capture.js";
 import { heartbeat, logoutResponse, matchMakerGenerate } from "./objects.js";
 import * as matchMaker from "./matchmaker.js";
 import { matchExecutor } from "./match-runtime.js";
@@ -259,7 +259,7 @@ const handlePacket = (session, body) => {
       if (!noteViolation(session, RULE.unknownOpcode, `${opcodeName(opcode)}`)) return undefined;
       return unimplemented(
         `socket ${opcodeName(opcode)}`,
-        `${body.length} bytes ${truncate(body.toString("hex"))}`
+        `${body.length} bytes ${truncate(withoutCredentials(body).toString("hex"))}`
       );
   }
 };
@@ -504,7 +504,7 @@ export const onConnection = (socket) => {
           }
           error(
             `${describe(session)} failed handling packet ` +
-              `${truncate(body.toString("hex"))}: ${err.stack ?? err}`
+              `${truncate(withoutCredentials(body).toString("hex"))}: ${err.stack ?? err}`
           );
         }
         if (session.terminationRequested) {

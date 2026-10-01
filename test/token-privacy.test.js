@@ -125,3 +125,34 @@ test("the gate still answers yes or no", () => {
   assert.equal(verifyToken(1000, token, { secret: SECRET }), true);
   assert.equal(verifyToken(1001, token, { secret: SECRET }), false);
 });
+
+/**
+ * The same token goes over the game socket once, in the login frame, and the
+ * socket's failure path printed the frame as hex. The redaction above reads
+ * text: a token spelled in hex digits went through it untouched, and decoding
+ * the line gave it back whole.
+ */
+test("a login frame printed as hex does not carry the token either", async () => {
+  const { withoutCredentials } = await import("../src/socket/capture.js");
+  const { OP } = await import("../src/socket/opcodes.js");
+  const token = issueToken(1000, { secret: SECRET });
+
+  const frame = Buffer.alloc(4 + token.length + 8);
+  frame.writeUInt16LE(OP.CLIENT_LOGIN_DUNGEONBUSTER, 0);
+  frame.writeUInt16LE(token.length, 2);
+  frame.write(token, 4, "latin1");
+
+  assert.ok(Buffer.from(frame.toString("hex"), "hex").includes(token), "the hex alone gives it back");
+  const logged = truncate(withoutCredentials(frame).toString("hex"));
+  assert.equal(Buffer.from(logged, "hex").includes(token.split(":")[1]), false);
+});
+
+test("the game socket never prints a frame it has not masked", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/socket/index.js", import.meta.url), "utf8");
+  const printed = [...source.matchAll(/(.{0,24})\.toString\("hex"\)/g)].map(([, before]) => before);
+  assert.ok(printed.length >= 2, "the two places a frame is printed are still there");
+  for (const before of printed) {
+    assert.ok(before.endsWith("withoutCredentials(body)"), `printed unmasked: ${before}`);
+  }
+});
