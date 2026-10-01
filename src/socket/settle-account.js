@@ -1,8 +1,7 @@
 import { matchHost } from "./match-host.js";
 import { reconcileConsumables } from "../consumables.js";
 import { warn } from "../log.js";
-import { trackRunSave } from "./run-saves.js";
-import { count } from "../metrics.js";
+import { followRunSave } from "./run-saves.js";
 
 /**
  * Writes the run down, once.
@@ -75,18 +74,20 @@ export const settleDungeonAccount = (session) => {
   const persist = session.persistDungeonAccount ?? matchHost().saveAccount;
   const save = queued ? () => queued(session) : () => persist(account);
 
-  const pending = (session.rewardSavePromise ?? Promise.resolve())
+  const attempt = (session.rewardSavePromise ?? Promise.resolve())
     .catch(() => undefined)
     .then(() => reconcileConsumables(account, avatar))
-    .then(save)
-    .catch((problem) => {
-      count("saves_failed");
-      warn(`[${session.id}] powerup reconcile failed: ${problem.message}`);
-    });
+    .then(save);
+  // Followed to the end, because the teardown that comes next deletes the field
+  // below: a settle storage refuses is tried again, and the account is not let
+  // go until it is written. See run-saves.js.
+  followRunSave(account.id, attempt, save);
+  const pending = attempt.catch((problem) =>
+    warn(`[${session.id}] powerup reconcile failed: ${problem.message}`)
+  );
 
   // Becomes the save in flight, so anything that still queues one orders behind
-  // it rather than racing it — and so a caller that wants to wait can. Tracked
-  // as well, because the teardown that follows deletes this field.
+  // it rather than racing it — and so a caller that wants to wait can.
   session.rewardSavePromise = pending;
-  return trackRunSave(pending);
+  return pending;
 };

@@ -35,6 +35,7 @@ import {
 import { EntryRefusedError, admitEntry, checkDestination } from "./match-entry.js";
 import { matchExecutor } from "./match-runtime.js";
 import { dungeonMatches } from "./matches.js";
+import { runSavesFailing } from "./run-saves.js";
 
 const controllers = new WeakMap();
 
@@ -112,6 +113,21 @@ export class SessionTransitions {
       warn(
         `[${this.connection.id}] refusing dungeon entry while ${this.phase}` +
           (this.current ? ` (${this.current.kind})` : "")
+      );
+      this.answer(ENTRY_ERROR.GAME_NOT_ENTERABLE);
+      return null;
+    }
+    /**
+     * Not while storage is refusing saves. Whoever is already in a dungeon is
+     * kept — their account stays in memory until it can be written — but a run
+     * started now would be played on the same hope, so it is not started. Only
+     * here: a door is somebody mid-run, and refusing that strands them.
+     */
+    const unsaved = runSavesFailing();
+    if (unsaved) {
+      warn(
+        `[${this.connection.id}] refusing dungeon entry: ${unsaved} account(s) have a dungeon save ` +
+          "that has not reached storage"
       );
       this.answer(ENTRY_ERROR.GAME_NOT_ENTERABLE);
       return null;

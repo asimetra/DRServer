@@ -44,6 +44,7 @@ import { Worker } from "node:worker_threads";
 
 import { error, info, warn } from "../log.js";
 import { absorb, count } from "../metrics.js";
+import { noteUnsavedElsewhere } from "./run-saves.js";
 import {
   AccountLeasedError,
   installAccountOwnership,
@@ -330,6 +331,8 @@ export class MatchWorkerPool {
    * the others.
    */
   replace(worker) {
+    // Whatever it was still trying to save went with it.
+    noteUnsavedElsewhere(worker.index, 0);
     if (!this.everReady) return;
     count("worker_restarts");
     const failures = worker.started ? 0 : this.startFailures[worker.index] + 1;
@@ -485,6 +488,9 @@ export class MatchWorkerPool {
       case "count":
         // What that worker's dungeons counted, added to the server's totals.
         return absorb(message.counts);
+      case "unsaved":
+        // How many accounts that worker is still trying to write down.
+        return noteUnsavedElsewhere(worker.index, Number(message.count) || 0);
       default:
         return warn(`match worker ${worker.index}: unknown message ${message?.t}`);
     }

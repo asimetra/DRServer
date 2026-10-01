@@ -230,6 +230,7 @@ test("a running server reports itself well, and says so differently when it is n
     web: "ok",
     socket: "ok",
     storage: "ok",
+    saves: "ok",
     workers: "ok",
     running: "ok",
   });

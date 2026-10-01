@@ -135,6 +135,7 @@ import { envFlag, envSetting } from "../env.js";
 import { info, warn } from "../log.js";
 import { cancelDungeonSummary, removeHeroFromFloor } from "./summary.js";
 import { settleDungeonAccount } from "./settle-account.js";
+import { hasRunSaves, whenRunSaved } from "./run-saves.js";
 import { spawnNpcRewards, spawnBossReward } from "./drops.js";
 import { clearDungeonBuffs, grantBuff } from "./buffs.js";
 import { clearDungeonPowerups, scheduleTimelineDoobers } from "./powerups.js";
@@ -3490,14 +3491,25 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   session.doobers?.clear();
 
   /**
-   * Let go of the shared account before the reference to it goes.
+   * Let go of the shared account — once it is written down.
    *
-   * Released here rather than when the socket closes because this is where the
-   * session stops being one of the people playing it: from now on it changes
-   * nothing, so the next JSON-RPC should read storage again rather than a copy
-   * this run happened to leave behind.
+   * Released for this session rather than when the socket closes, because this
+   * is where the session stops being one of the people playing it: from now on
+   * it changes nothing, so the next JSON-RPC should read storage again rather
+   * than a copy this run happened to leave behind.
+   *
+   * But not before storage has what the run changed. Let go at once, with the
+   * settle above still on its way, a request arriving in between read the
+   * account as storage had it — a second copy, and then one of the two
+   * overwrote the other. And a save storage refused left nothing behind at all.
+   * While the account is held, that request gets this very object instead.
    */
-  if (session.dungeonAccount) matchHost().releaseAccount(session.dungeonAccount.id);
+  if (session.dungeonAccount) {
+    const accountId = session.dungeonAccount.id;
+    const host = matchHost();
+    if (hasRunSaves(accountId)) void whenRunSaved(accountId).then(() => host.releaseAccount(accountId));
+    else host.releaseAccount(accountId);
+  }
 
   for (const key of [
     "areaDoid",

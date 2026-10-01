@@ -22,6 +22,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { config } from "../config.js";
 import { error, info, warn } from "../log.js";
 import { count } from "../metrics.js";
+import { finishRunSaves } from "./run-saves.js";
 import {
   accountWritesSettled,
   closeAccountStorage,
@@ -834,6 +835,11 @@ const drain = async () => {
   // its own leave still has a save to queue, and storage must outlast it.
   await Promise.allSettled(everyone.map((member) => member.gone.promise));
   await Promise.allSettled(everyone.map((member) => member.entry));
+  // Before the leases: a save storage refused gets its last attempt here, and
+  // the account it belongs to is only handed back after it.
+  await finishRunSaves();
+  // A turn, so that the releases waiting on those saves have been asked for.
+  await new Promise((resolve) => setImmediate(resolve));
   while (releasing.size) await Promise.allSettled([...releasing.values()]);
   await waitForAccountWrites();
   await closeAccountStorage();

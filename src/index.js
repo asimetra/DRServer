@@ -31,7 +31,7 @@ import {
   closeMatchWorkers,
   startMatchWorkers,
 } from "./socket/match-worker-service.js";
-import { waitForRunSaves } from "./socket/run-saves.js";
+import { finishRunSaves, runSavesFailing } from "./socket/run-saves.js";
 import { describeBuild } from "./build-info.js";
 import { createHealthWatch, eventLoopDelay, start as startStatus } from "./status.js";
 import { presenceEntries, presenceSummary } from "./socket/presence.js";
@@ -143,7 +143,9 @@ try {
 const waitForPersistentWrites = async () => {
   // First, because a dungeon save still chained behind another has not reached
   // the account store yet and would not be seen by the wait below.
-  await waitForRunSaves();
+  // Including the ones storage refused: each gets a last attempt now, rather
+  // than being left asleep in its backoff while the process ends.
+  await finishRunSaves();
   await waitForRunRecords();
   const [, declarationsFlushed] = await Promise.all([
     waitForAccountWrites(),
@@ -166,6 +168,14 @@ const probes = {
   web: () => (webListener?.listening ? null : "the web service is not accepting connections"),
   socket: () => (socketListener?.listening ? null : "the game socket is not accepting connections"),
   storage: storageProblem,
+  // What a probe of the storage can miss — a full disk still passes an access
+  // check — and what matters most: progress waiting in memory to be written.
+  saves: () => {
+    const unsaved = runSavesFailing();
+    return unsaved
+      ? `${unsaved} account(s) have a dungeon save that has not reached storage; retrying`
+      : null;
+  },
   workers: () => {
     const slots = workerSlots();
     return slots && !slots.some((slot) => slot.alive) ? "no match worker is running" : null;
