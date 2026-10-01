@@ -352,7 +352,22 @@ export const readyContentPacks = async ({ file = config.contentPacksFile, quiet 
     warn(`content packs: could not read ${file} — ${problem.message}; serving the game's own content only`);
     return installContentPacks(EMPTY);
   }
-  const built = buildRegistry(await loadGameMaster(), packsConfig);
+  /**
+   * Without the rules there is nothing to check a pack against — and nothing a
+   * client could be sent either, since no account loads without them. That is
+   * already said at startup (see preflight.js), so it is not said again by
+   * failing the start from here.
+   */
+  let gameMaster;
+  try {
+    gameMaster = await loadGameMaster();
+  } catch (problem) {
+    if (!quiet) {
+      warn(`content packs: the GameMaster could not be read — ${problem.message}; no packs are in effect`);
+    }
+    return installContentPacks(EMPTY);
+  }
+  const built = buildRegistry(gameMaster, packsConfig);
   if (!quiet) {
     for (const problem of built.problems) warn(`content packs: ${problem}`);
     if (built.packs.size) {

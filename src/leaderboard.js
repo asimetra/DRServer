@@ -303,10 +303,30 @@ const purgeLegacyExperienceBoardUnlocked = async () => {
   }
 };
 
+/**
+ * Startup upkeep of the boards, which may fail without the server failing.
+ *
+ * Both steps below run on every boot, before the listeners open, and both read
+ * things an operator can break without meaning to: a board file edited by hand,
+ * one account's JSON left with a trailing comma, compatibility data not yet
+ * imported. Thrown from the entry point, any of those kept every player out
+ * over a table of high scores. The header's rule holds here too — a
+ * leaderboard is not worth failing a run over, and still less a start.
+ */
+const boardUpkeep = async (what, work) => {
+  try {
+    await work();
+  } catch (problem) {
+    warn(`leaderboard: ${what} skipped at startup: ${problem.message}`);
+  }
+};
+
 export const purgeLegacyExperienceBoard = () =>
-  usingDatabase()
-    ? purgeLegacyExperienceBoardUnlocked()
-    : withFileStoreLock(purgeLegacyExperienceBoardUnlocked);
+  boardUpkeep("legacy board cleanup", () =>
+    usingDatabase()
+      ? purgeLegacyExperienceBoardUnlocked()
+      : withFileStoreLock(purgeLegacyExperienceBoardUnlocked)
+  );
 
 /**
  * Seeds the player-scoped boards from the accounts themselves.
@@ -348,7 +368,15 @@ const seedStandingsUnlocked = async () => {
   };
 
   for (const id of await listAccountIds()) {
-    const account = await loadAccount(id);
+    let account;
+    try {
+      account = await loadAccount(id);
+    } catch (problem) {
+      // One account that cannot be read is that account's problem, reported
+      // where it is read; everybody else still gets their standing.
+      warn(`leaderboard: account ${id} left out of the seed: ${problem.message}`);
+      continue;
+    }
     const name = account.name ?? null;
     const at = new Date().toISOString();
     const best = (account.account_avatars ?? []).reduce(
@@ -384,7 +412,9 @@ const seedStandingsUnlocked = async () => {
 };
 
 export const seedStandings = () =>
-  usingDatabase() ? seedStandingsUnlocked() : withFileStoreLock(seedStandingsUnlocked);
+  boardUpkeep("seeding standings from the accounts", () =>
+    usingDatabase() ? seedStandingsUnlocked() : withFileStoreLock(seedStandingsUnlocked)
+  );
 
 /**
  * Records finished runs and folds them into the boards.
@@ -392,7 +422,26 @@ export const seedStandings = () =>
  * Takes a list because a party finishes together, and one write for four
  * players is one write.
  */
-export const recordRuns = async (runs) => {
+/**
+ * Run records still being written. A run is recorded without anybody waiting
+ * for it — see summary.js — so shutdown asks here instead, or the last run of
+ * the evening is cut off between the history and the boards.
+ */
+const recording = new Set();
+
+export const waitForRunRecords = async () => {
+  while (recording.size) await Promise.allSettled([...recording]);
+};
+
+export const recordRuns = (runs) => {
+  const pending = recordRunsNow(runs);
+  recording.add(pending);
+  const forget = () => recording.delete(pending);
+  pending.then(forget, forget);
+  return pending;
+};
+
+const recordRunsNow = async (runs) => {
   const rankableRuns = runs.filter((run) => run && run.rankable !== false);
   if (!rankableRuns.length) return 0;
 

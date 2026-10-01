@@ -254,6 +254,35 @@ test("the boards are seeded from the accounts themselves", async () => {
 });
 
 /**
+ * The seed runs before the listeners open and loads every account. One file an
+ * operator edited by hand and left a comma in used to end the start there, for
+ * everybody, over a table of high scores.
+ */
+test("one unreadable account does not stop the seed, or the start it runs in", async () => {
+  const { createNewAccount, loadAccount, saveAccount } = await import("../src/accounts.js");
+  const { seedStandings } = await import("../src/leaderboard.js");
+
+  const sound = await createNewAccount({});
+  const account = await loadAccount(sound.id);
+  account.account_avatars[0].experience = 123_456;
+  await saveAccount(account);
+
+  // Sorts ahead of every real id, so the seed meets it first.
+  const broken = path.join(scratch, "7.json");
+  fs.writeFileSync(broken, '{"id": 7, "name": "Hand-edited",}');
+  try {
+    await seedStandings();
+  } finally {
+    for (const name of fs.readdirSync(scratch)) {
+      if (name.startsWith("7.json")) fs.rmSync(path.join(scratch, name));
+    }
+  }
+
+  const seeded = (await boardFor("hero_experience", {})).find((e) => e.account_id === sound.id);
+  assert.equal(seeded?.value, 123_456, "everybody else still got their standing");
+});
+
+/**
  * The history is kept whole even though nothing draws a board from it — the
  * boards are bounded and the history is what a later question is answered from.
  */

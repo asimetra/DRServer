@@ -2,11 +2,11 @@
  * Says at startup what would otherwise be found out by a player.
  *
  * The server binds its ports and reports itself healthy with no compatibility
- * data at all, because nothing reads that data until somebody enters a floor.
- * So a fresh install looks like it worked, and the first thing that goes wrong
- * goes wrong for a person who is already playing — an `ENOENT` in the log, a
- * client stuck on a loading screen, and nothing connecting the two to the
- * install step that was skipped.
+ * data at all, because nothing reads that data until somebody logs in or
+ * enters a floor. So a fresh install looks like it worked, and the first thing
+ * that goes wrong goes wrong for a person who is already playing — an `ENOENT`
+ * in the log, a client stuck on a loading screen, and nothing connecting the
+ * two to the install step that was skipped.
  *
  * This does not refuse to start. Running the web services alone is a legitimate
  * thing to do, and a server that will not boot is a worse failure than one that
@@ -23,10 +23,35 @@ import { fileURLToPath } from "node:url";
 
 import { config } from "./config.js";
 import { info, warn } from "./log.js";
-import { generateSecret } from "./auth.js";
+import { generateSecret, writeDurably } from "./auth.js";
+import { unreadEnvSettings } from "./env-file.js";
 
 const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestFile = path.join(serverRoot, "game-data", "manifest.json");
+
+/**
+ * A start this server declines, for a reason the operator can act on.
+ *
+ * Its own class so the entry point can tell the two kinds of failed start
+ * apart: this one is a sentence about a setting and is printed as one, where
+ * anything else is a fault in the server and keeps its stack.
+ */
+export class StartupRefusal extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StartupRefusal";
+  }
+}
+
+/**
+ * The two files src/gamemaster.js reads, which every account load goes through.
+ *
+ * Floors are only missed by whoever enters one. These are missed by everybody:
+ * loading an account runs its repairs against the rules, so without them the
+ * server answers service discovery and then fails every login. The warning has
+ * to say which of the two situations this is.
+ */
+const RULES_TABLE = /(?:DB_GameMaster|AttackTimeline)\.json$/;
 
 /** Where the manifest's `Resources/...` source path lands locally. */
 const localPathFor = (entry) =>
@@ -53,7 +78,11 @@ export const checkCompatibilityData = () => {
   warn(`  looked in ${config.resourcesDir}`);
   for (const entry of missing.slice(0, 3)) warn(`  missing ${entry.source}`);
   if (missing.length > 3) warn(`  ...and ${missing.length - 3} more`);
-  warn("  dungeons will fail to load until this is imported from your own client:");
+  warn(
+    missing.some((entry) => RULES_TABLE.test(String(entry.source)))
+      ? "  nobody can log in or enter a dungeon until this is imported from your own client:"
+      : "  dungeons will fail to load until this is imported from your own client:"
+  );
   warn("  npm run sync:data -- --source /path/to/your/client");
 
   return { required: entries.length, missing: missing.length };
@@ -92,6 +121,31 @@ export const reportContentOverride = () => {
   return true;
 };
 
+/**
+ * A `.env` beside package.json that this process was started without.
+ *
+ * Only `npm start` reads it — the flag is in that script. `node src/index.js`,
+ * which is what a service file tends to say, comes up on the defaults: file
+ * storage, loopback, no internal API, whatever the `.env` beside it asks for.
+ * It starts cleanly, and the operator goes on believing the file. The server
+ * does not read it for them — a test that imported the entry point would then
+ * run against the developer's own database — but it can say that it has not.
+ */
+export const reportUnreadEnvFile = (file = path.join(serverRoot, ".env"), environment = process.env) => {
+  let unread;
+  try {
+    unread = unreadEnvSettings(file, environment);
+  } catch (problem) {
+    warn(`${file} could not be read: ${problem.message}`);
+    return true;
+  }
+  if (!unread.length) return false;
+  const named = unread.slice(0, 3).join(", ") + (unread.length > 3 ? `, and ${unread.length - 3} more` : "");
+  warn(`${file} was not loaded: ${named} ${unread.length === 1 ? "is" : "are"} not set in this process`);
+  warn("  start with `npm start`, or pass the file yourself: node --env-file=.env src/index.js");
+  return true;
+};
+
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 /**
@@ -108,7 +162,7 @@ export const ensureSafeTransport = () => {
     );
     return false;
   }
-  throw new Error(
+  throw new StartupRefusal(
     `refusing cleartext remote bind on ${config.host}; bind to loopback behind a VPN/tunnel, ` +
       "or set ODS_ALLOW_INSECURE_REMOTE=1 to acknowledge the risk"
   );
@@ -124,7 +178,7 @@ export const ensureSafeTransport = () => {
  * read back afterwards. `ODS_TOKEN_SECRET` overrides it and is the right answer
  * for more than one machine.
  */
-export const ensureTokenSecret = () => {
+export const ensureTokenSecret = ({ create = true } = {}) => {
   if (config.tokenSecret) {
     warnIfWeakSecret(config.tokenSecret, "configured token secret");
     return config.tokenSecret;
@@ -150,10 +204,14 @@ export const ensureTokenSecret = () => {
     return config.tokenSecret;
   }
 
+  // A tool asks without `create`: it reads the server's secret or has none.
+  // One it made itself, in a directory the server is not using, signs tokens
+  // that look right and are refused.
+  if (!create) return "";
+
   fs.mkdirSync(config.dataDir, { recursive: true });
   config.tokenSecret = generateSecret();
-  fs.writeFileSync(file, `${config.tokenSecret}\n`, { mode: 0o600 });
-  if (process.platform !== "win32") fs.chmodSync(file, 0o600);
+  writeDurably(file, `${config.tokenSecret}\n`);
   info(`auth: wrote a new signing secret to ${file}`);
   freshSecret = true;
   return config.tokenSecret;

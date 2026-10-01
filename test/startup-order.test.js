@@ -13,7 +13,7 @@ import fs from "node:fs/promises";
  */
 test("the process lock is taken before schema repair or legacy data movement", async () => {
   const entry = await fs.readFile(new URL("../src/index.js", import.meta.url), "utf8");
-  const lock = entry.indexOf("await acquireProcessLock()");
+  const lock = entry.indexOf("await acquireProcessLock(");
   const schema = entry.indexOf("await checkDatabaseSchema()");
   const move = entry.indexOf("await moveLegacyData()");
   const initialize = entry.indexOf("await initializeProcessStorage()");
@@ -33,11 +33,24 @@ test("the standalone grant allocator initializes PostgreSQL while holding the pr
 test("startup refuses to open services after an unsafe schema check", async () => {
   const entry = await fs.readFile(new URL("../src/index.js", import.meta.url), "utf8");
   const schema = entry.indexOf("if (!(await checkDatabaseSchema()))");
-  const lock = entry.indexOf("await acquireProcessLock()");
+  const lock = entry.indexOf("await acquireProcessLock(");
   const listeners = entry.indexOf("startWebServices()");
   assert.ok(lock > 0 && schema > lock && listeners > schema);
-  assert.match(entry.slice(schema, listeners), /throw new Error\(/);
-  assert.match(entry.slice(schema, listeners), /await releaseProcessLock\(\)/);
+  assert.match(entry.slice(schema, listeners), /throw new StartupRefusal\(/);
+  // The throw lands in the one handler every failed start goes through, which
+  // gives the storage back before the process ends.
+  const handler = entry.indexOf("await refuseToStart(problem)", listeners);
+  assert.ok(handler > listeners, "the listeners start inside the guarded block");
+  assert.match(entry, /const refuseToStart = async[^]*?await releaseProcessLock\?\.\(\)[^]*?process\.exit\(1\)/);
+});
+
+test("settings that refuse a start are checked before the storage is claimed", async () => {
+  const entry = await fs.readFile(new URL("../src/index.js", import.meta.url), "utf8");
+  const transport = entry.indexOf("ensureSafeTransport();");
+  const internal = entry.indexOf("internalApiProblem();");
+  const lock = entry.indexOf("await acquireProcessLock(");
+  assert.ok(transport > 0 && internal > 0 && lock > 0);
+  assert.ok(transport < lock && internal < lock, "a refusal claims and writes nothing");
 });
 
 test("graceful shutdown flushes content declarations with account writes", async () => {

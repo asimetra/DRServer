@@ -5,6 +5,18 @@ const stamp = () => new Date().toISOString().slice(11, 23);
 const LEVEL = { info: 0, warn: 1, error: 2, silent: 3 };
 const threshold = () => LEVEL[config.logLevel] ?? LEVEL.info;
 
+/**
+ * A log that cannot be written is not a reason to stop.
+ *
+ * When the terminal the server was started in goes away, or the far end of a
+ * pipe does, each write to standard output fails as an `error` event — and an
+ * `error` event nobody hears is thrown at the process. So the first line of
+ * the shutdown a hangup had just started crashed that shutdown, with nothing
+ * flushed and the storage lock left behind. The lines are lost either way;
+ * the server, and whatever it was in the middle of saving, need not be.
+ */
+process.stdout.on("error", () => {});
+
 const write = (level, message) => {
   if ((LEVEL[level.trim().toLowerCase()] ?? LEVEL.info) < threshold()) return;
   process.stdout.write(`${stamp()} ${level} ${message}\n`);
