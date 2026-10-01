@@ -234,7 +234,8 @@ const readProfile = async (req, [capture]) => {
   const refusal = authorise(req);
   if (refusal) return refusal;
 
-  const id = await accountIdNamed(decodeURIComponent(capture ?? ""), { listAccountIds, loadAccount });
+  // Already decoded by the router; decoding again made a name with a "%" in it a 500.
+  const id = await accountIdNamed(capture ?? "", { listAccountIds, loadAccount });
   if (id === null) return json({ error: "no such player" }, 404);
 
   const account = await loadAccount(id);

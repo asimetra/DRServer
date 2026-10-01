@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
 import { availableParallelism } from "node:os";
+import { isIPv6 } from "node:net";
 import { readJsonFile } from "./json-file.js";
 import { envSetting } from "./env.js";
 
@@ -95,7 +96,27 @@ export const loadServerConfig = (environment = process.env) => {
      * Advertised over service discovery. Must be reachable *by the client*, so it
      * cannot be 0.0.0.0 even when we bind to it.
      */
-    publicHost: setting(environment, "PUBLIC_HOST") ?? defaults.publicHost,
+    publicHost: unbracketed(setting(environment, "PUBLIC_HOST") || defaults.publicHost),
+
+    /**
+     * The ports and socket host clients are told, where they differ from what
+     * is bound: a router forwarding 9000 to 8080, or a tunnel that hands out a
+     * host and port of its own for each listener. Advertising only — nothing
+     * listens on these. Each defaults to its bound counterpart.
+     */
+    publicPort: asInt(
+      setting(environment, "PUBLIC_PORT"),
+      asInt(setting(environment, "PORT"), defaults.port)
+    ),
+    publicSocketHost: unbracketed(
+      setting(environment, "PUBLIC_SOCKET_HOST") ||
+        setting(environment, "PUBLIC_HOST") ||
+        defaults.publicHost
+    ),
+    publicSocketPort: asInt(
+      setting(environment, "PUBLIC_SOCKET_PORT"),
+      asInt(setting(environment, "SOCKET_PORT"), defaults.gameSocketPort)
+    ),
 
     /** Explicit acknowledgement required before cleartext ports bind remotely. */
     allowInsecureRemote:
@@ -135,6 +156,16 @@ export const loadServerConfig = (environment = process.env) => {
         setting(environment, "MAX_SOCKET_CONNECTIONS_PER_IP"),
         defaults.maxSocketConnectionsPerIp ?? 64
       )
+    ),
+    /**
+     * Requests one address may make to a listener in ten seconds; see http.js
+     * for where 320 comes from. Raise it where every player arrives from one
+     * address — a tunnel, a reverse proxy — because then they share the budget
+     * of one.
+     */
+    httpRateLimit: Math.max(
+      1,
+      asInt(setting(environment, "HTTP_RATE_LIMIT"), defaults.httpRateLimit ?? 320)
     ),
     /**
      * Which rules refuse and which only count.
@@ -231,9 +262,9 @@ export const loadServerConfig = (environment = process.env) => {
     contentBaseUrl:
       setting(environment, "CONTENT_URL") ??
       (defaultContentDir()
-        ? `http://${setting(environment, "PUBLIC_HOST") ?? defaults.publicHost}:${asInt(
-            setting(environment, "PORT"),
-            defaults.port
+        ? `http://${hostInUrl(unbracketed(setting(environment, "PUBLIC_HOST") || defaults.publicHost))}:${asInt(
+            setting(environment, "PUBLIC_PORT"),
+            asInt(setting(environment, "PORT"), defaults.port)
           )}/content`
         : ""),
 
@@ -249,10 +280,11 @@ export const loadServerConfig = (environment = process.env) => {
      * discovered later is better as a loud error than as a silent empty array.
      * `ODS_STRICT=0` turns it back on for protocol work.
      */
-    permissive:
-      setting(environment, "STRICT") === undefined
-        ? defaults.permissive
-        : setting(environment, "STRICT") !== "1",
+    // Unset or empty is the default. Empty used to count as "not 1", so a
+    // variable passed through blank switched strictness off.
+    permissive: !setting(environment, "STRICT")
+      ? defaults.permissive
+      : setting(environment, "STRICT") !== "1",
 
     /**
      * Where accounts live: "file" keeps one JSON document per account, which
@@ -260,7 +292,7 @@ export const loadServerConfig = (environment = process.env) => {
      * docker-compose.yml. File storage stays the default so the server runs on
      * a clean machine.
      */
-    storage: setting(environment, "STORAGE") ?? defaults.storage,
+    storage: setting(environment, "STORAGE") || defaults.storage,
 
     databaseUrl: setting(environment, "DATABASE_URL") ?? defaults.databaseUrl,
 
@@ -544,6 +576,127 @@ const mode = (named, legacy) => {
 /** Reported once at startup rather than thrown: a typo should not fail to boot. */
 export const invalidModes = [];
 
+/** `[2001:db8::1]` as it is often written; kept bare, and bracketed where it goes into a URL. */
+const unbracketed = (host) => {
+  const text = String(host ?? "");
+  return /^\[.*\]$/.test(text) && isIPv6(text.slice(1, -1)) ? text.slice(1, -1) : text;
+};
+
+/** An IPv6 literal goes into a URL in brackets, or its colons read as a port. */
+const hostInUrl = (host) => (isIPv6(String(host)) ? `[${host}]` : host);
+
+export const publicBaseUrlFor = (settings) =>
+  `http://${hostInUrl(settings.publicHost)}:${settings.publicPort}`;
+
+const LOOPBACK = /^(?:localhost|::1|127(?:\.\d{1,3}){3})$/i;
+const WILDCARD = new Set(["0.0.0.0", "::", "[::]"]);
+
+/** The variable as the operator spelled it, public name before legacy. */
+const spelled = (environment, name) => {
+  for (const key of [`ODS_${name}`, `DR_${name}`]) {
+    if (environment[key] !== undefined) return { key, value: String(environment[key]) };
+  }
+  return null;
+};
+
+/**
+ * What is wrong with the settings, said instead of worked around.
+ *
+ * `loadServerConfig` is forgiving on purpose — a number that will not parse
+ * becomes the default, a switch is compared with one spelling — and that keeps
+ * it total for the tests and tools that only want a config object. It is the
+ * wrong behaviour at startup. `ODS_STORAGE=postgresql` ran on files and gave
+ * every player a fresh account; `ODS_PORT=abc` listened on 8080;
+ * `ODS_STRICT=true` switched strictness *off*; and each of them started
+ * cleanly, so the operator went on believing what they had written.
+ *
+ * `refusals` stop the server. `warnings` are settings that are allowed and
+ * almost never meant.
+ */
+export const configProblems = (environment = process.env) => {
+  const refusals = [];
+  const warnings = [];
+  const settings = loadServerConfig(environment);
+
+  for (const name of ["PORT", "SOCKET_PORT", "INTERNAL_PORT", "PUBLIC_PORT", "PUBLIC_SOCKET_PORT"]) {
+    const given = spelled(environment, name);
+    // Assigned nothing is the default, as it always has been.
+    if (!given || given.value === "") continue;
+    const port = /^\d+$/.test(given.value) ? Number(given.value) : NaN;
+    if (!(port >= 1 && port <= 65535)) {
+      refusals.push(
+        `${given.key} must be a port number between 1 and 65535, not ${JSON.stringify(given.value)}`
+      );
+    }
+  }
+
+  if (settings.storage !== "file" && settings.storage !== "postgres") {
+    refusals.push(
+      `${spelled(environment, "STORAGE")?.key ?? "storage"} must be "file" or "postgres", ` +
+        `not ${JSON.stringify(settings.storage)}`
+    );
+  }
+
+  for (const name of [
+    "AUTH",
+    "MIGRATE",
+    "DUNGEON",
+    "STRICT",
+    "ALLOW_INSECURE_REMOTE",
+    "ALLOW_INSECURE_INTERNAL",
+  ]) {
+    const given = spelled(environment, name);
+    if (given && given.value !== "" && given.value !== "0" && given.value !== "1") {
+      refusals.push(`${given.key} must be 0 or 1, not ${JSON.stringify(given.value)}`);
+    }
+  }
+
+  const admins = spelled(environment, "ADMIN_ACCOUNTS");
+  if (admins && admins.value.trim()) {
+    const entries = admins.value.split(",").map((entry) => entry.trim()).filter(Boolean);
+    if (!entries.every((entry) => /^\d+$/.test(entry) && Number(entry) > 0)) {
+      refusals.push(
+        `${admins.key} must be comma-separated account ids, not ${JSON.stringify(admins.value)}`
+      );
+    }
+  }
+
+  /** An address a client can be handed, or why not. */
+  const hostProblem = (key, host) => {
+    if (WILDCARD.has(host)) {
+      return (
+        `${key} is the address clients are told to connect to, and a client cannot connect to ` +
+        `${host}; set it to this machine's address as the players reach it`
+      );
+    }
+    if (!host || (!isIPv6(host) && /[\s/:]/.test(host))) {
+      return (
+        `${key} must be a host name or address only — no scheme, port or path — ` +
+        `not ${JSON.stringify(host)}`
+      );
+    }
+    return null;
+  };
+
+  const publicHost = String(settings.publicHost ?? "");
+  const publicProblem = hostProblem(spelled(environment, "PUBLIC_HOST")?.key ?? "publicHost", publicHost);
+  const socketHost = spelled(environment, "PUBLIC_SOCKET_HOST");
+  const socketProblem =
+    socketHost && socketHost.value ? hostProblem(socketHost.key, unbracketed(socketHost.value)) : null;
+  if (socketProblem) refusals.push(socketProblem);
+  if (publicProblem) {
+    refusals.push(publicProblem);
+  } else if (!LOOPBACK.test(String(settings.host)) && LOOPBACK.test(publicHost)) {
+    warnings.push(
+      `listening on ${settings.host} but advertising ${publicHost}: a client on another machine ` +
+        "will be told to connect to itself. Set ODS_PUBLIC_HOST to this machine's address as " +
+        "the players reach it"
+    );
+  }
+
+  return { refusals, warnings };
+};
+
 export const config = loadServerConfig();
 
-export const publicBaseUrl = () => `http://${config.publicHost}:${config.port}`;
+export const publicBaseUrl = () => publicBaseUrlFor(config);

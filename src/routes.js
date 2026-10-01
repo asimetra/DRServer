@@ -86,8 +86,8 @@ const sessionForRequest = (accountId, req) => {
 const serviceDiscovery = () =>
   json({
     webServicesUrl: publicBaseUrl(),
-    gameSocketAddress: config.publicHost,
-    gameSocketPort: config.gameSocketPort,
+    gameSocketAddress: config.publicSocketHost,
+    gameSocketPort: config.publicSocketPort,
     gameSocketFallbackPort: 0,
   });
 

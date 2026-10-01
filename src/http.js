@@ -1,5 +1,5 @@
 import http from "node:http";
-import { config } from "./config.js";
+import { config, publicBaseUrl } from "./config.js";
 import { routes } from "./routes.js";
 import { error, info, truncate, unimplemented, warn } from "./log.js";
 import { isWebClientPath, serveWebClient } from "./web-client.js";
@@ -33,24 +33,30 @@ const rates = new Map();
 /** Forgets every counted address. Exists for tests. */
 export const resetRates = () => rates.clear();
 
-export const withinRate = (address, now = Date.now()) => {
-  const seen = rates.get(address);
+/**
+ * `table` and `limit` are a listener's own. One table for all of them counted
+ * the website's calls to the internal API against the players' budget whenever
+ * the two came from the same address, which behind a tunnel or on one host is
+ * always: a busy lobby reset the website's connections.
+ */
+export const withinRate = (address, now = Date.now(), { table = rates, limit = RATE_LIMIT } = {}) => {
+  const seen = table.get(address);
   if (!seen || now - seen.since >= RATE_WINDOW_MS) {
     /**
      * Swept while somebody is asking rather than on a timer, so an idle server
      * holds no work and the table cannot grow while nothing is happening.
      */
-    if (rates.size > 10_000) {
-      for (const [key, entry] of rates) {
-        if (now - entry.since >= RATE_WINDOW_MS) rates.delete(key);
+    if (table.size > 10_000) {
+      for (const [key, entry] of table) {
+        if (now - entry.since >= RATE_WINDOW_MS) table.delete(key);
       }
     }
-    rates.set(address, { since: now, count: 1 });
+    table.set(address, { since: now, count: 1 });
     return true;
   }
 
   seen.count += 1;
-  return seen.count <= RATE_LIMIT;
+  return seen.count <= limit;
 };
 
 export class BodyTooLarge extends Error {
@@ -106,6 +112,28 @@ export const readBody = (req) =>
  * contains an empty segment, so `a//../b` cannot smuggle a level up through
  * this. The file server resolves and re-checks anyway.
  */
+export class MalformedPath extends Error {
+  constructor() {
+    super("malformed path");
+  }
+}
+
+/**
+ * Percent-decoding that fails as the caller's mistake.
+ *
+ * `decodeURIComponent` throws on an escape that is not one, and a path is the
+ * one part of a request anybody can send without a token. Thrown from the
+ * router it was an unhandled failure — a 500, and a stack in the log for every
+ * request a scanner cared to make.
+ */
+const decoded = (segment) => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new MalformedPath();
+  }
+};
+
 const match = (pattern, pathname) => {
   const wanted = pattern.split("/").filter(Boolean);
   const actual = pathname.split("/").filter(Boolean);
@@ -116,14 +144,14 @@ const match = (pattern, pathname) => {
     for (let i = 0; i < fixed.length; i++) {
       if (fixed[i] !== actual[i]) return null;
     }
-    return [actual.slice(fixed.length).map(decodeURIComponent).join("/")];
+    return [actual.slice(fixed.length).map(decoded).join("/")];
   }
 
   if (wanted.length !== actual.length) return null;
 
   const captures = [];
   for (let i = 0; i < wanted.length; i++) {
-    if (wanted[i].startsWith(":")) captures.push(decodeURIComponent(actual[i]));
+    if (wanted[i].startsWith(":")) captures.push(decoded(actual[i]));
     else if (wanted[i] !== actual[i]) return null;
   }
   return captures;
@@ -143,7 +171,7 @@ const refuse = (res, status, message) => {
   res.end(JSON.stringify({ error: message }));
 };
 
-const handle = async (req, res, { routeTable, rateLimited, webClientDir = "" }) => {
+const handle = async (req, res, { routeTable, rateLimited, callers, webClientDir = "" }) => {
   const url = new URL(req.url, "http://localhost");
 
   // The browser client's files: streamed, and ahead of the budget below — see web-client.js.
@@ -158,7 +186,7 @@ const handle = async (req, res, { routeTable, rateLimited, webClientDir = "" }) 
    * for anybody who asked, including for paths that do not exist.
    */
   const address = req.socket?.remoteAddress ?? "unknown";
-  if (rateLimited && !withinRate(address)) {
+  if (rateLimited && !withinRate(address, Date.now(), callers)) {
     warn(`rate limit: ${address} on ${req.method} ${url.pathname}`);
     req.destroy();
     return;
@@ -180,7 +208,14 @@ const handle = async (req, res, { routeTable, rateLimited, webClientDir = "" }) 
 
   info(`${req.method} ${url.pathname}${body ? ` body=${truncate(body)}` : ""}`);
 
-  const found = findRoute(routeTable, req.method, url.pathname);
+  let found;
+  try {
+    found = findRoute(routeTable, req.method, url.pathname);
+  } catch (problem) {
+    if (!(problem instanceof MalformedPath)) throw problem;
+    refuse(res, 400, problem.message);
+    return;
+  }
   if (!found) {
     unimplemented(`${req.method} ${url.pathname}`, body ? `body=${truncate(body)}` : "");
     res.writeHead(404, { "Content-Type": "application/json" });
@@ -216,9 +251,18 @@ const handle = async (req, res, { routeTable, rateLimited, webClientDir = "" }) 
  * end is a single address making every call there is; measuring it against a
  * budget meant for one player would refuse it under ordinary load.
  */
-export const listen = ({ routeTable, host, port, rateLimited = true, webClientDir = "", onReady }) => {
+export const listen = ({
+  routeTable,
+  host,
+  port,
+  rateLimited = true,
+  rateLimit = config.httpRateLimit,
+  webClientDir = "",
+  onReady,
+}) => {
+  const callers = { table: new Map(), limit: rateLimit };
   const server = http.createServer((req, res) => {
-    handle(req, res, { routeTable, rateLimited, webClientDir }).catch((err) => {
+    handle(req, res, { routeTable, rateLimited, callers, webClientDir }).catch((err) => {
       error(`unhandled failure on ${req.method} ${req.url}: ${err.stack ?? err}`);
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json" });
@@ -245,9 +289,9 @@ export const start = () =>
     port: config.port,
     webClientDir: config.webClientDir,
     onReady: () => {
-      if (config.webClientDir) info(`browser client at http://${config.publicHost}:${config.port}/play/`);
+      if (config.webClientDir) info(`browser client at ${publicBaseUrl()}/play/`);
       info(`web services listening on http://${config.host}:${config.port}`);
-      info(`advertising webServicesUrl http://${config.publicHost}:${config.port}`);
-      info(`advertising game socket ${config.publicHost}:${config.gameSocketPort}`);
+      info(`advertising webServicesUrl ${publicBaseUrl()}`);
+      info(`advertising game socket ${config.publicSocketHost}:${config.publicSocketPort}`);
     },
   });

@@ -80,3 +80,40 @@ test("one address flooding does not lock out another", () => {
   for (let i = 0; i < 5000; i++) withinRate("10.0.0.4");
   assert.equal(withinRate("10.0.0.5"), true, "somebody else is unaffected");
 });
+
+/**
+ * One table for every listener meant the website's own calls to the internal
+ * API were counted against the players' budget, from the same address — and a
+ * busy lobby, or one client flooding, reset the website's connections too.
+ */
+test("each listener counts its own callers", async (t) => {
+  const { listen } = await import("../src/http.js");
+  const routeTable = [
+    { method: "GET", pattern: "/ping", handler: () => ({ status: 200, headers: {}, body: "pong" }) },
+  ];
+  const start = async () => {
+    const server = listen({ routeTable, host: "127.0.0.1", port: 0, rateLimit: 3 });
+    await new Promise((resolve) => server.once("listening", resolve));
+    t.after(() => server.close());
+    return `http://127.0.0.1:${server.address().port}/ping`;
+  };
+  const answered = (url) =>
+    fetch(url, { headers: { connection: "close" } }).then(
+      (response) => response.status === 200,
+      () => false
+    );
+  const players = await start();
+  const website = await start();
+
+  const flood = [];
+  for (let i = 0; i < 6; i++) flood.push(await answered(players));
+  assert.deepEqual(flood, [true, true, true, false, false, false], "the limit is the one it was given");
+  assert.equal(await answered(website), true, "the other listener has a budget of its own");
+});
+
+test("the limit an operator sets is the limit that applies", async () => {
+  const { loadServerConfig } = await import("../src/config.js");
+  assert.equal(loadServerConfig({}).httpRateLimit, 320, "what the recordings were measured against");
+  assert.equal(loadServerConfig({ ODS_HTTP_RATE_LIMIT: "2000" }).httpRateLimit, 2000);
+  assert.equal(loadServerConfig({ ODS_HTTP_RATE_LIMIT: "0" }).httpRateLimit, 1, "never none at all");
+});
