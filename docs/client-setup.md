@@ -12,7 +12,7 @@ The client reads a JSON configuration file at startup:
 DbConfiguration/Config.json
 ```
 
-Three keys decide which server it talks to and who it logs in as:
+Four keys decide which server it talks to and who it logs in as:
 
 | Key | Set it to | Why |
 |---|---|---|
@@ -64,8 +64,8 @@ moves or changes ports does not need every client edited.
 If you are the one running it for other people, that is also where the usual
 first failure shows: the server has to be started with `ODS_PUBLIC_HOST` set to
 an address the players can reach, or it will advertise `127.0.0.1` and every
-client will try to connect to itself. See the README for the two variables that
-matter.
+client will try to connect to itself. See "Hosting multiplayer" in the README
+for the three variables that matter.
 
 **`UseSteamLogin` has to be set, not left out.** The client reads it as
 `getConfigBoolean("UseSteamLogin", true)` — the default is `true`, so an absent
@@ -166,9 +166,9 @@ server:
 ODS_ADMIN_ACCOUNTS=1000000005 npm start
 ```
 
-Ranks are otherwise granted by an in-game command, which a fresh database has
-nobody to run — this flag is the way out of that. It is an environment variable
-rather than a stored row so that revoking it is restarting without it.
+No in-game command grants a rank yet, so this flag is the only way to make an
+admin. It is an environment variable rather than a stored row so that revoking
+it is restarting without it.
 
 ## Running a second client
 
@@ -194,8 +194,8 @@ npm run sync:data -- --source /path/to/your/client
 npm run check:data
 ```
 
-The server starts without it and will tell you at startup that it is missing,
-but dungeons will not load until it is imported. See
+The server starts without it and says so at startup, but nobody can log in or
+enter a dungeon until it is imported. See
 [../README.md](../README.md) for the rest of the setup.
 
 ## A complete example
@@ -208,6 +208,7 @@ else your configuration already has:
   "ServiceDiscoveryUrl": "http://127.0.0.1:8080",
   "UseSteamLogin": false,
   "AccountId": 1000000005,
+  "API_ValidationToken": "1788698313:ab83c85d6bad9…",
   "download_root": "",
   "gameMasterPath": "http://127.0.0.1:8080/content/Resources/Levels/DB_GameMaster.json",
   "ALLOW_HACKS_TO_PLAY_MAP_NODE": true
@@ -222,13 +223,14 @@ places, and usually without the debug switch:
   "ServiceDiscoveryUrl": "http://192.168.1.10:8080",
   "UseSteamLogin": false,
   "AccountId": 1000000005,
+  "API_ValidationToken": "1788698313:ab83c85d6bad9…",
   "download_root": "",
   "gameMasterPath": "http://192.168.1.10:8080/content/Resources/Levels/DB_GameMaster.json"
 }
 ```
 
 If the operator is not overriding content, drop `download_root` and
-`gameMasterPath` too and only the first three lines matter.
+`gameMasterPath` too and only the first four lines matter.
 
 The last three are optional. Drop `download_root` and `gameMasterPath` to load
 all game data from your own disk, and drop `ALLOW_HACKS_TO_PLAY_MAP_NODE` unless

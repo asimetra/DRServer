@@ -44,7 +44,7 @@ progression, trading, and the player market.
 
 ### Requirements
 
-- Node.js 20+
+- Node.js 20.19+ or 22.9+
 - a locally available compatible client installation or worktree
 - JSON compatibility data imported into the ignored `local-data/` directory
 
@@ -90,12 +90,17 @@ configuration are not part of this repository; see
 
 ## Hosting multiplayer
 
-Remote players need both the HTTP service and game socket to be reachable, and
-the server must advertise an address they can resolve:
+By default both listeners bind `127.0.0.1`, so only clients on the same machine
+can connect. Remote players need both the HTTP service and game socket to be
+reachable, and the server must advertise an address they can resolve:
 
 ```bash
-ODS_HOST=0.0.0.0 ODS_PUBLIC_HOST=192.168.1.10 npm start
+ODS_HOST=0.0.0.0 ODS_PUBLIC_HOST=192.168.1.10 ODS_ALLOW_INSECURE_REMOTE=1 npm start
 ```
+
+`ODS_PUBLIC_HOST` is this machine's address as the other players reach it.
+`ODS_ALLOW_INSECURE_REMOTE=1` acknowledges that both ports are cleartext; the
+server refuses to start on a non-loopback address without it.
 
 Player tokens cross both listeners, so putting TLS in front of HTTP alone is
 not sufficient. Use a trusted VPN or tunnel when exposing the server beyond a

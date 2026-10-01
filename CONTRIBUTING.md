@@ -13,7 +13,7 @@ and compatibility improvements are all useful.
 
 ## Development
 
-Use Node.js 20 or newer:
+Use Node.js 20.19+ or 22.9+:
 
 ```bash
 npm ci
