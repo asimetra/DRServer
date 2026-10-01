@@ -74,3 +74,71 @@ test("a cleanup cancelled by another cleanup is not run twice", () => {
   scope.dispose();
   assert.equal(hits, 0);
 });
+
+/**
+ * A timer is the one place gameplay code runs with nothing above it. A throw
+ * from a buff expiring or a trap firing went straight to the process, and with
+ * every dungeon in one thread that ended all of them over one.
+ */
+test("a timer callback that throws is reported instead of escaping", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const failures = [];
+  const scope = new LifecycleScope("run", {
+    onTimerError: (error, failed) => failures.push([failed.label, error.message]),
+  });
+  const floor = scope.child("floor");
+  let ticks = 0;
+
+  floor.timeout(() => {
+    throw new Error("buff expiry went wrong");
+  }, 5);
+  floor.interval(() => {
+    ticks += 1;
+    if (ticks === 1) throw new Error("first tick went wrong");
+  }, 10);
+
+  assert.doesNotThrow(() => t.mock.timers.tick(30));
+  assert.deepEqual(failures, [
+    ["floor", "buff expiry went wrong"],
+    ["floor", "first tick went wrong"],
+  ]);
+  assert.equal(ticks, 3, "an interval outlives one bad tick");
+  assert.equal(floor.activeResourceCount, 1, "the failed timeout still released its bookkeeping");
+  scope.dispose();
+});
+
+test("a failing timer is contained even when nobody asked to hear about it", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const scope = new LifecycleScope("run");
+  scope.timeout(() => {
+    throw new Error("unobserved");
+  }, 1);
+  assert.doesNotThrow(() => t.mock.timers.tick(5));
+  scope.dispose();
+});
+
+test("an interval that fails on every tick is not logged on every tick", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const lines = [];
+  const write = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    lines.push(String(chunk));
+    return true;
+  };
+  t.after(() => {
+    process.stdout.write = write;
+  });
+
+  const scope = new LifecycleScope("noisy-run");
+  scope.interval(() => {
+    throw new Error("the same failure every twenty milliseconds");
+  }, 20);
+  t.mock.timers.tick(20 * 200);
+  scope.dispose();
+  process.stdout.write = write;
+
+  const about = lines.filter((line) => line.includes("noisy-run"));
+  assert.ok(about.length >= 1, "it is reported");
+  assert.ok(about.length <= 3, `and not two hundred times (${about.length})`);
+  assert.match(about[0], /timer callback failed: Error: the same failure/);
+});
