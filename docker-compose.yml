@@ -5,7 +5,9 @@
 # Putting the server in a container would add an image rebuild to every one of
 # those iterations for no benefit until there is something to deploy.
 #
-#   docker compose up -d        (or: npm run db:up, which also works with podman)
+#   docker compose up -d        (or: npm run db:up, which also works with podman
+#                                and keeps its data in a volume of its own — see
+#                                the note at the bottom of this file)
 #
 # The schema is applied automatically on first start, from db/schema.sql.
 
@@ -18,8 +20,11 @@ services:
       POSTGRES_DB: open_dungeon
       POSTGRES_USER: ods
       POSTGRES_PASSWORD: ods
+    # Loopback only: the game server is on this host, and a database published
+    # on every interface with the password above is every account, for anyone
+    # who can reach the machine.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - ods-pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
@@ -29,5 +34,10 @@ services:
       timeout: 5s
       retries: 10
 
+# Compose prefixes this with the project name (`<directory>_ods-pgdata`), so it
+# is NOT the volume `npm run db:up` creates, which is plainly `ods-pgdata`. The
+# two ways of starting the database each have their own data: pick one and stay
+# with it. The name is left as compose has always made it — pinning it now would
+# move every existing compose deployment onto an empty volume.
 volumes:
   ods-pgdata:
