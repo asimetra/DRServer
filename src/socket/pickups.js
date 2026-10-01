@@ -41,9 +41,17 @@ const tooFullForDoober = (heroDoid, isHealthDoober) =>
 
 /**
  * The original pickup radius is not in the game data — it lived on the server —
- * so this is a judgement call. Tiles are 900 units across and a character is
- * roughly a tenth of that, which makes ~120 feel like walking over something
- * rather than magnetising it from across the room.
+ * so `pickupRadius` is a judgement call, and the recordings only narrow it:
+ * the hero's position arrives late, which blurs every distance measured at the
+ * moment of collection. The cleanest reading is a hero standing still while
+ * loot lands beside it, and of 32 such pickups 25 were inside 105 units.
+ *
+ * It was 120 here, and that reached loot lying behind a raised spike field. A
+ * field is some forty units deep, so a hero stopped at its near edge still had
+ * seventy units of reach past it; at 100 it has fifty. Nothing here looks at
+ * what stands between the hero and the loot — that would be a line-of-sight
+ * test for every pickup in range on every step, and the reach is the cheaper
+ * place to be strict.
  */
 const withinReach = (a, b, radius) => {
   const dx = a.x - b.x;

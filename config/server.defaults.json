@@ -40,7 +40,7 @@
   "afkWarnMs": 30000,
   "afkKickMs": 60000,
   "activityThresholds": [1, 5, 9, 17],
-  "pickupRadius": 120,
+  "pickupRadius": 100,
   "logBodyLimit": 600,
   "logLevel": "info",
   "matchWorkerCount": 0,

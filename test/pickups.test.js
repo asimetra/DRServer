@@ -595,3 +595,28 @@ test("a buff that stacks stacks to its limit", async () => {
 
   clearDungeonBuffs(session);
 });
+
+/**
+ * Reach is a hundred units. It was a hundred and twenty, and that was enough to
+ * take loot from the far side of a raised spike field without stepping onto it:
+ * the field is some forty units deep, which left seventy of reach behind it.
+ * Where the official server's reach can be read at all — a hero standing still
+ * while loot lands beside it, 32 pickups — 25 of them were inside 105.
+ */
+test("loot is taken from a hundred units away and no further", () => {
+  const sessionWith = (x) => ({
+    id: 8,
+    heroDoid: 500,
+    doobers: new Map([[100, { x, y: 0, constant: "GOLD_SMALL", gold: 1 }]]),
+    objects: new Map([[100, 40]]),
+    send: () => {},
+  });
+
+  assert.equal(collectNearby(sessionWith(100), { x: 0, y: 0 }), 1, "a hundred is within reach");
+  assert.equal(collectNearby(sessionWith(110), { x: 0, y: 0 }), 0, "a hundred and ten is not");
+  assert.equal(
+    collectNearbyForPet(sessionWith(110), { x: 0, y: 0 }, { gold: true }),
+    0,
+    "and a pet reaches no further than its owner"
+  );
+});
