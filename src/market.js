@@ -3,6 +3,7 @@ import {
   isRemoteAccountCopy,
   listAccountIds,
   loadAccount,
+  loadAccountForScan,
   saveAccount,
   saveAccounts,
   withAccountLock,
@@ -304,7 +305,8 @@ const listForSaleHere = async ({ sellerId, itemId, price } = {}) => {
  */
 const sellerHolding = async (listingId) => {
   for (const id of await listAccountIds()) {
-    const account = await loadAccount(id);
+    const account = await loadAccountForScan(id);
+    if (!account) continue;
     const listing = listingNamed(account, listingId);
     if (listing && !listing.sold_to) return id;
   }
@@ -507,7 +509,8 @@ export const browseAll = async () => {
   const now = Date.now();
 
   for (const id of await listAccountIds()) {
-    const account = await loadAccount(id);
+    const account = await loadAccountForScan(id);
+    if (!account) continue;
     for (const listing of openListings(account)) {
       if (isUp(listing, now)) found.push(asView(listing, id, account.name));
     }

@@ -100,7 +100,15 @@ export const accountIdNamed = async (name, { listAccountIds, loadAccount }) => {
   }
 
   for (const id of await listAccountIds()) {
-    const account = await loadAccount(id);
+    let account;
+    try {
+      account = await loadAccount(id);
+    } catch (problem) {
+      // An account that will not parse cannot say what it is called, and is
+      // not a reason nobody else may register; accounts.js reports it.
+      if (problem?.code !== "ACCOUNT_CORRUPT") throw problem;
+      continue;
+    }
     if (nameKey(account?.name) === wanted) return id;
   }
   return null;

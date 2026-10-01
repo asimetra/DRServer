@@ -10,7 +10,7 @@ import { readJsonFile } from "./json-file.js";
 import { repairSpentPowerups } from "./powerup-slots.js";
 import { accountTrophies, getMapNodeBit } from "./map-progress.js";
 import { infiniteTrophiesFor } from "./infinite.js";
-import { info, warn } from "./log.js";
+import { info, warn, warnOnce } from "./log.js";
 import {
   ACCOUNT_OBJECT_ID_FLOOR,
   CLIENT_PERSISTENT_OBJECT_ID_MAX,
@@ -86,11 +86,67 @@ const syncDirectory = async (directory) => {
   }
 };
 
+/**
+ * Keeps the bytes of an account that would not parse, once.
+ *
+ * The broken file is left where it is — replacing it is the one thing that
+ * must never happen — so it is read again by the next login, by every scan of
+ * the population and by each restart, and every one of those wrote another
+ * copy of the same bytes. Twenty-six reads left twenty-six files. A copy that
+ * already holds exactly these bytes is the evidence already kept.
+ */
 const preserveCorruptAccount = async (file, raw) => {
+  const prefix = `${path.basename(file)}.corrupt-`;
+  for (const name of await fs.readdir(path.dirname(file))) {
+    if (!name.startsWith(prefix)) continue;
+    const kept = path.join(path.dirname(file), name);
+    const same = await fs.readFile(kept, "utf8").then(
+      (text) => text === raw,
+      () => false
+    );
+    if (same) return kept;
+  }
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const preserved = `${file}.corrupt-${stamp}-${process.pid}-${++temporaryFileId}`;
   await durableWrite(preserved, raw, { exclusive: true });
   return preserved;
+};
+
+/**
+ * An account whose stored form cannot be parsed.
+ *
+ * Still a `SyntaxError`, which is what it is. The code is for the callers that
+ * ask a question of every account at once: they can step over this one and
+ * answer for the rest, which they must not do for a read that merely failed.
+ */
+export class CorruptAccountError extends SyntaxError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "CorruptAccountError";
+    this.code = "ACCOUNT_CORRUPT";
+  }
+}
+
+/**
+ * Loads one account for a scan of all of them, or null when it is corrupt.
+ *
+ * Whether a name is taken and what is for sale are answered by reading the
+ * population. One account an operator edited by hand and left a comma in
+ * failed those for everybody: no market, no new registrations. It is reported
+ * once and left out; an account that could not be *read* still fails the scan,
+ * because that says nothing about what the account holds.
+ */
+export const loadAccountForScan = async (id, load = loadAccount) => {
+  try {
+    return await load(id);
+  } catch (problem) {
+    if (problem?.code !== "ACCOUNT_CORRUPT") throw problem;
+    warnOnce(
+      `corrupt-account:${id}`,
+      `accounts: ${id} is left out of population scans until its file is repaired — ${problem.message}`
+    );
+    return null;
+  }
 };
 
 /**
@@ -650,7 +706,7 @@ const readStoredAccount = async (id) => {
   } catch (error) {
     const preserved = await preserveCorruptAccount(file, raw);
     warn(`accounts: invalid JSON in ${file}; preserved at ${preserved}`);
-    throw new SyntaxError(`Account ${id} contains invalid JSON; refusing to recreate it`, {
+    throw new CorruptAccountError(`Account ${id} contains invalid JSON; refusing to recreate it`, {
       cause: error,
     });
   }

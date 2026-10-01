@@ -156,6 +156,54 @@ test("invalid account JSON is preserved and never replaced with a fresh account"
   );
   assert.equal(preserved.length, 1, "the corrupt payload was not quarantined exactly once");
   assert.equal(await readFile(path.join(dataDir, preserved[0]), "utf8"), corrupt);
+
+  /* The broken file stays where it is, so it is read again — by the next
+     login, by every scan of the population, by each restart. Each of those
+     used to write another copy of the same bytes. */
+  await assert.rejects(() => loadAccount(id), /invalid JSON; refusing to recreate/);
+  await assert.rejects(() => loadAccount(id), (problem) => problem.code === "ACCOUNT_CORRUPT");
+  const afterMore = (await readdir(dataDir)).filter((name) =>
+    name.startsWith(`${id}.json.corrupt-`)
+  );
+  assert.deepEqual(afterMore, preserved, "the same bytes were preserved a second time");
+
+  // A different breakage of the same file is different evidence, and is kept.
+  await writeFile(file, corrupt.slice(0, -5), "utf8");
+  await assert.rejects(() => loadAccount(id), /invalid JSON; refusing to recreate/);
+  const afterChange = (await readdir(dataDir)).filter((name) =>
+    name.startsWith(`${id}.json.corrupt-`)
+  );
+  assert.equal(afterChange.length, 2);
+
+  // Out of the way of the tests that follow.
+  await rm(file);
+  for (const name of afterChange) await rm(path.join(dataDir, name));
+});
+
+/**
+ * One account an operator edited by hand and left a comma in. Questions asked
+ * of the whole population — is this name taken, what is for sale — load every
+ * account to answer, and each of them failed for everybody on that one file.
+ */
+test("questions asked of every account skip one that cannot be read", async () => {
+  const { browseAll } = await import("../src/market.js");
+  const { createNewAccount, listAccountIds } = await import("../src/accounts.js");
+  const { nameTaken } = await import("../src/account-names.js");
+
+  const sound = await createNewAccount({ name: "Readable" });
+  const file = path.join(dataDir, "12360.json");
+  await writeFile(file, '{"id": 12360, "name": "Edited",}', "utf8");
+  try {
+    assert.ok(Array.isArray(await browseAll()), "the market still lists what it can read");
+    assert.equal(await nameTaken("Readable", { listAccountIds, loadAccount }), true);
+    assert.equal(await nameTaken("Nobody Yet", { listAccountIds, loadAccount }), false);
+    assert.equal((await createNewAccount({ name: "Newcomer" })).name, "Newcomer");
+    assert.ok(sound.id);
+  } finally {
+    for (const name of await readdir(dataDir)) {
+      if (name.startsWith("12360.json")) await rm(path.join(dataDir, name));
+    }
+  }
 });
 
 test("a non-ENOENT account read failure is propagated without writing", async () => {
