@@ -178,3 +178,47 @@ test("a mid-run quit keeps the gold and loses the chests", async () => {
   assert.deepEqual(disk.account_chests, [], "the chest never became one");
   assert.equal(session.dungeonTreasures, undefined, "and the claim went with the run");
 });
+
+/**
+ * Shutdown closes every session and then waits for the run to be written. It
+ * looked for that write on the session — where the teardown, which runs inside
+ * the close, has just deleted it. So it waited for nothing, and the last save
+ * of every run in progress was left racing the end of the process.
+ */
+test("a settle still on its way to storage is waited for after the session forgot it", async () => {
+  const { waitForRunSaves } = await import("../src/socket/run-saves.js");
+  let landed = false;
+  const { session } = sessionWith({
+    persistDungeonAccount: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      landed = true;
+    },
+  });
+
+  settleDungeonAccount(session);
+  // What the teardown does next, synchronously.
+  delete session.rewardSavePromise;
+  delete session.persistDungeonAccount;
+
+  await waitForRunSaves();
+  assert.equal(landed, true, "the write finished before shutdown moved on");
+});
+
+test("a reward save queued behind another is waited for too", async () => {
+  const { waitForRunSaves } = await import("../src/socket/run-saves.js");
+  const { queueAccountSave } = await import("../src/socket/rewards.js");
+  const order = [];
+  const { session } = sessionWith({
+    persistDungeonAccount: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      order.push("saved");
+    },
+  });
+
+  queueAccountSave(session);
+  queueAccountSave(session);
+  delete session.rewardSavePromise;
+
+  await waitForRunSaves();
+  assert.deepEqual(order, ["saved", "saved"]);
+});
