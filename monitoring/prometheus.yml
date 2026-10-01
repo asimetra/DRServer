@@ -1,0 +1,23 @@
+# What Prometheus collects from DR Server, and how often.
+#
+# The server answers on its status listener — 127.0.0.1:8082 unless
+# ODS_STATUS_HOST / ODS_STATUS_PORT say otherwise; change the target below to
+# match. Started by `npm run monitor:up`, which runs Prometheus on the host's
+# network so that it can reach a listener bound to loopback.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: dr-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:8082"]
+    # With ODS_STATUS_TOKEN set on the server, present it here:
+    # authorization:
+    #   type: Bearer
+    #   credentials: "<the same value as ODS_STATUS_TOKEN>"

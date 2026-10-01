@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: ods-prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:${ODS_PROMETHEUS_PORT}
+    isDefault: true
+    editable: false

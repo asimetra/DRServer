@@ -1,0 +1,66 @@
+# When something is worth a person's attention.
+#
+# These fire in Prometheus and show on the dashboard. They are not sent
+# anywhere: delivering an alert — to a chat channel, to a phone — is the job of
+# an Alertmanager or of Grafana's own alerting, and which of those, and to
+# whom, is a deployment's decision rather than this repository's.
+
+groups:
+  - name: dr-server
+    rules:
+      - alert: ServerDown
+        expr: up{job="dr-server"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: DR Server is not answering on its status listener.
+
+      - alert: HealthCheckFailing
+        expr: ods_health_check == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health check {{ $labels.check }} is failing: players cannot play."
+
+      # Progress a player was shown and did not keep. One is already too many.
+      - alert: SavesFailing
+        expr: increase(ods_saves_failed_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} dungeon save(s) did not reach storage in the last ten minutes."
+
+      - alert: EventLoopLagging
+        expr: ods_event_loop_delay_p99_seconds > 0.25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Timers are firing {{ $value | humanizeDuration }} late; players will feel this as lag."
+
+      - alert: MatchWorkerDown
+        expr: ods_match_worker_alive == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Match worker {{ $labels.worker }} is down."
+
+      # Disk nearly full, a player's token about to expire, and whatever else
+      # the server itself raises as a warning.
+      - alert: ServerWarning
+        expr: ods_health_warning == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The server is warning about {{ $labels.warning }}; see /healthz for the detail."
+
+      - alert: ServerRestarted
+        expr: changes(ods_start_time_seconds[15m]) > 0
+        labels:
+          severity: info
+        annotations:
+          summary: The server restarted in the last fifteen minutes.
