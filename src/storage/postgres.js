@@ -2,7 +2,8 @@ import pg from "pg";
 import { isMainThread } from "node:worker_threads";
 import { MAIN_THREAD_CONNECTIONS, WORKER_THREAD_CONNECTIONS } from "./connections.js";
 import { config } from "../config.js";
-import { info } from "../log.js";
+import { info, warn } from "../log.js";
+import { ProcessLockHeldError } from "../process-lock.js";
 import { ACCOUNT_OBJECT_ID_FLOOR } from "../account-object-ids.js";
 
 /**
@@ -31,11 +32,35 @@ pg.types.setTypeParser(20, Number);
 let pool = null;
 let processLockClient = null;
 
+/**
+ * A pool that says when it loses a connection instead of throwing it.
+ *
+ * node-postgres reports a connection closed from the other end as an `error`
+ * event, and an `error` event nobody listens for is thrown at the process. So
+ * restarting the database — an image update, `npm run db:down`, the container
+ * running out of memory — took the game server down with it, and every dungeon
+ * in it. The pool already drops the dead connection and opens another for the
+ * next query; all that was missing was somebody to hear about it.
+ */
 const connect = () => {
-  pool ??= new pg.Pool({
-    connectionString: config.databaseUrl,
-    max: isMainThread ? MAIN_THREAD_CONNECTIONS : WORKER_THREAD_CONNECTIONS,
-  });
+  if (!pool) {
+    pool = new pg.Pool({
+      connectionString: config.databaseUrl,
+      max: isMainThread ? MAIN_THREAD_CONNECTIONS : WORKER_THREAD_CONNECTIONS,
+    });
+    pool.on("error", (problem) =>
+      warn(`postgres: lost an idle connection (${problem.message}); it will be reopened on demand`)
+    );
+    /**
+     * And every connection, for as long as it lives. The pool listens only
+     * while a connection is idle; one checked out for a transaction has nobody
+     * listening, so a database restart in the middle of a save was still
+     * thrown at the process. The save itself is told through the query that
+     * was in flight, which rejects — this only has to keep the event from
+     * being a crash as well.
+     */
+    pool.on("connect", (client) => client.on("error", () => {}));
+  }
   return pool;
 };
 
@@ -44,42 +69,113 @@ export const close = async () => {
   pool = null;
 };
 
-/**
- * Holds one dedicated advisory-lock connection for the process lifetime.
- * Account locks and match state are process-local, so a second server sharing
- * this database would make their guarantees false even though SQL itself is
- * transactional.
- */
-export const acquireServerProcessLock = async () => {
-  if (processLockClient) throw new Error("Postgres process lock is already held here");
+const PROCESS_LOCK = [0x0d55_3e7, 0x5345_5256];
+
+/** How often, and for how long, a lost lock connection is tried again. */
+const LOCK_RETRY_MS = 1_000;
+const LOCK_RETRY_FOR_MS = 30_000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A connection of its own holding the session lock, or a refusal. */
+const takeProcessLock = async () => {
   const client = await connect().connect();
   try {
     const { rows } = await client.query(
       "SELECT pg_try_advisory_lock($1, $2) AS acquired",
-      [0x0d55_3e7, 0x5345_5256]
+      PROCESS_LOCK
     );
     if (!rows[0]?.acquired) {
-      throw new Error("storage is already in use by another server or maintenance tool");
+      throw new ProcessLockHeldError(
+        "storage is already in use by another server or maintenance tool"
+      );
     }
-    processLockClient = client;
+    return client;
   } catch (problem) {
     // A failed setup may already hold the session advisory lock. Destroying
     // the connection releases it; returning it to the pool would not.
     client.release(true);
     throw problem;
   }
+};
+
+/**
+ * Holds one dedicated advisory-lock connection for the process lifetime.
+ * Account locks and match state are process-local, so a second server sharing
+ * this database would make their guarantees false even though SQL itself is
+ * transactional.
+ *
+ * The lock is the connection: when the connection goes, PostgreSQL has let the
+ * lock go with it. That is tried again for a short while — a database restart
+ * is over in seconds, and nobody else is likely to have asked in between — and
+ * `onLost` is called when it cannot be had back: another server holds it now,
+ * or the database stayed away. The caller stops; two servers writing the same
+ * accounts is the thing this exists to prevent.
+ */
+export const acquireServerProcessLock = async ({
+  onLost = null,
+  retryMs = LOCK_RETRY_MS,
+  retryForMs = LOCK_RETRY_FOR_MS,
+} = {}) => {
+  if (processLockClient) throw new Error("Postgres process lock is already held here");
 
   let released = false;
+  let dropped = null;
+
+  const hold = (client) => {
+    processLockClient = client;
+    dropped = (problem) => void retake(client, problem);
+    client.once("error", dropped);
+  };
+
+  const retake = async (client, problem) => {
+    if (released || processLockClient !== client) return;
+    processLockClient = null;
+    client.release(true);
+    warn(
+      `postgres: lost the connection holding this server's storage lock (${problem.message}); ` +
+        "taking the lock again"
+    );
+    const deadline = Date.now() + retryForMs;
+    for (;;) {
+      if (released) return;
+      try {
+        const again = await takeProcessLock();
+        if (released) {
+          again.release(true);
+          return;
+        }
+        hold(again);
+        info("postgres: storage lock taken again");
+        return;
+      } catch (failure) {
+        // Released while this attempt was out: nothing is lost that was wanted.
+        if (released) return;
+        if (failure instanceof ProcessLockHeldError || Date.now() >= deadline) {
+          onLost?.(failure);
+          return;
+        }
+        await sleep(retryMs);
+      }
+    }
+  };
+
+  hold(await takeProcessLock());
+
   return async () => {
     if (released) return;
     released = true;
     const held = processLockClient;
     processLockClient = null;
     if (!held) return;
+    held.off("error", dropped);
     try {
-      await held.query("SELECT pg_advisory_unlock($1, $2)", [0x0d55_3e7, 0x5345_5256]);
-    } finally {
+      await held.query("SELECT pg_advisory_unlock($1, $2)", PROCESS_LOCK);
       held.release();
+    } catch {
+      // The connection had already gone, and the lock went with it: there is
+      // nothing left to give back, only a dead connection to throw away.
+      held.release(true);
     }
   };
 };
@@ -358,7 +454,9 @@ export const saveAccounts = async (accounts) => {
     await client.query("COMMIT");
     return accounts;
   } catch (err) {
-    await client.query("ROLLBACK");
+    // On a connection that has gone there is nothing to roll back, and a
+    // failure here must not replace the error that says what went wrong.
+    await client.query("ROLLBACK").catch(() => undefined);
     throw err;
   } finally {
     client.release();
@@ -415,7 +513,9 @@ export const moveSoldListingsOut = async (client) => {
     await client.query("COMMIT");
     return moved.rowCount;
   } catch (problem) {
-    await client.query("ROLLBACK");
+    // On a connection that has gone there is nothing to roll back, and a
+    // failure here must not replace the error that says what went wrong.
+    await client.query("ROLLBACK").catch(() => undefined);
     throw problem;
   }
 };
@@ -582,7 +682,9 @@ export const recordRuns = async (runs, boards) => {
     }
     await client.query("COMMIT");
   } catch (err) {
-    await client.query("ROLLBACK");
+    // On a connection that has gone there is nothing to roll back, and a
+    // failure here must not replace the error that says what went wrong.
+    await client.query("ROLLBACK").catch(() => undefined);
     throw err;
   } finally {
     client.release();
