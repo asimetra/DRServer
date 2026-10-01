@@ -41,6 +41,8 @@ const boot = async (t, settings = {}, { nodeArguments = [] } = {}) => {
       ODS_STORAGE: "file",
       ODS_PORT: String(port),
       ODS_SOCKET_PORT: String(await freePort()),
+      // Off unless a test asks: every server here would otherwise want 8082.
+      ODS_STATUS_PORT: "0",
       ...settings,
     },
   });
@@ -150,10 +152,14 @@ test("the server starts without compatibility data, as it says it does", async (
  * The compatibility data is beside the point for everything below, and absent
  * on a fresh clone, so these start the way that clone would.
  */
-const bootWithoutData = async (t, options) => {
+const bootWithoutData = async (t, options, settings = {}) => {
   const emptyResources = await fs.mkdtemp(path.join(os.tmpdir(), "ods-no-data-"));
   t.after(() => fs.rm(emptyResources, { recursive: true, force: true }));
-  const server = await boot(t, { ODS_RESOURCES_DIR: emptyResources, ODS_CONTENT_DIR: "" }, options);
+  const server = await boot(
+    t,
+    { ODS_RESOURCES_DIR: emptyResources, ODS_CONTENT_DIR: "", ...settings },
+    options
+  );
   await server.said(/game socket listening/);
   return server;
 };
@@ -206,4 +212,78 @@ test("an exception nothing caught ends the server deliberately, and as a failure
     false,
     "the storage is given back even on the way down"
   );
+});
+
+/**
+ * The health check, asked of the server an operator actually runs: every
+ * probe wired to the real listeners and the real storage.
+ */
+test("a running server reports itself well, and says so differently when it is not", async (t) => {
+  const statusPort = await freePort();
+  const server = await bootWithoutData(t, undefined, { ODS_STATUS_PORT: String(statusPort) });
+  await server.said(/status listening on http:\/\/127\.0\.0\.1:/);
+  const base = `http://127.0.0.1:${statusPort}`;
+
+  const well = await fetch(`${base}/healthz`);
+  assert.equal(well.status, 200);
+  assert.deepEqual((await well.json()).checks, {
+    web: "ok",
+    socket: "ok",
+    storage: "ok",
+    workers: "ok",
+    running: "ok",
+  });
+
+  const status = await (await fetch(`${base}/status`)).json();
+  assert.equal(status.storage, "file");
+  assert.deepEqual(status.players, { online: 0, in_dungeon: 0 });
+  assert.match(status.version, /^\d+\.\d+\.\d+/);
+
+  // Storage the server can no longer write: up, answering, and losing saves.
+  if (process.getuid?.() !== 0) {
+    await fs.chmod(server.dataDir, 0o555);
+    try {
+      const unwell = await fetch(`${base}/healthz`);
+      assert.equal(unwell.status, 503);
+      assert.match((await unwell.json()).checks.storage, /cannot be written/);
+    } finally {
+      await fs.chmod(server.dataDir, 0o755);
+    }
+  }
+
+  // The players' port knows nothing of any of it.
+  assert.equal((await fetch(`http://127.0.0.1:${server.port}/healthz`)).status, 404);
+  assert.doesNotMatch(server.output(), /GET \/status|-> 200 \{"status"/, "polling is not logged");
+
+  server.child.kill("SIGTERM");
+  assert.equal((await server.exited).code, 0);
+});
+
+test("a status port that is already taken costs the status listener, not the server", async (t) => {
+  const taken = net.createServer();
+  await new Promise((resolve) => taken.listen(0, "127.0.0.1", resolve));
+  t.after(() => taken.close());
+
+  const server = await bootWithoutData(t, undefined, {
+    ODS_STATUS_PORT: String(taken.address().port),
+  });
+  await server.said(/status listener is off: .*EADDRINUSE/);
+  assert.equal(
+    (await fetch(`http://127.0.0.1:${server.port}/game-status/service-discovery`)).status,
+    200,
+    "players are unaffected"
+  );
+
+  server.child.kill("SIGTERM");
+  assert.equal((await server.exited).code, 0);
+});
+
+test("the first line of the log says which build is running, and every line which day", async (t) => {
+  const server = await bootWithoutData(t);
+
+  const [first] = server.output().split("\n");
+  assert.match(first, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z INFO {2}Open Dungeon Server \d+\.\d+\.\d+/);
+
+  server.child.kill("SIGTERM");
+  await server.exited;
 });

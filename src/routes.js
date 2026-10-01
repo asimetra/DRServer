@@ -4,6 +4,7 @@ import { dispatch } from "./rpc.js";
 import { info, warn } from "./log.js";
 import { serveContent } from "./content.js";
 import { tokenProblem } from "./auth.js";
+import { count } from "./metrics.js";
 import { gameStatusFor } from "./game-status.js";
 import { declare, declaredView, jsonFor, viewForOwnAccount, viewFromDemographics } from "./content-packs.js";
 import { sessionHolding } from "./socket/presence.js";
@@ -66,6 +67,7 @@ export const authorise = (req) => {
   // nonsense, a token that ran out last week and one signed under an older
   // secret all alike, and those want three different answers from an operator.
   warn(`api: refused account ${req.headers?.["x-account-id"] ?? "?"} — ${problem}`);
+  count("auth_refused");
   return json({ error: "invalid account or validation token" }, 401);
 };
 

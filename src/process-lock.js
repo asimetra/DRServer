@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { readFileSync, readlinkSync } from "node:fs";
+import { constants as fsConstants, readFileSync, readlinkSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
@@ -213,6 +213,7 @@ export const acquireFileProcessLock = async (
           if (released || lost) return;
           lost = true;
           clearInterval(heartbeat);
+          heldHere.delete(lockFile);
           onLost?.(new Error(`storage lock ${lockFile} was taken by another process or removed`));
         }
       }, heartbeatMs);
@@ -287,6 +288,26 @@ export const acquireProcessLock = async ({ onLost = null } = {}) => {
     return storage.acquireServerProcessLock({ onLost });
   }
   return acquireFileProcessLock(config.dataDir, { onLost });
+};
+
+/**
+ * What is wrong with the storage right now, or null. For the health check: a
+ * server whose storage cannot be written, or whose claim on it has gone, is up
+ * and answering and losing everything players do.
+ */
+export const storageProblem = async () => {
+  if (config.storage === "postgres") {
+    const storage = await import("./storage/postgres.js");
+    return storage.connectionProblem();
+  }
+  try {
+    await fs.access(config.dataDir, fsConstants.W_OK);
+  } catch (problem) {
+    return `data directory ${config.dataDir} cannot be written: ${problem.code ?? problem.message}`;
+  }
+  return heldHere.has(path.join(config.dataDir, ".server.lock"))
+    ? null
+    : "this server does not hold the storage lock";
 };
 
 /** Initializes backend state that requires both the current schema and ownership lock. */

@@ -5,6 +5,9 @@ import { error, info, singleLine, truncate, unimplemented, warn } from "../log.j
 import { CLID, DC_HASH, OP, opcodeName } from "./opcodes.js";
 import { MalformedPacketError, PacketReader, drainFrames } from "./packet.js";
 import { closeSessionCapture, recordReceived, recordSent, withoutCredentials } from "./capture.js";
+import { count } from "../metrics.js";
+import { SESSION_TTL_SECONDS } from "../auth.js";
+import { TOKEN_WARN_DAYS } from "../health-warnings.js";
 import { heartbeat, logoutResponse, matchMakerGenerate } from "./objects.js";
 import * as matchMaker from "./matchmaker.js";
 import { matchExecutor } from "./match-runtime.js";
@@ -42,6 +45,30 @@ const allocateDistributedObjectId = createDistributedObjectIdAllocator({
 
 const describe = (session) =>
   `[${session.id}${session.accountId ? ` acct=${session.accountId}` : ""}]`;
+
+/**
+ * Notes when the token a player just logged in with runs out, and says so if
+ * that is soon.
+ *
+ * A token lasts a year and nothing told anybody it was ending: the first the
+ * player heard was an error popup, and the operator after that. The server
+ * keeps no list of the tokens it issued, but it sees the expiry every time one
+ * is presented — so it says so while the player is still able to be told. A
+ * browser session's token lasts six hours by design and is left out.
+ */
+const noteTokenExpiry = (session, login) => {
+  const expiry = Number(String(login.token ?? "").split(":")[0]);
+  if (!Number.isFinite(expiry) || expiry <= 0) return;
+  session.tokenExpiry = expiry;
+  const left = expiry - Math.floor(Date.now() / 1000);
+  if (left > SESSION_TTL_SECONDS && left <= TOKEN_WARN_DAYS * 86400) {
+    warn(
+      `account ${login.accountId}'s token expires in ` +
+        `${left < 86400 ? "under a day" : `${Math.floor(left / 86400)} day(s)`}; ` +
+        `issue a new one with: node tools/token.js ${login.accountId}`
+    );
+  }
+};
 
 /**
  * DcSocket.BuildPacketLogin:
@@ -90,9 +117,11 @@ const handleLogin = async (session, reader) => {
   const problem = config.authEnabled === false ? null : tokenProblem(login.accountId, login.token);
   if (problem) {
     warn(`[${session.id}] refused account ${login.accountId} — ${problem}`);
+    count("auth_refused");
     session.close?.("invalid validation token", { flush: true });
     return;
   }
+  noteTokenExpiry(session, login);
 
   const displaced = sessionHolding(login.accountId);
   session.completeAuthentication(login.accountId, login.token);
@@ -289,6 +318,7 @@ export const admitSocket = (socket) => {
         `(global ${activeSocketCount}/${config.maxSocketConnections}, ` +
         `address ${addressCount}/${config.maxSocketConnectionsPerIp})`
     );
+    count("sockets_refused");
     socket.destroy();
     return false;
   }
@@ -317,6 +347,9 @@ export const onConnection = (socket) => {
   const session = new MemberSession({
     id: nextSessionId++,
     socket,
+    // For whoever runs the server: when this connection began and from where.
+    connectedAt: Date.now(),
+    remoteAddress: String(socket.remoteAddress ?? ""),
     accountId: null,
     authenticated: false,
     token: null,
@@ -502,6 +535,7 @@ export const onConnection = (socket) => {
             closeSession("truncated payload");
             return;
           }
+          count("packets_failed");
           error(
             `${describe(session)} failed handling packet ` +
               `${truncate(withoutCredentials(body).toString("hex"))}: ${err.stack ?? err}`

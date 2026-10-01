@@ -21,6 +21,7 @@ import { parentPort, workerData } from "node:worker_threads";
 
 import { config } from "../config.js";
 import { error, info, warn } from "../log.js";
+import { count } from "../metrics.js";
 import {
   accountWritesSettled,
   closeAccountStorage,
@@ -840,9 +841,10 @@ const drain = async () => {
   return true;
 };
 
-process.on("unhandledRejection", (problem) =>
-  error(`${label}: unhandled rejection: ${problem?.stack ?? problem}`)
-);
+process.on("unhandledRejection", (problem) => {
+  count("unhandled_rejections");
+  error(`${label}: unhandled rejection: ${problem?.stack ?? problem}`);
+});
 
 // Before any member: the first hero this thread generates may wear a pack.
 await readyContentPacks({ quiet: true });

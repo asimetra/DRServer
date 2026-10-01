@@ -413,6 +413,26 @@ export const loadServerConfig = (environment = process.env) => {
     internalToken: setting(environment, "INTERNAL_TOKEN") ?? defaults.internalToken ?? "",
 
     /**
+     * Where health and status are answered; see status.js. A listener of its
+     * own because it has no credential: what protects it is the address it is
+     * bound to, which is loopback unless the operator says otherwise. Port 0
+     * turns it off.
+     */
+    statusHost: setting(environment, "STATUS_HOST") || defaults.statusHost || "127.0.0.1",
+    statusPort: Math.max(0, asInt(setting(environment, "STATUS_PORT"), defaults.statusPort ?? 8082)),
+    allowRemoteStatus:
+      setting(environment, "ALLOW_REMOTE_STATUS") === undefined
+        ? defaults.allowRemoteStatus === true
+        : setting(environment, "ALLOW_REMOTE_STATUS") === "1",
+    /**
+     * What a caller presents to read the status routes, for watching the
+     * server from another machine. Read-only by construction: nothing on that
+     * listener changes anything, so this is not the internal token and must
+     * not be the same value — that one acts for every account.
+     */
+    statusToken: setting(environment, "STATUS_TOKEN") ?? defaults.statusToken ?? "",
+
+    /**
      * What the market keeps of a sale. A gold sink, and the thing that makes
      * moving gold through the market lossy — ten per cent compounds, so ten
      * hops leave two thirds.
@@ -630,6 +650,42 @@ export const configProblems = (environment = process.env) => {
     }
   }
 
+  // Zero is allowed here and nowhere else: it is how the listener is turned off.
+  const statusPort = spelled(environment, "STATUS_PORT");
+  if (statusPort && statusPort.value !== "") {
+    const port = /^\d+$/.test(statusPort.value) ? Number(statusPort.value) : NaN;
+    if (!(port >= 0 && port <= 65535)) {
+      refusals.push(
+        `${statusPort.key} must be a port number, or 0 to turn the status listener off, ` +
+          `not ${JSON.stringify(statusPort.value)}`
+      );
+    }
+  }
+  if (settings.statusToken && settings.statusToken.length < 32) {
+    refusals.push(
+      `${spelled(environment, "STATUS_TOKEN")?.key ?? "statusToken"} must be at least 32 characters ` +
+        "(openssl rand -hex 32)"
+    );
+  }
+  if (settings.statusToken && settings.statusToken === settings.internalToken) {
+    refusals.push(
+      "ODS_STATUS_TOKEN must not be the internal token: whoever watches the server would then hold every account"
+    );
+  }
+  if (
+    settings.statusPort > 0 &&
+    !LOOPBACK.test(String(settings.statusHost)) &&
+    !settings.allowRemoteStatus &&
+    !settings.statusToken
+  ) {
+    refusals.push(
+      `${spelled(environment, "STATUS_HOST")?.key ?? "statusHost"} is ${settings.statusHost}, which is not ` +
+        "loopback, and the status listener has no authentication; keep it on loopback, set " +
+        "ODS_STATUS_TOKEN so that callers must present it, or set ODS_ALLOW_REMOTE_STATUS=1 " +
+        "where the network in front of it is the access control"
+    );
+  }
+
   if (settings.storage !== "file" && settings.storage !== "postgres") {
     refusals.push(
       `${spelled(environment, "STORAGE")?.key ?? "storage"} must be "file" or "postgres", ` +
@@ -644,6 +700,7 @@ export const configProblems = (environment = process.env) => {
     "STRICT",
     "ALLOW_INSECURE_REMOTE",
     "ALLOW_INSECURE_INTERNAL",
+    "ALLOW_REMOTE_STATUS",
   ]) {
     const given = spelled(environment, name);
     if (given && given.value !== "" && given.value !== "0" && given.value !== "1") {

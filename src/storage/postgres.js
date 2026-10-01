@@ -4,6 +4,7 @@ import { MAIN_THREAD_CONNECTIONS, WORKER_THREAD_CONNECTIONS } from "./connection
 import { config } from "../config.js";
 import { info, warn } from "../log.js";
 import { ProcessLockHeldError } from "../process-lock.js";
+import { count } from "../metrics.js";
 import { ACCOUNT_OBJECT_ID_FLOOR } from "../account-object-ids.js";
 
 /**
@@ -48,9 +49,10 @@ const connect = () => {
       connectionString: config.databaseUrl,
       max: isMainThread ? MAIN_THREAD_CONNECTIONS : WORKER_THREAD_CONNECTIONS,
     });
-    pool.on("error", (problem) =>
-      warn(`postgres: lost an idle connection (${problem.message}); it will be reopened on demand`)
-    );
+    pool.on("error", (problem) => {
+      count("database_connections_lost");
+      warn(`postgres: lost an idle connection (${problem.message}); it will be reopened on demand`);
+    });
     /**
      * And every connection, for as long as it lives. The pool listens only
      * while a connection is idle; one checked out for a transaction has nobody
@@ -67,6 +69,20 @@ const connect = () => {
 export const close = async () => {
   await pool?.end();
   pool = null;
+};
+
+/**
+ * What is wrong with the database right now, or null; see storageProblem. One
+ * round trip, which is also what proves the pool can still open a connection.
+ */
+export const connectionProblem = async () => {
+  if (!processLockClient) return "this server does not hold the database lock";
+  try {
+    await connect().query("SELECT 1");
+    return null;
+  } catch (problem) {
+    return `the database does not answer: ${problem.message}`;
+  }
 };
 
 const PROCESS_LOCK = [0x0d55_3e7, 0x5345_5256];
@@ -132,6 +148,7 @@ export const acquireServerProcessLock = async ({
     if (released || processLockClient !== client) return;
     processLockClient = null;
     client.release(true);
+    count("database_connections_lost");
     warn(
       `postgres: lost the connection holding this server's storage lock (${problem.message}); ` +
         "taking the lock again"

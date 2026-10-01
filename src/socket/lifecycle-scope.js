@@ -1,4 +1,5 @@
 import { error as logError } from "../log.js";
+import { count } from "../metrics.js";
 
 /**
  * Owns asynchronous resources that must end with one gameplay lifetime.
@@ -134,6 +135,8 @@ const REPORT_EVERY_MS = 10_000;
 const reported = new Map();
 
 const reportTimerFailure = (label, problem, now = Date.now()) => {
+  // Every one of them, whether or not it is written down again.
+  count("timer_failures");
   const key = `${label}|${problem?.message ?? problem}`;
   const seen = reported.get(key);
   if (!seen) {

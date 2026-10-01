@@ -43,6 +43,7 @@ import { performance } from "node:perf_hooks";
 import { Worker } from "node:worker_threads";
 
 import { error, info, warn } from "../log.js";
+import { absorb, count } from "../metrics.js";
 import {
   AccountLeasedError,
   installAccountOwnership,
@@ -330,6 +331,7 @@ export class MatchWorkerPool {
    */
   replace(worker) {
     if (!this.everReady) return;
+    count("worker_restarts");
     const failures = worker.started ? 0 : this.startFailures[worker.index] + 1;
     this.startFailures[worker.index] = failures;
     if (failures >= this.maxStartFailures) {
@@ -404,6 +406,20 @@ export class MatchWorkerPool {
   }
 
   /**
+   * Which slots are up and what each is carrying. Unlike `distribution` this
+   * measures nothing, so a status poll does not disturb the busy figures
+   * somebody else is reading.
+   */
+  slots() {
+    return this.workers.map((worker) => ({
+      index: worker.index,
+      alive: worker.alive,
+      matches: worker.matches.size,
+      members: worker.routes.size,
+    }));
+  }
+
+  /**
    * How the load is spread: matches and members per worker, and how busy each
    * worker's event loop was since the last time this was asked.
    */
@@ -466,6 +482,9 @@ export class MatchWorkerPool {
         return this.updateMatch(message);
       case "friendship":
         return friendshipChanged(message.first, message.second, message.made === true);
+      case "count":
+        // What that worker's dungeons counted, added to the server's totals.
+        return absorb(message.counts);
       default:
         return warn(`match worker ${worker.index}: unknown message ${message?.t}`);
     }

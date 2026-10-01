@@ -2,6 +2,7 @@ import { matchHost } from "./match-host.js";
 import { reconcileConsumables } from "../consumables.js";
 import { warn } from "../log.js";
 import { trackRunSave } from "./run-saves.js";
+import { count } from "../metrics.js";
 
 /**
  * Writes the run down, once.
@@ -78,7 +79,10 @@ export const settleDungeonAccount = (session) => {
     .catch(() => undefined)
     .then(() => reconcileConsumables(account, avatar))
     .then(save)
-    .catch((problem) => warn(`[${session.id}] powerup reconcile failed: ${problem.message}`));
+    .catch((problem) => {
+      count("saves_failed");
+      warn(`[${session.id}] powerup reconcile failed: ${problem.message}`);
+    });
 
   // Becomes the save in flight, so anything that still queues one orders behind
   // it rather than racing it — and so a caller that wants to wait can. Tracked

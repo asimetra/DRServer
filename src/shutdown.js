@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { error, info, warn } from "./log.js";
+import { count } from "./metrics.js";
 
 /**
  * How long a listener is given to finish what it already accepted.
@@ -64,7 +65,7 @@ export const createGracefulShutdown = ({
 } = {}) => {
   let stopping = null;
 
-  return (reason = "shutdown") => {
+  const shutdown = (reason = "shutdown") => {
     if (stopping) return stopping;
     stopping = (async () => {
       info(`shutdown: ${reason}; refusing new connections`);
@@ -129,6 +130,9 @@ export const createGracefulShutdown = ({
     })();
     return stopping;
   };
+  /** Whether a stop is under way, for a health check to stop saying "well". */
+  shutdown.inProgress = () => stopping !== null;
+  return shutdown;
 };
 
 /**
@@ -206,6 +210,7 @@ export const installProcessHandlers = ({
   const onSigint = () => stop("SIGINT");
   const onSighup = () => stop("SIGHUP");
   const onUnhandledRejection = (reason) => {
+    count("unhandled_rejections");
     error(`unhandled promise rejection: ${reason?.stack ?? reason}`);
   };
   const onUncaughtException = (problem) => {

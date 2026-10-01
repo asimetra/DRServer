@@ -8,6 +8,7 @@ import { PacketWriter } from "./packet.js";
 import { buffMultiplierFor } from "./buffs.js";
 import { infiniteFloorGold, infiniteProgressFor, infiniteTrophiesFor } from "../infinite.js";
 import { trackRunSave } from "./run-saves.js";
+import { count } from "../metrics.js";
 
 export { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 
@@ -79,9 +80,10 @@ export const queueAccountSave = (session) => {
     .then(() => persist(account));
   session.rewardSavePromise = pending;
   trackRunSave(
-    pending.catch((error) =>
-      warn(`[${session.id}] could not persist dungeon reward: ${error.message}`)
-    )
+    pending.catch((error) => {
+      count("saves_failed");
+      warn(`[${session.id}] could not persist dungeon reward: ${error.message}`);
+    })
   );
   return pending;
 };

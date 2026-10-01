@@ -1,6 +1,7 @@
 import { config } from "./config.js";
 
-const stamp = () => new Date().toISOString().slice(11, 23);
+// The date as well as the time: a log kept for a week has to say which day.
+const stamp = () => new Date().toISOString();
 
 const LEVEL = { info: 0, warn: 1, error: 2, silent: 3 };
 const threshold = () => LEVEL[config.logLevel] ?? LEVEL.info;

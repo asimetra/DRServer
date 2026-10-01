@@ -4,7 +4,7 @@ import { start as startWebServices } from "./http.js";
 import { activeSocketSessions, start as startGameSocket } from "./socket/index.js";
 import { internalApiProblem, start as startInternalApi } from "./internal.js";
 import { config, configProblems } from "./config.js";
-import { closeAccountStorage, waitForAccountWrites } from "./accounts.js";
+import { closeAccountStorage, loadAccount, waitForAccountWrites } from "./accounts.js";
 import { purgeLegacyExperienceBoard, seedStandings, waitForRunRecords } from "./leaderboard.js";
 import {
   StartupRefusal,
@@ -23,12 +23,28 @@ import {
   ProcessLockHeldError,
   acquireProcessLock,
   initializeProcessStorage,
+  storageProblem,
 } from "./process-lock.js";
 import { flushDeclarations, keepDeclarationsIn, readyContentPacks } from "./content-packs.js";
-import { closeMatchWorkers, startMatchWorkers } from "./socket/match-worker-service.js";
+import {
+  activeMatchWorkerPool,
+  closeMatchWorkers,
+  startMatchWorkers,
+} from "./socket/match-worker-service.js";
 import { waitForRunSaves } from "./socket/run-saves.js";
+import { describeBuild } from "./build-info.js";
+import { createHealthWatch, eventLoopDelay, start as startStatus } from "./status.js";
+import { presenceEntries, presenceSummary } from "./socket/presence.js";
+import { counters } from "./metrics.js";
+import {
+  diskSpace,
+  diskWarning,
+  loopWarning,
+  tokenWarning,
+  workerWarning,
+} from "./health-warnings.js";
 
-info("Open Dungeon Server — web services + game socket");
+info(`Open Dungeon Server ${describeBuild()} — web services + game socket`);
 if (config.permissive) {
   info("permissive mode: unknown RPC methods answer [] and are logged as TODO");
 }
@@ -137,11 +153,102 @@ const waitForPersistentWrites = async () => {
     throw new Error("content declarations could not be persisted during shutdown");
   }
 };
+/**
+ * Health and status; see status.js.
+ *
+ * The checks are what "can people play" comes down to; the warnings are what
+ * will stop being true next week. Both are watched whether or not anybody is
+ * polling, so that a change is written to the log when it happens.
+ */
+const [webListener, , socketListener] = listeners;
+const workerSlots = () => activeMatchWorkerPool()?.slots() ?? null;
+const probes = {
+  web: () => (webListener?.listening ? null : "the web service is not accepting connections"),
+  socket: () => (socketListener?.listening ? null : "the game socket is not accepting connections"),
+  storage: storageProblem,
+  workers: () => {
+    const slots = workerSlots();
+    return slots && !slots.some((slot) => slot.alive) ? "no match worker is running" : null;
+  },
+  running: () => (shutdown.inProgress() ? "shutting down" : null),
+};
+const warnings = {
+  disk: async () => diskWarning(config.dataDir, await diskSpace(config.dataDir)),
+  tokens: () => tokenWarning(activeSocketSessions().filter((session) => session.authenticated)),
+  workers: () => workerWarning(workerSlots()),
+  event_loop: () => loopWarning(eventLoopDelay().p99_ms),
+};
+const healthWatch = createHealthWatch({ probes, warnings });
+healthWatch.start();
+
+/** Who is connected, for whoever runs the server; never sent to a player. */
+const connectedPlayers = async () => {
+  const where = new Map(presenceEntries());
+  const now = Date.now();
+  return Promise.all(
+    activeSocketSessions()
+      .filter((session) => session.authenticated)
+      .map(async (session) => ({
+        account_id: session.accountId,
+        // The stored name; a failure to read it is not a reason to hide the player.
+        name: await loadAccount(session.accountId).then((account) => account?.name ?? null, () => null),
+        map_node: Number(where.get(session.accountId) ?? 0),
+        connected_seconds: Math.floor((now - (session.connectedAt ?? now)) / 1000),
+        address: session.remoteAddress ?? null,
+        token_expires_at: session.tokenExpiry
+          ? new Date(session.tokenExpiry * 1000).toISOString()
+          : null,
+      }))
+  );
+};
+
+/**
+ * The listener is started last and allowed to fail: a monitoring port that is
+ * already taken is a line in the log, not a reason for nobody to be able to play.
+ */
+let statusListener = null;
+if (config.statusPort > 0) {
+  statusListener = startStatus({
+    host: config.statusHost,
+    port: config.statusPort,
+    token: config.statusToken,
+    probes,
+    warnings,
+    counters,
+    players: connectedPlayers,
+    describe: async () => {
+      const presence = presenceSummary();
+      const disk = await diskSpace(config.dataDir).catch(() => null);
+      return {
+        name: config.serverName,
+        storage: config.storage,
+        players: { online: presence.online, in_dungeon: presence.inDungeon },
+        game_sockets: activeSocketSessions().length,
+        match_workers: workerSlots() ?? [],
+        data_dir: disk ? { free_bytes: disk.freeBytes, size_bytes: disk.totalBytes } : null,
+      };
+    },
+    onReady: () =>
+      info(
+        `status listening on http://${config.statusHost}:${config.statusPort} ` +
+          `(/healthz, /status, /players, /metrics${config.statusToken ? "; token required for details" : ""})`
+      ),
+  });
+  statusListener.on("error", (problem) => {
+    warn(`status listener is off: ${problem.message}`);
+    statusListener = null;
+  });
+}
+
 const shutdown = createGracefulShutdown({
-  servers: () => listeners,
+  servers: () => [...listeners, statusListener],
   sessions: activeSocketSessions,
   waitForWrites: waitForPersistentWrites,
-  closeServices: closeMatchWorkers,
+  // The watch stops first: "shutting down" is not a health event worth a line.
+  closeServices: () => {
+    healthWatch.stop();
+    return closeMatchWorkers();
+  },
   releaseProcessLock,
   closeStorage: closeAccountStorage,
 });

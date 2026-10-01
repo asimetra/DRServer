@@ -1,5 +1,6 @@
 import http from "node:http";
 import { config, publicBaseUrl } from "./config.js";
+import { count } from "./metrics.js";
 import { routes } from "./routes.js";
 import { error, info, truncate, unimplemented, warn } from "./log.js";
 import { isWebClientPath, serveWebClient } from "./web-client.js";
@@ -171,7 +172,7 @@ const refuse = (res, status, message) => {
   res.end(JSON.stringify({ error: message }));
 };
 
-const handle = async (req, res, { routeTable, rateLimited, callers, webClientDir = "" }) => {
+const handle = async (req, res, { routeTable, rateLimited, callers, quiet = false, webClientDir = "" }) => {
   const url = new URL(req.url, "http://localhost");
 
   // The browser client's files: streamed, and ahead of the budget below — see web-client.js.
@@ -188,6 +189,7 @@ const handle = async (req, res, { routeTable, rateLimited, callers, webClientDir
   const address = req.socket?.remoteAddress ?? "unknown";
   if (rateLimited && !withinRate(address, Date.now(), callers)) {
     warn(`rate limit: ${address} on ${req.method} ${url.pathname}`);
+    count("http_rate_limited");
     req.destroy();
     return;
   }
@@ -206,7 +208,9 @@ const handle = async (req, res, { routeTable, rateLimited, callers, webClientDir
     return;
   }
 
-  info(`${req.method} ${url.pathname}${body ? ` body=${truncate(body)}` : ""}`);
+  // `quiet` is for a listener polled by a machine: two lines every few
+  // seconds, for ever, is a log nobody can read anything else in.
+  if (!quiet) info(`${req.method} ${url.pathname}${body ? ` body=${truncate(body)}` : ""}`);
 
   let found;
   try {
@@ -217,7 +221,7 @@ const handle = async (req, res, { routeTable, rateLimited, callers, webClientDir
     return;
   }
   if (!found) {
-    unimplemented(`${req.method} ${url.pathname}`, body ? `body=${truncate(body)}` : "");
+    if (!quiet) unimplemented(`${req.method} ${url.pathname}`, body ? `body=${truncate(body)}` : "");
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not implemented" }));
     return;
@@ -235,7 +239,7 @@ const handle = async (req, res, { routeTable, rateLimited, callers, webClientDir
   const result = await found.route.handler(request, found.captures);
   res.writeHead(result.status, result.headers);
   res.end(result.body);
-  info(`  -> ${result.status} ${truncate(result.body)}`);
+  if (!quiet) info(`  -> ${result.status} ${truncate(result.body)}`);
 };
 
 /**
@@ -257,13 +261,15 @@ export const listen = ({
   port,
   rateLimited = true,
   rateLimit = config.httpRateLimit,
+  quiet = false,
   webClientDir = "",
   onReady,
 }) => {
   const callers = { table: new Map(), limit: rateLimit };
   const server = http.createServer((req, res) => {
-    handle(req, res, { routeTable, rateLimited, callers, webClientDir }).catch((err) => {
+    handle(req, res, { routeTable, rateLimited, callers, quiet, webClientDir }).catch((err) => {
       error(`unhandled failure on ${req.method} ${req.url}: ${err.stack ?? err}`);
+      count("http_errors");
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json" });
       }
