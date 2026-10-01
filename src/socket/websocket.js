@@ -480,12 +480,20 @@ export const acceptGameSocket = (socket, onConnection, { timeoutMs = SNIFF_TIMEO
   // Nobody else is listening yet, and an unheard "error" takes the process down.
   const early = (err) => warn(`game socket from ${socket.remoteAddress} before login: ${err.message}`);
   socket.on("error", early);
-  const silent = () => socket.destroy();
-  socket.setTimeout(timeoutMs);
-  socket.once("timeout", silent);
+  /**
+   * A deadline, counted from the connection and not from its last byte.
+   *
+   * This was the socket's idle timeout, which every byte resets. A connection
+   * that sent the start of an upgrade and then one byte every few seconds never
+   * ran out of time, never reached a session, and kept its place in the
+   * per-address limit — and behind a tunnel, where every player arrives from
+   * one address, sixty-four of those shut everybody else out.
+   */
+  const deadline = setTimeout(() => socket.destroy(), timeoutMs);
+  deadline.unref?.();
+  socket.once("close", () => clearTimeout(deadline));
   const decided = () => {
-    socket.removeListener("timeout", silent);
-    socket.setTimeout(0);
+    clearTimeout(deadline);
     socket.removeListener("error", early);
   };
 

@@ -429,3 +429,33 @@ test("an upgrade that never finishes is closed at the deadline", async (t) => {
   await closed;
   assert.ok(Date.now() - started < 2000, "the server let go of it");
 });
+
+/**
+ * The deadline has to be a deadline. It was an idle timer, which every byte
+ * resets: a connection sending one byte every few seconds never ran out of
+ * time, never logged in, and held its place in the per-address limit — sixty
+ * four of them, and nobody else from that address could connect at all.
+ */
+test("an upgrade kept alive a byte at a time is still closed at the deadline", async (t) => {
+  const server = net.createServer((socket) => acceptGameSocket(socket, () => {}, { timeoutMs: 200 }));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const client = net.connect(server.address().port, "127.0.0.1");
+  client.on("error", () => {});
+  await new Promise((resolve) => client.once("connect", resolve));
+  const closed = new Promise((resolve) => client.once("close", resolve));
+  client.write("GET / HTTP/1.1\r\n");
+  const trickle = setInterval(() => {
+    if (!client.destroyed) client.write("X");
+  }, 50);
+  t.after(() => clearInterval(trickle));
+
+  const started = Date.now();
+  const outcome = await Promise.race([
+    closed.then(() => "closed"),
+    new Promise((resolve) => setTimeout(() => resolve("still open"), 1500)),
+  ]);
+  client.destroy();
+  assert.equal(outcome, "closed");
+  assert.ok(Date.now() - started < 1000, "at the deadline, not whenever it went quiet");
+});
