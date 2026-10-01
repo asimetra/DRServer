@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 /** Finds persistent row IDs owned by more than one account/table. Read-only. */
+// Must be first: without it a `.env` naming PostgreSQL is ignored, and this
+// audits the JSON files nobody uses and reports them clean.
+import "../src/load-env.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "../src/config.js";

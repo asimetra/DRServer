@@ -24,12 +24,12 @@
  * suite at the live database, which is a worse fault than the one being fixed.
  * Entry points opt in — the server through its flag, tools through this.
  */
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyEnvFile } from "./env-file.js";
 
-const envFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".env");
+export const envFile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".env");
 
-// Values already in the environment win: `process.loadEnvFile` leaves them
-// alone, so `ODS_DATA_DIR=/tmp/x node tools/grant.js` still means /tmp/x.
-if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
+// Values already in the environment win, and a relative path in the file
+// means the same directory wherever the tool is run from; see env-file.js.
+applyEnvFile(envFile);
