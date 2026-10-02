@@ -41,7 +41,12 @@ CREATE TABLE IF NOT EXISTS accounts (
     concurrent_days        INTEGER     NOT NULL DEFAULT 1,
     last_reward_date       TIMESTAMPTZ,
     last_login             TIMESTAMPTZ,
-    created                TIMESTAMPTZ NOT NULL DEFAULT now()
+    created                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Raised by every save of the account. The server keeps a picture of the
+    -- rows it last read or wrote and sends only what differs from it; the
+    -- version is how it learns that the picture is out of date, and writes
+    -- everything instead. No part of the account the client is sent.
+    version                BIGINT      NOT NULL DEFAULT 0
 );
 
 -- A name belongs to one player.
@@ -367,5 +372,8 @@ ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS market_barred BOOLEAN NO
 -- were dropped on every save and a gift never arrived.
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gifts JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gift_sends JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- See `version` on the accounts table.
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);

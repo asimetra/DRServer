@@ -6,6 +6,18 @@ import { info, warn } from "../log.js";
 import { ProcessLockHeldError } from "../process-lock.js";
 import { count } from "../metrics.js";
 import { ACCOUNT_OBJECT_ID_FLOOR } from "../account-object-ids.js";
+import {
+  CHILD_TABLES,
+  ROW_TABLES,
+  SOLD_LISTINGS,
+  isSold,
+  planWrite,
+  saleKey,
+  snapshotOf,
+} from "./account-rows.js";
+import { runPlans } from "./account-writes.js";
+
+export { CHILD_TABLES };
 
 /**
  * Postgres-backed account storage.
@@ -18,6 +30,10 @@ import { ACCOUNT_OBJECT_ID_FLOOR } from "../account-object-ids.js";
  * Reads are one round trip per table rather than a join: the payload is a set
  * of independent lists, and stitching a join back into them costs more than the
  * extra queries save at this size.
+ *
+ * Writes send only what changed. What an account's rows are, and which of them
+ * a save has to touch, is account-rows.js; this file keeps the picture of what
+ * storage holds, checks it is still true before trusting it, and runs the plan.
  */
 
 /**
@@ -197,55 +213,6 @@ export const acquireServerProcessLock = async ({
   };
 };
 
-/**
- * Tables whose rows hang off an account, keyed by the payload field name.
- *
- * Exported so a test can hold it against db/schema.sql. A list that is in the
- * payload and missing from here is not an error anything reports — it simply
- * never reaches storage and comes back empty, which is how every chest a player
- * owned was lost on this backend.
- */
-export const CHILD_TABLES = {
-  account_avatars: [
-    "id", "account_id", "avatar_id", "skin_type", "experience",
-    "completed_mapnode_mask", "statupgrade1", "statupgrade2", "statupgrade3",
-    "statupgrade4", "consumable1_id", "consumable1_count", "consumable2_id",
-    "consumable2_count", "created",
-  ],
-  account_items: [
-    "id", "account_id", "item_id", "power", "avatar_id", "avatar_slot",
-    "is_new", "requiredlevel", "rarity", "modifier1", "modifier2",
-    "legendarymodifier", "created",
-  ],
-  account_stackables: ["id", "account_id", "stack_id", "count", "is_new"],
-  account_chests: ["id", "account_id", "chest_id", "is_new"],
-  account_pets: ["id", "account_id", "npc_id", "equipped_hero", "is_new"],
-  account_skins: ["id", "account_id", "skin_type"],
-  account_attributes: ["id", "account_id", "name", "value"],
-  /*
-   * Weapons that are up for sale, held here rather than in `account_items`.
-   *
-   * A child of the account on purpose: that is what makes listing a weapon one
-   * write instead of an account write and a market write with a crash-shaped
-   * gap in between. The row's id is the weapon's own, so the buyer receives the
-   * instance that was put up rather than a copy of it.
-   */
-  market_listings: [
-    "id", "account_id", "item_id", "price", "listed_at", "sold_to", "sold_at", "tax", "proceeds",
-    "power", "requiredlevel", "rarity", "modifier1", "modifier2",
-    "legendarymodifier", "created",
-  ],
-};
-
-/**
- * Sold listings are stored apart from the open ones, keyed by account and id
- * (see db/schema.sql): the buyer can list the weapon again under the same id
- * before the seller claims. In the account they stay one list.
- */
-const SOLD_LISTINGS = "market_sold_listings";
-const isSold = (listing) => listing?.sold_to !== undefined && listing?.sold_to !== null;
-const saleKey = (row) => `${row.id}|${row.sold_at}`;
-
 /** One logical sale, even if a failed migration left it in either table twice. */
 export const mergeMarketListings = (listings, soldListings) => {
   const uniqueSold = [
@@ -257,16 +224,6 @@ export const mergeMarketListings = (listings, soldListings) => {
     ...uniqueSold,
   ];
 };
-
-const ACCOUNT_COLUMNS = [
-  "id", "name", "campaign", "ancestor_campaign", "demographic", "trophies",
-  "completed_mapnode_mask", "basic_currency", "premium_currency", "basic_keys",
-  "uncommon_keys", "rare_keys", "legendary_keys", "highest_avatar",
-  "buckets_weapon", "buckets_other", "active_avatar", "admin_flags",
-  "ingame_friends", "ignore_friends", "friend_requests", "infinite_progress", "gifts", "gift_sends",
-  "account_flags", "market_barred", "completed_dungeons", "matchmaker_group", "concurrent_days",
-  "last_reward_date", "last_login", "created",
-];
 
 /**
  * Timestamps come back as Date objects but the client expects the ISO strings
@@ -281,62 +238,30 @@ const fromRow = (row) =>
   );
 
 /**
- * A field the row does not carry is left out of the statement, so the column's
- * own DEFAULT applies.
+ * What storage is believed to hold for an account: its version and its rows as
+ * comparable text, taken when it was read or last written here.
  *
- * Naming it as null instead is what `?? null` did, and an explicit null does
- * not fall back to a DEFAULT — it violates the NOT NULL beside it. Six child
- * tables carry such columns (`is_new` on four, `power` and the modifier set on
- * `account_items`, `count` on the stackables), so any writer that built a row
- * without one produced a save that worked against the file backend and threw
- * against PostgreSQL. Buying a chest from the store did exactly that.
- *
- * `undefined` and `null` stop meaning the same thing here, which is the point:
- * absent is "the column decides", null is "the value is null". A nullable
- * column that is deliberately cleared — `account_items.avatar_id`, when a
- * weapon is unequipped — is assigned null rather than deleted, so it still
- * travels.
- *
- * Safe for these rows because the child tables are emptied and rewritten on
- * every save: there is no surviving row for an omitted column to inherit from.
+ * Trusted only as far as the version goes. A save planned against a picture
+ * names the version the picture was taken at, and storage refuses it when the
+ * row has moved on — another thread wrote the account, or a tool did — and the
+ * save falls back to writing everything, as every save used to. So a stale
+ * picture costs a full write and can never cost a wrong one. A picture is a
+ * few kilobytes; the least recently used go when there are too many.
  */
-const insert = async (client, table, columns, row) => {
-  const present = columns.filter((column) => row[column] !== undefined);
-  if (!present.length) return;
-  const placeholders = present.map((_, index) => `$${index + 1}`).join(", ");
-  await client.query(
-    `INSERT INTO ${table} (${present.join(", ")}) VALUES (${placeholders})`,
-    present.map((column) => row[column])
-  );
+const SNAPSHOT_LIMIT = 2000;
+const snapshots = new Map();
+
+const remember = (id, snapshot) => {
+  const key = Number(id);
+  snapshots.delete(key);
+  snapshots.set(key, snapshot);
+  if (snapshots.size > SNAPSHOT_LIMIT) snapshots.delete(snapshots.keys().next().value);
 };
 
-/**
- * The same, for a row that has to keep its identity across a rewrite — and the
- * same rule: a field the account does not carry is DEFAULT, not null. The
- * account row had the `?? null` the child tables lost, so a brand-new account
- * (the template carries no `market_barred`) could not be saved at all against
- * PostgreSQL. `EXCLUDED` then carries the default into the update as well, so
- * an absent field means the column's default whether the row is new or not —
- * as it would read back from a file that never had it.
- */
-const upsert = async (client, table, columns, row) => {
-  const values = [];
-  const placeholders = columns
-    .map((column) => {
-      if (row[column] === undefined) return "DEFAULT";
-      values.push(row[column]);
-      return `$${values.length}`;
-    })
-    .join(", ");
-  const assignments = columns
-    .filter((column) => column !== "id")
-    .map((column) => `${column} = EXCLUDED.${column}`)
-    .join(", ");
-  await client.query(
-    `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders})
-     ON CONFLICT (id) DO UPDATE SET ${assignments}`,
-    values
-  );
+/** Test seam, and what a failed write does: nothing is assumed about storage. */
+export const forgetAccountSnapshots = (ids = null) => {
+  if (!ids) return snapshots.clear();
+  for (const id of ids) snapshots.delete(Number(id));
 };
 
 export const loadAccount = async (id) => {
@@ -344,7 +269,10 @@ export const loadAccount = async (id) => {
   const { rows } = await db.query("SELECT * FROM accounts WHERE id = $1", [id]);
   if (!rows.length) return null;
 
-  const account = fromRow(rows[0]);
+  // The version is storage's own bookkeeping and no part of the account. Read
+  // with the account row, before the lists: a save that lands between the two
+  // leaves this picture a version behind, which is refused rather than trusted.
+  const { version, ...account } = fromRow(rows[0]);
 
   for (const [field, columns] of Object.entries(CHILD_TABLES)) {
     const child = await db.query(
@@ -367,6 +295,8 @@ export const loadAccount = async (id) => {
     sold.rows.map(fromRow)
   );
 
+  remember(id, snapshotOf(account, Number(version ?? 0)));
+
   // Still unmodelled: nothing in this server writes a booster row, so there is
   // no shape to store (see db/schema.sql). Chests used to be lumped in with
   // this and were silently dropped on every load — they have their own table.
@@ -376,71 +306,16 @@ export const loadAccount = async (id) => {
 };
 
 /**
- * One account and its lists, on a caller's transaction. Children are replaced
- * wholesale: the caller hands over a complete account, and diffing rows to save
- * a few writes would be a lot of machinery for an object this size.
+ * One account and its lists, whole, on a caller's transaction.
+ *
+ * For a caller that is moving accounts in bulk and knows nothing about what
+ * storage held before. Whatever picture this thread had of the account is
+ * dropped: the caller's transaction may yet be rolled back, and a picture of
+ * rows that were never committed would be trusted on the next save.
  */
 export const writeAccount = async (client, account) => {
-  await clearAccount(client, account);
-  await fillAccount(client, account);
-};
-
-/** The account row, and none of its children: the first half of a write. */
-const clearAccount = async (client, account) => {
-  /**
-   * Updated in place, never removed and remade.
-   *
-   * This began as the file backend's shape — rewrite the whole document — and
-   * inside this server the two read alike, because the children cascade away
-   * and are written again in the same breath.
-   *
-   * Outside it they do not. The website's `web.users.account_id` references
-   * this row with ON DELETE SET NULL, so every save detached a player's login
-   * from their character. One finished dungeon was enough, and what the site
-   * then said was "confirm your email address first" to somebody who had
-   * confirmed it days before.
-   */
-  /**
-   * The JSONB fields go as JSON text. Handed a JavaScript array, the driver
-   * writes a PostgreSQL array literal — `{...}` — which JSONB refuses, so the
-   * first pending friend request made the whole save fail, and an empty list
-   * was stored as the object `{}`.
-   */
-  const asJsonList = (value) => JSON.stringify(Array.isArray(value) ? value : []);
-  await upsert(client, "accounts", ACCOUNT_COLUMNS, {
-    ...account,
-    ingame_friends: account.ingame_friends ?? "[]",
-    ignore_friends: account.ignore_friends ?? "[]",
-    friend_requests: asJsonList(account.friend_requests),
-    gifts: asJsonList(account.gifts),
-    gift_sends: asJsonList(account.gift_sends),
-    infinite_progress: JSON.stringify(
-      account.infinite_progress && typeof account.infinite_progress === "object"
-        ? account.infinite_progress
-        : {}
-    ),
-  });
-
-  /**
-   * The children are cleared, which the account row cannot be: they are lists
-   * and a save has to be able to shorten one — a weapon that was sold would
-   * otherwise come back on the next write. Nothing outside this server points
-   * at them, so removing them costs nothing.
-   */
-  for (const field of [...Object.keys(CHILD_TABLES), SOLD_LISTINGS]) {
-    await client.query(`DELETE FROM ${field} WHERE account_id = $1`, [account.id]);
-  }
-};
-
-/** Its children, written again: the second half. */
-const fillAccount = async (client, account) => {
-  // Avatars first: items and pets reference them.
-  for (const [field, columns] of Object.entries(CHILD_TABLES)) {
-    for (const row of account[field] ?? []) {
-      const table = field === "market_listings" && isSold(row) ? SOLD_LISTINGS : field;
-      await insert(client, table, columns, { ...row, account_id: account.id });
-    }
-  }
+  forgetAccountSnapshots([account.id]);
+  await runPlans(client, [account], [planWrite(null, account)]);
 };
 
 /**
@@ -453,24 +328,27 @@ const fillAccount = async (client, account) => {
  * commits mean a crash in between leaves the item on neither or on both. The
  * lock pair callers already take (`withTwoAccountLocks`) stops two writers
  * interleaving; it does nothing about a writer that stops halfway.
+ *
+ * Each account is planned before the first round trip, against the picture
+ * this thread holds of it, and the pictures are replaced only once the
+ * transaction has committed. A write that fails leaves none: what storage
+ * holds after a failure is not something to guess at.
  */
 export const saveAccounts = async (accounts) => {
   const db = connect();
+  const plans = accounts.map((account) =>
+    planWrite(snapshots.get(Number(account.id)) ?? null, account)
+  );
   const client = await db.connect();
 
   try {
     await client.query("BEGIN");
-    /**
-     * Every account cleared before any is filled. Child ids are global keys, so
-     * a weapon moving from the second account to the first is inserted under
-     * the first while the second still holds its old row — and a trade the
-     * second party gave something in failed on the duplicate key, every time.
-     */
-    for (const account of accounts) await clearAccount(client, account);
-    for (const account of accounts) await fillAccount(client, account);
+    await runPlans(client, accounts, plans);
     await client.query("COMMIT");
+    for (const plan of plans) remember(plan.id, { ...plan.next, version: plan.written });
     return accounts;
   } catch (err) {
+    forgetAccountSnapshots(accounts.map((account) => account.id));
     // On a connection that has gone there is nothing to roll back, and a
     // failure here must not replace the error that says what went wrong.
     await client.query("ROLLBACK").catch(() => undefined);
@@ -572,7 +450,7 @@ export const accountIdWithName = async (key) => {
   return rows.length ? Number(rows[0].id) : null;
 };
 
-const OBJECT_ID_TABLES = [...Object.keys(CHILD_TABLES), SOLD_LISTINGS];
+const OBJECT_ID_TABLES = ROW_TABLES;
 
 /**
  * Brings the sequence above its floor and every persisted child id.
