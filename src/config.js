@@ -5,6 +5,7 @@ import { availableParallelism } from "node:os";
 import { isIPv6 } from "node:net";
 import { readJsonFile } from "./json-file.js";
 import { envSetting } from "./env.js";
+import { parseTrustedProxies } from "./forwarded.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..");
@@ -113,6 +114,13 @@ export const loadServerConfig = (environment = process.env) => {
     : defaultConfigFile;
   const defaults = readJsonFile(configFile);
   const configDir = path.dirname(configFile);
+  // Read once, here, because four settings below follow it. One that cannot be
+  // used is left out; the startup checks refuse it by name.
+  const { url: publicUrl } = readPublicUrl(setting(environment, "PUBLIC_URL") ?? defaults.publicUrl);
+  const publicHost = publicUrl?.host ?? unbracketed(setting(environment, "PUBLIC_HOST") || defaults.publicHost);
+  const publicPort =
+    publicUrl?.port ?? asInt(setting(environment, "PUBLIC_PORT"), asInt(setting(environment, "PORT"), defaults.port));
+  const publicScheme = publicUrl?.scheme ?? "http";
 
   return {
     /** Address the HTTP server binds to. */
@@ -122,28 +130,46 @@ export const loadServerConfig = (environment = process.env) => {
     /**
      * Advertised over service discovery. Must be reachable *by the client*, so it
      * cannot be 0.0.0.0 even when we bind to it.
+     *
+     * `ODS_PUBLIC_URL` says all of it at once — `https://play.example.net` —
+     * and is the only way to say https: a server behind a TLS proxy has to
+     * hand out the proxy's address, or the browser client, on an https page,
+     * refuses every call after discovery as mixed content. Otherwise the host
+     * and port are given apart and the scheme is http.
      */
-    publicHost: unbracketed(setting(environment, "PUBLIC_HOST") || defaults.publicHost),
+    publicScheme,
+    publicHost,
 
     /**
      * The ports and socket host clients are told, where they differ from what
      * is bound: a router forwarding 9000 to 8080, or a tunnel that hands out a
      * host and port of its own for each listener. Advertising only — nothing
      * listens on these. Each defaults to its bound counterpart.
+     *
+     * Behind https the socket defaults to the proxy's port instead. The browser
+     * opens `wss://` from an https page, which the game port does not speak, so
+     * the proxy is the only place its socket can go; it hands WebSocket
+     * upgrades on to the game port (see docs/operations.md).
      */
-    publicPort: asInt(
-      setting(environment, "PUBLIC_PORT"),
-      asInt(setting(environment, "PORT"), defaults.port)
-    ),
+    publicPort,
     publicSocketHost: unbracketed(
       setting(environment, "PUBLIC_SOCKET_HOST") ||
+        publicUrl?.host ||
         setting(environment, "PUBLIC_HOST") ||
         defaults.publicHost
     ),
     publicSocketPort: asInt(
       setting(environment, "PUBLIC_SOCKET_PORT"),
-      asInt(setting(environment, "SOCKET_PORT"), defaults.gameSocketPort)
+      publicScheme === "https" ? publicPort : asInt(setting(environment, "SOCKET_PORT"), defaults.gameSocketPort)
     ),
+
+    /**
+     * The proxies whose `X-Forwarded-For` is believed: addresses and ranges,
+     * "127.0.0.1, ::1" for one on the same machine. Without them every player
+     * behind a proxy is the proxy's address, and shares its limits. See
+     * forwarded.js.
+     */
+    trustedProxies: listOf(setting(environment, "TRUSTED_PROXIES") ?? defaults.trustedProxies),
 
     /** Explicit acknowledgement required before cleartext ports bind remotely. */
     allowInsecureRemote:
@@ -303,10 +329,7 @@ export const loadServerConfig = (environment = process.env) => {
     contentBaseUrl:
       setting(environment, "CONTENT_URL") ??
       (defaultContentDir()
-        ? `http://${hostInUrl(unbracketed(setting(environment, "PUBLIC_HOST") || defaults.publicHost))}:${asInt(
-            setting(environment, "PUBLIC_PORT"),
-            asInt(setting(environment, "PORT"), defaults.port)
-          )}/content`
+        ? `${publicBaseUrlFor({ publicScheme, publicHost, publicPort })}/content`
         : ""),
 
     /**
@@ -753,8 +776,50 @@ const unbracketed = (host) => {
 /** An IPv6 literal goes into a URL in brackets, or its colons read as a port. */
 const hostInUrl = (host) => (isIPv6(String(host)) ? `[${host}]` : host);
 
-export const publicBaseUrlFor = (settings) =>
-  `http://${hostInUrl(settings.publicHost)}:${settings.publicPort}`;
+const DEFAULT_PORTS = { http: 80, https: 443 };
+
+/** The address clients are given for the web services; a scheme's own port is left unsaid. */
+export const publicBaseUrlFor = (settings) => {
+  const scheme = settings.publicScheme ?? "http";
+  const port = Number(settings.publicPort) === DEFAULT_PORTS[scheme] ? "" : `:${settings.publicPort}`;
+  return `${scheme}://${hostInUrl(settings.publicHost)}${port}`;
+};
+
+/** "a, b" or a list, as its non-empty entries. */
+const listOf = (value) =>
+  (Array.isArray(value) ? value : String(value ?? "").split(","))
+    .map((entry) => String(entry).trim())
+    .filter(Boolean);
+
+/**
+ * `ODS_PUBLIC_URL` as a scheme, host and port, or why it cannot be one.
+ *
+ * Only an address: the client builds `/rpc/`, `/api/` and the rest onto it
+ * itself, so a path would be one the server does not answer under.
+ */
+const readPublicUrl = (value) => {
+  const given = String(value ?? "").trim();
+  if (!given) return { url: null, problem: null };
+  let parsed;
+  try {
+    parsed = new URL(given);
+  } catch {
+    return { url: null, problem: "must be an address such as https://play.example.net" };
+  }
+  const scheme = parsed.protocol.slice(0, -1);
+  if (!(scheme in DEFAULT_PORTS)) return { url: null, problem: "must start with http:// or https://" };
+  if (parsed.username || parsed.password) {
+    return { url: null, problem: "must not carry a user name or password" };
+  }
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    return { url: null, problem: "must be the address alone, with no path or query: the client adds its own" };
+  }
+  const host = unbracketed(parsed.hostname);
+  if (WILDCARD.has(host)) {
+    return { url: null, problem: `is the address clients are told to connect to, and a client cannot connect to ${host}` };
+  }
+  return { url: { scheme, host, port: parsed.port ? Number(parsed.port) : DEFAULT_PORTS[scheme] }, problem: null };
+};
 
 const LOOPBACK = /^(?:localhost|::1|127(?:\.\d{1,3}){3})$/i;
 const WILDCARD = new Set(["0.0.0.0", "::", "[::]"]);
@@ -882,6 +947,37 @@ export const configProblems = (environment = process.env) => {
     }
     return null;
   };
+
+  const publicUrl = spelled(environment, "PUBLIC_URL");
+  if (publicUrl && publicUrl.value.trim()) {
+    const { problem } = readPublicUrl(publicUrl.value);
+    if (problem) refusals.push(`${publicUrl.key} ${problem}, not ${JSON.stringify(publicUrl.value)}`);
+    // Two settings for one address can only disagree.
+    for (const name of ["PUBLIC_HOST", "PUBLIC_PORT"]) {
+      const other = spelled(environment, name);
+      if (other && other.value !== "") {
+        refusals.push(
+          `${publicUrl.key} replaces ${other.key}; set one or the other, not both`
+        );
+      }
+    }
+  }
+
+  const proxies = spelled(environment, "TRUSTED_PROXIES");
+  const unreadable = parseTrustedProxies(settings.trustedProxies).invalid;
+  if (unreadable.length) {
+    refusals.push(
+      `${proxies?.key ?? "trustedProxies"} must be addresses or ranges such as 127.0.0.1 or 10.0.0.0/8; ` +
+        `cannot read ${unreadable.map((entry) => JSON.stringify(entry)).join(", ")}`
+    );
+  }
+  if (settings.publicScheme === "https" && settings.trustedProxies.length === 0) {
+    warnings.push(
+      "advertising https, so a proxy is in front, but ODS_TRUSTED_PROXIES is empty: every player " +
+        "will count as the proxy's address and share its limits. Name the proxy, e.g. " +
+        "ODS_TRUSTED_PROXIES=127.0.0.1,::1"
+    );
+  }
 
   const publicHost = String(settings.publicHost ?? "");
   const publicProblem = hostProblem(spelled(environment, "PUBLIC_HOST")?.key ?? "publicHost", publicHost);

@@ -30,6 +30,8 @@
 import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 
+import { config } from "../config.js";
+import { clientAddress, trustedFrom } from "../forwarded.js";
 import { warn } from "../log.js";
 
 const ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -419,15 +421,21 @@ const parseUpgrade = (head) => {
   const [requestLine, ...lines] = head.split("\r\n");
   if (!/^GET \S+ HTTP\/1\.1$/.test(requestLine)) return null;
   const headers = {};
+  const forwardedFor = [];
   for (const line of lines) {
     const colon = line.indexOf(":");
-    if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+    if (colon <= 0) continue;
+    const name = line.slice(0, colon).trim().toLowerCase();
+    const value = line.slice(colon + 1).trim();
+    // A proxy may add its own line rather than extend the last one; both are one list.
+    if (name === "x-forwarded-for") forwardedFor.push(value);
+    else headers[name] = value;
   }
   const upgrade = /\bwebsocket\b/i.test(headers.upgrade ?? "");
   const connection = /\bupgrade\b/i.test(headers.connection ?? "");
   const key = headers["sec-websocket-key"];
   if (!upgrade || !connection || !key || headers["sec-websocket-version"] !== "13") return null;
-  return { key };
+  return { key, forwardedFor };
 };
 
 const upgrade = (socket, first, onConnection) => {
@@ -456,6 +464,12 @@ const upgrade = (socket, first, onConnection) => {
         `Sec-WebSocket-Accept: ${acceptKeyFor(request.key)}\r\n\r\n`
     );
     const stream = new WebSocketStream(socket);
+    // Behind a proxy the operator trusts, the player it names (see forwarded.js).
+    stream.remoteAddress = clientAddress(
+      socket.remoteAddress,
+      request.forwardedFor,
+      trustedFrom(config.trustedProxies)
+    );
     onConnection(stream);
     const early = head.subarray(end + 4);
     if (early.length && !socket.destroyed) stream.receive(early);

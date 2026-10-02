@@ -103,9 +103,10 @@ ODS_HOST=0.0.0.0 ODS_PUBLIC_HOST=192.168.1.10 ODS_ALLOW_INSECURE_REMOTE=1 npm st
 `ODS_ALLOW_INSECURE_REMOTE=1` acknowledges that both ports are cleartext; the
 server refuses to start on a non-loopback address without it.
 
-Player tokens cross both listeners, so putting TLS in front of HTTP alone is
-not sufficient. Use a trusted VPN or tunnel when exposing the server beyond a
-trusted LAN. See [Operations](docs/operations.md) for remote binding, player
+Player tokens cross both listeners, so both have to be protected beyond a
+trusted LAN: for the browser client, an https proxy in front of both (see
+[HTTPS](docs/operations.md#https)); for the desktop client, whose game socket
+has no TLS, a trusted VPN or tunnel. See [Operations](docs/operations.md) for remote binding, player
 tokens, the internal API, worker threads, storage ownership, and load testing.
 
 ## Custom skins (optional)

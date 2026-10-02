@@ -1,7 +1,9 @@
 {
   "host": "127.0.0.1",
   "port": 8080,
+  "publicUrl": "",
   "publicHost": "127.0.0.1",
+  "trustedProxies": [],
   "allowInsecureRemote": false,
   "serverName": "Server",
   "gameSocketPort": 7198,

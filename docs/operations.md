@@ -74,14 +74,63 @@ ODS_HOST=0.0.0.0 ODS_ALLOW_INSECURE_REMOTE=1 \
 Players then set `ServiceDiscoveryUrl` to `http://203.0.113.7:9000`. A tunnel
 client running on the same machine connects to the server over loopback, so
 with one of those `ODS_HOST` and `ODS_ALLOW_INSECURE_REMOTE` are not needed.
-The web service is advertised as `http://`; a TLS-terminating proxy in front of
-it is not supported.
+For https, see [HTTPS](#https) below.
 
-### Behind a tunnel or reverse proxy
+### HTTPS
 
-When every player reaches the server through one tunnel endpoint, the server
-sees them all as one address, and two per-address limits then apply to
-everybody at once. Raise both to suit the number of players:
+The server speaks plain HTTP and plain TCP. For https, put a proxy in front
+that holds the certificate and passes both on: web requests to the web port,
+and the browser client's game socket — a WebSocket upgrade — to the game port.
+Both can share the proxy's one port, 443. With [Caddy](https://caddyserver.com),
+which gets and renews the certificate itself:
+
+```caddyfile
+play.example.net {
+	@game {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @game 127.0.0.1:7198
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+And tell the server what is in front of it:
+
+```bash
+ODS_PUBLIC_URL=https://play.example.net \
+  ODS_TRUSTED_PROXIES=127.0.0.1,::1 npm start
+```
+
+`ODS_PUBLIC_URL` is the address players are given, in place of
+`ODS_PUBLIC_HOST` and `ODS_PUBLIC_PORT` (the server refuses to start with both).
+It has to be the proxy's https address: a page served over https refuses every
+call to an `http://` one. With https the game socket is advertised on the same
+host and port, because a browser opens `wss://` from an https page and only the
+proxy speaks it. `ODS_PUBLIC_SOCKET_HOST` and `ODS_PUBLIC_SOCKET_PORT` still
+override that.
+
+`ODS_TRUSTED_PROXIES` names the proxy, as addresses or ranges
+(`10.0.0.0/8`). Through it every connection comes from the proxy's address;
+the player is in its `X-Forwarded-For`, and that header is read only from the
+proxies listed here, because anybody can send one. The per-address request and
+game-socket limits then count each player apart. Leave it out and the server
+still works, but every player shares one address and its limits; it warns
+about that at startup. Caddy and nginx both set the header.
+
+The server stays on loopback and needs no `ODS_ALLOW_INSECURE_REMOTE`; only the
+proxy's port is open. Players use `/play/` in the browser, at
+`https://play.example.net/play/`.
+
+**Only the browser client can play over https.** The desktop client's game
+socket is plain TCP and has no TLS, so it cannot connect through the proxy. It
+keeps working against a server that is reached without https.
+
+### Behind a tunnel
+
+A tunnel that passes on raw connections does not say who it is carrying, so the
+server sees every player as the tunnel's one address, and two per-address limits
+then apply to everybody at once. Raise both to suit the number of players:
 
 ```bash
 ODS_HTTP_RATE_LIMIT=2000                  # requests per address per ten seconds (default 320)
@@ -126,9 +175,10 @@ when authentication is disabled.
 ### Transport security
 
 Signed tokens prevent one player from claiming another account, but the bearer
-token crosses both HTTP and the raw game socket in cleartext. TLS in front of
-only the HTTP listener is therefore insufficient. Keep the server on loopback
-or expose both ports through a trusted VPN or tunnel.
+token crosses both HTTP and the game socket, so both have to be protected. The
+browser client can have both behind one https proxy (see [HTTPS](#https)). The
+desktop client's game socket cannot be encrypted, so a server it plays on
+should stay on loopback or be reached through a trusted VPN or tunnel.
 
 ## Internal API
 

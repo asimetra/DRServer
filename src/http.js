@@ -1,6 +1,7 @@
 import http from "node:http";
 import { config, publicBaseUrl } from "./config.js";
 import { count } from "./metrics.js";
+import { clientAddress, trustedFrom } from "./forwarded.js";
 import { routes } from "./routes.js";
 import { error, info, truncate, unimplemented, warn } from "./log.js";
 import { isWebClientPath, serveWebClient } from "./web-client.js";
@@ -186,7 +187,12 @@ const handle = async (req, res, { routeTable, rateLimited, callers, quiet = fals
    * everything below this line costs memory, and until now the cost was paid
    * for anybody who asked, including for paths that do not exist.
    */
-  const address = req.socket?.remoteAddress ?? "unknown";
+  // Behind a proxy the operator trusts, the player it names (see forwarded.js).
+  const address = clientAddress(
+    req.socket?.remoteAddress ?? "unknown",
+    req.headers["x-forwarded-for"],
+    trustedFrom(config.trustedProxies)
+  );
   if (rateLimited && !withinRate(address, Date.now(), callers)) {
     warn(`rate limit: ${address} on ${req.method} ${url.pathname}`);
     count("http_rate_limited");

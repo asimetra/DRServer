@@ -6,6 +6,7 @@ import { CLID, DC_HASH, OP, opcodeName } from "./opcodes.js";
 import { MalformedPacketError, PacketReader, drainFrames } from "./packet.js";
 import { closeSessionCapture, recordReceived, recordSent, withoutCredentials } from "./capture.js";
 import { count } from "../metrics.js";
+import { isTrustedProxy, trustedFrom } from "../forwarded.js";
 import { SESSION_TTL_SECONDS } from "../auth.js";
 import { TOKEN_WARN_DAYS } from "../health-warnings.js";
 import { heartbeat, logoutResponse, matchMakerGenerate } from "./objects.js";
@@ -297,6 +298,32 @@ let nextSessionId = 1;
 
 /** Marks a raw socket already counted by `admitSocket`. */
 const ADMITTED = Symbol("admitted");
+/** Marks one from a trusted proxy, whose player is not known until its upgrade. */
+const ADDRESS_PENDING = Symbol("address pending");
+
+const refuseSocket = (socket, address) => {
+  warn(
+    `socket refused from ${address}: connection limit ` +
+      `(global ${activeSocketCount}/${config.maxSocketConnections}, ` +
+      `address ${activeSocketsByAddress.get(address) ?? 0}/${config.maxSocketConnectionsPerIp})`
+  );
+  count("sockets_refused");
+  socket.destroy();
+  return false;
+};
+
+/** Counts a connection against its address's limit, or refuses it. */
+const admitAddress = (socket, address) => {
+  const held = activeSocketsByAddress.get(address) ?? 0;
+  if (held >= config.maxSocketConnectionsPerIp) return refuseSocket(socket, address);
+  activeSocketsByAddress.set(address, held + 1);
+  socket.once("close", () => {
+    const remaining = (activeSocketsByAddress.get(address) ?? 1) - 1;
+    if (remaining > 0) activeSocketsByAddress.set(address, remaining);
+    else activeSocketsByAddress.delete(address);
+  });
+  return true;
+};
 
 /**
  * Counts a connection against the global and per-address limits, or refuses it.
@@ -305,37 +332,25 @@ const ADMITTED = Symbol("admitted");
  * used to be counted only once its upgrade was answered, so a socket parked
  * halfway through a handshake counted against nothing and one address could
  * hold as many as the process would take.
+ *
+ * Except from a proxy the operator trusts: there the address is the proxy's,
+ * shared by every player behind it, and the player is only named in the
+ * upgrade. Such a connection counts against the total here and against its
+ * player's address in `onConnection`. The sniffing deadline still closes one
+ * that never says who it is, and the proxy keeps limits of its own.
  */
 export const admitSocket = (socket) => {
   const remoteAddress = String(socket.remoteAddress ?? "unknown");
-  const addressCount = activeSocketsByAddress.get(remoteAddress) ?? 0;
-  if (
-    activeSocketCount >= config.maxSocketConnections ||
-    addressCount >= config.maxSocketConnectionsPerIp
-  ) {
-    warn(
-      `socket refused from ${remoteAddress}: connection limit ` +
-        `(global ${activeSocketCount}/${config.maxSocketConnections}, ` +
-        `address ${addressCount}/${config.maxSocketConnectionsPerIp})`
-    );
-    count("sockets_refused");
-    socket.destroy();
-    return false;
-  }
+  if (activeSocketCount >= config.maxSocketConnections) return refuseSocket(socket, remoteAddress);
+  const fromProxy = isTrustedProxy(remoteAddress, trustedFrom(config.trustedProxies));
+  if (!fromProxy && !admitAddress(socket, remoteAddress)) return false;
 
   activeSocketCount += 1;
-  activeSocketsByAddress.set(remoteAddress, addressCount + 1);
-  let admissionReleased = false;
-  const releaseAdmission = () => {
-    if (admissionReleased) return;
-    admissionReleased = true;
+  socket.once("close", () => {
     activeSocketCount = Math.max(0, activeSocketCount - 1);
-    const remaining = (activeSocketsByAddress.get(remoteAddress) ?? 1) - 1;
-    if (remaining > 0) activeSocketsByAddress.set(remoteAddress, remaining);
-    else activeSocketsByAddress.delete(remoteAddress);
-  };
-  socket.once("close", releaseAdmission);
+  });
   socket[ADMITTED] = true;
+  if (fromProxy) socket[ADDRESS_PENDING] = true;
   return true;
 };
 
@@ -343,6 +358,12 @@ export const onConnection = (socket) => {
   // A browser arrives wrapped; the raw socket underneath is what was admitted.
   const raw = socket.socket ?? socket;
   if (!raw[ADMITTED] && !admitSocket(socket)) return null;
+  if (raw[ADDRESS_PENDING]) {
+    // Through a trusted proxy: a browser's stream now names its player; a raw
+    // connection has nobody to name and is counted as the proxy.
+    raw[ADDRESS_PENDING] = false;
+    if (!admitAddress(raw, String(socket.remoteAddress ?? "unknown"))) return null;
+  }
 
   const session = new MemberSession({
     id: nextSessionId++,
