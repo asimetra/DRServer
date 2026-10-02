@@ -490,7 +490,7 @@ test("a request still held from before a block is neither shown nor accepted", a
   me.ignore_friends = `[${THEM}]`;
   await saveAccount(me);
 
-  assert.deepEqual(await dispatch("friendrequests", "DRFriendRequestPending", [ME, "token"]), []);
+  assert.equal(await dispatch("friendrequests", "DRFriendRequestPending", [ME, "token"]), false);
   assert.deepEqual(await accept(ME, THEM), []);
   await strangers();
   assert.deepEqual(pendingFriendRequestsOf(await loadAccount(ME)), [], "used up rather than left");

@@ -823,9 +823,13 @@ register("leaderboard/getIgnoreFriendData", async ([accountId]) =>
 register("friendrequests/DRFriendRequestPending", async ([accountId]) => {
   const account = await loadAccount(Number(accountId));
   const blocked = new Set(ignoredIdsOf(account));
-  return pendingFriendRequestsOf(account)
+  const rows = pendingFriendRequestsOf(account)
     .filter((row) => !blocked.has(Number(row.account_id)))
     .map((row) => requestRowOf(row, Number(accountId)));
+  // Nothing pending is `false`, as the official answers it. The client tests
+  // this for truth and an empty array passes, raising its pending flag over an
+  // empty tab.
+  return rows.length ? rows : false;
 });
 
 /**

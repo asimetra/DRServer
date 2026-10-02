@@ -247,9 +247,20 @@ test("moderation and limited offers answer empty, which is what the live server 
   await withAccount(ACCOUNT, { friend_requests: [] });
   assert.deepEqual(await dispatch("modrpc", "getmod", [3]), []);
   assert.deepEqual(await dispatch("store", "GetLimitedOfferStatus", [ACCOUNT]), []);
-  assert.deepEqual(
+});
+
+/**
+ * Nothing pending is `false`, never an empty list. The official answers `false`
+ * on every one of 25 calls for an account with no requests and a list of rows
+ * on all 199 for one that has them. The client tests the answer for truth, and
+ * an empty array is true there: it raised the pending flag and switched the
+ * panel to a tab with nothing on it.
+ */
+test("no pending friend requests is false, not an empty list", async () => {
+  await withAccount(ACCOUNT, { friend_requests: [] });
+  assert.equal(
     await dispatch("friendrequests", "DRFriendRequestPending", [ACCOUNT, "token"]),
-    []
+    false
   );
 });
 
