@@ -829,6 +829,17 @@ export const accountWritesSettled = async (id) => {
   while (writeChains.has(key)) await writeChains.get(key);
 };
 
+/**
+ * Removes an account's own record from storage — the file, or on PostgreSQL the
+ * row with everything that hangs off it and what the database keeps about it
+ * besides (storage/postgres.js). Only for account-deletion.js, which makes sure
+ * nobody is holding it first.
+ */
+export const deleteStoredAccount = async (id) => {
+  if (usingDatabase()) return (await db()).deleteAccountEverywhere(Number(id));
+  await fs.rm(filePathFor(Number(id)), { force: true });
+};
+
 /** Waits until every account write already in flight (and any it queues) settles. */
 export const waitForAccountWrites = async () => {
   while (pendingAccountWrites.size) {

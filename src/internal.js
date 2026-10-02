@@ -29,6 +29,7 @@ import {
 } from "./restrictions.js";
 import { beginMaintenance, endMaintenance, maintenanceState } from "./maintenance.js";
 import { adminActions, recordAdminAction } from "./admin-actions.js";
+import { deleteAccount } from "./account-deletion.js";
 import { onlinePlayers } from "./socket/online.js";
 import { ROLE, roleOf } from "./socket/roles.js";
 import { MAX_ANNOUNCEMENT_BYTES, announceTo } from "./socket/announce.js";
@@ -121,7 +122,7 @@ const accountExists = async (id) => (await listAccountIds()).includes(id);
  * It cannot stop a website that has been taken over from naming a real admin:
  * that is what keeping the internal API off the internet is for.
  */
-const actingAdmin = async (req) => {
+const actingAdmin = async (req, { self = null } = {}) => {
   const refusal = authorise(req);
   if (refusal) return { refusal };
   const named = req.headers?.["x-acting-account"];
@@ -133,6 +134,8 @@ const actingAdmin = async (req) => {
     return { refusal: json({ error: "X-Acting-Account must be an account id" }, 400) };
   }
   const account = await loadExistingAccount(actor);
+  // Some calls an account may make about itself: deleting it, for one.
+  if (self !== null && actor === self && account) return { actor };
   const admin = account && (config.adminAccounts?.includes(actor) || roleOf(account) >= ROLE.ADMIN);
   if (!admin) {
     warn(`internal: refused an administrative call by account ${actor}, which is not an admin`);
@@ -1207,6 +1210,38 @@ const disconnectAccount = async (req, [capture]) => {
   return json({ accountId: id, disconnected: sessions.length });
 };
 
+/**
+ * DELETE /internal/v1/accounts/:id — delete an account, at its player's request.
+ *
+ * By the account itself (X-Acting-Account is its own id) or by an admin. Its
+ * tokens are revoked first and stay revoked — a valid token arriving for an id
+ * makes an account, and would bring this one back empty — and whoever is online
+ * on it is disconnected. Then it waits for the account to be let go (a dungeon
+ * writes its account as the run ends) and deletes it; see account-deletion.js
+ * for what goes. Still held when the wait runs out: 409, with the tokens already
+ * revoked, so asking again shortly finishes it.
+ */
+const removeAccount = async (req, [capture]) => {
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  const { refusal, actor } = await actingAdmin(req, { self: id });
+  if (refusal) return refusal;
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  await revokeAccountTokens(id);
+  for (const session of activeSessions().filter((each) => each.accountId === id)) {
+    session.close?.("account deleted", { flush: true });
+  }
+  if (!(await deleteAccount(id))) {
+    warn(`internal: account ${id} is still in play; its tokens are revoked, the deletion did not happen yet`);
+    return json({ error: "the account is still in play; it has been disconnected, ask again shortly" }, 409);
+  }
+  invalidateMarketBrowse();
+  info(`internal: deleted account ${id} at the request of ${actor}`);
+  await recordAdminAction({ actor, action: "account.delete", target: id });
+  return json({ accountId: id, deleted: true });
+};
+
 /** GET /internal/v1/restrictions — the accounts restricted now, why and until when. */
 const readRestrictions = async (req) => {
   const { refusal } = await actingAdmin(req);
@@ -1238,6 +1273,7 @@ export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/leaderboards/:metric", handler: readBoard },
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },
+  { method: "DELETE", pattern: "/internal/v1/accounts/:id", handler: removeAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id/summary", handler: readSummary },
   { method: "GET", pattern: "/internal/v1/accounts/:id/inventory", handler: readInventory },
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },

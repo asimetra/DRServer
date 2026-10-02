@@ -129,3 +129,34 @@ export const salesFor = async (accountId, { limit = 50 } = {}) => {
      guaranteed to be — the same mistake `runsSince` made once. */
   return mine.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, size);
 };
+
+/**
+ * One account's name taken out of the history, for an account deleted at its
+ * player's request (account-deletion.js). The sales stay: they are the other
+ * side's history too. On PostgreSQL the deletion's own transaction does this.
+ */
+export const anonymiseSales = async (accountId) => {
+  if (usingDatabase()) return;
+  const id = Number(accountId);
+  let text;
+  try {
+    text = await fs.readFile(file(SALES_FILE), "utf8");
+  } catch (problem) {
+    if (problem.code === "ENOENT") return;
+    throw problem;
+  }
+  const lines = text.split("\n").filter(Boolean).map((line) => {
+    try {
+      const sale = JSON.parse(line);
+      if (Number(sale.seller_id) === id) sale.seller_name = null;
+      if (Number(sale.buyer_id) === id) sale.buyer_name = null;
+      return JSON.stringify(sale);
+    } catch {
+      return line;
+    }
+  });
+  const temporary = `${file(SALES_FILE)}.${process.pid}.tmp`;
+  await fs.writeFile(temporary, lines.length ? `${lines.join("\n")}\n` : "", "utf8");
+  await fs.rename(temporary, file(SALES_FILE));
+};
+

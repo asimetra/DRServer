@@ -770,3 +770,28 @@ export const restrictedAccounts = async () => {
   );
   return rows.map((row) => ({ account_id: Number(row.id), name: row.name, restriction: row.restriction }));
 };
+
+/**
+ * An account deleted at its player's request (src/account-deletion.js): its row
+ * and, by cascade, every child of it; its standings and run history; and its
+ * name from the market history, whose sales stay for the other side.
+ */
+export const deleteAccountEverywhere = async (accountId) => {
+  const client = await connect().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM accounts WHERE id = $1", [accountId]);
+    await client.query("DELETE FROM dungeon_bests WHERE account_id = $1", [accountId]);
+    await client.query("DELETE FROM dungeon_runs WHERE account_id = $1", [accountId]);
+    await client.query("UPDATE market_sales SET seller_name = NULL WHERE seller_id = $1", [accountId]);
+    await client.query("UPDATE market_sales SET buyer_name = NULL WHERE buyer_id = $1", [accountId]);
+    await client.query("COMMIT");
+  } catch (problem) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw problem;
+  } finally {
+    client.release();
+  }
+  forgetAccountSnapshots([accountId]);
+};
+

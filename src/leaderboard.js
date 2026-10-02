@@ -582,3 +582,45 @@ export const boardFor = async (metric, { node, hero, party, limit = 20 } = {}) =
   }
   return shown.map(asEntry);
 };
+
+/**
+ * Everything the boards keep about one account, gone: its standings and its run
+ * history. For an account deleted at its player's request (account-deletion.js);
+ * on PostgreSQL the deletion's own transaction does this.
+ */
+export const forgetAccountRuns = async (accountId) => {
+  if (usingDatabase()) return;
+  const id = Number(accountId);
+  await waitForRunRecords();
+  await withFileStoreLock(async () => {
+    const bests = await readJson(BESTS_FILE, {});
+    let changed = false;
+    for (const rows of Object.values(bests)) {
+      if (rows && Object.hasOwn(rows, String(id))) {
+        delete rows[String(id)];
+        changed = true;
+      }
+    }
+    if (changed) await writeJson(BESTS_FILE, bests);
+
+    let text;
+    try {
+      text = await fs.readFile(file(RUNS_FILE), "utf8");
+    } catch (problem) {
+      if (problem.code === "ENOENT") return;
+      throw problem;
+    }
+    const kept = text.split("\n").filter((line) => {
+      if (!line) return false;
+      try {
+        return Number(JSON.parse(line).account_id) !== id;
+      } catch {
+        return true;
+      }
+    });
+    const temporary = `${file(RUNS_FILE)}.${process.pid}.${++temporaryId}.tmp`;
+    await fs.writeFile(temporary, kept.length ? `${kept.join("\n")}\n` : "", "utf8");
+    await fs.rename(temporary, file(RUNS_FILE));
+  });
+};
+

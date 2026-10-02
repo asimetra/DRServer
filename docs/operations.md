@@ -197,6 +197,7 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 |---|---|
 | `POST /internal/v1/accounts` | Register an account and return its id and token |
 | `GET /internal/v1/accounts/:id` | Read the account as the client receives it |
+| `DELETE /internal/v1/accounts/:id` | Delete an account (see [Deleting an account](#deleting-an-account)) |
 | `GET /internal/v1/accounts/:id/summary` | Read a web-ready account and active-hero summary |
 | `GET /internal/v1/accounts/:id/inventory` | Read items eligible for web inventory/market views |
 | `POST /internal/v1/accounts/:id/token` | Issue a replacement token |
@@ -291,6 +292,31 @@ what the client claims.
 The client has no way to show a restriction, a reason or a date. The account
 summary (`GET …/summary`) carries `restriction` so the website can tell the
 player instead.
+
+### Deleting an account
+
+A player can ask for their account to be deleted, and a server whose website
+keeps e-mail addresses has to be able to do it. The call has to come from the
+account itself (its own id in `X-Acting-Account`) or from an admin:
+
+```bash
+curl -X DELETE -H "X-Internal-Token: $ODS_INTERNAL_TOKEN" -H "X-Acting-Account: 1000000042" \
+  http://127.0.0.1:8081/internal/v1/accounts/1000000042
+```
+
+The account is removed with everything it had, along with its leaderboard
+standings and run history. Its market sales stay, because they are also the
+other player's history, but its name is taken off them. The action log keeps a
+record of the deletion. Its name becomes free for somebody else.
+
+The account's tokens are revoked first and stay revoked after it is gone. This
+matters because the server creates an account the first time a valid token
+arrives for an unknown id, so a token left valid would bring it back, empty. A
+player who is online is disconnected. If their dungeon is still writing their
+account, the deletion waits up to fifteen seconds. If the account is still in
+play after that, the answer is `409` and nothing is deleted yet; the tokens are
+already revoked, so asking again shortly finishes it. Backups still hold the
+account until they are rotated out.
 
 ### Securing the internal API
 
