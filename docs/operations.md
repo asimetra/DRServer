@@ -530,6 +530,19 @@ database answers; requests made in between fail. If the lock cannot be had back
 within thirty seconds, or another server has taken it, the server shuts down
 with status 1.
 
+### Rewards the server decides
+
+Most of what a run pays is in the game's own tables. A few amounts are not, and
+those are settings:
+
+| Setting | Default | What it is |
+|---|---|---|
+| `ODS_TROPHY_GEMS` | 25 | Gems paid with a boss trophy, the first time that boss is beaten |
+
+What a new account starts with — gold, gems, keys, bag size, its first hero and
+weapon — is `config/account-template.json`, or a file of your own named by
+`ODS_ACCOUNT_TEMPLATE`.
+
 See [`.env.example`](../.env.example) for the environment-variable reference and
 [`config/README.md`](../config/README.md) for the tracked JSON data contracts.
 

@@ -56,6 +56,7 @@ test("completing a node pays it out and records the bit", async () => {
     experience: 55,
     basicKeys: 1,
     trophies: 1,
+    gems: 25,
     firstClear: true,
   });
   assert.equal(target.dungeonAccount.basic_currency, 100, "untouched by completion");
@@ -241,6 +242,60 @@ test("a doober that is not a treasure earns nothing", async () => {
  * bosses, Prisoner's Keep and the rest — while the eighty-five ordinary
  * dungeons and the nine Infinites pay none.
  */
+/**
+ * A trophy comes with gems. Beating a boss for the first time paid twenty-five
+ * of them on the official server, beside the trophy and the key, and this
+ * server paid none: completing a node never touched the premium currency at
+ * all. No table authors the amount — it is the game's own unit, the same
+ * twenty-five an Infinite dungeon's gem floor pays — so it is a setting, and
+ * the default is what the game paid.
+ */
+test("a boss beaten for the first time pays gems with its trophy", async () => {
+  const target = session();
+  target.dungeonAccount.premium_currency = 5;
+
+  const paid = await awardDungeonCompletion(target);
+
+  assert.equal(paid.gems, 25);
+  assert.equal(target.dungeonAccount.premium_currency, 30);
+  assert.equal(target.dungeonRewards.gems, 25, "and the report has them to show");
+
+  const again = session({ dungeonAccount: target.dungeonAccount, dungeonAvatar: { experience: 0 } });
+  const replay = await awardDungeonCompletion(again);
+  assert.equal(replay.gems, 0, "they go with the trophy, and the trophy is given once");
+  assert.equal(target.dungeonAccount.premium_currency, 30);
+});
+
+test("an ordinary dungeon pays no gems, since it pays no trophy", async () => {
+  const target = session({
+    mapPage: { Name: "Knight Fortress 1-1", NodeType: "DUNGEON", BitIndex: 4, CompletionXPBonus: 110, BasicKeys: 1 },
+  });
+
+  const paid = await awardDungeonCompletion(target);
+
+  assert.equal(paid.gems, 0);
+  assert.equal(target.dungeonAccount.premium_currency ?? 0, 0);
+});
+
+test("what a trophy pays in gems is the operator's to set", async () => {
+  const { config, loadServerConfig } = await import("../src/config.js");
+  assert.equal(loadServerConfig({}).trophyGems, 25, "the game's own amount unless told otherwise");
+  assert.equal(loadServerConfig({ ODS_TROPHY_GEMS: "40" }).trophyGems, 40);
+  assert.equal(loadServerConfig({ ODS_TROPHY_GEMS: "0" }).trophyGems, 0);
+
+  const usual = config.trophyGems;
+  try {
+    config.trophyGems = 40;
+    assert.equal((await awardDungeonCompletion(session())).gems, 40);
+    config.trophyGems = 0;
+    const none = session();
+    assert.equal((await awardDungeonCompletion(none)).gems, 0);
+    assert.equal(none.dungeonAccount.premium_currency ?? 0, 0);
+  } finally {
+    config.trophyGems = usual;
+  }
+});
+
 test("an ordinary dungeon pays no trophy, however new it is", async () => {
   const target = session({
     mapPage: {

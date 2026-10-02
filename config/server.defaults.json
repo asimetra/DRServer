@@ -38,6 +38,7 @@
   "projectileTickMs": 20,
   "dungeonSummaryDelayMs": 5000,
   "runCheckpointSeconds": 30,
+  "trophyGems": 25,
   "afkWarnMs": 30000,
   "afkKickMs": 60000,
   "activityThresholds": [1, 5, 9, 17],

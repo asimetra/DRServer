@@ -428,7 +428,6 @@ export const awardDungeonCompletion = async (session) => {
   const experience = rewardAmount(node.CompletionXPBonus);
   const teamExperience = completionTeamXpBonus(node, account);
   const basicKeys = firstClear ? rewardAmount(node.BasicKeys) : 0;
-  const premiumKeys = firstClear ? rewardAmount(node.PremiumKeys) : 0;
   /**
    * A trophy is for a boss, not for a dungeon.
    *
@@ -443,11 +442,23 @@ export const awardDungeonCompletion = async (session) => {
    * carries an award column — so one per boss beaten is taken from the game.
    */
   const trophies = firstClear && node.NodeType === "BOSS" ? 1 : 0;
+  /**
+   * And a trophy comes with gems.
+   *
+   * Reported from play on the official server: a boss beaten for the first
+   * time pays twenty-five gems beside its trophy and its key. Nothing here
+   * paid any — completing a node never touched the premium currency. Like the
+   * trophy itself the amount is in no table: no MapPage column carries gems,
+   * and the only gem figures in the game data are the shop's and the Infinite
+   * dungeons' own gem floor, which is the same twenty-five. So it is the
+   * server's setting, `trophyGems`, and what the game paid is its default.
+   */
+  const gems = trophies * rewardAmount(config.trophyGems);
 
   account.basic_currency = (account.basic_currency ?? 0) + gold;
   if (basicKeys) account.basic_keys = (account.basic_keys ?? 0) + basicKeys;
-  if (premiumKeys) account.premium_keys = (account.premium_keys ?? 0) + premiumKeys;
   if (trophies) account.trophies = (account.trophies ?? 0) + trophies;
+  if (gems) account.premium_currency = rewardAmount(account.premium_currency) + gems;
   account.completed_dungeons = (account.completed_dungeons ?? 0) + 1;
 
   const avatar = session.dungeonAvatar;
@@ -476,14 +487,15 @@ export const awardDungeonCompletion = async (session) => {
 
   session.dungeonRewards ??= { gold: 0, gems: 0, xp: 0 };
   session.dungeonRewards.gold += gold;
+  session.dungeonRewards.gems = (session.dungeonRewards.gems ?? 0) + gems;
 
   await queueAccountSave(session);
   info(
     `[${session.id}] ${firstClear ? "first clear of" : "replayed"} "${node.Name}" — ` +
       `+${gold} gold, +${experience} xp (+${teamExperience} crew), +${basicKeys} basic key(s), ` +
-      `+${trophies} trophy, node bit ${node.BitIndex}`
+      `+${trophies} trophy, +${gems} gems, node bit ${node.BitIndex}`
   );
-  return { gold, experience, basicKeys, trophies, firstClear };
+  return { gold, experience, basicKeys, trophies, gems, firstClear };
 };
 
 /** The first treasure doober and the first chest, so the offset lines them up. */

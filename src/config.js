@@ -523,6 +523,12 @@ export const loadServerConfig = (environment = process.env) => {
     ),
 
     /**
+     * Gems paid with a boss trophy, the first time that boss is beaten. The
+     * official paid twenty-five; no table authors it, so it is set here.
+     */
+    trophyGems: Math.max(0, asInt(setting(environment, "TROPHY_GEMS"), defaults.trophyGems ?? 25)),
+
+    /**
      * How often a running dungeon writes the accounts that changed, in
      * milliseconds; 0 for never. Gold and experience are written when a floor
      * or the run ends and when a player leaves or is dropped — this is for the
