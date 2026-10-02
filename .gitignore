@@ -33,6 +33,7 @@ logs-fresh/
 /docs/*
 # Local official-server capture analysis; never publish the evidence report.
 /docs/official-vs-local-behavior-diff.md
+!/docs/chat-commands.md
 !/docs/client-setup.md
 !/docs/combat-conformance.md
 !/docs/content-packs.md

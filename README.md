@@ -152,6 +152,7 @@ and remaining client-side boundary. Load-test scenarios and SLO gating are in
 - [Operations and deployment](docs/operations.md)
 - [Environment reference](.env.example)
 - [Configuration data contracts](config/README.md)
+- [Chat commands](docs/chat-commands.md)
 - [Known limitations](docs/known-limitations.md)
 - [Content packs](docs/content-packs.md)
 - [Combat conformance](docs/combat-conformance.md)

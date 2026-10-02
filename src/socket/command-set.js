@@ -94,18 +94,49 @@ const NEAR_LIMIT = 8;
 const LIST_LIMIT = 6;
 
 export const registerBuiltinCommands = () => {
+  /**
+   * The names, in one message; a description is asked for by name.
+   *
+   * It answered with a line for every command, each its own chat message, and
+   * the client keeps fifty lines: asking what exists cost a third of the log.
+   * Somebody asking that wants the list. The sentence about one command is
+   * `/help <command>`, which is also the only place its arguments are shown.
+   *
+   * What everybody has comes first and unlabelled; a rank's own commands follow
+   * under the rank's name, and only for a caller who holds it.
+   */
   define({
     name: "help",
     role: ROLE.PLAYER,
-    summary: "list the commands you can run",
-    run: ({ reply, rank }) => {
+    usage: "[command]",
+    summary: "list the commands you can run, or say what one does",
+    run: ({ args, reply, rank }) => {
+      const spelled = (command) => `${COMMAND_PREFIX}${command.name}`;
+
+      if (args.length) {
+        const asked = args[0].toLowerCase();
+        const name = asked.startsWith(COMMAND_PREFIX) ? asked.slice(COMMAND_PREFIX.length) : asked;
+        const command = commands().find((entry) => entry.name === name);
+        if (!command) return reply.warn(`unknown command "${name}" — try ${COMMAND_PREFIX}help`);
+        if (rank < command.role) {
+          return reply.warn(
+            `${spelled(command)} needs ${roleName(command.role)}; you are ${roleName(rank)}`
+          );
+        }
+        const usage = command.usage ? ` ${command.usage}` : "";
+        return reply(`${spelled(command)}${usage} — ${command.summary}`);
+      }
+
       const mine = commands().filter((command) => rank >= command.role);
       if (!mine.length) return reply.warn("you have no commands");
-      reply(`commands for ${roleName(rank)}:`);
-      for (const command of mine) {
-        const usage = command.usage ? ` ${command.usage}` : "";
-        reply(`  ${COMMAND_PREFIX}${command.name}${usage} — ${command.summary}`);
+
+      const lines = [];
+      for (const role of [...new Set(mine.map((command) => command.role))].sort((a, b) => a - b)) {
+        const names = mine.filter((command) => command.role === role).map(spelled).join(" ");
+        lines.push(role === ROLE.PLAYER ? names : `${roleName(role)}: ${names}`);
       }
+      lines.push(`${COMMAND_PREFIX}help <command> says what one does`);
+      reply(lines.join("\n"));
     },
   });
 
