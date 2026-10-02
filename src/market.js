@@ -12,6 +12,7 @@ import {
 import { occupiedSlots, storageLimit } from "./inventory-space.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { ceilingFor, isBarred, shareOf, slotsFor } from "./market-rules.js";
+import { isRestricted } from "./restrictions.js";
 import { recordSale, saleRecord } from "./market-history.js";
 import { info } from "./log.js";
 import { defineAccountOperation } from "./account-operations.js";
@@ -256,6 +257,7 @@ const listForSaleHere = async ({ sellerId, itemId, price } = {}) => {
 
     const account = await loadAccount(seller);
     if (isBarred(account)) throw refuse("barred", `account ${seller} may not use the market`);
+    if (isRestricted(account)) throw refuse("restricted", `account ${seller} is restricted`);
 
     const item = (account.account_items ?? []).find((row) => Number(row.id) === wanted);
     if (!item) throw refuse("not_owned", `account ${seller} does not hold item ${wanted}`);
@@ -345,6 +347,9 @@ const buyListingHere = async ({ listingId, buyerId } = {}) => {
       throw refuse("busy", `the seller of listing ${wanted} is in a dungeon on another worker; try again`);
     }
     if (isBarred(buyerAccount)) throw refuse("barred", `account ${buyer} may not use the market`);
+    if (isRestricted(buyerAccount)) throw refuse("restricted", `account ${buyer} is restricted`);
+    // A restricted seller's listings are out of sight, and to a buyer simply not there.
+    if (isRestricted(sellerAccount)) throw refuse("gone", `listing ${wanted} is no longer up`);
 
     /* Looked up again inside the lock, which is the look that decides: two
        buyers reaching for the same listing both got past the check above, and
@@ -510,7 +515,8 @@ export const browseAll = async () => {
 
   for (const id of await listAccountIds()) {
     const account = await loadAccountForScan(id);
-    if (!account) continue;
+    // A restricted seller's listings are out of sight while it lasts.
+    if (!account || isRestricted(account, now)) continue;
     for (const listing of openListings(account)) {
       if (isUp(listing, now)) found.push(asView(listing, id, account.name));
     }

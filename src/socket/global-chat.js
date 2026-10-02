@@ -19,6 +19,7 @@
  * standing next to you.
  */
 import { config } from "../config.js";
+import { isRestricted } from "../restrictions.js";
 import { info } from "../log.js";
 import { ignoredIdsOf } from "../social.js";
 import { activeSessions } from "./presence.js";
@@ -81,6 +82,8 @@ const canHear = (session) => Boolean(session?.playerDoid && session?.floorDoid);
  */
 export const sayGlobally = (speaker, text) => {
   const account = Number(speaker?.accountId ?? 0);
+  // A restricted account is not heard here (restrictions.js).
+  if (isRestricted(speaker?.dungeonAccount)) return null;
   // Null rather than zero: over the allowance is not the same as unheard.
   if (!admitGlobalLine(account)) return null;
   const name = speaker?.dungeonAccount?.name ?? `Player${account || "?"}`;

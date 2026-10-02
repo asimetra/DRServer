@@ -616,9 +616,17 @@ export const recordRuns = async (runs, boards) => {
 /** One board, already ordered by the caller's direction. */
 export const boardRows = async (key, { ascending = true, limit = 20 } = {}) => {
   const { rows } = await connect().query(
-    `SELECT account_id, name, trophies, hero_id, value, achieved_at
-       FROM dungeon_bests WHERE board_key = $1
-      ORDER BY value ${ascending ? "ASC" : "DESC"} LIMIT $2`,
+    // A restricted account is off the board while it lasts (restrictions.js).
+    `SELECT b.account_id, b.name, b.trophies, b.hero_id, b.value, b.achieved_at
+       FROM dungeon_bests b
+      WHERE b.board_key = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM accounts a
+           WHERE a.id = b.account_id
+             AND a.restriction IS NOT NULL
+             AND (a.restriction->>'until' IS NULL OR (a.restriction->>'until')::timestamptz > now())
+        )
+      ORDER BY b.value ${ascending ? "ASC" : "DESC"} LIMIT $2`,
     [key, limit]
   );
   return rows.map((row) => ({
@@ -726,4 +734,39 @@ export const writeServerState = async (key, value) => {
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
     [key, JSON.stringify(value)]
   );
+};
+
+/** One administrative action (src/admin-actions.js). Append-only. */
+export const recordAdminAction = async ({ at, actor, action, target, detail }) => {
+  await connect().query(
+    "INSERT INTO admin_actions (at, actor, action, target, detail) VALUES ($1, $2, $3, $4, $5)",
+    [at, actor, action, target, JSON.stringify(detail ?? {})]
+  );
+};
+
+export const adminActions = async ({ limit, target }) => {
+  const { rows } = await connect().query(
+    `SELECT at, actor, action, target, detail FROM admin_actions
+      WHERE $2::bigint IS NULL OR target = $2
+      ORDER BY id DESC LIMIT $1`,
+    [limit, target]
+  );
+  return rows.map((row) => ({
+    at: row.at instanceof Date ? row.at.toISOString() : row.at,
+    actor: Number(row.actor),
+    action: row.action,
+    target: row.target === null ? null : Number(row.target),
+    detail: row.detail ?? {},
+  }));
+};
+
+/** The accounts restricted now (src/restrictions.js), the most recently restricted first. */
+export const restrictedAccounts = async () => {
+  const { rows } = await connect().query(
+    `SELECT id, name, restriction FROM accounts
+      WHERE restriction IS NOT NULL
+        AND (restriction->>'until' IS NULL OR (restriction->>'until')::timestamptz > now())
+      ORDER BY restriction->>'at' DESC`
+  );
+  return rows.map((row) => ({ account_id: Number(row.id), name: row.name, restriction: row.restriction }));
 };

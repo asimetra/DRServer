@@ -3,10 +3,10 @@ import { config } from "./config.js";
 import { BOARDS, boardFor, runsSince, standingsFor, titleFor } from "./leaderboard.js";
 import { STAT_CAP, heroLevel, statPointsEarned } from "./progression.js";
 import { loadGameMaster, weaponIconFor } from "./gamemaster.js";
-import { presenceSummary } from "./socket/presence.js";
+import { activeSessions, presenceSummary } from "./socket/presence.js";
 import { activeMatchWorkerPool } from "./socket/match-worker-service.js";
 import { listen } from "./http.js";
-import { createNewAccount, listAccountIds, loadAccount } from "./accounts.js";
+import { createNewAccount, listAccountIds, loadAccount, loadExistingAccount } from "./accounts.js";
 import { NameRefused, accountIdNamed, checkName, nameKey, nameTaken, tidyName } from "./account-names.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
 import { TradeRefused, settleTrade } from "./trade.js";
@@ -17,8 +17,21 @@ import {
   cancelListing,
   claimProceeds,
   listForSale,
+  invalidateMarketBrowse,
   stallFor,
 } from "./market.js";
+import {
+  RestrictionInvalid,
+  listRestrictions,
+  restrictionFrom,
+  restrictionOf,
+  setRestriction,
+} from "./restrictions.js";
+import { beginMaintenance, endMaintenance, maintenanceState } from "./maintenance.js";
+import { adminActions, recordAdminAction } from "./admin-actions.js";
+import { onlinePlayers } from "./socket/online.js";
+import { ROLE, roleOf } from "./socket/roles.js";
+import { MAX_ANNOUNCEMENT_BYTES, announceTo } from "./socket/announce.js";
 import { salesFor } from "./market-history.js";
 import { STAT_NAMES, maxHitPoints, maxManaPoints, statTotals } from "./hero-stats.js";
 import { statLabel } from "./stat-names.js";
@@ -93,6 +106,40 @@ const accountIdIn = (capture) => {
  * conjure an account and hand back a working token for it.
  */
 const accountExists = async (id) => (await listAccountIds()).includes(id);
+
+/**
+ * The admin a call is made by, or the answer refusing it.
+ *
+ * The internal token proves the caller is the website; it says nothing about
+ * which person on the website pressed the button. An administrative call names
+ * them in `X-Acting-Account`, and that account has to be an admin by the rule
+ * the chat commands use: named in ODS_ADMIN_ACCOUNTS, or holding the rank. A
+ * page on the website that forgot to check would otherwise hand any signed-in
+ * player these powers, and nothing here would notice. What it does is done,
+ * and recorded, in that admin's name (admin-actions.js).
+ *
+ * It cannot stop a website that has been taken over from naming a real admin:
+ * that is what keeping the internal API off the internet is for.
+ */
+const actingAdmin = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return { refusal };
+  const named = req.headers?.["x-acting-account"];
+  if (named === undefined || named === "") {
+    return { refusal: json({ error: "name the admin making this call in X-Acting-Account" }, 400) };
+  }
+  const actor = accountIdIn(String(named));
+  if (actor === null) {
+    return { refusal: json({ error: "X-Acting-Account must be an account id" }, 400) };
+  }
+  const account = await loadExistingAccount(actor);
+  const admin = account && (config.adminAccounts?.includes(actor) || roleOf(account) >= ROLE.ADMIN);
+  if (!admin) {
+    warn(`internal: refused an administrative call by account ${actor}, which is not an admin`);
+    return { refusal: json({ error: `account ${actor} is not an admin` }, 403) };
+  }
+  return { actor };
+};
 
 /**
  * POST /internal/v1/accounts — registration, from this server's side.
@@ -215,6 +262,63 @@ const revokeTokens = async (req, [capture]) => {
   const generation = await revokeAccountTokens(id);
   info(`internal: revoked every token for account ${id}`);
   return json({ accountId: id, generation });
+};
+
+/**
+ * PUT /internal/v1/accounts/:id/restriction — restrict an account.
+ *
+ *   { "reason": "speed hack", "until": "2026-10-12T00:00:00Z", "by": "simetra" }
+ *
+ * `until` left out or null is until it is lifted. Whoever is online on the
+ * account is sent back to the start: out of any dungeon they were in, signing
+ * in again to an account that may no longer enter one. See restrictions.js for
+ * what a restricted account may not do.
+ */
+const restrictAccount = async (req, [capture]) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  let restriction;
+  try {
+    restriction = restrictionFrom(req.json ?? {}, actor);
+  } catch (problem) {
+    if (!(problem instanceof RestrictionInvalid)) throw problem;
+    return json({ error: problem.message }, 400);
+  }
+
+  await setRestriction(id, restriction);
+  invalidateMarketBrowse();
+  info(`internal: restricted account ${id} until ${restriction.until ?? "lifted"} by ${actor}: ${restriction.reason}`);
+  await recordAdminAction({
+    actor,
+    action: "restriction.set",
+    target: id,
+    detail: { reason: restriction.reason, until: restriction.until },
+  });
+  for (const session of activeSessions().filter((each) => each.accountId === id)) {
+    session.close?.("account restricted", { flush: true });
+  }
+  return json({ accountId: id, restriction });
+};
+
+/** DELETE /internal/v1/accounts/:id/restriction — lift it. */
+const liftRestriction = async (req, [capture]) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  await setRestriction(id, null);
+  invalidateMarketBrowse();
+  info(`internal: lifted the restriction on account ${id} by ${actor}`);
+  await recordAdminAction({ actor, action: "restriction.lift", target: id });
+  return json({ accountId: id, restriction: null });
 };
 
 /**
@@ -419,6 +523,8 @@ const readSummary = async (req, [capture]) => {
         }
       : null,
     clears: standings.clears ?? 0,
+    /* For the website to tell the player why and until when: the client cannot. */
+    restriction: restrictionOf(account),
     /* Same answer as the profile's, and by the same reasoning. */
     experience_total: (account.account_avatars ?? []).reduce(
       (total, avatar) => total + Number(avatar.experience ?? 0),
@@ -978,7 +1084,7 @@ const readMatchWorkers = async (req) => {
  * Its players go home and a fresh worker takes its place; see restartWorker.
  */
 const restartMatchWorker = async (req, [capture]) => {
-  const refusal = authorise(req);
+  const { refusal, actor } = await actingAdmin(req);
   if (refusal) return refusal;
   const pool = activeMatchWorkerPool();
   if (!pool) return json({ error: "match workers are off" }, 409);
@@ -986,11 +1092,147 @@ const restartMatchWorker = async (req, [capture]) => {
   if (!Number.isSafeInteger(index) || index < 0) return json({ error: "index must be a worker number" }, 400);
   const outcome = pool.restartWorker(index);
   if (outcome.error) return json(outcome, outcome.error === "no such worker" ? 404 : 409);
+  await recordAdminAction({ actor, action: "worker.restart", detail: { index } });
   return json(outcome, 202);
+};
+
+/**
+ * Says `text` to everybody on a dungeon floor, on this thread and in every
+ * match worker; how many heard it. See socket/announce.js.
+ */
+const announce = async (text) => {
+  let heard = announceTo(activeSessions(), text);
+  const pool = activeMatchWorkerPool();
+  if (pool) heard += await pool.announceEverywhere(text);
+  info(`internal: announced to ${heard} player(s): ${text}`);
+  return heard;
+};
+
+/** A line to say, or why it cannot be one. */
+const announcementProblem = (text, name) => {
+  if (typeof text !== "string" || !text.trim()) return `${name} must be some text`;
+  if (Buffer.byteLength(text, "utf8") > MAX_ANNOUNCEMENT_BYTES) {
+    return `${name} is at most ${MAX_ANNOUNCEMENT_BYTES} bytes, which is what a chat line holds`;
+  }
+  return null;
+};
+
+/** GET /internal/v1/maintenance — whether the dungeons are closed, since when and why. */
+const readMaintenance = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+  return json({ maintenance: maintenanceState() });
+};
+
+/**
+ * PUT /internal/v1/maintenance — close the dungeons.
+ *
+ *   { "message": "We restart at 15:00, finish your run", "by": "simetra" }
+ *
+ * Nobody starts or joins a run until it is opened again; runs under way go on.
+ * A message, if there is one, is said to everybody on a floor as it closes and
+ * kept for the website to show. See maintenance.js.
+ */
+const closeDungeons = async (req) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const { message = null } = req.json ?? {};
+  const problem = message === null ? null : announcementProblem(message, "message");
+  if (problem) return json({ error: problem }, 400);
+
+  const state = beginMaintenance({ by: actor, message: message?.trim() ?? null });
+  info(`internal: dungeons closed for maintenance by ${actor}`);
+  const heard = state.message ? await announce(state.message) : 0;
+  await recordAdminAction({ actor, action: "maintenance.close", detail: { message: state.message, heard } });
+  return json({ maintenance: state, heard });
+};
+
+/** DELETE /internal/v1/maintenance — open them again. */
+const openDungeons = async (req) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+  endMaintenance();
+  info(`internal: dungeons open again, by ${actor}`);
+  await recordAdminAction({ actor, action: "maintenance.open" });
+  return json({ maintenance: null });
+};
+
+/** POST /internal/v1/announcements — `{ "text": "…" }`, said to everybody on a floor now. */
+const makeAnnouncement = async (req) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const text = req.json?.text;
+  const problem = announcementProblem(text, "text");
+  if (problem) return json({ error: problem }, 400);
+  const heard = await announce(text.trim());
+  await recordAdminAction({ actor, action: "announcement", detail: { text: text.trim(), heard } });
+  return json({ heard });
+};
+
+/** GET /internal/v1/online — who is connected, where, from where. See socket/online.js. */
+const readOnline = async (req) => {
+  const { refusal } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const players = await onlinePlayers();
+  return json({ count: players.length, players });
+};
+
+/**
+ * POST /internal/v1/accounts/:id/disconnect — `{ "reason": "…" }`, optional.
+ *
+ * Closes the player's connection: out of any dungeon they were in, with what
+ * they had played written as at any other disconnect. They can sign in again;
+ * keeping them out is a restriction, or revoking their tokens.
+ */
+const disconnectAccount = async (req, [capture]) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  const reason = req.json?.reason ?? null;
+  if (reason !== null && (typeof reason !== "string" || reason.length > 500)) {
+    return json({ error: "reason is text of at most 500 characters" }, 400);
+  }
+
+  const sessions = activeSessions().filter((session) => session.accountId === id);
+  if (!sessions.length) return json({ error: `account ${id} is not online` }, 404);
+  for (const session of sessions) session.close?.("disconnected by an admin", { flush: true });
+  info(`internal: disconnected account ${id} by ${actor}${reason ? `: ${reason}` : ""}`);
+  await recordAdminAction({
+    actor,
+    action: "account.disconnect",
+    target: id,
+    detail: { reason, disconnected: sessions.length },
+  });
+  return json({ accountId: id, disconnected: sessions.length });
+};
+
+/** GET /internal/v1/restrictions — the accounts restricted now, why and until when. */
+const readRestrictions = async (req) => {
+  const { refusal } = await actingAdmin(req);
+  if (refusal) return refusal;
+  return json({ restrictions: await listRestrictions() });
+};
+
+/** GET /internal/v1/admin-actions?limit=50&account=<id> — what admins did, newest first. */
+const readAdminActions = async (req) => {
+  const { refusal } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const named = req.query?.get("account");
+  const account = named ? accountIdIn(named) : null;
+  if (named && account === null) return json({ error: "account must be an account id" }, 400);
+  return json({ actions: await adminActions({ limit: req.query?.get("limit") ?? 50, account }) });
 };
 
 export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/status", handler: readStatus },
+  { method: "GET", pattern: "/internal/v1/maintenance", handler: readMaintenance },
+  { method: "PUT", pattern: "/internal/v1/maintenance", handler: closeDungeons },
+  { method: "DELETE", pattern: "/internal/v1/maintenance", handler: openDungeons },
+  { method: "POST", pattern: "/internal/v1/announcements", handler: makeAnnouncement },
+  { method: "GET", pattern: "/internal/v1/online", handler: readOnline },
+  { method: "GET", pattern: "/internal/v1/restrictions", handler: readRestrictions },
+  { method: "GET", pattern: "/internal/v1/admin-actions", handler: readAdminActions },
   { method: "GET", pattern: "/internal/v1/match-workers", handler: readMatchWorkers },
   { method: "POST", pattern: "/internal/v1/match-workers/:index/restart", handler: restartMatchWorker },
   { method: "GET", pattern: "/internal/v1/leaderboards/:metric", handler: readBoard },
@@ -1000,6 +1242,9 @@ export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/accounts/:id/inventory", handler: readInventory },
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/token", handler: revokeTokens },
+  { method: "PUT", pattern: "/internal/v1/accounts/:id/restriction", handler: restrictAccount },
+  { method: "DELETE", pattern: "/internal/v1/accounts/:id/restriction", handler: liftRestriction },
+  { method: "POST", pattern: "/internal/v1/accounts/:id/disconnect", handler: disconnectAccount },
   { method: "POST", pattern: "/internal/v1/trades", handler: settleTradeRoute },
   /* A listing is addressed under /market; a seller's own stall is a fact about
      their account, so it hangs off /accounts/:id like the summary does. */

@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { dungeonsClosedBecause } from "../maintenance.js";
 import { info, warn } from "../log.js";
 import { ENTRY_ERROR, FLID, buildEntryResponse, readEntryRequest } from "./entry-protocol.js";
 import { transitionsOf } from "./session-transitions.js";
@@ -44,11 +44,9 @@ export const handleField = (session, fieldId, reader) => {
       );
       noteDeclaration(session, request.demographics);
 
-      if (!config.dungeonsEnabled) {
-        warn(
-          `[${session.id}] refusing entry with error ${ENTRY_ERROR.GAME_NOT_ENTERABLE} — ` +
-            `dungeons are disabled (DR_DUNGEON=0)`
-        );
+      const closed = dungeonsClosedBecause();
+      if (closed) {
+        warn(`[${session.id}] refusing entry with error ${ENTRY_ERROR.GAME_NOT_ENTERABLE} — ${closed}`);
         session.send(buildEntryResponse(session.matchMakerDoid, ENTRY_ERROR.GAME_NOT_ENTERABLE));
         return true;
       }

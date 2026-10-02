@@ -4,7 +4,7 @@ import { start as startWebServices } from "./http.js";
 import { activeSocketSessions, start as startGameSocket } from "./socket/index.js";
 import { internalApiProblem, start as startInternalApi } from "./internal.js";
 import { config, configProblems } from "./config.js";
-import { closeAccountStorage, loadAccount, waitForAccountWrites } from "./accounts.js";
+import { closeAccountStorage, waitForAccountWrites } from "./accounts.js";
 import { purgeLegacyExperienceBoard, seedStandings, waitForRunRecords } from "./leaderboard.js";
 import {
   StartupRefusal,
@@ -27,6 +27,7 @@ import {
 } from "./process-lock.js";
 import { flushDeclarations, keepDeclarationsIn, readyContentPacks } from "./content-packs.js";
 import { keepServerStateInDatabase } from "./storage/server-state.js";
+import { onlinePlayers } from "./socket/online.js";
 import {
   activeMatchWorkerPool,
   closeMatchWorkers,
@@ -35,8 +36,9 @@ import {
 import { finishRunSaves, runSavesFailing } from "./socket/run-saves.js";
 import { describeBuild } from "./build-info.js";
 import { createHealthWatch, eventLoopDelay, start as startStatus } from "./status.js";
-import { presenceEntries, presenceSummary } from "./socket/presence.js";
+import { presenceSummary } from "./socket/presence.js";
 import { counters } from "./metrics.js";
+import { maintenanceState } from "./maintenance.js";
 import {
   diskSpace,
   diskWarning,
@@ -195,27 +197,6 @@ const warnings = {
 const healthWatch = createHealthWatch({ probes, warnings });
 healthWatch.start();
 
-/** Who is connected, for whoever runs the server; never sent to a player. */
-const connectedPlayers = async () => {
-  const where = new Map(presenceEntries());
-  const now = Date.now();
-  return Promise.all(
-    activeSocketSessions()
-      .filter((session) => session.authenticated)
-      .map(async (session) => ({
-        account_id: session.accountId,
-        // The stored name; a failure to read it is not a reason to hide the player.
-        name: await loadAccount(session.accountId).then((account) => account?.name ?? null, () => null),
-        map_node: Number(where.get(session.accountId) ?? 0),
-        connected_seconds: Math.floor((now - (session.connectedAt ?? now)) / 1000),
-        address: session.remoteAddress ?? null,
-        token_expires_at: session.tokenExpiry
-          ? new Date(session.tokenExpiry * 1000).toISOString()
-          : null,
-      }))
-  );
-};
-
 /**
  * The listener is started last and allowed to fail: a monitoring port that is
  * already taken is a line in the log, not a reason for nobody to be able to play.
@@ -229,7 +210,7 @@ if (config.statusPort > 0) {
     probes,
     warnings,
     counters,
-    players: connectedPlayers,
+    players: onlinePlayers,
     describe: async () => {
       const presence = presenceSummary();
       const disk = await diskSpace(config.dataDir).catch(() => null);
@@ -239,6 +220,8 @@ if (config.statusPort > 0) {
         players: { online: presence.online, in_dungeon: presence.inDungeon },
         game_sockets: activeSocketSessions().length,
         match_workers: workerSlots() ?? [],
+        // Dungeons closed through the internal API (maintenance.js), or null.
+        maintenance: maintenanceState(),
         data_dir: disk ? { free_bytes: disk.freeBytes, size_bytes: disk.totalBytes } : null,
       };
     },

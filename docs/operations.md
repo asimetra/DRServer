@@ -201,6 +201,16 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 | `GET /internal/v1/accounts/:id/inventory` | Read items eligible for web inventory/market views |
 | `POST /internal/v1/accounts/:id/token` | Issue a replacement token |
 | `DELETE /internal/v1/accounts/:id/token` | Invalidate the account's issued tokens |
+| `GET /internal/v1/maintenance` | Whether the dungeons are closed, since when, and why |
+| `PUT /internal/v1/maintenance` | Close the dungeons (see [Restarting without cutting runs short](#restarting-without-cutting-runs-short)) |
+| `DELETE /internal/v1/maintenance` | Open the dungeons again |
+| `POST /internal/v1/announcements` | Say something to everybody on a dungeon floor |
+| `PUT /internal/v1/accounts/:id/restriction` | Restrict an account (see below) |
+| `DELETE /internal/v1/accounts/:id/restriction` | Lift a restriction |
+| `GET /internal/v1/restrictions` | The accounts restricted now, why and until when |
+| `GET /internal/v1/online` | Who is connected, where they are, and from which address |
+| `POST /internal/v1/accounts/:id/disconnect` | Disconnect a player (`{"reason": "…"}` is optional) |
+| `GET /internal/v1/admin-actions` | What admins did, newest first (`?limit=`, `?account=`) |
 | `GET /internal/v1/players/:name` | Read a public player profile by name |
 | `GET /internal/v1/leaderboards/:metric` | Read a paged leaderboard |
 | `POST /internal/v1/trades` | Move weapons and gold atomically between two accounts |
@@ -215,6 +225,62 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 Trade refusals carry a machine-readable reason such as `in_dungeon`,
 `equipped`, `not_owned`, `no_room`, `not_enough_gold`, or `bad_offer` so a user
 interface can respond correctly.
+
+### Administrative calls
+
+The internal token shows that a call comes from the website. It does not show
+which person on the website made it. So the administrative calls also name the
+admin making them, in an `X-Acting-Account` header:
+
+- restricting an account and lifting a restriction;
+- closing and opening the dungeons, and announcements;
+- the list of who is online, disconnecting a player, the list of restrictions;
+- the action log;
+- restarting a match worker.
+
+The account named there must be an admin by the same rule the chat commands use:
+listed in `ODS_ADMIN_ACCOUNTS`, or holding the admin rank. Otherwise the call is
+refused with `403`, and with `400` if the header is missing. This way a website
+page that forgets to check whether its user is an admin still cannot give
+ordinary players these powers.
+
+Every administrative call that takes effect is recorded with who made it, what
+it did, which account it affected, when, and its details. The record is a table
+on PostgreSQL, or `admin-actions.jsonl` in the data directory on file storage.
+`GET /internal/v1/admin-actions` returns it, newest first. A restriction's `by`
+and the maintenance `by` are the admin's account id.
+
+### Restricting an account
+
+A restricted account can still sign in and keeps everything it has. What it
+cannot do is anything that reaches other players:
+
+- enter a dungeon — the client shows its own "game not enterable" message;
+- list or buy on the market. Its listings are hidden and cannot be bought,
+  but it can still take its own weapons back down and collect earlier sales;
+- speak on the global channel.
+
+It is also left off the leaderboards while the restriction lasts. Its runs are
+kept, so it comes back when the restriction ends. Gifts and trades are not
+affected.
+
+```bash
+curl -X PUT -H "X-Internal-Token: $ODS_INTERNAL_TOKEN" -H "X-Acting-Account: 1000000005" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"speed hack","until":"2026-10-12T00:00:00Z"}' \
+  http://127.0.0.1:8081/internal/v1/accounts/1000000042/restriction
+```
+
+`reason` is required. Leave `until` out, or send `null`, to restrict until it is
+lifted. The restriction ends by itself when `until` passes; nothing has to clear
+it. A player who is online when restricted is disconnected, which takes them out
+of any dungeon they were in. Each change is recorded in the action log.
+
+The client has no way to show a restriction, a reason or a date. The account
+summary (`GET …/summary`) carries `restriction` so the website can tell the
+player instead.
+
+### Securing the internal API
 
 Holding the internal token means holding every account. Keep it on the same
 machine or a private network. A non-loopback cleartext internal bind requires
@@ -309,6 +375,39 @@ What the server does with the signals a supervisor sends:
   default of ten seconds is too short — use `stop_grace_period: 30s`).
 - An exception nothing handled is logged, the same shutdown runs, and the exit
   status is 1, so `Restart=on-failure` brings the server back.
+
+### Restarting without cutting runs short
+
+A restart ends every dungeon run in progress. What has been played is written
+first (see [When a run is written down](#when-a-run-is-written-down)), but the
+run itself is over. To give players a chance to finish, close the dungeons
+first through the internal API, wait, and then restart:
+
+```bash
+curl -X PUT -H "X-Internal-Token: $ODS_INTERNAL_TOKEN" -H "X-Acting-Account: 1000000005" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"We restart at 15:00 - finish your run"}' \
+  http://127.0.0.1:8081/internal/v1/maintenance
+```
+
+While the dungeons are closed, nobody can start a run or join a friend's, and
+the client shows its own "game not enterable" message. Runs already under way
+continue through their doors to the end. `/status` shows `maintenance` until it
+ends, and `DELETE` on the same route opens the dungeons again. The setting is
+not saved: after a restart the server is open again, unless `ODS_DUNGEON=0`
+keeps it closed.
+
+The message is optional. If given, it is said once to everybody on a dungeon
+floor, under the server's name. To say more later:
+
+```bash
+curl -X POST -H "X-Internal-Token: $ODS_INTERNAL_TOKEN" -H "X-Acting-Account: 1000000005" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Five minutes left"}' http://127.0.0.1:8081/internal/v1/announcements
+```
+
+The answer says how many players heard it. Only players on a dungeon floor can
+hear it, because the client has no chat in town. A line is at most 300 bytes.
 
 ## Monitoring
 

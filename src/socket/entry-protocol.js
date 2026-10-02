@@ -100,6 +100,9 @@ export const entryErrorCodeFor = ({ error: reason, source } = {}) => {
       return ENTRY_ERROR.DUNGEON_FULL;
     case "game_not_enterable":
       return ENTRY_ERROR.GAME_NOT_ENTERABLE;
+    /** The client has no words for a restricted account; this is the nearest it has. */
+    case "restricted":
+      return ENTRY_ERROR.GAME_NOT_ENTERABLE;
     default:
       return ENTRY_ERROR.INTERNAL;
   }

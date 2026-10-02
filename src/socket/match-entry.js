@@ -11,6 +11,7 @@
  * - Capacity and the match's state: at admission, by the registry, which
  *   counts the reserved place from then on.
  */
+import { isRestricted } from "../restrictions.js";
 import { loadAccount } from "../accounts.js";
 import { loadGameMaster } from "../gamemaster.js";
 import { areFriends, friendIdsOf } from "../social.js";
@@ -157,6 +158,8 @@ export const admitEntry = async (
   // Read fresh on every entry: progression changes mid-session, and a door
   // or a friend is no different a route from the map.
   const account = await loadAccountById(session.accountId);
+  // Before anything else: a restricted account enters nothing (restrictions.js).
+  if (isRestricted(account)) return { match: null, created: false, source, error: "restricted" };
   const adminOverride = hasDungeonAdminOverride(account);
 
   // Before anything about the match itself, so that a stranger's answer does

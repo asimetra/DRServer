@@ -51,6 +51,7 @@ import { dungeonMatches } from "./matches.js";
 import { registerBuiltinCommands } from "./command-set.js";
 import { createDistributedObjectIdAllocator } from "./doids.js";
 import { deliverGlobalLine } from "./global-chat.js";
+import { announceTo } from "./announce.js";
 import { installFriendshipRelay, mirrorPresence } from "./presence.js";
 import { RULE, flushViolations, noteViolation } from "./security-events.js";
 import { createWorkerChannel, deferred } from "./worker-channel.js";
@@ -222,6 +223,8 @@ const channel = createWorkerChannel({
         return true;
       case "say":
         return deliverGlobalLine(args, [...members.values()].filter((member) => !member.closed));
+      case "announce":
+        return announceTo([...members.values()], args.text);
       case "drain":
         return drain();
       default:

@@ -778,6 +778,17 @@ export class MatchWorkerPool {
     return heard;
   }
 
+  /** Something the server says to everybody on a floor in any worker (announce.js). */
+  async announceEverywhere(text) {
+    const answers = await Promise.allSettled(
+      this.workers.filter((worker) => worker.alive).map((worker) => worker.channel.call("announce", { text }))
+    );
+    return answers.reduce(
+      (sum, answer) => sum + (answer.status === "fulfilled" ? Number(answer.value) || 0 : 0),
+      0
+    );
+  }
+
   // --- RPCs for leased accounts -------------------------------------------------------
 
   /**

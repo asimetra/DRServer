@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     last_reward_date       TIMESTAMPTZ,
     last_login             TIMESTAMPTZ,
     created                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- What the account may not do, and until when (src/restrictions.js):
+    -- {"until": ISO time or null, "reason", "by", "at"}. Null when it is free.
+    restriction            JSONB,
     -- Raised by every save of the account. The server keeps a picture of the
     -- rows it last read or wrote and sends only what differs from it; the
     -- version is how it learns that the picture is out of date, and writes
@@ -375,6 +378,7 @@ ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gift_sends JSONB NOT NUL
 
 -- See `version` on the accounts table.
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS restriction JSONB;
 
 CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);
 
@@ -398,3 +402,17 @@ CREATE TABLE IF NOT EXISTS server_state (
     value       JSONB       NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- What admins did through the internal API (src/admin-actions.js): who, what,
+-- to whom and when. Append-only, and no foreign keys: the record of a
+-- restriction outlives the account it was made against.
+CREATE TABLE IF NOT EXISTS admin_actions (
+    id      BIGSERIAL   PRIMARY KEY,
+    at      TIMESTAMPTZ NOT NULL,
+    actor   BIGINT      NOT NULL,
+    action  TEXT        NOT NULL,
+    target  BIGINT,
+    detail  JSONB       NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS admin_actions_target ON admin_actions(target, id DESC);

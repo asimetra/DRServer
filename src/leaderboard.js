@@ -4,6 +4,8 @@ import { config } from "./config.js";
 import { info, warn } from "./log.js";
 import { accountTrophies } from "./map-progress.js";
 import { infiniteTrophiesFor } from "./infinite.js";
+import { loadAccountForScan, loadExistingAccount } from "./accounts.js";
+import { isRestricted } from "./restrictions.js";
 
 /**
  * What a finished run leaves behind, and the boards read off it.
@@ -566,9 +568,17 @@ export const boardFor = async (metric, { node, hero, party, limit = 20 } = {}) =
   }
 
   const rows = (await readJson(BESTS_FILE, {}))[key] ?? {};
-  return Object.entries(rows)
+  const ordered = Object.entries(rows)
     .map(([accountId, entry]) => ({ account_id: accountId, ...entry }))
-    .sort((a, b) => (board.better === "lower" ? a.value - b.value : b.value - a.value))
-    .slice(0, size)
-    .map(asEntry);
+    .sort((a, b) => (board.better === "lower" ? a.value - b.value : b.value - a.value));
+  // A restricted account is off the board while it lasts; its standing is kept
+  // and comes back when it ends (restrictions.js). The database does this in
+  // its query.
+  const shown = [];
+  for (const row of ordered) {
+    if (shown.length >= size) break;
+    if (isRestricted(await loadAccountForScan(Number(row.account_id), loadExistingAccount))) continue;
+    shown.push(row);
+  }
+  return shown.map(asEntry);
 };

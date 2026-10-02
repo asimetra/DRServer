@@ -79,7 +79,7 @@ export const ACCOUNT_COLUMNS = [
   "buckets_weapon", "buckets_other", "active_avatar", "admin_flags",
   "ingame_friends", "ignore_friends", "friend_requests", "infinite_progress", "gifts", "gift_sends",
   "account_flags", "market_barred", "completed_dungeons", "matchmaker_group", "concurrent_days",
-  "last_reward_date", "last_login", "created",
+  "last_reward_date", "last_login", "created", "restriction",
 ];
 
 /**
@@ -144,6 +144,11 @@ export const accountRowOf = (account) => ({
       ? account.infinite_progress
       : {}
   ),
+  // Nullable, so absent stays absent: the column's default, which is none.
+  restriction:
+    account.restriction && typeof account.restriction === "object"
+      ? JSON.stringify(account.restriction)
+      : account.restriction === undefined ? undefined : null,
 });
 
 /**
