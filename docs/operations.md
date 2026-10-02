@@ -642,8 +642,19 @@ while the server runs is never a half-written account — but two accounts
 changed by one trade may be caught either side of it. Stop the server first
 when that matters.
 
+`npm run backup` does this for either storage. It writes a dated copy under
+`backups/`: a `pg_dump` from the database container on PostgreSQL, with
+`token-secret` kept beside it, or an archive of the data directory on file
+storage. `npm run backup -- list` shows what has been kept.
+`npm run backup -- restore <file>` asks first, takes a copy of the current state,
+then puts the backup back, including the signing secret. The secret it replaces
+is set aside, not deleted. The container, database and folders are
+`ODS_DB_CONTAINER`, `ODS_DB_NAME`, `ODS_DB_USER`, `ODS_BACKUP_DIR` and
+`ODS_DATA_DIR`. Nothing runs this on a schedule; use cron or a systemd timer.
+
+By hand, with the bundled container:
+
 ```bash
-# PostgreSQL, with the bundled container
 podman exec ods-postgres pg_dump -U ods -d open_dungeon > backup.sql   # or: docker exec
 cp data/token-secret /your/backup/   # unless ODS_TOKEN_SECRET is set
 ```
