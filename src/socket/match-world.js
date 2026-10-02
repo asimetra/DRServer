@@ -73,6 +73,7 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "gateEdges",
   "gateInputEdges",
   "gateLatches",
+  "gateHeld",
   "movableSources",
   "virtualTriggerables",
   "triggerableNames",

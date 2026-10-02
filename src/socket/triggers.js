@@ -321,6 +321,50 @@ const evaluateGate = (session, gate) => {
 };
 
 /**
+ * The boolean gates whose `triggerOnce` means "once on, stays on".
+ *
+ * A treasure room is wired through them. Its buttons are timed — stand on one
+ * and it holds for a few seconds — and all of them feed an AND that says
+ * `triggerOnce`: press them together and the door is open for good. The
+ * treasure itself lies in a small zone feeding an OR that says the same: reach
+ * it and the room's traps are off for good.
+ *
+ * The flag was carried and never read, so both were only true while their
+ * inputs were. The door shut behind the player when the first button timed
+ * out, and a recorded run shows the rest of it: the hero steps into the
+ * treasure zone and six spike beds drop, steps 41 units out of it 1.2 seconds
+ * later and they are back.
+ *
+ * No recording of the official settles it — none solves a timed-button room —
+ * so this rests on the flag itself and on how the rooms are known to play.
+ * That is also why it stops here: `RESET_TIMER_GATE` authors the flag 38 times,
+ * mostly on boss floors' generators, and what it means there is not known.
+ */
+const LATCHING_GATES = new Set(["AND_GATE", "OR_GATE", "NOT_GATE"]);
+
+/**
+ * A gate's output as the floor is running, which for a latching gate is not
+ * always what its inputs say.
+ *
+ * Only something happening latches one. How a floor rests is not an event: a
+ * `NOT` that is on because its generator has not started must still go off
+ * when it does, so the resting pass in `trackTriggers` evaluates the gates
+ * plainly and nothing is held until the floor is standing and the gate goes
+ * from off to on.
+ */
+const gateOutput = (session, gate) => {
+  const value = evaluateGate(session, gate);
+  if (!gate.triggerOnce || !LATCHING_GATES.has(gate.constant)) return value;
+  if (session.gateHeld?.has(gate.id)) return true;
+  const rose = value && session.signalValues?.get(gate.id) === false;
+  if (rose && session.floorSettled !== false) {
+    session.gateHeld ??= new Set();
+    session.gateHeld.add(gate.id);
+  }
+  return value;
+};
+
+/**
  * A one-shot pulse: the gate goes on, and takes itself off again.
  *
  * `startDelay` is how long the pulse waits before it starts, and it was parsed
@@ -619,7 +663,7 @@ const deliverSignal = (session, targetId, on) => {
       return;
     }
 
-    emitSignal(session, gate.id, evaluateGate(session, gate));
+    emitSignal(session, gate.id, gateOutput(session, gate));
     return;
   }
 
@@ -1141,6 +1185,8 @@ export const trackTriggers = (session, floor) => {
     session.signalValues.set(generator.id, false);
   }
   for (const gate of floor.placements.logicGate) session.signalValues.set(gate.id, false);
+  // What a gate has latched belongs to the floor it was latched on.
+  session.gateHeld = new Set();
 
   // Resolve the graph's resting state before objects are generated. This makes
   // NOT-gated jails solid/closed and directly wired buttons inactive from the
