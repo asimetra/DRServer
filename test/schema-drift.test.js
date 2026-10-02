@@ -217,7 +217,8 @@ test("startup puts back the indexes a database is short of", {
   await client.connect();
   const indexes = async () =>
     (await client.query(
-      "SELECT indexname FROM pg_indexes WHERE tablename = 'market_sold_listings' ORDER BY indexname"
+      "SELECT indexname FROM pg_indexes WHERE tablename = 'market_sold_listings' " +
+        "AND schemaname = current_schema() ORDER BY indexname"
     )).rows.map((row) => row.indexname);
   try {
     await client.query("DROP INDEX IF EXISTS market_sold_listings_account");

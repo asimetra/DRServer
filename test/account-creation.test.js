@@ -4,6 +4,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
+
+/**
+ * These read or damage the account files themselves, or keep a record in a
+ * shape only a file can hold, so they have nothing to say about PostgreSQL —
+ * test/postgres-save.test.js is where that backend is held to the same things.
+ */
+const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
+
 /**
  * A new account has to be whole before it is first written.
  *
@@ -44,7 +52,7 @@ test("the ids are distinct, so a table keyed on them accepts the row", async () 
  * still have been stored without ids, and the next process to read it would
  * be the one that found out.
  */
-test("and the document on disk carries them too", async () => {
+test("and the document on disk carries them too", { skip: fileOnly }, async () => {
   // Asked rather than assumed: whichever test file imports the configuration
   // first settles the directory, so the environment variable set above is not
   // necessarily the one in force by the time this runs.

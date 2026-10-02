@@ -39,6 +39,14 @@ const run = (over = {}) => ({
   ...over,
 });
 
+
+/**
+ * These read or damage the account files themselves, or keep a record in a
+ * shape only a file can hold, so they have nothing to say about PostgreSQL —
+ * test/postgres-save.test.js is where that backend is held to the same things.
+ */
+const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
+
 test("the fastest clear leads the speedrun board", async () => {
   const map_node_id = aNode();
   await recordRuns([
@@ -187,7 +195,7 @@ test("the trophies standing is the holder's total, replaced only when beaten", a
  * and no rule turns that into the figure the board ranks now. They are swept
  * rather than shown, and everything else in the file survives the sweep.
  */
-test("the old experience board's standings are swept at startup", async () => {
+test("the old experience board's standings are swept at startup", { skip: fileOnly }, async () => {
   const bestsFile = path.join(scratch, "dungeon-bests.json");
   const bests = JSON.parse(fs.readFileSync(bestsFile, "utf8"));
   bests.experience = { 5: { value: 999_999, name: "Ghost of the old board" } };
@@ -286,7 +294,7 @@ test("one unreadable account does not stop the seed, or the start it runs in", a
  * The history is kept whole even though nothing draws a board from it — the
  * boards are bounded and the history is what a later question is answered from.
  */
-test("every run is written to the history", async () => {
+test("every run is written to the history", { skip: fileOnly }, async () => {
   const map_node_id = aNode();
   await recordRuns([run({ account_id: 501, map_node_id, kills: 42 })]);
 
@@ -353,7 +361,7 @@ test("the experience standing keeps the hero that set it", async () => {
   assert.equal(mine.value, 5_000);
 });
 
-test("a run recorded without a hero reads as none rather than missing", async () => {
+test("a run recorded without a hero reads as none rather than missing", { skip: fileOnly }, async () => {
   const map_node_id = aNode();
   const { hero_id, ...withoutHero } = run({ account_id: 67, map_node_id });
   await recordRuns([withoutHero]);
@@ -465,7 +473,7 @@ test("simultaneous finishes cannot overwrite each other's standings", async () =
   );
 });
 
-test("invalid leaderboard JSON is never treated as an empty board", async () => {
+test("invalid leaderboard JSON is never treated as an empty board", { skip: fileOnly }, async () => {
   const bestsFile = path.join(scratch, "dungeon-bests.json");
   const original = fs.readFileSync(bestsFile, "utf8");
   const corrupt = original.slice(0, -2);

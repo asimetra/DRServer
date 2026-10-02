@@ -205,7 +205,7 @@ test("the reward screen is offered again only once the countdown runs out", asyn
  */
 test("the daily payout is the streak tier times the hero count", async () => {
   const avatars = (count) =>
-    Array.from({ length: count }, (_, index) => ({ id: index + 1, avatar_id: 101 + index }));
+    Array.from({ length: count }, (_, index) => ({ id: index + 1, avatar_id: 101 + index, skin_type: 151 + index }));
 
   await freshAccount({ premium_currency: 0, concurrent_days: 1, last_reward_date: null, account_avatars: avatars(2) });
   const [day1] = [await dispatch("store", "AskAboutDailyReward", [ACCOUNT])];
@@ -233,7 +233,7 @@ const utcDaysAgo = (days, hours = 0) => {
 };
 
 const heroes = (count) =>
-  Array.from({ length: count }, (_, index) => ({ id: index + 1, avatar_id: 101 + index }));
+  Array.from({ length: count }, (_, index) => ({ id: index + 1, avatar_id: 101 + index, skin_type: 151 + index }));
 
 /**
  * The question answers with the day that is about to be paid, not the one that
@@ -321,7 +321,7 @@ test("a second free spin on the same day pays nothing", async () => {
  */
 test("equipping a consumable moves the stack onto the hero and back", async () => {
   await freshAccount({
-    account_avatars: [{ id: 1, avatar_id: 101, consumable1_id: 0, consumable1_count: 0 }],
+    account_avatars: [{ id: 1, avatar_id: 101, skin_type: 151, consumable1_id: 0, consumable1_count: 0 }],
     account_stackables: [{ id: 5, account_id: ACCOUNT, stack_id: 70000, count: 3 }],
   });
 
@@ -339,7 +339,7 @@ test("equipping a consumable moves the stack onto the hero and back", async () =
 
 test("a hero walks with one pet at a time", async () => {
   await freshAccount({
-    account_avatars: [{ id: 1, avatar_id: 101 }],
+    account_avatars: [{ id: 1, avatar_id: 101, skin_type: 151 }],
     account_pets: [
       { id: 91, account_id: ACCOUNT, npc_id: 3303, equipped_hero: null },
       { id: 92, account_id: ACCOUNT, npc_id: 3304, equipped_hero: null },
@@ -414,6 +414,7 @@ const trainee = (experience, placed = {}) =>
         id: 1,
         account_id: ACCOUNT,
         avatar_id: 101, // Berserker
+        skin_type: 151,
         experience,
         statupgrade1: 0,
         statupgrade2: 0,

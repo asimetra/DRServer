@@ -129,13 +129,26 @@ export const isAdditiveOnly = (sql) => {
   });
 };
 
+/**
+ * The schemas a connection's tables are looked for in when none are named: the
+ * one it creates tables in, and the website's.
+ *
+ * That is `public` on every ordinary deployment, which is what this said
+ * outright. Asked of the connection instead, a database reached through a
+ * search path of its own — a test's scratch schema, an operator's — is checked
+ * where its tables actually are, rather than found complete because some other
+ * schema in the same database happens to be.
+ */
+const HERE = "(table_schema = current_schema() OR table_schema = 'web')";
+const HERE_INDEXES = "(schemaname = current_schema() OR schemaname = 'web')";
+
 /** The columns a live database actually has, in the shape `driftBetween` wants. */
-export const columnsInDatabase = async (client, schemas = ["public", "web"]) => {
+export const columnsInDatabase = async (client, schemas = null) => {
   const { rows } = await client.query(
     `SELECT table_name, column_name
        FROM information_schema.columns
-      WHERE table_schema = ANY($1)`,
-    [schemas]
+      WHERE ${schemas ? "table_schema = ANY($1)" : HERE}`,
+    schemas ? [schemas] : []
   );
 
   const actual = {};
@@ -146,10 +159,10 @@ export const columnsInDatabase = async (client, schemas = ["public", "web"]) => 
 };
 
 /** The index names a live database has, in the shape `missingIndexes` wants. */
-export const indexesInDatabase = async (client, schemas = ["public", "web"]) => {
+export const indexesInDatabase = async (client, schemas = null) => {
   const { rows } = await client.query(
-    "SELECT indexname FROM pg_indexes WHERE schemaname = ANY($1)",
-    [schemas]
+    `SELECT indexname FROM pg_indexes WHERE ${schemas ? "schemaname = ANY($1)" : HERE_INDEXES}`,
+    schemas ? [schemas] : []
   );
   return new Set(rows.map((row) => row.indexname));
 };

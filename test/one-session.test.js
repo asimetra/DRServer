@@ -63,13 +63,22 @@ const fakeSocket = () => {
   return socket;
 };
 
+/**
+ * Waits by the clock, not by a count of turns: against a database a login is a
+ * few round trips, and a thousand turns of the loop are over before the first
+ * of them has answered.
+ */
 const settle = async (session) => {
-  const turns = session ? 1000 : 40;
-  for (let index = 0; index < turns; index++) {
-    await new Promise((resolve) => setImmediate(resolve));
-    if (session && !session.draining) return;
+  if (!session) {
+    for (let index = 0; index < 40; index++) await new Promise((resolve) => setImmediate(resolve));
+    return;
   }
-  if (session) throw new Error(`session ${session.id} did not finish draining`);
+  const deadline = Date.now() + 5000;
+  do {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (!session.draining) return;
+  } while (Date.now() < deadline);
+  throw new Error(`session ${session.id} did not finish draining`);
 };
 
 const login = (accountId, version = "1.0.0") =>

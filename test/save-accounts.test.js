@@ -17,6 +17,14 @@ after(async () => {
 const readStored = async (id) =>
   JSON.parse(await readFile(path.join(dataDir, `${id}.json`), "utf8"));
 
+
+/**
+ * These read or damage the account files themselves, or keep a record in a
+ * shape only a file can hold, so they have nothing to say about PostgreSQL —
+ * test/postgres-save.test.js is where that backend is held to the same things.
+ */
+const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
+
 /**
  * Moving something from one account to another, written down once.
  *
@@ -26,7 +34,7 @@ const readStored = async (id) =>
  * neither account. Gifting already had that shape, and trading between players
  * will be nothing but that shape.
  */
-test("both sides of a transfer are written together", async () => {
+test("both sides of a transfer are written together", { skip: fileOnly }, async () => {
   const sender = await loadAccount(9001);
   const recipient = await loadAccount(9002);
   sender.basic_currency = 100;
@@ -49,7 +57,7 @@ test("both sides of a transfer are written together", async () => {
  * notice — `if (recipient !== sender)` — and a caller who forgets writes the
  * account, deletes it, and writes it again.
  */
-test("the same account offered twice is written once", async () => {
+test("the same account offered twice is written once", { skip: fileOnly }, async () => {
   const account = await loadAccount(9003);
   account.basic_currency = 7;
   await saveAccounts([account, account]);
@@ -78,7 +86,7 @@ test("two different objects for one account are refused", async () => {
  * cannot produce one of its files leaves all of them alone rather than landing
  * the half it managed.
  */
-test("a save that fails partway leaves the earlier account untouched", async () => {
+test("a save that fails partway leaves the earlier account untouched", { skip: fileOnly }, async () => {
   const first = await loadAccount(9005);
   const second = await loadAccount(9006);
   first.basic_currency = 5;
@@ -105,7 +113,7 @@ test("a save that fails partway leaves the earlier account untouched", async () 
  * while the other holds B and waits for A. Sorting by id is what makes that
  * cycle impossible; without it this test hangs rather than fails.
  */
-test("saves of the same pair in opposite orders do not deadlock", async () => {
+test("saves of the same pair in opposite orders do not deadlock", { skip: fileOnly }, async () => {
   const first = await loadAccount(9007);
   const second = await loadAccount(9008);
 

@@ -46,6 +46,14 @@ const until = async (condition, what, withinMs = 3000) => {
   }
 };
 
+
+/**
+ * These read or damage the account files themselves, or keep a record in a
+ * shape only a file can hold, so they have nothing to say about PostgreSQL —
+ * test/postgres-save.test.js is where that backend is held to the same things.
+ */
+const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
+
 /** A session the way dungeon entry leaves it: the account loaded and held. */
 const enter = async (id, overrides = {}) => {
   const account = await acquireAccount(id);
@@ -118,7 +126,7 @@ test("a later save that lands is the whole account: the retry has nothing left t
  * last reward of a run cannot be written, the player leaves, and storage comes
  * back a moment later.
  */
-test("progress the storage refused is kept in memory and written when the storage is back", async () => {
+test("progress the storage refused is kept in memory and written when the storage is back", { skip: fileOnly }, async () => {
   const id = 1000000101;
   const { account, session } = await enter(id);
   const start = account.basic_currency;
@@ -148,7 +156,7 @@ test("progress the storage refused is kept in memory and written when the storag
  * leaving and the last save landing. It used to get a second copy from
  * storage, and then one of the two overwrote the other.
  */
-test("a request arriving while the last save is still landing changes the same account", async () => {
+test("a request arriving while the last save is still landing changes the same account", { skip: fileOnly }, async () => {
   for (const [what, saveDelay, requestThinks] of [
     ["a slow save and a quick request", 60, 0],
     ["a request that reads first and writes last", 20, 80],

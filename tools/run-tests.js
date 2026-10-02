@@ -49,7 +49,34 @@ const child = spawn(
   { stdio: "inherit", cwd: root, env: process.env }
 );
 
-child.on("exit", (code, signal) => {
+/**
+ * Drops the schemas the test files made for themselves — see
+ * tools/test-environment.js. Done here, once, because a test process cannot be
+ * relied on to tidy up as it leaves: one that fails, or is killed, leaves its
+ * schema behind, and the next run would find a database slowly filling with
+ * them. Only schemas with the suite's own prefix are touched.
+ */
+const dropTestSchemas = async () => {
+  if (process.env.ODS_STORAGE !== "postgres" || !process.env.ODS_DATABASE_URL) return;
+  try {
+    const { default: pg } = await import("pg");
+    const client = new pg.Client({ connectionString: process.env.ODS_DATABASE_URL });
+    await client.connect();
+    try {
+      const { rows } = await client.query(
+        "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'ods\\_test\\_%'"
+      );
+      for (const { nspname } of rows) await client.query(`DROP SCHEMA "${nspname}" CASCADE`);
+    } finally {
+      await client.end();
+    }
+  } catch (problem) {
+    console.error(`run-tests: could not drop the test schemas: ${problem.message}`);
+  }
+};
+
+child.on("exit", async (code, signal) => {
+  await dropTestSchemas();
   if (signal) process.kill(process.pid, signal);
   else process.exit(code ?? 1);
 });

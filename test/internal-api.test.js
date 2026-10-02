@@ -168,7 +168,8 @@ test("the inventory offers only what nobody is holding, named", async () => {
   const account = await loadAccount(registered.accountId);
   account.account_items = [
     { id: 90001, account_id: account.id, item_id: 11001, power: 5, rarity: 1, avatar_id: null },
-    { id: 90002, account_id: account.id, item_id: 11001, power: 5, rarity: 1, avatar_id: 7 },
+    // Worn by the account's own hero: a weapon cannot name one it does not hold.
+    { id: 90002, account_id: account.id, item_id: 11001, power: 5, rarity: 1, avatar_id: account.account_avatars[0].id },
   ];
   await saveAccount(account);
 

@@ -256,7 +256,8 @@ test("schema repair removes duplicate sales before restoring the unique index", 
     );
     assert.equal(
       (await client.query(
-        "SELECT count(*)::int AS n FROM pg_indexes WHERE indexname = 'market_sold_listings_sale'"
+        "SELECT count(*)::int AS n FROM pg_indexes WHERE indexname = 'market_sold_listings_sale' " +
+          "AND schemaname = current_schema()"
       )).rows[0].n,
       1,
       "repair restores the uniqueness guard"

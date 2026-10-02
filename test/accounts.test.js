@@ -56,7 +56,7 @@ test("a new account survives a save/load round trip", async () => {
   assert.equal(reloaded.account_avatars[0].experience, 99);
 });
 
-test("loading a legacy account restores its map progress to the active avatar", async () => {
+test("loading a legacy account restores its map progress to the active avatar", { skip: fileOnly }, async () => {
   const account = await loadAccount(12346);
   account.completed_mapnode_mask = String.fromCharCode(0x80);
   account.account_avatars.forEach((avatar) => {
@@ -73,7 +73,7 @@ test("loading a legacy account restores its map progress to the active avatar", 
   assert.equal(savedActive.completed_mapnode_mask.charCodeAt(0), 0x80);
 });
 
-test("loading a legacy account moves avatar ids out of the client-local range", async () => {
+test("loading a legacy account moves avatar ids out of the client-local range", { skip: fileOnly }, async () => {
   const account = await loadAccount(12347);
   account.account_avatars.push({
     id: 1_000_055,
@@ -172,7 +172,7 @@ test("starter rows never collide with allocator output or modulo-related account
   assert.equal(new Set(ids).size, ids.length, `persistent ID collision: ${ids}`);
 });
 
-test("invalid account JSON is preserved and never replaced with a fresh account", async () => {
+test("invalid account JSON is preserved and never replaced with a fresh account", { skip: fileOnly }, async () => {
   const id = 12348;
   const account = await loadAccount(id);
   account.basic_currency = 999_999;
@@ -241,7 +241,7 @@ test("questions asked of every account skip one that cannot be read", async () =
   }
 });
 
-test("a non-ENOENT account read failure is propagated without writing", async () => {
+test("a non-ENOENT account read failure is propagated without writing", { skip: fileOnly }, async () => {
   const id = 12349;
   await loadAccount(id);
   const file = path.join(dataDir, `${id}.json`);

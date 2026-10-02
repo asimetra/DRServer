@@ -27,6 +27,14 @@ test.afterEach(() => forgetHeldAccounts());
 let nextId = 1;
 const anId = () => 1_000_000 + nextId++;
 
+
+/**
+ * These read or damage the account files themselves, or keep a record in a
+ * shape only a file can hold, so they have nothing to say about PostgreSQL —
+ * test/postgres-save.test.js is where that backend is held to the same things.
+ */
+const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
+
 /** An account on disk, with a bag and some gold. */
 const anAccount = async ({ id = anId(), gold = 1000, items = [] } = {}) => {
   const account = {
@@ -215,7 +223,13 @@ test("nobody buys their own listing", async () => {
  * statistics were worked out from what it is holding.
  */
 test("an equipped weapon is refused rather than taken off", async () => {
-  const seller = await anAccount({ items: [weapon(7010, { avatar_id: 5, avatar_slot: 1 })] });
+  const seller = await anAccount({ items: [weapon(7010)] });
+  // On a hero the account really holds: a weapon cannot name one it does not.
+  const account = await loadAccount(seller.id);
+  const hero = { id: seller.id * 10 + 1, account_id: seller.id, avatar_id: 101, skin_type: 151 };
+  account.account_avatars = [hero];
+  Object.assign(account.account_items[0], { avatar_id: hero.id, avatar_slot: 1 });
+  await saveAccount(account);
 
   await assert.rejects(
     () => listForSale({ sellerId: seller.id, itemId: 7010, price: 100 }),
@@ -407,7 +421,7 @@ test("once its wait is over, a listing is up and sells", async () =>
     assert.ok((await loadAccount(buyer.id)).account_items.some((item) => Number(item.id) === 7032));
   }));
 
-test("a listing from before the wait existed is up", async () =>
+test("a listing from before the wait existed is up", { skip: fileOnly }, async () =>
   withListingDelay(180, async (forgetBrowse) => {
     const seller = await anAccount({ items: [weapon(7033)] });
 
@@ -432,7 +446,7 @@ test("listings are capped, and the cap follows the roster", async () => {
     items: Array.from({ length: SLOTS_PER_HERO + 1 }, (_, index) => weapon(7300 + index)),
   });
   const account = await loadAccount(seller.id);
-  account.account_avatars = [{ id: 1, avatar_id: 101 }];
+  account.account_avatars = [{ id: seller.id * 10 + 1, avatar_id: 101, skin_type: 151 }];
   await saveAccount(account);
 
   for (let index = 0; index < SLOTS_PER_HERO; index++) {
@@ -445,7 +459,7 @@ test("listings are capped, and the cap follows the roster", async () => {
 
   // A second hero buys another five.
   const grown = await loadAccount(seller.id);
-  grown.account_avatars.push({ id: 2, avatar_id: 102 });
+  grown.account_avatars.push({ id: seller.id * 10 + 2, avatar_id: 102, skin_type: 152 });
   await saveAccount(grown);
   const listed = await listForSale({ sellerId: seller.id, itemId: 7300 + SLOTS_PER_HERO, price: 100 });
   assert.equal(listed.id, 7300 + SLOTS_PER_HERO);

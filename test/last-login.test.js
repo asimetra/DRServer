@@ -12,6 +12,14 @@ config.authEnabled = false;
 const { routes } = await import("../src/routes.js");
 const { loadAccount, saveAccount, withAccountLock } = await import("../src/accounts.js");
 
+
+/**
+ * These read or damage the account files themselves, or keep a record in a
+ * shape only a file can hold, so they have nothing to say about PostgreSQL —
+ * test/postgres-save.test.js is where that backend is held to the same things.
+ */
+const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
+
 /**
  * When an account was last here.
  *
@@ -48,7 +56,7 @@ test("launching the game moves last_login to today", async () => {
   assert.equal((await loadAccount(ME)).last_login, today(), "and it is written down");
 });
 
-test("a second launch the same day writes nothing", async () => {
+test("a second launch the same day writes nothing", { skip: fileOnly }, async () => {
   await launch();
   const written = async () => (await fs.stat(accountFile)).mtimeMs;
   const before = await written();

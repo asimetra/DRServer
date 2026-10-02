@@ -61,6 +61,14 @@ test.after(() => {
 let nextId = 970000001;
 const anId = () => nextId++;
 
+
+/**
+ * These read or damage the account files themselves, or keep a record in a
+ * shape only a file can hold, so they have nothing to say about PostgreSQL —
+ * test/postgres-save.test.js is where that backend is held to the same things.
+ */
+const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
+
 test("this template gives the repairs nothing to do", async () => {
   const fresh = await createAccount(anId());
   assert.equal(
@@ -70,7 +78,7 @@ test("this template gives the repairs nothing to do", async () => {
   );
 });
 
-test("a first login is written down", async () => {
+test("a first login is written down", { skip: fileOnly }, async () => {
   const id = anId();
 
   const served = await loadAccount(id);
@@ -82,7 +90,7 @@ test("a first login is written down", async () => {
   );
 });
 
-test("and what was written is what was served", async () => {
+test("and what was written is what was served", { skip: fileOnly }, async () => {
   const id = anId();
 
   const served = await loadAccount(id);

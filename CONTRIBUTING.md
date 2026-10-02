@@ -29,6 +29,21 @@ npm run sync:data -- --source /path/to/your/client
 npm test
 ```
 
+The suite runs on file storage. To run it against PostgreSQL as well — which
+is where the storage layer's own tests and the inventory endpoints' are held —
+point it at any database you can create schemas in:
+
+```bash
+npm run db:up
+ODS_STORAGE=postgres ODS_DATABASE_URL=postgres://ods:ods@127.0.0.1:5432/open_dungeon npm test
+```
+
+Each test file works in a schema of its own, made for it and dropped when the
+run ends, so nothing already in that database is read or changed. Use one that
+no server is running against, though: the storage lock a server holds is the
+database's, not a schema's, and the tests that take it would be refused. The
+tests that are about account files themselves are skipped in this mode.
+
 ## Pull requests
 
 - Explain the problem and why the change is needed.
