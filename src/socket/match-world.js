@@ -110,6 +110,9 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "enemiesSeen",
   // What a kill is worth on this run: one price for the whole party.
   "runXp",
+  // Whether a floor of this run was ended by command; the run then counts for
+  // nobody on it — see `/complete`.
+  "runAssisted",
   "rewardGenerators",
   "floorExits",
   "floorTransition",

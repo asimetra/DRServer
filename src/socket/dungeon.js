@@ -3645,6 +3645,7 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "dungeonRewards",
     "dungeonContribution",
     "dungeonTreasures",
+    "runAssisted",
     "healthBombsUsed",
     "partyBombsUsed",
     // The run's remaining chest allowance, rolled once from the node.

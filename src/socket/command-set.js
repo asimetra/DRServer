@@ -17,7 +17,13 @@ import { heroPositionUpdate } from "./objects.js";
 import { damageTurnedAside } from "./combat.js";
 import { buffMultiplierFor } from "./buffs.js";
 import { heroCooldownMultiplier } from "./cooldowns.js";
-import { authorsItsOwnEnding, floorHolds } from "./floorstate.js";
+import {
+  VICTORY_DELAY_MS,
+  authorsItsOwnEnding,
+  cancelFloorFailing,
+  completeFloor,
+  floorHolds,
+} from "./floorstate.js";
 import { membersOf } from "./match-world.js";
 import { presenceSummary } from "./presence.js";
 import { TILE_SIZE } from "./tilegen.js";
@@ -553,4 +559,52 @@ export const registerBuiltinCommands = () => {
     },
   });
 
+  /**
+   * Ends the floor the caller is standing on, the way the floor ends itself.
+   *
+   * For reaching a later floor without fighting through the ones before it.
+   * It goes through `completeFloor`, which is the one place that decides what
+   * a finished floor means: a floor with another after it hands over, the last
+   * one wins the run after its delay, with its report and its reward. For
+   * everybody on the floor, since a floor is the party's.
+   *
+   * Nothing is killed for it. A death drops loot, pays its star, counts on the
+   * report and fires whatever the floor wired to it, and none of that is what
+   * was asked for. The floor is marked cleared first, which is what stops a
+   * hero falling in the last seconds from failing a run that is already won.
+   *
+   * The run stops counting from here, for the whole party: it is kept off the
+   * boards and an Infinite dungeon neither pays its floors nor records its
+   * depth — see `runAssisted`. What the run earned before the command stays.
+   *
+   * Not while the floor is still being built: its objects are arriving, and
+   * tearing a floor down under its own construction is the race the build's
+   * `isActive` checks exist to survive, not one to start on purpose.
+   */
+  define({
+    name: "complete",
+    role: ROLE.ADMIN,
+    summary: "end this floor as though it had been cleared",
+    run: ({ session, reply }) => {
+      if (!session.heroDoid || !session.areaDoid) return reply.warn("you are not on a floor");
+      if (session.floorSettled === false) return reply.warn("this floor is still being built");
+      if (session.floorFinished) return reply.warn("this floor is already finishing");
+
+      const ordinal = floorOrdinal(session);
+      const next = (session.floorIndex ?? 0) + 2;
+      const last = next > (session.floorCount ?? 1);
+
+      // Before the floor is ended, so that ending it pays nothing either.
+      session.runAssisted = true;
+      session.floorCleared = true;
+      cancelFloorFailing(session);
+      (session.completeFloor ?? completeFloor)(session);
+
+      if (last) {
+        const seconds = Math.round((session.victoryDelayMs ?? VICTORY_DELAY_MS) / 1000);
+        return reply(`last floor completed — the run ends in ${seconds}s`);
+      }
+      reply(`${ordinal} completed — on to floor ${next}`);
+    },
+  });
 };

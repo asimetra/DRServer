@@ -135,8 +135,10 @@ export const runRecordFor = (session, success) => {
      * the number the hero experience board ranks.
      */
     hero_xp: avatar.experience ?? 0,
-    // Written to the history either way; only kept off the boards.
-    rankable: rankable(session.mapPage?.NodeType) && startedAt !== null,
+    // Written to the history either way; only kept off the boards. A run that
+    // had a floor ended by `/complete` was not cleared, however fast it went.
+    rankable:
+      rankable(session.mapPage?.NodeType) && startedAt !== null && !session.runAssisted,
   };
 };
 

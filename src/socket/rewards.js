@@ -263,6 +263,8 @@ export const noteInfiniteFloorReached = (session) => {
   const definition = session.infiniteDefinition;
   const account = session.dungeonAccount;
   if (!definition || !account) return null;
+  // A floor reached by `/complete` was not reached; see `runAssisted`.
+  if (session.runAssisted) return null;
 
   const floorNumber = Math.max(1, Math.trunc(Number(session.floorIndex ?? 0)) + 1);
   const progress = infiniteProgressFor(account, {
@@ -284,6 +286,13 @@ export const awardInfiniteFloor = (session) => {
   const definition = session.infiniteDefinition;
   const account = session.dungeonAccount;
   if (!definition || !account) return null;
+  /**
+   * A run that had a floor ended by command pays no floor from then on, and
+   * `noteInfiniteFloorReached` raises no depth for it. Depth is the only thing
+   * an Infinite dungeon measures, and a command that walks through its floors
+   * would otherwise be the fastest way to all of its rewards.
+   */
+  if (session.runAssisted) return null;
   const floorNumber = (session.floorIndex ?? 0) + 1;
   session.infiniteAwardedFloors ??= new Set();
   if (session.infiniteAwardedFloors.has(floorNumber)) return null;

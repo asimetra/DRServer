@@ -198,7 +198,7 @@ export const clearFloorFailing = (session) => {
 const FLID_FLOOR_SHOW_TEXT = 201;
 const FLID_FLOOR_PLAY_SOUND = 202;
 
-const VICTORY_DELAY_MS = 7000;
+export const VICTORY_DELAY_MS = 7000;
 
 /**
  * DistributedDungeonFloor::show_text — the floor's own narration, keyed by a
