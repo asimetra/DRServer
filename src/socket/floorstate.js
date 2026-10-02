@@ -402,11 +402,40 @@ const COMPLETION_TRIGGERABLES = new Set([
   "FLOOR_COMPLETE_TRIGGERABLE",
 ]);
 
-const authorsItsOwnEnding = (session) => {
+export const authorsItsOwnEnding = (session) => {
   for (const constant of session.triggerableNames?.values() ?? []) {
     if (COMPLETION_TRIGGERABLES.has(constant)) return true;
   }
   return false;
+};
+
+/**
+ * What stands between a floor and being cleared: the generators that have not
+ * finished, and the enemies still on their feet.
+ *
+ * One reading for the rule and for anybody asking about it. `/floor` prints
+ * this, and a readout that counted for itself would agree with the rule right
+ * up until the two drifted — which is when somebody is asking why a floor will
+ * not end.
+ */
+export const floorHolds = (session) => {
+  // A proximity-gated cage is still part of the encounter even before its
+  // actors exist. Otherwise killing the room's front line can end the floor
+  // before the player steps on the button that releases the remaining waves.
+  const generators = [...(session.generators?.values() ?? [])].filter(
+    (generator) => !generator.completed
+  );
+
+  let enemies = 0;
+  const alive = [];
+  for (const [doid, actor] of session.actors ?? []) {
+    // Barrels and props do not hold it, and neither does an enemy the floor
+    // did not stock — see actor-roles.js.
+    if (!holdsFloor(actor)) continue;
+    enemies++;
+    if (!actor.dead) alive.push({ doid, actor });
+  }
+  return { generators, enemies, alive };
 };
 
 /**
@@ -417,22 +446,10 @@ const authorsItsOwnEnding = (session) => {
 export const checkFloorCleared = (session) => {
   if (session.floorCleared || !session.areaDoid) return false;
 
-  // A proximity-gated cage is still part of the encounter even before its
-  // actors exist. Otherwise killing the room's front line can end the floor
-  // before the player steps on the button that releases the remaining waves.
-  if ([...(session.generators?.values() ?? [])].some((generator) => !generator.completed)) {
-    return false;
-  }
-
-  let enemies = 0;
-  let alive = 0;
-  for (const actor of session.actors.values()) {
-    // Barrels and props do not hold it, and neither does an enemy the floor
-    // did not stock — see actor-roles.js.
-    if (!holdsFloor(actor)) continue;
-    enemies++;
-    if (!actor.dead) alive++;
-  }
+  const holds = floorHolds(session);
+  if (holds.generators.length) return false;
+  const { enemies } = holds;
+  const alive = holds.alive.length;
 
   /**
    * A floor with no enemies at all is not a cleared floor, or smashing the

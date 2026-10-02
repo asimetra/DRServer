@@ -43,6 +43,10 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "mapNodeId",
   "floorPlan",
   "currentFloor",
+  // The secret rooms a run has opened. The floor's, not whoever built it: a
+  // member asking which tile they stand on is asking about the same floor.
+  "revealedRooms",
+  "revealedTiles",
   "floorCount",
   "floorIndex",
   "npcLevel",

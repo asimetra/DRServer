@@ -3090,6 +3090,9 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
    * then loads an authored map — so it belongs per floor.
    */
   session.floorGenerated = Boolean(floor.generated);
+  // The floor itself, for anything that has to say where on it something is —
+  // its name is the map or the seed, and its tiles are what a position is on.
+  session.currentFloor = floor;
   /**
    * How much of the NPC level counts, which on an infinite run grows with the
    * depth. Set here rather than once per run because `floorIndex` moves under
@@ -3471,6 +3474,9 @@ const advanceFloorUnlocked = async (session) => {
   session.world?.beginFloorSnapshot?.();
 
   session.floorIndex = next;
+  // With the index, so the two never name different floors while this one is
+  // on its way: the build below is where everything else about it is set.
+  session.currentFloor = floor;
   session.floorCleared = false;
   session.enemiesSeen = 0;
   session.infiniteActiveModifiers = activeInfiniteModifiers(
@@ -3616,6 +3622,7 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   for (const key of [
     "areaDoid",
     "floorDoid",
+    "currentFloor",
     "heroDoid",
     "heroPosition",
     "reportedHeroPosition",

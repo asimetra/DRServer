@@ -17,6 +17,10 @@ import { heroPositionUpdate } from "./objects.js";
 import { damageTurnedAside } from "./combat.js";
 import { buffMultiplierFor } from "./buffs.js";
 import { heroCooldownMultiplier } from "./cooldowns.js";
+import { authorsItsOwnEnding, floorHolds } from "./floorstate.js";
+import { membersOf } from "./match-world.js";
+import { presenceSummary } from "./presence.js";
+import { TILE_SIZE } from "./tilegen.js";
 import { TICK_MS as MANA_TICK_MS, manaRegenFor } from "./regen.js";
 import { statOffsetsFor } from "../combat-damage.js";
 import { heroById, loadGameMaster } from "../gamemaster.js";
@@ -42,6 +46,47 @@ const withBuff = (base, multiplier) =>
 
 /** The three damage types, which is the axis both attack and defence turn on. */
 const DAMAGE_TYPES = ["MELEE", "SHOOTING", "MAGIC"];
+
+/** `1 enemy`, `2 enemies`. */
+const counted = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+/**
+ * The tile a position is on, or null where the floor has none.
+ *
+ * A tile is placed by its corner and is `TILE_SIZE` square. A secret room's
+ * tile is not among the floor's own until it is opened — the floor is cached
+ * and shared between runs, so what a run has revealed is kept on the session.
+ */
+const tileAt = (session, at) =>
+  [...(session.currentFloor?.tiles ?? []), ...(session.revealedTiles ?? [])].find(
+    (tile) =>
+      at.x >= tile.x && at.x < tile.x + TILE_SIZE && at.y >= tile.y && at.y < tile.y + TILE_SIZE
+  ) ?? null;
+
+/** `floor 2 of 3`, which is how a player counts them. */
+const floorOrdinal = (session) => {
+  const number = (session.floorIndex ?? 0) + 1;
+  return session.floorCount ? `floor ${number} of ${session.floorCount}` : `floor ${number}`;
+};
+
+/**
+ * What reproduces the floor: the map's file for an authored one, the library
+ * and the seed for one that was laid out. A floor's name already holds either;
+ * only the directory every one of them shares is dropped.
+ */
+const mapLine = (floor) => {
+  if (!floor?.name) return null;
+  const [name, seed] = String(floor.name).replace(/^Resources\/Levels\//, "").split("#");
+  return seed === undefined ? `map ${name}` : `map ${name} seed ${seed}`;
+};
+
+/** How much `/near` prints before it says how many it left out. */
+const NEAR_LIMIT = 8;
+
+/** How many nodes `/online` names, and running generators `/floor` does. */
+const LIST_LIMIT = 6;
 
 export const registerBuiltinCommands = () => {
   define({
@@ -83,14 +128,269 @@ export const registerBuiltinCommands = () => {
     },
   });
 
+  /**
+   * Where the caller is, in the words a report needs.
+   *
+   * A position alone says nothing to anybody who was not there: the same
+   * coordinates are a different place on every map and on every seed. So this
+   * names the node, the floor, the map — the file for an authored floor, the
+   * library and seed for one that was laid out — and the tile underfoot, which
+   * is the unit a level is authored in and the thing a fault is nearly always
+   * about. The position inside the tile is how that tile's own objects are
+   * placed, so it can be held against the level data directly.
+   */
   define({
     name: "where",
     role: ROLE.PLAYER,
-    summary: "say where you are",
+    summary: "say where you are: node, floor, map, tile and position",
     run: ({ session, reply }) => {
       const at = session.heroPosition;
       if (!at) return reply.warn("nowhere yet — you are not on a floor");
-      reply(`x ${Math.round(at.x)}, y ${Math.round(at.y)} on floor ${session.floorDoid ?? "?"}`);
+
+      const x = Math.round(at.x);
+      const y = Math.round(at.y);
+      const tile = tileAt(session, at);
+      const node = [session.mapNodeId ?? "?", session.mapPage?.Name].filter(Boolean).join(" ");
+      reply(
+        [
+          `node ${node} · ${floorOrdinal(session)} (#${session.floorDoid ?? "?"})`,
+          mapLine(session.currentFloor),
+          tile ? `tile ${tile.tileId} at ${tile.x}, ${tile.y}` : "no tile here",
+          `x ${x}, y ${y}` + (tile ? ` — ${x - tile.x}, ${y - tile.y} inside the tile` : ""),
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    },
+  });
+
+  /**
+   * What the floor is waiting for.
+   *
+   * "The floor will not end" is the report this answers, and the answer is
+   * nearly always one of three things nobody can see: a generator that has not
+   * finished, an enemy standing somewhere out of sight, or a last floor that
+   * ends by its own trigger and not by the last kill. `floorHolds` is the rule's
+   * own reading, so what this prints is what the rule is looking at.
+   *
+   * The nearest of the enemies still standing is named with its tile and what
+   * it is doing, because the one holding a floor is usually the one that is
+   * stuck — and `blocked` beside it says so.
+   */
+  define({
+    name: "floor",
+    role: ROLE.PLAYER,
+    summary: "say what this floor is still waiting for",
+    run: ({ session, reply }) => {
+      const at = session.heroPosition;
+      if (!at || !session.actors) return reply.warn("you are not on a floor");
+
+      const last = !session.floorExits?.length;
+      const ownEnding = last && authorsItsOwnEnding(session);
+      const state = session.floorFinished ? "finished" : session.floorCleared ? "cleared" : "not cleared";
+      const lines = [`${floorOrdinal(session)} — ${state}`];
+
+      if (session.floorCleared || session.floorFinished) {
+        if (!last) lines.push("the exit is open");
+        else if (ownEnding && !session.floorFinished) {
+          lines.push("last floor: it ends by its own trigger, a chest to break or a switch to reach");
+        }
+        return reply(lines.join("\n"));
+      }
+
+      const { generators, enemies, alive } = floorHolds(session);
+      const seen = session.enemiesSeen || enemies;
+      if (!seen) lines.push("nothing has spawned yet, so there is nothing to clear");
+      else lines.push(`${counted(alive.length, "enemy", "enemies")} alive, ${seen} seen`);
+
+      const nearest = alive
+        .filter(({ actor }) => actor.position)
+        .map((entry) => ({ ...entry, away: distance(at, entry.actor.position) }))
+        .sort((a, b) => a.away - b.away)[0];
+      if (nearest) {
+        const { actor, away } = nearest;
+        const tile = tileAt(session, actor.position);
+        lines.push(
+          `nearest ${actor.constant ?? "?"}, ${Math.round(away)} away at ` +
+            `${Math.round(actor.position.x)}, ${Math.round(actor.position.y)} ` +
+            (tile ? `on tile ${tile.tileId}` : "on no tile") +
+            (actor.ai?.state ? `, ${actor.ai.state}` : "")
+        );
+      }
+
+      /**
+       * The running ones are listed; the ones that have not started are
+       * counted, and the nearest is placed. A floor of cages has a dozen of
+       * the second kind and a line each would bury the one that matters —
+       * which is usually the one nobody has walked up to yet.
+       */
+      if (generators.length) {
+        const running = generators.filter((generator) => generator.started);
+        const waiting = generators.filter((generator) => !generator.started);
+        lines.push(
+          `${counted(generators.length, "generator", "generators")} unfinished: ` +
+            `${running.length} running, ${waiting.length} not started`
+        );
+        for (const generator of running.slice(0, LIST_LIMIT)) {
+          lines.push(
+            `  ${generator.placement?.spawnConstant ?? "?"} ` +
+              `${generator.attemptedSpawns ?? 0} of ${generator.maxSpawns ?? "?"} spawned, ` +
+              `${generator.alive ?? 0} alive`
+          );
+        }
+        if (running.length > LIST_LIMIT) lines.push(`  and ${running.length - LIST_LIMIT} more`);
+
+        const next = waiting
+          .filter(({ placement }) => Number.isFinite(placement?.x) && Number.isFinite(placement?.y))
+          .map((generator) => ({ generator, away: distance(at, generator.placement) }))
+          .sort((a, b) => a.away - b.away)[0];
+        if (next) {
+          const { placement, maxSpawns } = next.generator;
+          const tile = tileAt(session, placement);
+          lines.push(
+            `  nearest not started: ${placement.spawnConstant ?? "?"} at ` +
+              `${Math.round(placement.x)}, ${Math.round(placement.y)} ` +
+              (tile ? `on tile ${tile.tileId}` : "on no tile") +
+              `, ${maxSpawns ?? "?"} to spawn`
+          );
+        }
+      }
+
+      if (!last) lines.push("clearing it opens the exit");
+      else if (ownEnding) {
+        lines.push("last floor: it ends by its own trigger, a chest to break or a switch to reach");
+      } else lines.push("last floor: it ends when the last enemy falls");
+
+      reply(lines.join("\n"));
+    },
+  });
+
+  /**
+   * What stands around the caller, closest first.
+   *
+   * For "this one will not move" and "that one cannot be hit": the constant is
+   * what the game data calls it, the number is the object the server's log
+   * lines carry, and the last word is what its AI believes it is doing. Heroes
+   * are left out — `/party` is for them — and so is anything dead.
+   *
+   * A tile's width by default, which is about a screen.
+   */
+  define({
+    name: "near",
+    role: ROLE.PLAYER,
+    usage: "[reach]",
+    summary: "list the monsters and props around you",
+    run: ({ session, args, reply }) => {
+      const at = session.heroPosition;
+      if (!at || !session.actors) return reply.warn("you are not on a floor");
+      const reach = args.length ? Math.max(1, number(args[0], "reach")) : TILE_SIZE;
+
+      const around = [];
+      for (const [doid, actor] of session.actors) {
+        if (actor.dead || !actor.position) continue;
+        if (doid === session.heroDoid || session.objects?.get(doid) === CLID.HeroGameObject) continue;
+        const away = distance(at, actor.position);
+        if (away <= reach) around.push({ doid, actor, away });
+      }
+      if (!around.length) return reply(`nothing within ${Math.round(reach)}`);
+
+      around.sort((a, b) => a.away - b.away);
+      const lines = around.slice(0, NEAR_LIMIT).map(({ doid, actor, away }) =>
+        [
+          `${actor.constant ?? "?"} #${doid}`,
+          `${Math.round(away)} away`,
+          `${actor.hitPoints ?? "?"}/${actor.maxHitPoints ?? "?"}`,
+          actor.isEnemy ? actor.ai?.state ?? "enemy" : "not an enemy",
+        ].join(" · ")
+      );
+      if (around.length > NEAR_LIMIT) lines.push(`and ${around.length - NEAR_LIMIT} more`);
+      reply(lines.join("\n"));
+    },
+  });
+
+  /** Who is on this run, the hero each brought, and who is down. */
+  define({
+    name: "party",
+    role: ROLE.PLAYER,
+    summary: "list who is on this run",
+    run: async ({ session, reply }) => {
+      if (!session.heroDoid) return reply.warn("you are not on a floor");
+
+      const gm = await loadGameMaster();
+      const lines = [];
+      for (const member of membersOf(session)) {
+        const avatar = member.dungeonAvatar;
+        const hero = avatar ? await heroById(avatar.avatar_id) : null;
+        const actor = session.actors?.get(member.heroDoid);
+        const name = member.dungeonAccount?.name ?? "(unnamed)";
+        const health = !actor
+          ? "off the floor"
+          : actor.dead || !(actor.hitPoints > 0)
+            ? "down"
+            : `${actor.hitPoints}/${actor.maxHitPoints ?? "?"}`;
+        lines.push(
+          `${name}${member.heroDoid === session.heroDoid ? " (you)" : ""} — ` +
+            (hero
+              ? `${hero.Constant} lv ${heroLevel(gm, hero, Number(avatar.experience ?? 0))}`
+              : "no hero") +
+            ` · ${health}`
+        );
+      }
+      reply(lines.join("\n"));
+    },
+  });
+
+  /**
+   * What the run has paid in experience, and what a kill on it is worth.
+   *
+   * A kill's worth is the run's and not the monster's — the node's total over
+   * the weight of everything the run will make, see run-xp.js — so the same
+   * monster pays differently on two nodes and no screen says by how much. The
+   * three weights printed are the three a row authors.
+   */
+  define({
+    name: "xp",
+    role: ROLE.PLAYER,
+    summary: "say what this run has paid and what a kill is worth",
+    run: ({ session, reply }) => {
+      if (!session.heroDoid) return reply.warn("you are not on a floor");
+
+      const earned = `${Math.round(session.dungeonRewards?.xp ?? 0)} xp this run`;
+      const unit = session.runXp?.unit;
+      if (unit === null || unit === undefined) return reply(`${earned} · kills are not priced yet`);
+      if (!(unit > 0)) return reply(`${earned} · this node's monsters carry no experience`);
+      reply(
+        `${earned} · node total ${session.mapPage?.TotalEnemyXP ?? "?"}\n` +
+          `a kill pays by its weight: weight 1 pays ${rounded(unit)}, ` +
+          `3 pays ${rounded(unit * 3)}, 10 pays ${rounded(unit * 10)}`
+      );
+    },
+  });
+
+  /**
+   * How many are connected and where the ones in dungeons are.
+   *
+   * Counts and nodes, never who: the roll is the same summary the status
+   * routes give out, and naming accounts to the room is a different question
+   * with a different answer about privacy — see `presenceSummary`.
+   */
+  define({
+    name: "online",
+    role: ROLE.PLAYER,
+    summary: "say how many players are on, and on which nodes",
+    run: ({ reply }) => {
+      const { online, inDungeon, byNode } = presenceSummary();
+      const nodes = Object.entries(byNode).sort((a, b) => b[1] - a[1]);
+      const lines = [`${online} online, ${inDungeon} in dungeons`];
+      if (nodes.length) {
+        lines.push(
+          nodes
+            .slice(0, LIST_LIMIT)
+            .map(([node, count]) => `node ${node} ×${count}`)
+            .join(", ") + (nodes.length > LIST_LIMIT ? `, and ${nodes.length - LIST_LIMIT} more` : "")
+        );
+      }
+      reply(lines.join("\n"));
     },
   });
 
@@ -252,4 +552,5 @@ export const registerBuiltinCommands = () => {
       reply(`health is ${hero.hitPoints}`);
     },
   });
+
 };
