@@ -147,7 +147,7 @@ import { settleDungeonAccount } from "./settle-account.js";
 import { hasRunSaves, whenRunSaved } from "./run-saves.js";
 import { spawnNpcRewards, spawnBossReward } from "./drops.js";
 import { beginRunXp, claimXpStar, countFloorXp, settleFloorXp } from "./run-xp.js";
-import { clearDungeonBuffs, grantBuff } from "./buffs.js";
+import { clearDungeonBuffs, grantBuff, grantBuffInstance } from "./buffs.js";
 import { clearDungeonPowerups, scheduleTimelineDoobers } from "./powerups.js";
 import { clearDungeonPlaceables, clearPlacementPermits } from "./placeables.js";
 import { scheduleSummons } from "./summons.js";
@@ -163,6 +163,7 @@ import {
   clearAcceptedCasts,
   clearBombCasts,
   hitPointsUpdate,
+  startHealthDrain,
   startTrapProjectiles,
   killAllEnemies,
   npcAttackChoreography,
@@ -2575,7 +2576,17 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
     for (const modifier of session.infiniteActiveModifiers ?? []) {
       const constant = buffsById.get(Number(modifier.PlayerBuffId));
       if (constant) {
-        await grantBuff(context, constant, { affectedActor: member.heroDoid });
+        const granted = await grantBuffInstance(context, constant, {
+          affectedActor: member.heroDoid,
+        });
+        // The Poison Gas is the one that hurts by itself — see startHealthDrain.
+        if (granted.created) {
+          startHealthDrain(context, {
+            buffDoid: granted.doid,
+            victimDoid: member.heroDoid,
+            buff: granted.buff,
+          });
+        }
       }
     }
     for (const constant of (envSetting("HERO_BUFFS") ?? "").split(",").filter(Boolean)) {

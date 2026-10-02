@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { damageReductionFor } from "../src/socket/buffs.js";
+import { buffRatingFor, damageReductionFor } from "../src/socket/buffs.js";
 import { buffForConstant } from "../src/gamemaster.js";
 
 const wearing = async (...constants) => {
@@ -50,22 +50,34 @@ test("stacked reductions leave a remainder", async () => {
 });
 
 /**
- * The only total reduction in the game is the Berserker's own Dungeon Buster,
- * on himself, for twelve seconds. No item can be one: none of the 162 modifier
- * rows across `Modifiers`, `LegendaryModifiers` and `DungeonModifier` carries a
- * defence field at all.
+ * A whole number in those columns is not a share. `BERSERK_DB` authors 100 and
+ * was read as "all of it"; on the official a raging Berserker is untouchable
+ * only for the three seconds his buster's own timeline says so, and after that
+ * every recorded blow lands, marked resisted — fifteen of fifteen. It is a
+ * rating, the same +1 a monster's row carries, and `buffRatingFor` reads it.
  */
-test("only the Berserker's own ultimate is all of it", async () => {
+test("a whole number is a rating, not a share of the hit", async () => {
   const ult = await wearing("BERSERK_DB");
   for (const type of ["MELEE_DEF", "SHOOT_DEF", "MAGIC_DEF"]) {
-    assert.equal(damageReductionFor(ult, 500, type), 1, `${type} entirely`);
+    assert.equal(damageReductionFor(ult, 500, type), 0, `${type} takes no share off`);
+    assert.equal(buffRatingFor(ult, 500, type), 1, `${type} is resisted instead`);
   }
+
+  // The Poison Gas authors 1 in all three and is a penalty: it is neither
+  // immunity, as it was read, nor a resistance. See `buffRatingFor`.
+  const gassed = await wearing("INFINITE_POISONOUS_GAS");
+  assert.equal(damageReductionFor(gassed, 500, "MELEE_DEF"), 0);
+  assert.equal(buffRatingFor(gassed, 500, "MELEE_DEF"), 0);
 
   // What the party gets from him is attack and movement, and no defence at all.
   const party = await wearing("BERSERK");
   for (const type of ["MELEE_DEF", "SHOOT_DEF", "MAGIC_DEF"]) {
     assert.equal(damageReductionFor(party, 500, type), 0, `${type} untouched`);
+    assert.equal(buffRatingFor(party, 500, type), 0);
   }
+
+  // And a fraction stays a share: no rating in it.
+  assert.equal(buffRatingFor(await wearing("DEFENDER_L2"), 500, "MELEE_DEF"), 0);
 });
 
 /** And it is per type, which is what keeps a tank from being a god. */
@@ -73,6 +85,8 @@ test("reduction is read per damage type", async () => {
   const frost = await wearing("FROST_DRAGON_BUFF");
   // A negative authored value is not a reduction; it does not turn into one.
   assert.equal(damageReductionFor(frost, 500, "MELEE_DEF"), 0);
+  // It is the other rating: the frost dragon is weak to everything.
+  assert.equal(buffRatingFor(frost, 500, "MELEE_DEF"), -1);
 
   const nobody = { activeBuffs: new Map() };
   assert.equal(damageReductionFor(nobody, 500, "MELEE_DEF"), 0);

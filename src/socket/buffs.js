@@ -315,25 +315,19 @@ export const buffMultiplierFor = (session, actorDoid, stat) => {
  * `MELEE_DEF` stat is 0.2 — defence is subtracted flat, so it does not scale
  * with the hit — and multiplying 0.2 by anything is still nothing. Measured
  * against a 400 damage swing: no buff 400, `DEFENDER_L1` 400, `DEFENDER_L2`
- * 400, and the Berserker's own Dungeon Buster 375. Six per cent, for the
- * ultimate that is supposed to make him a tank.
+ * 400.
  *
- * The authored values say what they are meant to be. `CONSUMABLE_DEFENSE_BUFF`
- * is 0.1, `DEFENDER_L1` 0.25, `FRENZY` 0.3, `DEFENDER_L2` 0.5 — a family of
- * fractions, read plainly as "take this much off". `BERSERK_DB` is 100, which
- * is the same sentence meaning all of it, and the enemy version of the same
- * buff says so outright with `INVULNERABLE_ALL`.
+ * The authored fractions say what they are meant to be. `CONSUMABLE_DEFENSE_BUFF`
+ * is 0.1, `DEFENDER_L1` 0.25, `FRENZY` 0.3, `DEFENDER_L2` 0.5 — read plainly as
+ * "take this much off".
+ *
+ * Fractions only. A whole number in the same columns is not a share and is not
+ * read here — see `buffRatingFor`. Reading 1 as "all of it" made a hero under
+ * the Infinite dungeons' Poison Gas, whose row authors 1 in all three, immune
+ * to everything for as long as the gas lasted.
  *
  * Stacked multiplicatively, so two sources leave a remainder rather than adding
- * to a total: 0.5 and 0.3 together take 65%, not 80%. Nothing reaches all of it
- * by accumulation — only a source that is itself all of it.
- *
- * Which no item can be. None of the game's 162 modifier rows across
- * `Modifiers`, `LegendaryModifiers` and `DungeonModifier` carries a defence
- * field at all; they are attack, crit, chain, pierce, speed, mana and cooldown.
- * So reduction comes from buffs alone, and the only buff that is total is the
- * Berserker's own — which is his ultimate, on himself, for twelve seconds. The
- * party gets `BERSERK`, which carries attack and movement and no defence.
+ * to a total: 0.5 and 0.3 together take 65%, not 80%.
  */
 export const damageReductionFor = (session, actorDoid, stat) => {
   let remaining = 1;
@@ -341,11 +335,51 @@ export const damageReductionFor = (session, actorDoid, stat) => {
     if (active.affectedActor !== actorDoid) continue;
     if (isBuffEffectSuppressed(session, active)) continue;
     const authored = Number(active.buff?.[stat]);
-    if (!Number.isFinite(authored) || authored <= 0) continue;
-    // A value at or above 1 is the whole of it; the rest are fractions.
-    remaining *= 1 - Math.min(1, authored);
+    if (!Number.isFinite(authored) || authored <= 0 || authored >= 1) continue;
+    remaining *= 1 - authored;
   }
   return 1 - remaining;
+};
+
+/**
+ * Whether a buff makes its bearer resist a type of damage, or weak to it.
+ *
+ * A whole number in a buff's `*_DEF` column is the rating a monster's own row
+ * carries in the column of the same name: +1 resists, -1 is weak. The Infinite
+ * modifiers that say "Enemies resist melee damage" author 1 in that one
+ * column, and the frost dragon's own buff -1 in all three.
+ *
+ * `BERSERK_DB` authors 100 and is the same thing said louder: fifteen of the
+ * twenty-three recorded hits on a raging Berserker land, at 3 where the same
+ * yeti scratched for 4, each marked resisted. It was read as untouchable.
+ *
+ * Read straight — melee against `MELEE_DEF` — like a monster's rating and
+ * unlike the hero's own crossed stats; `INFINITE_MELEE_DEFENSE` names the
+ * column in its own name. Summed and kept to one step either way, so a weak
+ * monster under a resisting buff comes out neutral.
+ *
+ * **A buff that exists to hurt its bearer does not protect it.** This is a
+ * decision, and it departs from the one recording there is. The Poison Gas
+ * authors 1 in all three columns, and on the official's single gassed floor a
+ * hero took half from everything, marked resisted — 31 where 61 was due. But
+ * the gas is a penalty: its row sets every multiplier to 1, which is "leave
+ * alone" everywhere except in these three columns, and reads far more like a
+ * row filled in by habit than like a poison that was meant to shield. One floor
+ * of one run is not enough to copy a penalty into a protection, so a
+ * `DAMAGE_OVER_TIME` buff is not asked for a resistance here.
+ */
+export const buffRatingFor = (session, actorDoid, stat) => {
+  let rating = 0;
+  for (const active of session?.activeBuffs?.values() ?? []) {
+    if (active.affectedActor !== actorDoid) continue;
+    if (isBuffEffectSuppressed(session, active)) continue;
+    const authored = Number(active.buff?.[stat]);
+    if (!Number.isFinite(authored)) continue;
+    if (authored >= 1) {
+      if (active.buff?.BuffType !== "DAMAGE_OVER_TIME") rating += 1;
+    } else if (authored <= -1) rating -= 1;
+  }
+  return Math.max(-1, Math.min(1, rating));
 };
 
 /** Whether this actor is already under a named buff. */

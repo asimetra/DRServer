@@ -162,3 +162,48 @@ test("a hero just staggered shrugs off the next blow, and not the one after", as
   t.mock.timers.tick(700);
   assert.deepEqual(heroStaggerFor(session, tackle, 10, HERO), { suffer: 1, knockback: 1 }, "on his feet again");
 });
+
+// --- the legendary shields -----------------------------------------------------
+
+/**
+ * `Barrier`, `Cover` and `Comprehend` halve one type of damage each, and the
+ * official says so on the hit: 408 of 408 arrows on a hero carrying `Cover`
+ * arrive with effectiveness -1, which the client draws as the weak flash and
+ * the pale number. The half was taken here and nothing said it had been.
+ */
+const arrowOn = async (weapons) => {
+  const sent = [];
+  const session = {
+    id: 96,
+    heroDoid: HERO,
+    playerActors: new Set([HERO]),
+    dungeonActive: true,
+    heroWeapons: weapons,
+    heroStats: new Map([["MELEE_DEF", 0], ["SHOOT_DEF", 0], ["MAGIC_DEF", 0]]),
+    objects: new Map([
+      [HERO, CLID.HeroGameObject],
+      [TRAP, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map([
+      [HERO, { hitPoints: 60_000, maxHitPoints: 60_000, constant: "GHOST_SAMURAI" }],
+      [TRAP, { constant: "SKELETON_ARCHER", isEnemy: true }],
+    ]),
+    send: (frame) => sent.push(frame),
+  };
+  await dealTrapHit(session, TRAP, await attackForConstant("EN_ARROW_SHOT"), HERO, 400);
+  const hit = sent.find((frame) => frame.readUInt32LE(4) === HERO && frame.readUInt16LE(8) === 160);
+  assert.ok(hit, "the arrow lands");
+  return { damage: 0 - hit.readInt32LE(18), effectiveness: hit.readInt8(EFFECTIVENESS_AT) };
+};
+
+test("a hit a legendary shield halves is told to the client as resisted", async () => {
+  const bare = await arrowOn([{ power: 10 }]);
+  const covered = await arrowOn([{ power: 10, legendarymodifier: 11 }]); // Cover: ranged
+  const barred = await arrowOn([{ power: 10, legendarymodifier: 10 }]); // Barrier: melee
+
+  assert.equal(bare.effectiveness, 0);
+  assert.equal(covered.effectiveness, -1, "Cover took half of an arrow, and says so");
+  assert.ok(covered.damage < bare.damage);
+  assert.equal(barred.effectiveness, 0, "Barrier is for swords and has nothing to say about arrows");
+  assert.equal(barred.damage, bare.damage);
+});

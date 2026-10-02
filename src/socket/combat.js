@@ -27,6 +27,7 @@ import {
   buffEffectAbilityFor,
   buffEffectReport,
   buffMultiplierFor,
+  buffRatingFor,
   clearBuffsOn,
   damageReductionFor,
   grantBuff,
@@ -1588,6 +1589,51 @@ export const heroStateAndChoreography = ({
 export const isPartyHero = (session, doid) =>
   session?.playerActors?.has(doid) ?? doid === session?.heroDoid;
 
+/**
+ * A buff that takes a share of its bearer's full health every second, for as
+ * long as it is on him — the Infinite dungeons' Poison Gas.
+ *
+ * Not the damage-over-time below, which is priced from the hit that applied it
+ * and which a hero never takes. Nothing applies the gas: the floor grants it,
+ * and its `PercentDamage` is of the hero rather than of a blow. On the official
+ * it is one percent a second, rounded up — 9 off a hero of 880, forty-two times
+ * running, a median 973ms apart — and here it was a picture on the health bar.
+ *
+ * It stops with the buff, and it does not take the last point. Whether the
+ * official's can finish a hero is not something its one recording settles: that
+ * hero was killed by a skeleton with the gas still on him. Wearing him down and
+ * leaving the killing to the monsters is the reading that cannot be unfair.
+ */
+export const startHealthDrain = (session, { buffDoid, victimDoid, buff }) => {
+  const share = Number(buff?.PercentDamage);
+  if (buff?.BuffType !== "DAMAGE_OVER_TIME" || !(share > 0)) return null;
+
+  const scope = session.floorScope;
+  let timer = null;
+  const stop = () => {
+    if (timer === null) return;
+    if (scope) cancelScopedTimer(scope, timer, clearInterval);
+    else clearInterval(timer);
+    session.damageOverTimeTimers?.delete(timer);
+    timer = null;
+  };
+  const tick = () => {
+    if (!session.activeBuffs?.has(buffDoid)) return stop();
+    const victim = session.actors?.get(victimDoid);
+    if (!victim || victim.dead) return;
+    const lost = Math.min(
+      Math.ceil(Number(victim.maxHitPoints ?? 0) * share),
+      Math.max(0, Number(victim.hitPoints ?? 0) - 1)
+    );
+    if (lost > 0) applyDamage(session, victimDoid, lost);
+  };
+  timer = scope ? scope.interval(tick, 1000) : setInterval(tick, 1000);
+  if (!scope) timer.unref?.();
+  session.damageOverTimeTimers ??= new Set();
+  session.damageOverTimeTimers.add(timer);
+  return stop;
+};
+
 const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colorType }) => {
   /**
    * The hero does not burn.
@@ -2596,18 +2642,40 @@ export const damageTurnedAside = (session, doid, stats, offsets) => {
     Math.max(0, Number(stats?.get(stat)) || 0)
   );
   /**
-   * And the legendary shield, if a weapon carries the one for this damage type
-   * — see `legendaryShieldFor`. Only the hero's own weapons shield the hero; an
-   * NPC has none, so this is nothing for everybody else.
+   * And whether the hero resists this type outright — see `heroResists`. A
+   * monster's resistance is its rating and is `categoryFor`'s to apply, so this
+   * is nothing for everybody else.
    */
   const attackType = ["MELEE", "SHOOTING", "MAGIC"][offsets.type];
-  const legendary = legendaryShieldFor(weaponsForHero(session, doid), attackType);
+  const resisted = heroResists(session, doid, attackType) ? RESISTED_SHARE : 0;
 
   return (
     1 -
     (1 - trained) *
       (1 - damageReductionFor(session, doid, stat)) *
-      (1 - legendary)
+      (1 - resisted)
+  );
+};
+
+/** What resisting a type of damage takes off it: half, as it does for a monster. */
+const RESISTED_SHARE = 0.5;
+
+/**
+ * Whether a hero resists a type of damage, which is half of it and is said on
+ * the hit.
+ *
+ * Two things make one. A legendary shield for the type — `Barrier`, `Cover`,
+ * `Comprehend` — and a buff that rates the hero +1 against it (`buffRatingFor`).
+ * They are the same resistance and not two: the official's samurai carried
+ * `Cover` and took 5, 7 and 9 from an archer on three floors, then 11 on the
+ * fourth under the Poison Gas — the next step of the same halved series, where
+ * a second half would have made it 6.
+ */
+const heroResists = (session, doid, attackType) => {
+  if (!attackType || !isPartyHero(session, doid)) return false;
+  return (
+    legendaryShieldFor(weaponsForHero(session, doid), attackType) > 0 ||
+    buffRatingFor(session, doid, DEFENCE_FIELD[attackType]) > 0
   );
 };
 
@@ -2744,10 +2812,22 @@ const priceHit = async (session, proposal, attack, weaponPower, weapon = null) =
     : Math.round;
   // Multiplied before it is rounded: KATANA_SHADOW_SLASH lands 1133 on a
   // neutral target and 2265 on a weak one, not 2266.
+  /**
+   * And a resistance says what it did. `Barrier`, `Cover` and `Comprehend`
+   * each take half of one type, and the official marks the hit they halved as
+   * resisted: 408 of 408 arrows on a hero carrying `Cover` arrive at -1, every
+   * melee hit and every arrow on one carrying both. A buff that rates the hero
+   * does the same — all nine sword blows on a hero under the Poison Gas. It is
+   * the resistance and nothing else: a Berserker with every point in his
+   * defence slot and no shield takes 339 melee hits at zero.
+   */
+  const shielded =
+    offsets &&
+    heroResists(session, proposal.attackee, ["MELEE", "SHOOTING", "MAGIC"][offsets.type]);
   return {
     damage: Math.max(1, round(raw * category.multiplier * (1 - reduction))),
     neutral: Math.max(1, round(raw * (1 - reduction))),
-    effectiveness: category.effectiveness,
+    effectiveness: shielded ? -1 : category.effectiveness,
   };
 };
 
@@ -2808,7 +2888,10 @@ const categoryFor = async (session, attackerDoid, victimDoid, attack) => {
   if (ignoresResistances(session, attackerDoid)) {
     return { rated: true, multiplier: 1, effectiveness: 1 };
   }
-  const effectiveness = Math.max(-2, Math.min(2, -Math.round(Number(victim[field] ?? 0))));
+  // Its own rating, and whatever a buff on it adds — the Infinite modifiers
+  // that make enemies resist a type are exactly that. See `buffRatingFor`.
+  const rating = Math.round(Number(victim[field] ?? 0)) + buffRatingFor(session, victimDoid, field);
+  const effectiveness = Math.max(-2, Math.min(2, -rating));
   return { rated: true, multiplier: 2 ** effectiveness, effectiveness };
 };
 

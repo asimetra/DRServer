@@ -144,7 +144,9 @@ test("stats folds a live buff into the numbers and shows both halves", async () 
     })
   );
 
-  assert.ok(line(/^melee {4}deal \+[\d.]+ ×1\.5 = [\d.]+ · take −100%$/), "attack, and total immunity");
+  // The rage resists rather than erases: half of what lands, on top of the
+  // quarter this Berserker trained — 62%, not all of it.
+  assert.ok(line(/^melee {4}deal \+[\d.]+ ×1\.5 = [\d.]+ · take −62%$/), "attack, and most of what lands");
 
   const buffs = line(/^buffs /);
   assert.match(buffs, /BERSERK_DB/);
