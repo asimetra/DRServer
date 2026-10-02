@@ -66,3 +66,6 @@ logs-fresh/
 
 # Which of those content packs a deployment withholds from clients without them.
 /config/content-packs.json
+
+# Account copies. Same data as data/, same reason to stay out.
+backups/

@@ -20,6 +20,7 @@
     "db:down": "./tools/db.sh down",
     "db:reset": "./tools/db.sh reset",
     "db:psql": "./tools/db.sh psql",
+    "backup": "./tools/backup.sh",
     "monitor:up": "./tools/monitor.sh up",
     "monitor:down": "./tools/monitor.sh down",
     "test:public": "node tools/test-public.js",
