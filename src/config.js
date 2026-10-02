@@ -184,7 +184,21 @@ export const loadServerConfig = (environment = process.env) => {
      */
     castMode: mode(setting(environment, "CAST_MODE"), setting(environment, "REQUIRE_CAST")),
     placementMode: mode(setting(environment, "PLACEMENT_MODE"), setting(environment, "REQUIRE_CAST")),
-    reachMode: mode(setting(environment, "REACH_MODE"), setting(environment, "ENFORCE_REACH")),
+    /**
+     * Reach, which refuses by default like movement does.
+     *
+     * The other two wait for a false-positive rate measured on this server's
+     * own players. This one has it: across 14479 of the official's hit claims
+     * and 4689 of this server's, the furthest any landed past its attack's
+     * authored reach was 253 units against a bound of 400. It costs an honest
+     * player nothing and it only ever drops the hit — while with it off, a
+     * client that claims a hit on every monster from where it stands clears
+     * the floor in a couple of dozen packets.
+     *
+     * The old flag has nothing left to say: `1` asked for what is now the
+     * default, and it never had a way to ask for off.
+     */
+    reachMode: mode(setting(environment, "REACH_MODE") ?? "enforce"),
 
     /**
      * Movement, which is the one that already shipped enforcing.

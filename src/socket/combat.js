@@ -3689,10 +3689,9 @@ const applyProposals = async (session, proposals) => {
      * The attacker is the hero — the guard above returned otherwise — so these
      * run for every result rather than for a branch of them.
      *
-     * Reported, not refused. The bound has never been run against this server's
-     * own players, and a check that has only been measured on somebody else's
-     * recordings has no business dropping a hit yet — see REACH_SLACK. Turn it
-     * on with DR_ENFORCE_REACH=1 once the log has been quiet for a while.
+     * Reach refuses by default — see `reachMode` in config.js for what it was
+     * measured against — and `ODS_REACH_MODE=audit` only reports. The cast rule
+     * still only reports unless it is switched on.
      *
      * The reach call is wrapped because a check that only reports has no
      * business breaking anything. This one did: `projectileForConstant` was

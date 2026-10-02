@@ -368,7 +368,7 @@ test("a hero's own attack leaves the debuff it authors", async () => {
   clearDungeonBuffs(session);
 });
 
-test("a hit claimed from across the floor is reported, and dropped when told to", async () => {
+test("a hit claimed from across the floor is dropped, and only reported in audit", async () => {
   /**
    * The client says *that* a hit happened; the server only prices it. Nothing
    * checked the claim, so a modified client could report hitting every monster
@@ -417,34 +417,28 @@ test("a hit claimed from across the floor is reported, and dropped when told to"
     };
   };
 
-  // Reported but still applied, because the bound has never been watched on a
-  // real server and a check measured only on somebody else's recordings has no
-  // business dropping a hit yet.
+  // Refused by default: only the hit is dropped, and no honest claim in either
+  // set of recordings comes near the bound.
   const near = claim({ x: 60, y: 0 });
   await handleProposeCombatResults(near.session, new PacketReader(near.packet));
   assert.ok(near.session.actors.get(700).hitPoints < 9000, "a swing in reach lands");
 
   const far = claim({ x: 4000, y: 0 });
   await handleProposeCombatResults(far.session, new PacketReader(far.packet));
-  assert.ok(
-    far.session.actors.get(700).hitPoints < 9000,
-    "and one from across the floor is only reported while enforcement is off"
-  );
+  assert.equal(far.session.actors.get(700).hitPoints, 9000, "one from across the floor is dropped");
+  assert.equal(far.session.terminationRequested ?? null, null, "and that is all that happens");
 
-  config.reachMode = "enforce";
+  config.reachMode = "audit";
   try {
-    const refused = claim({ x: 4000, y: 0 });
-    await handleProposeCombatResults(refused.session, new PacketReader(refused.packet));
-    assert.equal(
-      refused.session.actors.get(700).hitPoints,
-      9000,
-      "with it on, the claim is dropped"
+    const reported = claim({ x: 4000, y: 0 });
+    await handleProposeCombatResults(reported.session, new PacketReader(reported.packet));
+    assert.ok(
+      reported.session.actors.get(700).hitPoints < 9000,
+      "in audit it is reported and still lands"
     );
-    const allowed = claim({ x: 60, y: 0 });
-    await handleProposeCombatResults(allowed.session, new PacketReader(allowed.packet));
-    assert.ok(allowed.session.actors.get(700).hitPoints < 9000, "and an honest one still lands");
+    assert.equal(reported.session.violations.get("combat.out_of_reach").count, 1);
   } finally {
-    config.reachMode = "off";
+    config.reachMode = "enforce";
   }
 });
 

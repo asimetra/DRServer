@@ -40,6 +40,17 @@ test("the named mode decides when it is there, and the old flag when it is not",
   // Set to nothing is a decision about that rule, not a fall-through.
   assert.equal(of({ DR_CAST_MODE: "", DR_REQUIRE_CAST: "1" }).castMode, "off");
 
+  /**
+   * Reach is on unless it is turned off. It only ever drops the one hit, and
+   * across 14479 of the official's hit claims and 4689 of this server's own
+   * not one landed beyond the bound — while with it off, a client that claims
+   * a hit on every monster on the floor from where it stands kills all of them.
+   */
+  assert.equal(of({}).reachMode, "enforce", "nothing set is enforcing");
+  assert.equal(of({ ODS_REACH_MODE: "off" }).reachMode, "off", "and it can be stood down");
+  assert.equal(of({ ODS_REACH_MODE: "audit" }).reachMode, "audit");
+  assert.equal(of({ ODS_REACH_MODE: "enfore" }).reachMode, "off", "a typo still costs the rule");
+
   // They are separate switches now: one may enforce while another audits.
   const split = of({ DR_PLACEMENT_MODE: "enforce", DR_CAST_MODE: "audit" });
   assert.equal(split.placementMode, "enforce");
