@@ -212,7 +212,7 @@ const revokeTokens = async (req, [capture]) => {
   if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
   if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
 
-  const generation = revokeAccountTokens(id);
+  const generation = await revokeAccountTokens(id);
   info(`internal: revoked every token for account ${id}`);
   return json({ accountId: id, generation });
 };

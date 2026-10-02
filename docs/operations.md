@@ -511,11 +511,20 @@ What has to be copied depends on where accounts live.
 | Storage | Copy |
 |---|---|
 | File (`ODS_STORAGE=file`) | The whole data directory (`data/` by default) |
-| PostgreSQL | A `pg_dump` of the database **and** three files from the data directory: `token-secret`, `token-generations.json`, `content-declarations.json` |
+| PostgreSQL | A `pg_dump` of the database, and `token-secret` from the data directory unless the secret is given as `ODS_TOKEN_SECRET` |
 
-The three files matter in PostgreSQL mode too. Without `token-secret` a
-restored server makes a new signing key and every player's token stops working;
-without `token-generations.json` every token that was ever revoked works again.
+In PostgreSQL mode the database holds everything else the server keeps: token
+revocations (`token_generations`) and what each player's client last said it
+has (`server_state`). The signing secret is kept out of it on purpose, because
+anyone with a copy of the database could then sign in as any player. Without
+the secret, a restored server makes a new signing key and every player's token
+stops working. So either back up `token-secret` or set `ODS_TOKEN_SECRET`, which
+is the better choice when the server runs in a container whose disk is replaced
+on every deploy. The server says at startup where its secret comes from.
+
+A server that kept `token-generations.json` and `content-declarations.json` as
+files before copies them into the database the first time it starts, and does
+not read them after that.
 
 In file mode each account is written whole and atomically, so a copy taken
 while the server runs is never a half-written account — but two accounts
@@ -525,7 +534,7 @@ when that matters.
 ```bash
 # PostgreSQL, with the bundled container
 podman exec ods-postgres pg_dump -U ods -d open_dungeon > backup.sql   # or: docker exec
-cp data/token-secret data/token-generations.json data/content-declarations.json /your/backup/
+cp data/token-secret /your/backup/   # unless ODS_TOKEN_SECRET is set
 ```
 
 There is no tool yet that moves a deployment from PostgreSQL back to files, and

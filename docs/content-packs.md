@@ -69,8 +69,8 @@ HTTP (friend lists, requests, boards, the account's own details).
 **Across launches.** The first thing a launching client asks for is its own
 account, before any request that carries its declaration, and a client without
 a pack does not survive its own account naming the pack's skin. So each
-account's last declaration is kept in `<dataDir>/content-declarations.json` and
-answers that first request. A launch that asks for its account again without
+account's last declaration is kept, in `<dataDir>/content-declarations.json` or
+on PostgreSQL in the database, and answers that first request. A launch that asks for its account again without
 having declared anything in between is taken to have crashed on that guess, and
 gets the game's own content until it declares again. A wrong guess costs one
 crash, never a loop of them.

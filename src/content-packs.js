@@ -537,7 +537,12 @@ export const keepPresentation = (from, copy) => {
  */
 const declarations = new Map();
 const unconfirmed = new Set();
-let declarationsFile = null;
+/**
+ * Where they are kept: a file, or on PostgreSQL a store with `read()` and
+ * `write(snapshot)` (see index.js) — the server keeps nothing of its own on
+ * disk there. Null for nowhere.
+ */
+let declarationsPlace = null;
 const DECLARATION_SAVE_DELAY_MS = 25;
 let declarationRevision = 0;
 let attemptedDeclarationRevision = 0;
@@ -548,51 +553,56 @@ let declarationSaveChain = Promise.resolve();
 
 /** Queues one atomic snapshot behind any write already in flight. */
 const enqueueDeclarationSave = () => {
-  if (!declarationsFile || attemptedDeclarationRevision >= declarationRevision) {
+  if (!declarationsPlace || attemptedDeclarationRevision >= declarationRevision) {
     return declarationSaveChain;
   }
 
-  const file = declarationsFile;
+  const place = declarationsPlace;
   const epoch = declarationPersistenceEpoch;
   const revision = declarationRevision;
-  const body = JSON.stringify(
-    Object.fromEntries([...declarations].map(([id, view]) => [id, view.key]))
-  );
+  const snapshot = Object.fromEntries([...declarations].map(([id, view]) => [id, view.key]));
   attemptedDeclarationRevision = revision;
+  const current = () => epoch === declarationPersistenceEpoch && place === declarationsPlace;
   declarationSaveChain = declarationSaveChain.then(async () => {
-    if (epoch !== declarationPersistenceEpoch || file !== declarationsFile) return;
-    const temporary = `${file}.tmp`;
+    if (!current()) return;
     try {
-      await fs.promises.writeFile(temporary, body);
-      if (epoch !== declarationPersistenceEpoch || file !== declarationsFile) {
-        await fs.promises.rm(temporary, { force: true });
-        return;
-      }
-      await fs.promises.rename(temporary, file);
-      if (epoch === declarationPersistenceEpoch && file === declarationsFile) {
+      const written = await place.write(snapshot, current);
+      if (written !== false && current()) {
         persistedDeclarationRevision = Math.max(persistedDeclarationRevision, revision);
       }
     } catch (problem) {
       // Leave the current revision dirty so a later flush can retry a transient
-      // disk failure. Do not rewind past a newer snapshot already queued behind
+      // failure. Do not rewind past a newer snapshot already queued behind
       // this one; that snapshot is the retry and contains this change too.
-      if (
-        epoch === declarationPersistenceEpoch &&
-        file === declarationsFile &&
-        attemptedDeclarationRevision === revision
-      ) {
+      if (current() && attemptedDeclarationRevision === revision) {
         attemptedDeclarationRevision = persistedDeclarationRevision;
       }
-      warn(`content packs: could not save declarations to ${file} — ${problem.message}`);
+      warn(`content packs: could not save declarations to ${place.name} — ${problem.message}`);
     }
   });
   return declarationSaveChain;
 };
 
+/** A file as a place to keep them: written beside itself and renamed over, so it is whole. */
+const declarationsFileAt = (file) => ({
+  name: file,
+  read: () => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null),
+  write: async (snapshot, current) => {
+    const temporary = `${file}.tmp`;
+    await fs.promises.writeFile(temporary, JSON.stringify(snapshot));
+    if (!current()) {
+      await fs.promises.rm(temporary, { force: true });
+      return false;
+    }
+    await fs.promises.rename(temporary, file);
+    return true;
+  },
+});
+
 /** Marks memory dirty and coalesces bursts into one asynchronous snapshot. */
 const saveDeclarations = () => {
   declarationRevision += 1;
-  if (!declarationsFile) {
+  if (!declarationsPlace) {
     attemptedDeclarationRevision = declarationRevision;
     persistedDeclarationRevision = declarationRevision;
     return;
@@ -616,20 +626,28 @@ export const flushDeclarations = async () => {
   return persistedDeclarationRevision >= targetRevision;
 };
 
-/** Where declarations are kept between runs; the main thread's, read once at startup. */
-export const keepDeclarationsIn = (file) => {
+/**
+ * Where declarations are kept between runs — a file's path, or a store (see
+ * `declarationsPlace`) — read once at startup; the main thread's. A file is
+ * read before this returns, so a caller that does not wait sees it at once.
+ */
+export const keepDeclarationsIn = async (where) => {
   if (declarationSaveTimer) clearTimeout(declarationSaveTimer);
   declarationSaveTimer = null;
   declarationPersistenceEpoch += 1;
-  declarationsFile = file;
+  const place = typeof where === "string" ? declarationsFileAt(where) : where ?? null;
+  declarationsPlace = place;
   declarations.clear();
   unconfirmed.clear();
   declarationRevision = 0;
   attemptedDeclarationRevision = 0;
   persistedDeclarationRevision = 0;
-  if (!file || !fs.existsSync(file)) return;
+  if (!place) return;
   try {
-    for (const [id, key] of Object.entries(JSON.parse(fs.readFileSync(file, "utf8")))) {
+    const reading = place.read();
+    const stored = reading instanceof Promise ? await reading : reading;
+    if (place !== declarationsPlace || !stored) return;
+    for (const [id, key] of Object.entries(stored)) {
       const view = viewFromKey(key);
       if (view !== OFFICIAL) {
         const accountId = Number(id);
@@ -637,7 +655,7 @@ export const keepDeclarationsIn = (file) => {
       }
     }
   } catch (problem) {
-    warn(`content packs: could not read ${file} — ${problem.message}; starting without declarations`);
+    warn(`content packs: could not read ${place.name} — ${problem.message}; starting without declarations`);
   }
 };
 

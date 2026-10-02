@@ -23,6 +23,7 @@ import { config } from "../src/config.js";
 import { ensureTokenSecret } from "../src/preflight.js";
 import {
   issueToken,
+  keepGenerationsIn,
   revokeAccountTokens,
   verifyToken,
   TOKEN_TTL_SECONDS,
@@ -43,6 +44,11 @@ import {
  * first anybody heard of it was the server refusing the token.
  */
 ensureTokenSecret({ create: false });
+// On PostgreSQL the revocations are the database's, not a file's (storage/server-state.js).
+if (config.storage === "postgres") {
+  const storage = await import("../src/storage/postgres.js");
+  await keepGenerationsIn(storage.tokenGenerationStore, { pollMs: 0 });
+}
 const secretSource = process.env.ODS_TOKEN_SECRET || process.env.DR_TOKEN_SECRET
   ? "ODS_TOKEN_SECRET"
   : path.join(config.dataDir, "token-secret");
@@ -101,7 +107,7 @@ if (options.has("--check")) {
 }
 
 if (options.has("--revoke")) {
-  const generation = revokeAccountTokens(accountId);
+  const generation = await revokeAccountTokens(accountId);
   console.log(`Revoked existing tokens for account ${accountId} (generation ${generation}).`);
   console.log("Run the issue command again to create a replacement token.");
   process.exit(0);
@@ -121,3 +127,5 @@ console.log(`signing secret: ${secretSource}\n`);
 console.log("Put these two into the client's configuration:\n");
 console.log(`  "AccountId": ${accountId},`);
 console.log(`  "API_ValidationToken": "${token}"`);
+// The database's idle connections would hold the process open for seconds.
+if (config.storage === "postgres") await (await import("../src/storage/postgres.js")).close();

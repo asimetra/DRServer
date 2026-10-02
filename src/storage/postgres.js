@@ -674,3 +674,56 @@ export const runsSince = async (since) => {
   );
   return rows[0]?.runs ?? 0;
 };
+
+/**
+ * Token revocations (see src/auth.js): every account's generation, and a
+ * revocation as one statement, so that two made at once both count.
+ */
+export const tokenGenerationStore = {
+  load: async () => {
+    const { rows } = await connect().query("SELECT account_id, generation FROM token_generations");
+    return Object.fromEntries(rows.map((row) => [String(row.account_id), Number(row.generation)]));
+  },
+  bump: async (accountId) => {
+    const { rows } = await connect().query(
+      `INSERT INTO token_generations (account_id, generation) VALUES ($1, 1)
+       ON CONFLICT (account_id) DO UPDATE
+         SET generation = token_generations.generation + 1, revoked_at = now()
+       RETURNING generation`,
+      [accountId]
+    );
+    return Number(rows[0].generation);
+  },
+};
+
+/**
+ * Revocations from the file a server kept before they were stored here. Only
+ * ever raises a generation, so it can be done on every start; returns how many
+ * it raised.
+ */
+export const importTokenGenerations = async (values) => {
+  const entries = Object.entries(values ?? {});
+  if (!entries.length) return 0;
+  const { rowCount } = await connect().query(
+    `INSERT INTO token_generations (account_id, generation)
+     SELECT * FROM unnest($1::bigint[], $2::int[])
+     ON CONFLICT (account_id) DO UPDATE SET generation = EXCLUDED.generation
+       WHERE token_generations.generation < EXCLUDED.generation`,
+    [entries.map(([id]) => Number(id)), entries.map(([, generation]) => Number(generation))]
+  );
+  return rowCount;
+};
+
+/** One of the server's own documents, or null when it has never been written. */
+export const readServerState = async (key) => {
+  const { rows } = await connect().query("SELECT value FROM server_state WHERE key = $1", [key]);
+  return rows.length ? rows[0].value : null;
+};
+
+export const writeServerState = async (key, value) => {
+  await connect().query(
+    `INSERT INTO server_state (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [key, JSON.stringify(value)]
+  );
+};

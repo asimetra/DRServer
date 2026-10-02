@@ -17,7 +17,20 @@ const tokenTool = async (t, { secret = "s".repeat(64) } = {}) => {
   if (secret) await fs.writeFile(path.join(dataDir, "token-secret"), `${secret}\n`, { mode: 0o600 });
   const call = (...args) =>
     run(process.execPath, [tool, ...args], {
-      env: { PATH: process.env.PATH, ODS_DATA_DIR: dataDir, ODS_TOKEN_SECRET: "" },
+      /*
+       * Every setting the tool would otherwise take from the checkout's own
+       * .env, which it reads (src/load-env.js): with ODS_STORAGE=postgres there,
+       * the tool would read and write that database.
+       */
+      env: {
+        PATH: process.env.PATH,
+        ODS_DATA_DIR: dataDir,
+        ODS_TOKEN_SECRET: "",
+        ODS_STORAGE: "file",
+        ODS_DATABASE_URL: "",
+        ODS_INTERNAL_TOKEN: "",
+        ODS_ADMIN_ACCOUNTS: "",
+      },
     }).then(
       ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
       (problem) => ({ code: problem.code, stdout: problem.stdout, stderr: problem.stderr })

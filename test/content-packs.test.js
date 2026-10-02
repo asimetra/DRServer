@@ -374,6 +374,38 @@ test("a transient declaration write failure remains retryable", async (t) => {
   assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), { [ME]: "knight@2" });
 });
 
+/**
+ * On PostgreSQL the server keeps nothing of its own on disk, so the same
+ * snapshot goes to the database instead (see storage/postgres.js); a store
+ * stands in for it here.
+ */
+test("declarations can be kept by a store instead of a file", async (t) => {
+  const { keepDeclarationsIn } = packs;
+  const written = [];
+  const store = {
+    name: "a test store",
+    read: async () => ({ [ME]: "knight@1" }),
+    write: async (snapshot) => written.push(snapshot),
+  };
+  t.after(async () => {
+    await flushDeclarations();
+    await keepDeclarationsIn(null);
+  });
+
+  await keepDeclarationsIn(store);
+  assert.equal(declaredView(ME).key, "knight@1", "what the store held is what is remembered");
+
+  declare(ME, viewFromKey("knight@2"));
+  assert.equal(await flushDeclarations(), true);
+  assert.deepEqual(written.at(-1), { [ME]: "knight@2" }, "and the snapshot goes back to it");
+
+  store.write = async () => {
+    throw new Error("connection refused");
+  };
+  declare(ME + 1, viewFromKey("knight@2"));
+  assert.equal(await flushDeclarations(), false, "a store that refuses is reported like a disk that does");
+});
+
 test("the daily reward question declares, a moment after login", async (t) => {
   await withPack(t);
   const previous = config.authEnabled;

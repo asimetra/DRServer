@@ -377,3 +377,24 @@ ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gift_sends JSONB NOT NUL
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);
+
+-- Which tokens are still good: an account's tokens are signed with its
+-- generation, and revoking them raises it (src/auth.js). Here rather than in a
+-- file beside the server, so that a server whose disk is replaced with every
+-- deploy does not forget every revocation with it.
+--
+-- No foreign key to accounts: a revocation outlives the account it was made
+-- for, or a token for a deleted account would be good again.
+CREATE TABLE IF NOT EXISTS token_generations (
+    account_id  BIGINT      PRIMARY KEY,
+    generation  INTEGER     NOT NULL CHECK (generation >= 0),
+    revoked_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Small pieces of state the server keeps for itself, one JSON document each:
+-- what each account's client last said it has (src/content-packs.js).
+CREATE TABLE IF NOT EXISTS server_state (
+    key         TEXT        PRIMARY KEY,
+    value       JSONB       NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

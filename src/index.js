@@ -26,6 +26,7 @@ import {
   storageProblem,
 } from "./process-lock.js";
 import { flushDeclarations, keepDeclarationsIn, readyContentPacks } from "./content-packs.js";
+import { keepServerStateInDatabase } from "./storage/server-state.js";
 import {
   activeMatchWorkerPool,
   closeMatchWorkers,
@@ -132,7 +133,10 @@ try {
   await readyContentPacks();
   // What each account's client said it has, kept across restarts: the first
   // thing a launching client asks for is its own account, before it says.
-  keepDeclarationsIn(path.join(config.dataDir, "content-declarations.json"));
+  // On PostgreSQL, token revocations with them: nothing the server keeps for
+  // itself is left on its disk there (storage/server-state.js).
+  if (config.storage === "postgres") await keepServerStateInDatabase();
+  else keepDeclarationsIn(path.join(config.dataDir, "content-declarations.json"));
   await startMatchWorkers();
 
   listeners = [startWebServices(), startInternalApi(), startGameSocket()];

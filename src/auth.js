@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
+import { info, warn } from "./log.js";
 
 /**
  * Who a caller says they are, proved.
@@ -149,7 +150,98 @@ export const writeDurably = (file, contents) => {
   }
 };
 
+/**
+ * What a revocation file holds, or null when there is none — for carrying an
+ * old one over into a store. Refuses one it cannot read, as the server does.
+ */
+export const generationsInFile = (file) => {
+  if (!fs.existsSync(file)) return null;
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${file} must be a JSON object`);
+  }
+  return Object.fromEntries(
+    Object.entries(parsed).filter(
+      ([accountId, generation]) => /^[1-9]\d*$/.test(accountId) && Number.isSafeInteger(generation) && generation >= 0
+    )
+  );
+};
+
+/**
+ * Or kept by a store instead of the file: the database, on PostgreSQL.
+ *
+ * There the server keeps nothing else of its own on disk, and a server whose
+ * disk is thrown away with every deploy — a container — would forget every
+ * revocation with it. A store answers `load()` with `{ accountId: generation }`
+ * and `bump(accountId)` with the new generation. It is read into memory before
+ * anybody is let in and again every few seconds, because a check has to stay
+ * synchronous: a login cannot wait on a query.
+ *
+ * Generations only ever go up, so whatever a refresh brings back is merged by
+ * taking the higher of the two: a read that left before a revocation and came
+ * back after it cannot undo it. A store that cannot be read keeps what was last
+ * read — signing everybody out because the database blinked is no better than
+ * forgiving anybody — and one that was never read refuses every check, as an
+ * unreadable file does.
+ */
+const stored = { store: null, values: null, timer: null, failing: false };
+
+const mergeGenerations = (loaded) => {
+  const values = { ...(stored.values ?? {}) };
+  for (const [accountId, generation] of Object.entries(loaded ?? {})) {
+    const id = String(Number(accountId));
+    if (/^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(generation))) {
+      values[id] = Math.max(values[id] ?? 0, Number(generation));
+    }
+  }
+  stored.values = values;
+};
+
+const refreshFromStore = async () => {
+  const store = stored.store;
+  if (!store) return;
+  try {
+    const loaded = await store.load();
+    if (stored.store !== store) return;
+    mergeGenerations(loaded);
+    if (stored.failing) info("auth: token revocations can be read again");
+    stored.failing = false;
+  } catch (problem) {
+    if (stored.store !== store) return;
+    if (!stored.failing) {
+      warn(`auth: could not refresh token revocations — ${problem.message}; checking against what was last read`);
+    }
+    stored.failing = true;
+  }
+};
+
+/**
+ * Keeps revocations in `store` from now on, or in the file again with null.
+ * Reads it once before returning, and fails if that read does; then every
+ * `pollMs` (0 for never, which is for tests). Returns the refresh, for a
+ * caller that wants one now.
+ */
+export const keepGenerationsIn = async (store, { pollMs = 5000 } = {}) => {
+  if (stored.timer) clearInterval(stored.timer);
+  stored.timer = null;
+  stored.store = store ?? null;
+  stored.values = null;
+  stored.failing = false;
+  if (!store) return { refreshGenerations: async () => {} };
+
+  mergeGenerations(await store.load());
+  if (pollMs > 0) {
+    stored.timer = setInterval(() => void refreshFromStore(), pollMs);
+    stored.timer.unref?.();
+  }
+  return { refreshGenerations: refreshFromStore };
+};
+
 const generationFor = (accountId) => {
+  if (stored.store) {
+    if (!stored.values) throw new Error("token revocations have not been read");
+    return stored.values[String(Number(accountId))] ?? 0;
+  }
   refreshGenerations();
   return generationsState.values[String(Number(accountId))] ?? 0;
 };
@@ -174,13 +266,33 @@ export const issueToken = (accountId, options = {}) => {
   return `${at}:${sign(secret, Number(accountId), at, generation)}`;
 };
 
-/** Invalidates every existing token for one account while preserving the wire format. */
+/**
+ * Invalidates every existing token for one account while preserving the wire
+ * format. Resolves to the account's new generation once it is stored.
+ *
+ * Into the file, the work is done before this returns, as it always was; the
+ * promise only carries the answer.
+ */
 export const revokeAccountTokens = (accountId) => {
   const id = Number(accountId);
   if (!Number.isSafeInteger(id) || id <= 0 || id > 0xffff_ffff) {
-    throw new Error("account id must be an unsigned 32-bit integer");
+    return Promise.reject(new Error("account id must be an unsigned 32-bit integer"));
   }
+  if (stored.store) return revokeInStore(stored.store, id);
+  try {
+    return Promise.resolve(revokeInFile(id));
+  } catch (problem) {
+    return Promise.reject(problem);
+  }
+};
 
+const revokeInStore = async (store, id) => {
+  const generation = await store.bump(id);
+  if (stored.store === store) mergeGenerations({ [id]: generation });
+  return generation;
+};
+
+const revokeInFile = (id) => {
   refreshGenerations(true);
   const key = String(id);
   const generation = (generationsState.values[key] ?? 0) + 1;

@@ -20,6 +20,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 
 import { config } from "../config.js";
+import { keepGenerationsIn } from "../auth.js";
 import { error, info, warn } from "../log.js";
 import { count } from "../metrics.js";
 import { finishRunSaves } from "./run-saves.js";
@@ -854,5 +855,11 @@ process.on("unhandledRejection", (problem) => {
 
 // Before any member: the first hero this thread generates may wear a pack.
 await readyContentPacks({ quiet: true });
+// A worker can issue a token (account/token, for a player in its dungeon), and
+// on PostgreSQL the generation it signs with is the database's (auth.js).
+if (config.storage === "postgres") {
+  const storage = await import("../storage/postgres.js");
+  await keepGenerationsIn(storage.tokenGenerationStore);
+}
 info(`${label} ready`);
 channel.post({ t: "ready" });
