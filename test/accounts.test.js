@@ -14,6 +14,14 @@ after(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
+
+/**
+ * These read or damage the account files themselves, or keep a record in a
+ * shape only a file can hold, so they have nothing to say about PostgreSQL —
+ * test/postgres-save.test.js is where that backend is held to the same things.
+ */
+const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
+
 test("a new account survives a save/load round trip", async () => {
   const account = await loadAccount(12345);
 
@@ -98,6 +106,33 @@ test("loading a legacy account moves avatar ids out of the client-local range", 
 
   const persisted = JSON.parse(await readFile(path.join(dataDir, "12347.json"), "utf8"));
   assert.equal(persisted.active_avatar, migratedId, "the repair survives a restart");
+});
+
+/**
+ * A hero row with no skin. Nothing this server creates is one — the template
+ * names a skin and so does buying a hero — but an account written by hand or
+ * carried over from somewhere else can be, and such a row is one PostgreSQL
+ * will not hold: the column is required, so the account could not be moved
+ * across. Every hero has a skin of its own in the game data, and a hero with
+ * none wears that.
+ */
+test("a hero with no skin is given its own on loading", { skip: fileOnly }, async () => {
+  const account = await loadAccount(12349);
+  account.account_avatars.push({
+    id: 1_250_000_901,
+    account_id: account.id,
+    avatar_id: 104,
+    completed_mapnode_mask: "",
+  });
+  await saveAccount(account);
+
+  const repaired = await loadAccount(12349);
+  const chef = repaired.account_avatars.find((avatar) => avatar.avatar_id === 104);
+  assert.equal(chef.skin_type, 154, "the Battle Chef's own");
+  assert.equal(repaired.account_avatars[0].skin_type, account.account_avatars[0].skin_type, "one that had a skin keeps it");
+
+  const persisted = JSON.parse(await readFile(path.join(dataDir, "12349.json"), "utf8"));
+  assert.equal(persisted.account_avatars.find((avatar) => avatar.avatar_id === 104).skin_type, 154);
 });
 
 test("new account object ids are allocated outside the client-local range", async () => {

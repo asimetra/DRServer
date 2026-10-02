@@ -378,8 +378,37 @@ export const repairTutorialFlag = (account) => {
   return true;
 };
 
+/**
+ * A hero with no skin wears its own.
+ *
+ * Nothing this server creates lacks one — the template names a skin and buying
+ * a hero sets it — but an account written by hand, or carried over from
+ * somewhere that kept less, can. The client is sent the row as it stands, and
+ * PostgreSQL will not hold it at all: the column is required, so such an
+ * account could not be saved there or moved across. Every hero's own skin is
+ * named in the game data.
+ */
+export const repairAvatarSkins = async (account) => {
+  const bare = (account.account_avatars ?? []).filter(
+    (avatar) => avatar.skin_type === undefined || avatar.skin_type === null
+  );
+  if (!bare.length) return 0;
+
+  const gm = await loadGameMaster();
+  let dressed = 0;
+  for (const avatar of bare) {
+    const hero = (gm.raw?.Hero ?? []).find((row) => Number(row.Id) === Number(avatar.avatar_id));
+    const skin = (gm.raw?.Skins ?? []).find((row) => row.Constant === hero?.DefaultSkin);
+    if (!skin) continue;
+    avatar.skin_type = Number(skin.Id);
+    dressed += 1;
+  }
+  return dressed;
+};
+
 const repairLoadedAccount = async (account) => {
   const migratedAvatars = repairAvatarInstanceIds(account);
+  const dressedAvatars = await repairAvatarSkins(account);
   const restoredProgress = repairActiveAvatarProgress(account);
   const restoredAttributes = await repairAccountAttributes(account);
   const namedModifiers = await repairItemModifiers(account);
@@ -388,6 +417,7 @@ const repairLoadedAccount = async (account) => {
   const seenTutorial = repairTutorialFlag(account);
   if (
     !migratedAvatars &&
+    !dressedAvatars &&
     !restoredProgress &&
     !restoredAttributes &&
     !namedModifiers &&
@@ -403,6 +433,9 @@ const repairLoadedAccount = async (account) => {
     info(
       `accounts: moved ${migratedAvatars} avatar id(s) out of the client-local range`
     );
+  }
+  if (dressedAvatars) {
+    info(`accounts: gave ${dressedAvatars} hero(es) of account ${account.id} their own skin`);
   }
   if (restoredProgress) {
     info(`accounts: restored map progress to active avatar ${account.active_avatar}`);
