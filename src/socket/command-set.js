@@ -13,7 +13,6 @@ import { COMMAND_PREFIX, commands, define, rankOf } from "./commands.js";
 import { ROLE, roleName } from "./roles.js";
 import { hitPointsUpdate } from "./combat.js";
 import { matchHost } from "./match-host.js";
-import { heroPositionUpdate } from "./objects.js";
 import { damageTurnedAside } from "./combat.js";
 import { buffMultiplierFor } from "./buffs.js";
 import { heroCooldownMultiplier } from "./cooldowns.js";
@@ -508,37 +507,6 @@ export const registerBuiltinCommands = () => {
       if (buffs.length) lines.push(`buffs ${buffs.join(", ")}`);
 
       reply(lines.join("\n"));
-    },
-  });
-
-  /**
-   * Moving somebody is a server decision, and the client accepts it:
-   * `HeroGameObjectOwner.set_position` forwards straight to the base setter, so
-   * field 147 sent inbound moves the local hero rather than being ignored as
-   * an echo of its own claim.
-   *
-   * The session's own idea of the position has to move with it, or the next
-   * claim the client sends looks like a jump from the old place and the
-   * movement audit refuses it.
-   */
-  define({
-    name: "tp",
-    role: ROLE.ADMIN,
-    usage: "<x> <y>",
-    summary: "put yourself somewhere",
-    run: ({ session, args, reply }) => {
-      if (args.length < 2) throw new Error(`usage: ${COMMAND_PREFIX}tp <x> <y>`);
-      const to = { x: number(args[0], "x"), y: number(args[1], "y") };
-      if (!session.heroDoid) return reply.warn("you are not on a floor");
-
-      session.heroPosition = to;
-      session.reportedHeroPosition = to;
-      session.reportedHeroPositionAt = Date.now();
-      const hero = session.actors?.get(session.heroDoid);
-      if (hero) hero.position = { ...to };
-
-      session.send(heroPositionUpdate(session.heroDoid, to));
-      reply(`moved to ${Math.round(to.x)}, ${Math.round(to.y)}`);
     },
   });
 

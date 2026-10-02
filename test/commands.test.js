@@ -52,7 +52,7 @@ test("a command runs and answers only its caller", async () => {
 
 /**
  * Consumed even when it names nothing. Letting an unknown command fall through
- * to the room would publish every typo as chat, and `/tp 4000 4000` typed by
+ * to the room would publish every typo as chat, and `/hp 9999` typed by
  * somebody without the rank would be broadcast as a sentence.
  */
 test("a line that starts with the prefix never reaches the room", async () => {

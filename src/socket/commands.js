@@ -80,7 +80,7 @@ const withWarn = (reply) => {
  * Runs a line if it is a command, and says whether it was one.
  *
  * A line that starts with the prefix is always consumed, even when it names
- * nothing: relaying `/tp 100 200` to the room after refusing it would broadcast
+ * nothing: relaying `/hp 9999` to the room after refusing it would broadcast
  * the attempt to everybody, and a typo would be published as chat.
  */
 export const runCommand = async (session, line, rawReply = () => {}) => {
