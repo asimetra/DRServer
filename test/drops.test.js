@@ -31,6 +31,9 @@ const npc = {
   Constant: "KNIGHT_TUTORIAL",
   CharType: "ENEMY",
   Exp: 20,
+  // The star is the row's own, as it is on the real one.
+  XP: 1,
+  XP_DOOBER_VISUAL: "EXP_SMALL",
   DooberProb: 1,
   MinDoobers: 1,
   MaxDoobers: 1,

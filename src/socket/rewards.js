@@ -137,6 +137,25 @@ export const grantMana = (session, points) => {
   return session.heroManaPoints - previous;
 };
 
+/**
+ * The whole points in an amount of experience, with the rest kept for next time.
+ *
+ * A star arrives as a whole number — run-xp.js rounds it where it drops — but a
+ * legendary that raises experience by a share makes it fractional again, and
+ * the hero's total is whole. Truncating each one would lose the share entirely
+ * on a small star (a tenth more of 1 is never 2), so what does not make a point
+ * is carried to the next. It is this member's own and less than a point, so
+ * nothing is owed for it when the run ends.
+ */
+const wholeExperience = (session, offered) => {
+  if (!Number.isFinite(offered) || offered <= 0) return 0;
+  // The epsilon is for sums such as five 9.2s arriving as 45.99999999999999.
+  const owed = offered + (session.xpCarry ?? 0);
+  const whole = Math.floor(owed + 1e-9);
+  session.xpCarry = Math.max(0, owed - whole);
+  return whole;
+};
+
 /** Gold, XP and Buster points are party progress; owner state remains per member. */
 export const applyProgressReward = (
   session,
@@ -151,7 +170,7 @@ export const applyProgressReward = (
    */
   const weapons = session.heroWeapons ?? [];
   const gold = rewardAmount(offeredGold * (1 + legendaryDropBonus(weapons, "gold")));
-  const xp = rewardAmount(offeredXp * (1 + legendaryDropBonus(weapons, "xp")));
+  const xp = wholeExperience(session, offeredXp * (1 + legendaryDropBonus(weapons, "xp")));
   const crowd = rewardAmount(
     offeredCrowd * buffMultiplierFor(session, session.heroDoid, "BUSTER")
   );
@@ -204,7 +223,8 @@ export const applyProgressReward = (
 /** Applies the authoritative GameMaster values attached to a collected doober. */
 export const applyDooberReward = (session, doober) => {
   const gold = rewardAmount(doober.gold);
-  const xp = rewardAmount(doober.xp);
+  // Left fractional: applyProgressReward carries what does not make a point.
+  const xp = Number.isFinite(doober.xp) ? Math.max(0, doober.xp) : 0;
   const crowd = rewardAmount(doober.crowd);
   const hpPercentage = rewardRatio(doober.hpPercentage);
   const mpPercentage = rewardRatio(doober.mpPercentage);

@@ -3,6 +3,7 @@ import { CLID, OP } from "./opcodes.js";
 import { dooberGenerate } from "./objects.js";
 import { PacketWriter } from "./packet.js";
 import { trackDoober } from "./pickups.js";
+import { xpWeightOf } from "./run-xp.js";
 
 export const FLID_DOOBER_SPAWN_FROM = 290;
 
@@ -47,24 +48,40 @@ export const pickByRarity = (candidates, rarityProb, random) => {
 const isGold = (doober) => doober.DooberType === "GOLD" || doober.DooberType === "COIN";
 
 /**
- * Production emits a base XP/gold pair for reward-bearing enemies and then
- * applies the NPC's authored probability/count to the CategoryProb/DooberDrop
- * matrix. Exact late-game scaling is still calibration work; all selection
- * inputs here are nevertheless GameMaster-authored rather than hard-coded ids.
+ * The star a monster leaves, which its own row names.
+ *
+ * `XP_DOOBER_VISUAL` is the doober and `XP` is what it weighs. The official
+ * never rolls it: every recorded kill at weight 1 dropped EXP_SMALL, at 3
+ * EXP_MEDIUM and at 10 EXP_LARGE — 7151 kills, none otherwise. A row that
+ * weighs nothing leaves no star whatever visual it carries; what counts as
+ * weighing something is run-xp.js's to say.
  */
-export const rollNpcRewardDoobers = (npc, rewardData, random = Math.random) => {
+export const xpDooberFor = (npc, allDoobers = []) => {
+  if (!xpWeightOf(npc)) return null;
+  return (
+    allDoobers.find(
+      (doober) => doober.DooberType === "EXP" && doober.Constant === npc.XP_DOOBER_VISUAL
+    ) ?? null
+  );
+};
+
+/**
+ * Production emits a star and a coin for reward-bearing enemies and then
+ * applies the NPC's authored probability/count to the CategoryProb/DooberDrop
+ * matrix. All selection inputs here are GameMaster-authored rather than
+ * hard-coded ids; what the star is worth is the run's — see run-xp.js.
+ *
+ * `xp: false` leaves the star out, for a monster another one called up.
+ */
+export const rollNpcRewardDoobers = (npc, rewardData, random = Math.random, { xp = true } = {}) => {
   const rewards = [];
   const { allDoobers = [], candidates = [], categoryProb = {}, rarityProb = {} } =
     rewardData ?? {};
 
+  const experience = xp ? xpDooberFor(npc, allDoobers) : null;
+  if (experience) rewards.push(experience);
   if (npc.CharType === "ENEMY" && positiveNumber(npc.Exp) > 0) {
-    const experience = pickByRarity(
-      allDoobers.filter((doober) => doober.DooberType === "EXP"),
-      rarityProb,
-      random
-    );
     const gold = pickByRarity(candidates.filter(isGold), rarityProb, random);
-    if (experience) rewards.push(experience);
     if (gold) rewards.push(gold);
   }
 
@@ -111,13 +128,15 @@ const landingPosition = (origin, index, total, baseAngle, random) => {
 /** Generates death drops at their landing points, then starts the fly-out animation. */
 export const spawnNpcRewards = (
   session,
-  { floorDoid, npc, rewardData, origin, random = Math.random }
+  { floorDoid, npc, rewardData, origin, random = Math.random, xp = true, xpWorth }
 ) => {
   const active = session.infiniteActiveModifiers ?? [];
   const noHealth = active.some((modifier) => modifier.NoHealthDrop);
   const noMana = active.some((modifier) => modifier.NoManaDrop);
   const noBuster = active.some((modifier) => modifier.NoBusterDrop);
-  const rewards = rollNpcRewardDoobers(npc, rewardData, random).filter((doober) =>
+  // The one doober whose worth is the run's rather than its own column.
+  const star = xp ? xpDooberFor(npc, rewardData?.allDoobers) : null;
+  const rewards = rollNpcRewardDoobers(npc, rewardData, random, { xp }).filter((doober) =>
     !(noHealth && Number(doober.HP_PERCENTAGE ?? 0) > 0) &&
     !(noMana && Number(doober.MP_PERCENTAGE ?? 0) > 0) &&
     !(noBuster && Number(doober.Crowd ?? 0) > 0)
@@ -134,7 +153,7 @@ export const spawnNpcRewards = (
       ...position,
       constant: doober.Constant,
       gold: doober.Gold ?? 0,
-      xp: doober.Exp ?? 0,
+      xp: doober === star && Number.isFinite(xpWorth) ? xpWorth : doober.Exp ?? 0,
       crowd: doober.Crowd ?? 0,
       hpPercentage: doober.HP_PERCENTAGE ?? 0,
       mpPercentage: doober.MP_PERCENTAGE ?? 0,

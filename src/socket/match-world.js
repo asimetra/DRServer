@@ -103,6 +103,8 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   // How many enemies this floor has spawned, which is party-wide floor state
   // for the same reason floorCleared is: it decides when the floor is done.
   "enemiesSeen",
+  // What a kill is worth on this run: one price for the whole party.
+  "runXp",
   "rewardGenerators",
   "floorExits",
   "floorTransition",

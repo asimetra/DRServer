@@ -1,5 +1,6 @@
 import { TILE_SIZE } from "./tilegen.js";
 import { isPositionBlocked } from "./navigation.js";
+import { xpWeightOf } from "./run-xp.js";
 
 /**
  * The monsters a floor is stocked with, which its tiles do not name.
@@ -232,4 +233,75 @@ export const stockFloor = (
     });
   }
   return stock;
+};
+
+/** The rooms a floor keeps sealed: built on reveal, but planned from the start. */
+const sealedNpcsOf = (floor) =>
+  (floor?.secrets ?? []).flatMap((room) => room.placements?.npc ?? []);
+
+/**
+ * What a floor that has not been built yet will weigh, for pricing a run on its
+ * first floor — see run-xp.js.
+ *
+ * Everything the build will put there: the monsters the map names outright,
+ * sealed rooms included; the tier's quota wherever the map offers that role a
+ * marker; and what its generators will make. Read without placing anything, so
+ * a quota is taken as placed in full — and the build does fall short of that,
+ * by a quarter to a third on a crowded map (79 planned against 56 built on one
+ * boss floor). The error is one-sided: a floor planned heavier than it turns
+ * out makes each kill pay a little less, never more.
+ */
+export const plannedXpWeight = (gm, floor, tier, options = {}) => {
+  const rowFor = (constant) => gm?.npcByConstant?.get(constant);
+  const stocked = tierHasEnemyPopulation(gm, tier?.Constant);
+
+  let weight = 0;
+  for (const placement of [...(floor?.placements?.npc ?? []), ...sealedNpcsOf(floor)]) {
+    if (stocked && SPAWN_MARKERS[placement.constant]) continue;
+    weight += xpWeightOf(rowFor(placement.constant));
+  }
+
+  const markers = markersFor(floor);
+  for (const entry of populationFor(gm, tier, options.random ?? Math.random, options)) {
+    if (markers[entry.role].length) weight += xpWeightOf(rowFor(entry.constant));
+  }
+  for (const room of floor?.secrets ?? []) weight += generatorXpWeight(gm, room, options.resolve);
+  return weight + generatorXpWeight(gm, floor, options.resolve);
+};
+
+/**
+ * What a sealed room holds, which the build will not count until it is opened
+ * and which the run is priced on all the same.
+ */
+export const sealedXpWeight = (gm, floor, tier, resolve) => {
+  const stocked = tierHasEnemyPopulation(gm, tier?.Constant);
+  let weight = 0;
+  for (const placement of sealedNpcsOf(floor)) {
+    if (stocked && SPAWN_MARKERS[placement.constant]) continue;
+    weight += xpWeightOf(gm?.npcByConstant?.get(placement.constant));
+  }
+  for (const room of floor?.secrets ?? []) weight += generatorXpWeight(gm, room, resolve);
+  return weight;
+};
+
+/**
+ * What a floor's generators will make, at their authored limit.
+ *
+ * `maxSpawns` is what the map says a generator may produce, and it is what the
+ * official counts: the tutorial's two floors author thirty-four spawns between
+ * them, and its 0.6 a unit only comes out with all of them in the sum. Where a
+ * limit is a ceiling rather than a plan — the golem's four generators, a
+ * hundred each "while it lives" — the floor is priced as though they all came,
+ * and each one that does is worth correspondingly little.
+ *
+ * `resolve` turns a role placeholder into this dungeon's monster, as the build
+ * does; a spawn it cannot name weighs nothing.
+ */
+export const generatorXpWeight = (gm, floor, resolve = (constant) => constant) => {
+  let weight = 0;
+  for (const generator of floor?.placements?.generator ?? []) {
+    const row = gm?.npcByConstant?.get(resolve(generator.spawnConstant));
+    weight += xpWeightOf(row) * Math.max(0, Math.trunc(Number(generator.maxSpawns ?? 1)) || 0);
+  }
+  return weight;
 };

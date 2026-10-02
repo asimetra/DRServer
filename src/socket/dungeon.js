@@ -65,7 +65,14 @@ import {
   petSpawnPosition,
   scaledNpcWeaponPower,
 } from "../pets.js";
-import { isStockedRoleMarker, stockFloor, tierHasEnemyPopulation } from "./population.js";
+import {
+  generatorXpWeight,
+  isStockedRoleMarker,
+  plannedXpWeight,
+  sealedXpWeight,
+  stockFloor,
+  tierHasEnemyPopulation,
+} from "./population.js";
 import { preloadFor } from "./precache.js";
 import { matchHost } from "./match-host.js";
 import {
@@ -137,6 +144,7 @@ import { cancelDungeonSummary, removeHeroFromFloor } from "./summary.js";
 import { settleDungeonAccount } from "./settle-account.js";
 import { hasRunSaves, whenRunSaved } from "./run-saves.js";
 import { spawnNpcRewards, spawnBossReward } from "./drops.js";
+import { beginRunXp, claimXpStar, countFloorXp, settleFloorXp } from "./run-xp.js";
 import { clearDungeonBuffs, grantBuff } from "./buffs.js";
 import { clearDungeonPowerups, scheduleTimelineDoobers } from "./powerups.js";
 import { clearDungeonPlaceables, clearPlacementPermits } from "./placeables.js";
@@ -801,12 +809,20 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       onDeath: (doid) => {
         if (context.isActive() && rewardData) {
           const origin = session.actors.get(doid)?.position ?? at;
+          // What another monster called up is outside the node's budget and
+          // leaves no star. Everything else carries its share of the node,
+          // which for some is nothing — see run-xp.js.
+          const star = options.countsForFloor !== false
+            ? claimXpStar(session, npc, session.random ?? Math.random)
+            : null;
           spawnNpcRewards(session, {
             floorDoid,
             npc,
             rewardData,
             origin,
             random: session.random ?? Math.random,
+            xp: star !== null,
+            xpWorth: star ?? undefined,
           });
         }
         removeNavigationObstacle(session.navigation, doid);
@@ -992,6 +1008,13 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
      */
     if (npc.CharType === "ENEMY" && options.countsForFloor !== false) {
       session.enemiesSeen = (session.enemiesSeen ?? 0) + 1;
+    }
+    // And what it weighs, towards the price of a kill — see run-xp.js. Only
+    // what can leave a star. A generator's spawn is left out here because all
+    // of them are counted at once, from the generator's own limit, when the
+    // floor settles — whichever of them happen to be out by then.
+    if (rewardData && options.countsForFloor !== false && !options.fromGenerator) {
+      countFloorXp(session, npc);
     }
   }
 
@@ -1764,6 +1787,7 @@ const spawnGeneratorWave = async (context, runtime) => {
       {
         returnDoid: true,
         engaged: true,
+        fromGenerator: true,
         resolveSpawn: (npc) => generatorSpawn(session, runtime, npc),
         onDeath: (deadDoid) => {
           runtime.alive = Math.max(0, runtime.alive - 1);
@@ -2331,6 +2355,50 @@ const hazardShape = async (npc, attack, placement) => {
   return worldColliders(placement, headingFor(npc ?? {}, placement), timeline);
 };
 
+/** A generator's spawn as this dungeon's monster — what the build resolves it to. */
+const spawnResolverFor = async (session, floor) => {
+  const resolved = new Map();
+  const generators = [
+    ...(floor?.placements?.generator ?? []),
+    ...(floor?.secrets ?? []).flatMap((room) => room.placements?.generator ?? []),
+  ];
+  for (const { spawnConstant } of generators) {
+    if (!resolved.has(spawnConstant)) {
+      resolved.set(spawnConstant, await resolveSpawnConstant(spawnConstant, session.mapNodeId));
+    }
+  }
+  return (constant) => resolved.get(constant);
+};
+
+/**
+ * What the run's floors still to come are expected to weigh, for pricing a
+ * kill on this one — see run-xp.js.
+ *
+ * An authored floor is read from its map, which is cached and costs nothing to
+ * look at early. A laid-out one would have to be generated to be read, so it is
+ * taken to weigh what the floor in hand does: same tier, same quota, and on an
+ * Infinite node fifty-four of them. Floors already behind the party are not
+ * counted — they held nothing, or the run would have been priced on them.
+ */
+const plannedXpElsewhere = async (session, gm, tier, here) => {
+  const floors = session.floorPlan?.floors ?? [];
+  const index = session.floorIndex ?? 0;
+  let weight = 0;
+  for (const [at, descriptor] of floors.entries()) {
+    if (at <= index) continue;
+    if (!descriptor.authored) {
+      weight += here;
+      continue;
+    }
+    const floor = await loadFloorAt(session.floorPlan, at);
+    weight += plannedXpWeight(gm, floor, tier, {
+      floorNumber: at + 1,
+      resolve: await spawnResolverFor(session, floor),
+    });
+  }
+  return weight;
+};
+
 const BUILDERS = {
   npc: buildNpcs,
   collectable: buildCollectables,
@@ -2579,6 +2647,7 @@ export const prepareDungeonMember = async (
     at: Date.now(),
   };
   session.dungeonRewards = { gold: 0, gems: 0, xp: 0 };
+  session.xpCarry = 0;
   session.dungeonContribution = { kills: 0, damage: 0 };
   session.dungeonTreasures = [];
   session.healthBombsUsed = 0;
@@ -2713,12 +2782,14 @@ export const enterDungeon = async (
   session.dungeonActive = true;
   session.floorCleared = false;
   session.enemiesSeen = 0;
+  beginRunXp(session);
   // Production creates DistributedDungeonSummary in the dungeon interest zone.
   session.dungeonZone = 10;
   session.mapNodeId = mapNodeId;
   // Which is what a friend's panel means by "in a dungeon" — see presence.js.
   matchHost().setPresenceLocation(session, mapNodeId);
   session.dungeonRewards = { gold: 0, gems: 0, xp: 0 };
+  session.xpCarry = 0;
   session.dungeonContribution = { kills: 0, damage: 0 };
   session.dungeonTreasures = [];
   session.healthBombsUsed = 0;
@@ -3166,6 +3237,22 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
   // Everything is placed and its opening state applied; from here a trigger
   // going on means the player did something. See fireSuicide.
   session.suicideFired = new Set();
+  if (session.runXp && session.runXp.unit === null) {
+    // What is standing was counted as it was placed. The rest of the floor is
+    // still to come: what its generators will make, and its sealed rooms.
+    const resolve = await spawnResolverFor(session, floor);
+    const toCome =
+      generatorXpWeight(gm, floor, resolve) + sealedXpWeight(gm, floor, tier, resolve);
+    const here = session.runXp.weight + toCome;
+    const elsewhere = here > 0 ? await plannedXpElsewhere(session, gm, tier, here) : 0;
+    const xpUnit = settleFloorXp(session, elsewhere, toCome);
+    if (xpUnit !== null) {
+      info(
+        `[${session.id}] experience — ${session.mapPage?.TotalEnemyXP} over weight ` +
+          `${here} here and ${elsewhere} on the other floor(s): ${xpUnit.toFixed(2)} a unit`
+      );
+    }
+  }
   session.floorSettled = true;
 
   /**
