@@ -82,6 +82,27 @@ export const ACCOUNT_COLUMNS = [
   "last_reward_date", "last_login", "created",
 ];
 
+/**
+ * A map mask as text can hold it, and back.
+ *
+ * `completed_mapnode_mask` is one character a byte (see map-progress.js), and
+ * a byte in which no node is cleared is a zero — a character PostgreSQL does
+ * not store in text. A hero whose first cleared node sits past the first eight
+ * has one at the front of its mask, and its save failed outright, and went on
+ * failing every time it was retried.
+ *
+ * A zero is written as U+0100. No mask holds that — every byte is under 256 —
+ * so it can only ever mean zero, masks already in storage read exactly as they
+ * did, and the mask's own arithmetic takes the low eight bits of a character,
+ * so even one read back undecoded counts as the zero it stands for.
+ */
+const MASK_COLUMN = "completed_mapnode_mask";
+const EMPTY_BYTE = "\u0100";
+export const storedMask = (mask) =>
+  typeof mask === "string" ? mask.replaceAll("\u0000", EMPTY_BYTE) : mask;
+export const loadedMask = (mask) =>
+  typeof mask === "string" ? mask.replaceAll(EMPTY_BYTE, "\u0000") : mask;
+
 /** Every table a save may touch, in the order rows have to be written. */
 export const ROW_TABLES = [...Object.keys(CHILD_TABLES), SOLD_LISTINGS];
 
@@ -112,6 +133,7 @@ const asJsonList = (value) => JSON.stringify(Array.isArray(value) ? value : []);
 /** The account's own row, as the values that are written for it. */
 export const accountRowOf = (account) => ({
   ...Object.fromEntries(ACCOUNT_COLUMNS.map((column) => [column, account[column]])),
+  [MASK_COLUMN]: storedMask(account[MASK_COLUMN]),
   ingame_friends: account.ingame_friends ?? "[]",
   ignore_friends: account.ignore_friends ?? "[]",
   friend_requests: asJsonList(account.friend_requests),
@@ -140,18 +162,43 @@ const comparable = (value) => {
 
 const rowText = (columns, row) => columns.map((column) => comparable(row[column])).join("\u0001");
 
-/** The account's lists as rows by table and key, copied so later changes do not reach them. */
+/** Which column of a table names one of the account's heroes, and what goes with it. */
+const HERO_REFERENCES = {
+  account_items: ["avatar_id", "avatar_slot"],
+  account_pets: ["equipped_hero"],
+};
+
+/**
+ * The account's lists as rows by table and key, copied so later changes do not
+ * reach them.
+ *
+ * A weapon or a pet that names a hero the account does not hold is written as
+ * unequipped, and counted. The hero is a foreign key, so the database will not
+ * keep such a row as it stands: written whole the account failed to save at
+ * all, and written as a difference, removing a hero let the database clear the
+ * reference itself while the picture went on holding the old one. Writing the
+ * row the way the database would leave it keeps the two the same.
+ */
 const childRowsOf = (account) => {
   const tables = new Map();
+  const heroes = new Set((account.account_avatars ?? []).map((avatar) => String(avatar.id)));
+  let unheld = 0;
   for (const field of Object.keys(CHILD_TABLES)) {
     for (const row of account[field] ?? []) {
       const table = field === "market_listings" && isSold(row) ? SOLD_LISTINGS : field;
       const key = table === SOLD_LISTINGS ? saleKey(row) : String(row.id);
       if (!tables.has(table)) tables.set(table, new Map());
-      tables.get(table).set(key, { ...row, account_id: account.id });
+      const copy = { ...row, account_id: account.id };
+      if (MASK_COLUMN in copy) copy[MASK_COLUMN] = storedMask(copy[MASK_COLUMN]);
+      const [hero, ...withIt] = HERO_REFERENCES[table] ?? [];
+      if (hero && copy[hero] !== null && copy[hero] !== undefined && !heroes.has(String(copy[hero]))) {
+        for (const column of [hero, ...withIt]) copy[column] = null;
+        unheld += 1;
+      }
+      tables.get(table).set(key, copy);
     }
   }
-  return tables;
+  return { tables, unheld };
 };
 
 /** What identifies a row that is in storage and no longer in the account. */
@@ -182,7 +229,7 @@ const push = (map, table, value) => {
 export const planWrite = (snapshot, account) => {
   const accountRow = accountRowOf(account);
   const accountText = ACCOUNT_COLUMNS.map((column) => comparable(accountRow[column]));
-  const rows = childRowsOf(account);
+  const { tables: rows, unheld } = childRowsOf(account);
 
   const next = { account: accountText, tables: new Map() };
   for (const [table, byKey] of rows) {
@@ -194,6 +241,7 @@ export const planWrite = (snapshot, account) => {
     full: !snapshot,
     version: snapshot?.version ?? null,
     id: account.id,
+    unheld,
     accountRow,
     accountColumns: null,
     removes: new Map(),

@@ -11,6 +11,7 @@ import {
   ROW_TABLES,
   SOLD_LISTINGS,
   isSold,
+  loadedMask,
   planWrite,
   saleKey,
   snapshotOf,
@@ -233,7 +234,12 @@ const fromRow = (row) =>
   Object.fromEntries(
     Object.entries(row).map(([key, value]) => [
       key,
-      value instanceof Date ? value.toISOString() : value,
+      // A map mask's empty bytes are stored as something text can hold.
+      key === "completed_mapnode_mask"
+        ? loadedMask(value)
+        : value instanceof Date
+          ? value.toISOString()
+          : value,
     ])
   );
 
@@ -345,7 +351,15 @@ export const saveAccounts = async (accounts) => {
     await client.query("BEGIN");
     await runPlans(client, accounts, plans);
     await client.query("COMMIT");
-    for (const plan of plans) remember(plan.id, { ...plan.next, version: plan.written });
+    for (const plan of plans) {
+      remember(plan.id, { ...plan.next, version: plan.written });
+      if (plan.unheld) {
+        warn(
+          `account ${plan.id}: ${plan.unheld} weapon(s) or pet(s) named a hero the account ` +
+            "does not hold, and were written as unequipped"
+        );
+      }
+    }
     return accounts;
   } catch (err) {
     forgetAccountSnapshots(accounts.map((account) => account.id));

@@ -174,3 +174,48 @@ test("the plan keeps what it saw, whatever happens to the account afterwards", (
   assert.deepEqual(ops(later).columns, [], "the picture is of the account as it was planned");
   assert.deepEqual(ops(later).inserts, {});
 });
+
+/**
+ * A map mask is one character a byte, and a byte with no node cleared in it is
+ * a zero — which is a character PostgreSQL will not store in text. A hero whose
+ * first cleared node sits past the first eight has one, and its save failed
+ * outright: "invalid byte sequence for encoding UTF8: 0x00". Zero bytes are
+ * written as U+0100, which no mask can hold (every byte is under 256) and which
+ * reads back through the mask's own arithmetic as zero even undecoded.
+ */
+test("a map mask's empty bytes are written as something text can hold", () => {
+  const next = account({ completed_mapnode_mask: "\u0000\u0080" });
+  next.account_avatars[0].completed_mapnode_mask = "\u0000\u0000\u0080";
+
+  const plan = planWrite(null, next);
+
+  assert.equal(plan.accountRow.completed_mapnode_mask, "\u0100\u0080");
+  assert.equal(plan.inserts.get("account_avatars")[0].completed_mapnode_mask, "\u0100\u0100\u0080");
+  assert.equal(JSON.stringify([...plan.inserts.values()]).includes("\\u0000"), false, "no row carries a zero character");
+  assert.equal(next.account_avatars[0].completed_mapnode_mask, "\u0000\u0000\u0080", "the account itself is untouched");
+});
+
+/**
+ * A weapon or a pet that names a hero the account does not hold cannot be
+ * stored that way: the hero is a foreign key. Written whole, such an account
+ * failed to save at all; written as a difference, removing a hero let the
+ * database clear the reference by itself while the picture kept the old one —
+ * storage and its picture disagreeing, which is the one thing a picture must
+ * not do. So the row is written the way the database would leave it, in the
+ * bag, and the plan says how many it did that to.
+ */
+test("a row that names a hero the account does not hold is written as unequipped", () => {
+  const next = account();
+  next.account_items.push({ id: 23, account_id: 500, item_id: 9003, avatar_id: 999, avatar_slot: 2 });
+  next.account_pets = [{ id: 51, account_id: 500, npc_id: 3303, equipped_hero: 999 }];
+
+  const plan = planWrite(null, next);
+  const item = plan.inserts.get("account_items").find((row) => row.id === 23);
+
+  assert.equal(item.avatar_id, null);
+  assert.equal(item.avatar_slot, null);
+  assert.equal(plan.inserts.get("account_pets")[0].equipped_hero, null);
+  assert.equal(plan.inserts.get("account_items").find((row) => row.id === 21).avatar_id, 11, "one that is held stays worn");
+  assert.equal(plan.unheld, 2);
+  assert.equal(next.account_items.at(-1).avatar_id, 999, "the account itself is untouched");
+});

@@ -303,6 +303,52 @@ test("a row that leaves a column to its default is not rewritten for it", postgr
 });
 
 /**
+ * A hero whose first cleared node is past the first eight has an empty byte at
+ * the front of its mask, and text cannot hold a zero character: the save
+ * failed, and went on failing.
+ */
+test("a map mask with empty bytes is stored and comes back as it was", postgresOnly, async () => {
+  const { getMapNodeBit, setMapNodeBit } = await import("../src/map-progress.js");
+  const account = newAccount(15, 2);
+  account.completed_mapnode_mask = setMapNodeBit("", 100);
+  account.account_avatars[0].completed_mapnode_mask = setMapNodeBit(setMapNodeBit("", 16), 41);
+  await storage.saveAccount(account);
+
+  const fromStorage = await stored(account.id);
+  const mask = fromStorage.account_avatars[0].completed_mapnode_mask;
+  assert.equal(mask, account.account_avatars[0].completed_mapnode_mask, "byte for byte");
+  assert.equal(getMapNodeBit(mask, 16), true);
+  assert.equal(getMapNodeBit(mask, 41), true);
+  assert.equal(getMapNodeBit(mask, 0), false);
+  assert.equal(fromStorage.completed_mapnode_mask, account.completed_mapnode_mask);
+
+  // And saving it again is not a change.
+  assert.deepEqual(await sent(() => storage.saveAccount(fromStorage)), ["BEGIN", "UPDATE accounts SET", "COMMIT"]);
+});
+
+test("an account whose weapon names a hero it no longer holds still saves", postgresOnly, async () => {
+  const account = newAccount(16, 3);
+  const second = { ...account.account_avatars[0], id: rowId(), avatar_id: 102, skin_type: 152 };
+  account.account_avatars.push(second);
+  account.account_items[1].avatar_id = second.id;
+  account.account_items[1].avatar_slot = 0;
+  await storage.saveAccount(account);
+
+  // The hero goes; the weapon still says it is wearing it.
+  account.account_avatars = [account.account_avatars[0]];
+  await storage.saveAccount(account);
+
+  const fromStorage = await stored(account.id);
+  const weaponRow = fromStorage.account_items.find((item) => Number(item.id) === account.account_items[1].id);
+  assert.equal(weaponRow.avatar_id, null, "it is in the bag");
+
+  // And storage and its picture still agree: nothing is left to write.
+  account.account_items[1].avatar_id = null;
+  account.account_items[1].avatar_slot = null;
+  assert.deepEqual(await sent(() => storage.saveAccount(account)), ["BEGIN", "UPDATE accounts SET", "COMMIT"]);
+});
+
+/**
  * The property the whole thing rests on, tried many ways: whatever is done to
  * an account between saves, storage afterwards equals it.
  */
