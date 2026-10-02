@@ -30,15 +30,17 @@
 const HOUR = 60 * 60 * 1000;
 
 /**
- * Persistent punishment is intentionally not wired.
+ * A session ended for a pattern (below) climbs its account one rung of the
+ * ladder, and the account is restricted for that long (restrictions.js). The
+ * counting stays per connection; only how far up the ladder an account is, is
+ * kept on it.
  *
- * The socket account id is still an unauthenticated client claim. Persisting a
- * suspension against it would let an attacker submit deterministic violations
- * in somebody else's name and take that account away. The ladder below remains
- * a pure, tested future policy; it is not safe to apply until login derives the
- * account from a server-verifiable credential.
+ * This waited, unwired, for login to prove whose account a socket is: an id the
+ * client merely claimed would have let anybody collect strikes in somebody
+ * else's name. The socket login now checks a signed token, so it is applied —
+ * and not where authentication is switched off (ODS_AUTH=0), where an account
+ * id is still only a claim.
  */
-export const PERSISTENT_SANCTIONS_READY = false;
 
 export const DISPOSITION = Object.freeze({
   OBSERVE: "observe",
@@ -237,6 +239,17 @@ const decay = (record, now) => {
   const clean = Math.floor((now - from) / DECAY_MS);
   if (clean <= 0) return record;
   return { ...record, step: Math.max(0, record.step - clean) };
+};
+
+/**
+ * One rung up, from wherever the account was after its clean months are
+ * counted: the record to keep, and how many hours this one is.
+ */
+export const escalate = (record, now = Date.now()) => {
+  const sheet = decay(record ?? emptyRecord(), now);
+  const step = Math.min((sheet.step ?? 0) + 1, LADDER_STEPS);
+  const hours = ladderHours(step);
+  return { record: { step, strikes: [], until: now + hours * HOUR, lastStrikeAt: now }, hours };
 };
 
 /** How much longer they are out, in milliseconds. Zero means they are not. */

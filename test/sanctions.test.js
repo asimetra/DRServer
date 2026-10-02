@@ -5,12 +5,12 @@ import {
   DECAY_MS,
   DISPOSITION,
   LADDER_STEPS,
-  PERSISTENT_SANCTIONS_READY,
   SESSION_STRIKES_PER_TERMINATION,
   STRIKE_WINDOW_MS,
   STRIKES_PER_STEP,
   dispositionFor,
   emptyRecord,
+  escalate,
   ladderHours,
   recordSessionViolation,
   strike,
@@ -20,8 +20,26 @@ import {
 const HOUR = 60 * 60 * 1000;
 const at = 1_000_000_000;
 
-test("persistent punishment stays disabled until account identity is verifiable", () => {
-  assert.equal(PERSISTENT_SANCTIONS_READY, false);
+/**
+ * A session ended for a pattern climbs the account one rung: two hours, then
+ * four, and so on to a year, and a clean month walks it back down one.
+ */
+test("each ended session climbs the ladder one rung, and a clean month walks it down", () => {
+  const first = escalate(emptyRecord(), at);
+  assert.equal(first.hours, 2);
+  assert.equal(first.record.step, 1);
+  assert.equal(first.record.until, at + 2 * HOUR);
+
+  const second = escalate(first.record, at + HOUR);
+  assert.equal(second.hours, 4, "again the same day: the next rung");
+
+  const later = escalate(second.record, second.record.until + DECAY_MS);
+  assert.equal(later.hours, 4, "a clean month after the last one ended: one rung down, then up");
+
+  let record = emptyRecord();
+  for (let i = 0; i < LADDER_STEPS + 3; i++) record = escalate(record, at + i).record;
+  assert.equal(ladderHours(record.step), 365 * 24, "and never past a year");
+  assert.equal(escalate(undefined, at).hours, 2, "an account with no record starts at the bottom");
 });
 
 test("rule disposition separates proof from suspicion and operations", () => {

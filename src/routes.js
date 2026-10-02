@@ -160,9 +160,10 @@ const accountDetails = async (req) => {
    * of the account so that listing a weapon is one atomic write, but the client
    * was never told such a thing exists and this response is parsed by code this
    * server does not change — so it is left out rather than sent and hoped over.
-   * So are the server's own market bar and restriction (restrictions.js).
+   * So are the server's own market bar, restriction and anti-cheat record
+   * (restrictions.js).
    */
-  const { market_listings, market_barred, restriction, ...forTheClient } = account;
+  const { market_listings, market_barred, restriction, sanctions, ...forTheClient } = account;
   // The first question a launching client asks, before it has said what it
   // has: answered in its last declaration, until this launch confirms it.
   const view = viewForOwnAccount(accountId, {

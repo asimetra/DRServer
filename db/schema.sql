@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     -- What the account may not do, and until when (src/restrictions.js):
     -- {"until": ISO time or null, "reason", "by", "at"}. Null when it is free.
     restriction            JSONB,
+    -- How far up the anti-cheat ladder the account is (src/sanctions.js):
+    -- {"step", "until", "lastStrikeAt"}. Null for an account never caught.
+    sanctions              JSONB,
     -- Raised by every save of the account. The server keeps a picture of the
     -- rows it last read or wrote and sends only what differs from it; the
     -- version is how it learns that the picture is out of date, and writes
@@ -379,6 +382,7 @@ ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gift_sends JSONB NOT NUL
 -- See `version` on the accounts table.
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS restriction JSONB;
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS sanctions JSONB;
 
 CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);
 

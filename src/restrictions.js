@@ -29,8 +29,14 @@ import {
   withAccountLock,
 } from "./accounts.js";
 import { config } from "./config.js";
+import { recordAdminAction } from "./admin-actions.js";
+import { info, warn } from "./log.js";
+import { escalate } from "./sanctions.js";
 
 export const MAX_REASON_LENGTH = 500;
+
+/** The account the server acts as, in `by` and in the action log, when nobody else did. */
+export const SERVER_ACTOR = 0;
 
 /** The account's restriction while it is in force, or null. */
 export const restrictionOf = (account, now = Date.now()) => {
@@ -103,3 +109,65 @@ export const setRestriction = defineAccountOperation("account.restrict", async (
     return restriction;
   })
 );
+
+/**
+ * Restricts an account whose session was ended for cheating: one rung up the
+ * ladder (sanctions.js), and restricted until that rung is over — unless it is
+ * restricted for longer already, by an admin or an earlier rung, which stands.
+ * The ladder's record is kept on the account as `sanctions`, never sent to the
+ * client.
+ */
+export const sanctionAccount = defineAccountOperation("account.sanction", async (accountId, rule, now = Date.now()) =>
+  withAccountLock(accountId, async () => {
+    const account = await loadAccount(accountId);
+    const { record, hours } = escalate(account.sanctions, now);
+    account.sanctions = record;
+    const current = restrictionOf(account, now);
+    const outlasts = current && (current.until === null || Date.parse(current.until) >= record.until);
+    if (!outlasts) {
+      account.restriction = {
+        until: new Date(record.until).toISOString(),
+        reason: `anti-cheat: ${rule}`,
+        by: SERVER_ACTOR,
+        at: new Date(now).toISOString(),
+      };
+    }
+    await saveAccount(account);
+    return { step: record.step, hours, until: account.restriction?.until ?? null, kept: Boolean(outlasts) };
+  })
+);
+
+const sanctionsUnderWay = new Set();
+
+/**
+ * Called when a session is ended for a pattern. Not awaited by the caller — the
+ * session ends whatever happens here — but kept track of, so a test or a
+ * shutdown can wait for it.
+ */
+export const sanctionForSession = (accountId, rule) => {
+  if (config.authEnabled === false || !accountId) return;
+  const work = (async () => {
+    try {
+      const outcome = await sanctionAccount(Number(accountId), rule);
+      info(
+        `anti-cheat: account ${accountId} restricted ${outcome.kept ? "already for longer" : `for ${outcome.hours}h`}` +
+          ` (rung ${outcome.step}) for ${rule}`
+      );
+      await recordAdminAction({
+        actor: SERVER_ACTOR,
+        action: "restriction.auto",
+        target: Number(accountId),
+        detail: { rule, step: outcome.step, hours: outcome.hours, until: outcome.until },
+      });
+    } catch (problem) {
+      warn(`anti-cheat: could not restrict account ${accountId} for ${rule}: ${problem.message}`);
+    }
+  })();
+  sanctionsUnderWay.add(work);
+  work.finally(() => sanctionsUnderWay.delete(work));
+};
+
+export const waitForSanctions = async () => {
+  while (sanctionsUnderWay.size) await Promise.allSettled([...sanctionsUnderWay]);
+};
+

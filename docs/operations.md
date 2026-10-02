@@ -276,6 +276,18 @@ lifted. The restriction ends by itself when `until` passes; nothing has to clear
 it. A player who is online when restricted is disconnected, which takes them out
 of any dungeon they were in. Each change is recorded in the action log.
 
+The server also restricts accounts by itself. A connection that breaks one of
+the rules no unmodified client can break three times within ten minutes is
+closed. Those rules are an attack in somebody else's name, a malformed attack, a
+position that is not a place, and walking off or between the map's tiles. The
+account is then restricted for the next step of a ladder: 2 hours, then 4, 8,
+and so on up to a year. Each clean 30 days moves the account one step back
+down. The restriction says `"by": 0` (the server), its reason names the rule,
+and it is in the action log as `restriction.auto`. A longer restriction already
+on the account, set by an admin or by an earlier step, is never shortened. With
+`ODS_AUTH=0` nobody is restricted this way, because there an account id is only
+what the client claims.
+
 The client has no way to show a restriction, a reason or a date. The account
 summary (`GET …/summary`) carries `restriction` so the website can tell the
 player instead.

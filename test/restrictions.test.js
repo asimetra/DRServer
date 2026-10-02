@@ -321,3 +321,75 @@ test("restricting an account held by a match worker is done on that worker", asy
   accounts.installAccountOwnership(previous);
   assert.equal(isRestricted(await loadAccount(accountId)), false, "and nothing was written here");
 });
+
+/**
+ * What the server catches by itself. A session that sends something an
+ * unmodified client cannot, three times in ten minutes, is ended — and its
+ * account is restricted for the rung of the ladder it has reached (sanctions.js),
+ * in the server's name: `by` is 0. Counting stays per connection; what is kept
+ * on the account is how far up the ladder it is.
+ */
+test("a session ended for cheating restricts its account, climbing each time", async () => {
+  const { noteViolation } = await import("../src/socket/security-events.js");
+  const { waitForSanctions } = await import("../src/restrictions.js");
+  const { accountId } = await register();
+  const cheat = () => {
+    const session = { id: 900, accountId };
+    for (let i = 0; i < 3; i++) noteViolation(session, "movement.segment_left_authored_tiles", "through a wall");
+    return session;
+  };
+
+  const before = Date.now();
+  assert.ok(cheat().terminationRequested, "the session is ended, as before");
+  await waitForSanctions();
+  let account = await loadAccount(accountId);
+  assert.equal(account.restriction.by, 0, "restricted by the server itself");
+  assert.match(account.restriction.reason, /segment_left_authored_tiles/);
+  const hours = (Date.parse(account.restriction.until) - before) / 3_600_000;
+  assert.ok(hours > 1.9 && hours < 2.1, `two hours the first time, was ${hours}`);
+  assert.equal(account.sanctions.step, 1);
+
+  cheat();
+  await waitForSanctions();
+  account = await loadAccount(accountId);
+  const longer = (Date.parse(account.restriction.until) - before) / 3_600_000;
+  assert.ok(longer > 3.9 && longer < 4.1, `four the second, was ${longer}`);
+
+  const log = await (await call("GET", `/internal/v1/admin-actions?account=${accountId}`)).json();
+  assert.equal(log.actions[0].action, "restriction.auto");
+  assert.equal(log.actions[0].actor, 0);
+});
+
+test("a restriction an admin set for longer is not shortened by one the server sets", async () => {
+  const { noteViolation } = await import("../src/socket/security-events.js");
+  const { waitForSanctions } = await import("../src/restrictions.js");
+  const { accountId } = await register();
+  await restrict(accountId, { reason: "known cheater" });
+
+  const session = { id: 901, accountId };
+  for (let i = 0; i < 3; i++) noteViolation(session, "combat.forged_attacker", "someone else's hit");
+  await waitForSanctions();
+  const account = await loadAccount(accountId);
+  assert.equal(account.restriction.until, null, "still indefinite");
+  assert.equal(account.restriction.reason, "known cheater");
+});
+
+/** Without signed tokens an account id is only a claim, and anybody could be made to collect strikes. */
+test("with authentication off, nobody is restricted for it", async () => {
+  const { noteViolation } = await import("../src/socket/security-events.js");
+  const { waitForSanctions } = await import("../src/restrictions.js");
+  const { config } = await import("../src/config.js");
+  const { accountId } = await register();
+  const usual = config.authEnabled;
+  config.authEnabled = false;
+  try {
+    const session = { id: 902, accountId };
+    for (let i = 0; i < 3; i++) noteViolation(session, "combat.forged_attacker", "someone else's hit");
+    assert.ok(session.terminationRequested, "the session still ends");
+    await waitForSanctions();
+  } finally {
+    config.authEnabled = usual;
+  }
+  assert.equal(isRestricted(await loadAccount(accountId)), false);
+});
+

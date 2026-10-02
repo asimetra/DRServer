@@ -1,5 +1,6 @@
 import { warn } from "../log.js";
 import { recordSessionViolation } from "../sanctions.js";
+import { sanctionForSession } from "../restrictions.js";
 
 /**
  * What a rule saw, counted rather than narrated.
@@ -65,9 +66,9 @@ export const noteViolation = (session, rule, detail, now = Date.now()) => {
   session.violations ??= new Map();
 
   /**
-   * Gameplay rejection remains at the rule's call site; this decides only what
-   * the evidence may do to the current session. Persistent account punishment
-   * is deliberately absent until login identity is verifiable.
+   * Gameplay rejection remains at the rule's call site; this decides what the
+   * evidence may do to the current session, and an ended session restricts its
+   * account one rung further up the ladder (restrictions.js, sanctions.js).
    */
   const decision = recordSessionViolation(session, rule, now);
   if (decision.terminate && !session.terminationRequested) {
@@ -77,6 +78,7 @@ export const noteViolation = (session, rule, detail, now = Date.now()) => {
       requestedAt: now,
     };
     warn(`${describe(session)} session termination requested: ${decision.reason}`);
+    sanctionForSession(session.accountId ?? session.member?.accountId, rule);
   }
 
   const bucket = session.violations.get(rule);
