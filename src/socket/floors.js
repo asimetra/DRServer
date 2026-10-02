@@ -274,6 +274,23 @@ const PLACEMENT_READERS = {
         },
 
   /**
+   * Where the map directs the camera — a shake for the golem's stomp, a zoom
+   * for its arena. An ordinary triggerable as far as the wiring goes, and one
+   * only the server can act on: TileFactory lists the type among those it
+   * skips. It carries its own numbers, which are the whole of the message.
+   */
+  LETriggerableCamera: (object, at) => ({
+    kind: "triggerable",
+    ...at,
+    id: object.id,
+    constant: object.constant,
+    shakeDuration: object.shakeDuration,
+    shakeStrength: object.shakeStrength,
+    shakeCount: object.shakeCount,
+    zoom: object.zoom,
+  }),
+
+  /**
    * Proximity sensors. The client only builds these for one constant
    * (PROXIMITY_LOCAL_HERO drives a purely local event); deciding that a trap or
    * gate should fire is the server's call, and it has the hero's position

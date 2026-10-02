@@ -567,6 +567,20 @@ const VIRTUAL_TRIGGERABLES = {
     return true;
   },
   /**
+   * The floor's camera, published on trigger_camera_shake and
+   * trigger_camera_zoom. Which of the two is the constant's to say: every
+   * shake object also authors a zoom of 1 and none ever sent one, while a zoom
+   * object authoring 1 is the arena closing back in.
+   */
+  CAMERA_SHAKE_TRIGGERABLE: (session, triggerable) => {
+    session.shakeFloorCamera?.(session, triggerable);
+    return true;
+  },
+  CAMERA_ZOOM_TRIGGERABLE: (session, triggerable) => {
+    session.zoomFloorCamera?.(session, triggerable);
+    return true;
+  },
+  /**
    * Makes the named NPC placement play an authored attack timeline.
    *
    * The Lava Golem is not a drawable triggerable object: GOLEM_INTRO,

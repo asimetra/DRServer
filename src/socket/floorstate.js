@@ -241,6 +241,56 @@ export const playFloorSound = (session, triggerable) => {
   return true;
 };
 
+const FLID_FLOOR_CAMERA_ZOOM = 203;
+const FLID_FLOOR_CAMERA_SHAKE = 204;
+
+/**
+ * DistributedDungeonFloor::trigger_camera_shake — the screen shaking because
+ * the map says so, as the Lava Golem's corridor does on every stomp.
+ *
+ * The three numbers are the map object's own and cross unconverted: the
+ * duration is in frames, which the client divides by 24 itself. A recorded
+ * stomp is `(8, 12, 5)` on the wire and in the tile both.
+ */
+export const buildCameraShake = (floorDoid, { shakeDuration = 0, shakeStrength = 0, shakeCount = 0 }) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(floorDoid)
+    .u16(FLID_FLOOR_CAMERA_SHAKE)
+    .f32(Number(shakeDuration) || 0)
+    .f32(Number(shakeStrength) || 0)
+    .u8(Math.max(0, Math.min(255, Math.trunc(Number(shakeCount) || 0))))
+    .frame();
+
+/**
+ * DistributedDungeonFloor::trigger_camera_zoom — the camera pulling back for
+ * the golem's attacks and closing in after them. One number; the client tweens
+ * to it over a second of its own, so the map's `zoomDuration` never crosses.
+ */
+export const buildCameraZoom = (floorDoid, zoom) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(floorDoid)
+    .u16(FLID_FLOOR_CAMERA_ZOOM)
+    .f32(zoom)
+    .frame();
+
+export const shakeFloorCamera = (session, triggerable) => {
+  if (!triggerable || !session.floorDoid) return false;
+  session.send(buildCameraShake(session.floorDoid, triggerable));
+  info(
+    `[${session.id}] camera shake ${triggerable.shakeDuration}/` +
+      `${triggerable.shakeStrength}/${triggerable.shakeCount}`
+  );
+  return true;
+};
+
+export const zoomFloorCamera = (session, triggerable) => {
+  const zoom = Number(triggerable?.zoom);
+  if (!Number.isFinite(zoom) || zoom <= 0 || !session.floorDoid) return false;
+  session.send(buildCameraZoom(session.floorDoid, zoom));
+  info(`[${session.id}] camera zoom ${zoom}`);
+  return true;
+};
+
 /**
  * The floor is over.
  *

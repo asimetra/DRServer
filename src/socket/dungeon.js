@@ -118,7 +118,9 @@ import {
   completeFloor,
   playFloorSound,
   reportFloorFailed,
+  shakeFloorCamera,
   showFloorText,
+  zoomFloorCamera,
 } from "./floorstate.js";
 import { classifyHazard } from "./hazards.js";
 import { startNpcAi } from "./ai.js";
@@ -3106,6 +3108,8 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
   session.completeFloor = completeFloor;
   session.showFloorText = showFloorText;
   session.playFloorSound = playFloorSound;
+  session.shakeFloorCamera = shakeFloorCamera;
+  session.zoomFloorCamera = zoomFloorCamera;
   session.reportFloorFailed = reportFloorFailed;
   session.killAllEnemies = killAllEnemies;
   session.advanceFloor = (target) =>

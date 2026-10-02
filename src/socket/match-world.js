@@ -135,6 +135,8 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "completeFloor",
   "showFloorText",
   "playFloorSound",
+  "shakeFloorCamera",
+  "zoomFloorCamera",
   "reportFloorFailed",
   "killAllEnemies",
   "advanceFloor",
