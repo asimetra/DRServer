@@ -1,4 +1,5 @@
 import test from "node:test";
+import { weaponWith } from "./helpers/weapons.js";
 import assert from "node:assert/strict";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { statTotals } from "../src/hero-stats.js";
@@ -264,8 +265,9 @@ test("a projectile's repeated hits are each worth half the last", async () => {
       heroDoid: 500,
       floorDoid: 400,
       // The slot that swung is what prices the hit now, so the hero has to be
-      // carrying something rather than merely having a strongest weapon.
-      heroWeapons: [{ power: 500 }],
+      // carrying something rather than merely having a strongest weapon — and
+      // something that has the attack (THUNDERSTORM, the storm staff's).
+      heroWeapons: [await weaponWith(901104, { power: 500 })],
       objects: new Map([
         [500, CLID.HeroGameObject],
         [700, CLID.DistributedNPCGameObject],
@@ -300,7 +302,7 @@ test("a lethal hero result credits damage and one kill to that member's report",
     id: 92,
     heroDoid: 500,
     floorDoid: 400,
-    heroWeapons: [{ power: 500 }],
+    heroWeapons: [await weaponWith(920050, { power: 500 })],
     dungeonContribution: { kills: 0, damage: 0 },
     objects: new Map([
       [500, CLID.HeroGameObject],

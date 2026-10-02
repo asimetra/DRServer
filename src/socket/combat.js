@@ -1,4 +1,5 @@
 import { baseAttackOf } from "../content-packs.js";
+import { slotGrantsAttack } from "./buster.js";
 import { PacketWriter, PacketReader } from "./packet.js";
 import { CLID, OP, TEAM } from "./opcodes.js";
 import { config } from "../config.js";
@@ -3684,6 +3685,38 @@ const applyProposals = async (session, proposals) => {
     }
 
     const attack = await attackById(proposal.attackType);
+
+    /**
+     * An attack the weapon in that slot does not have is not a hit, whatever
+     * the cast rule is set to.
+     *
+     * The slot names a weapon this server equipped, so what it can swing is
+     * this server's table, not the client's word. Without this a modified
+     * client could land any attack in the game with the weapon it holds — and
+     * reach is measured against the attack named, so a sword claiming a
+     * 3000-unit spell hit everything within 3000 units, about ten times what a
+     * melee weapon reaches. The cast rule would catch it too, but that one rests
+     * on timing and stays off by default.
+     *
+     * Measured before it was made to refuse: of 6616 hits by the player's own
+     * hero across 84 official recordings, every one is granted by the slot's
+     * weapon, or is a Dungeon Buster on slot 0, Berserk's RAMPAGE on a melee
+     * weapon, or one of the two bombs, which go out through the revive path and
+     * have rules of their own. Refused, logged, never a reason to end a session.
+     */
+    if (
+      attack &&
+      !proposal.isConsumable &&
+      !CASTLESS_ATTACKS.has(attack.Constant) &&
+      !(await slotGrantsAttack(session, attack, proposal.weaponSlot))
+    ) {
+      noteViolation(
+        session,
+        RULE.unownedAttack,
+        `${attack.Constant} hit from slot ${proposal.weaponSlot}, whose weapon does not have it`
+      );
+      continue;
+    }
 
     /**
      * The attacker is the hero — the guard above returned otherwise — so these

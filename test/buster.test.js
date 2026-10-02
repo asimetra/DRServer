@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { weaponWith } from "./helpers/weapons.js";
 import test from "node:test";
 
 import {
@@ -272,6 +273,8 @@ test("the snare scroll pays Mana back for every hit it lands", async () => {
     maxHeroManaPoints: 200,
     heroStats: undefined,
     weaponPower: 100,
+    // The scroll that has it: a hit names its slot's weapon.
+    heroWeapons: [await weaponWith(900081, { power: 100 })],
     objects: new Map([
       [500, CLID.HeroGameObject],
       [700, CLID.DistributedNPCGameObject],
@@ -337,6 +340,7 @@ test("a hero's own attack leaves the debuff it authors", async () => {
     floorDoid: 400,
     dungeonZone: 0,
     weaponPower: 100,
+    heroWeapons: [await weaponWith(901104, { power: 100 })],
     objects: new Map([
       [500, CLID.HeroGameObject],
       [700, CLID.DistributedNPCGameObject],
@@ -387,6 +391,7 @@ test("a hit claimed from across the floor is dropped, and only reported in audit
   const { PacketWriter } = await import("../src/socket/packet.js");
   const { config } = await import("../src/config.js");
 
+  const axe = await weaponWith(900101, { power: 100 });
   const claim = (victimAt) => {
     const session = {
       id: 35,
@@ -396,6 +401,7 @@ test("a hit claimed from across the floor is dropped, and only reported in audit
       heroManaPoints: 100,
       maxHeroManaPoints: 200,
       weaponPower: 100,
+      heroWeapons: [axe],
       objects: new Map([
         [500, CLID.HeroGameObject],
         [700, CLID.DistributedNPCGameObject],
@@ -408,7 +414,7 @@ test("a hit claimed from across the floor is dropped, and only reported in audit
     };
     // AXE_COMBO_1, a melee swing: nothing about it reaches across a room.
     const result = new PacketWriter()
-      .u32(500).u32(700).i32(0).u8(0).u8(0).u32(900001).u32(0)
+      .u32(500).u32(700).i32(0).u8(0).u8(0).u32(900101).u32(0)
       .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).i32(0).f32(1).u8(0)
       .body();
     return {
@@ -642,6 +648,8 @@ test("a combat result naming somebody else as the attacker is dropped", async ()
     heroPosition: { x: 0, y: 0 },
     heroPositionAt: Date.now(),
     heroWeapons: [{ power: 1 }],
+    // The meteor shower these claim is this hero's Dungeon Buster, swung from slot 0.
+    dungeonBusterAttack: "DBUSTER_MEATEOR_SHOWER",
     objects: new Map([
       [500, CLID.HeroGameObject],
       [600, CLID.DistributedNPCGameObject],
@@ -787,6 +795,8 @@ test("a malformed or oversized proposal packet is refused whole", async () => {
     heroPosition: { x: 0, y: 0 },
     heroPositionAt: Date.now(),
     heroWeapons: [{ power: 1 }],
+    // The meteor shower these claim is this hero's Dungeon Buster, swung from slot 0.
+    dungeonBusterAttack: "DBUSTER_MEATEOR_SHOWER",
     objects: new Map([[500, CLID.HeroGameObject], [700, CLID.DistributedNPCGameObject]]),
     actors: new Map([
       [700, { hitPoints: 9000, maxHitPoints: 9000, constant: "KNIGHT_TUTORIAL", position: { x: 40, y: 0 }, isEnemy: true }],
@@ -1119,6 +1129,9 @@ test("a hit is priced by the weapon that swung", async () => {
   const { handleProposeCombatResults } = await import("../src/socket/combat.js");
   const { attackForConstant } = await import("../src/gamemaster.js");
   const axe = await attackForConstant("AXE_COMBO_1");
+  // Two axes, a weak one and a strong one: the attack has to be the slot's.
+  const weakAxe = await weaponWith("AXE_COMBO_1", { power: 1 });
+  const strongAxe = await weaponWith("AXE_COMBO_1", { power: 1000 });
 
   const world = () => ({
     id: 91,
@@ -1127,7 +1140,7 @@ test("a hit is priced by the weapon that swung", async () => {
     dungeonActive: true,
     heroPosition: { x: 0, y: 0 },
     heroPositionAt: Date.now(),
-    heroWeapons: [{ power: 1 }, { power: 1000 }],
+    heroWeapons: [weakAxe, strongAxe],
     objects: new Map([[500, CLID.HeroGameObject], [700, CLID.DistributedNPCGameObject]]),
     actors: new Map([
       [700, { hitPoints: 99999, maxHitPoints: 99999, constant: "KNIGHT_TUTORIAL", position: { x: 40, y: 0 }, isEnemy: true }],

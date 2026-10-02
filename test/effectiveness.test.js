@@ -1,4 +1,5 @@
 import test from "node:test";
+import { weaponWith } from "./helpers/weapons.js";
 import assert from "node:assert/strict";
 
 import { loadGameMaster } from "../src/gamemaster.js";
@@ -35,7 +36,8 @@ const heroHit = async (constant, attackId, { activeBuffs, weapon = { power: 500 
     heroDoid: HERO,
     floorDoid: 400,
     dungeonActive: true,
-    heroWeapons: [weapon],
+    // Holding something that has the attack: a hit names its slot's weapon.
+    heroWeapons: [await weaponWith(attackId, weapon)],
     objects: new Map([
       [HERO, CLID.HeroGameObject],
       [VICTIM, CLID.DistributedNPCGameObject],

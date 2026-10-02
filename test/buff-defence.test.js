@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { weaponWith } from "./helpers/weapons.js";
 import test from "node:test";
 
 import { attackForConstant, buffForConstant } from "../src/gamemaster.js";
@@ -127,7 +128,7 @@ const heroHit = async (attackId, buffs = []) => {
     heroDoid: HERO,
     floorDoid: 400,
     dungeonActive: true,
-    heroWeapons: [{ power: 500 }],
+    heroWeapons: [await weaponWith(attackId, { power: 500 })],
     random: () => 0.99,
     activeBuffs: await under(...buffs.map((constant) => [constant, VICTIM])),
     objects: new Map([

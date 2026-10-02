@@ -402,12 +402,26 @@ const buildGrants = async () => {
   attacksByWeapon = new Map();
   weaponClassById = new Map();
   weaponItemById = new Map();
+  const idOf = new Map(raw.Attack.map((row) => [row.Constant, Number(row.Id)]));
+  const constantOf = new Map(raw.Attack.map((row) => [Number(row.Id), row.Constant]));
   for (const item of raw.WeaponItem) {
     const granted = new Set();
     for (const [column, value] of Object.entries(item)) {
       if (value && PLAYER_ATTACK_COLUMNS.test(column)) {
         granted.add(value);
         playerAttacks.add(value);
+        /**
+         * And what a pack's attack stands in for. A content-pack weapon names
+         * its own variants (KATANA_SHADOW_SLASH__THE_KNIGHT), and a hit is read
+         * as the base attack it dresses before anything asks about it
+         * (content-packs.js) — so without this the pack's katana could not land
+         * the very attacks its row lists. Found in 11 recorded sessions with it.
+         */
+        const base = constantOf.get(Number(baseAttackOf(idOf.get(value))));
+        if (base && base !== value) {
+          granted.add(base);
+          playerAttacks.add(base);
+        }
       }
     }
     attacksByWeapon.set(Number(item.Id), granted);
@@ -465,7 +479,7 @@ const isSlot = (slot, count) => Number.isInteger(slot) && slot >= 0 && slot < co
  * id has never once appeared. Slot 255 was accepted, spent Mana, and opened a
  * cooldown clock of its own — one per byte value, 256 of them.
  */
-const slotGrantsAttack = async (session, attack, weaponSlot) => {
+export const slotGrantsAttack = async (session, attack, weaponSlot) => {
   if (!isSlot(weaponSlot, WEAPON_SLOTS)) return false;
 
   /**

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { weaponWith } from "./helpers/weapons.js";
 import test from "node:test";
 
 import { attackForConstant } from "../src/gamemaster.js";
@@ -58,7 +59,8 @@ const heroHit = async (attackId, { random = () => 0.5, abilities, moveSpeed = 18
     floorDoid: 400,
     dungeonActive: true,
     heroPosition: { x: 1000, y: 1000 },
-    heroWeapons: [{ power: 500 }],
+    // Holding something that has the attack: a hit names its slot's weapon.
+    heroWeapons: [await weaponWith(attackId, { power: 500 })],
     random,
     objects: new Map([
       [HERO, CLID.HeroGameObject],

@@ -1,4 +1,5 @@
 import test from "node:test";
+import { weaponWith } from "./helpers/weapons.js";
 import assert from "node:assert/strict";
 
 import { loadGameMaster } from "../src/gamemaster.js";
@@ -29,7 +30,8 @@ const hit = async (attackConstant) => {
     heroDoid: HERO,
     floorDoid: 400,
     dungeonActive: true,
-    heroWeapons: [{ power: 100, modifier1: crit.Id }],
+    // A hand axe, which has AXE_COMBO_1; the bomb is the slot's whatever it holds.
+    heroWeapons: [await weaponWith("AXE_COMBO_1", { power: 100, modifier1: crit.Id })],
     random: () => 0,
     objects: new Map([
       [HERO, CLID.HeroGameObject],
