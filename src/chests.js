@@ -286,8 +286,15 @@ export const generateWeapon = ({ gm, hero, rarity, level, accountId, id, random 
  * Opens a chest held by the account and returns the reward fields the client
  * expects alongside the account payload. The account object is mutated: the
  * chest is consumed and the award appended.
+ *
+ * `keyless` is a chest bought in the shop, whose price is the opening: the
+ * client buys and reveals it in one step and never asks for a key.
  */
-export const openChest = async ({ account, chestInstanceId, heroInstanceId, nextId, random = Math.random }) => {
+/** The chests opened with a key, as opposed to the consumable boxes. */
+export const isKeyedChest = (gm, chestId) =>
+  Boolean(KEY_COLUMN_BY_RARITY[gm.raw.Chests.find((entry) => entry.Id === Number(chestId))?.Rarity]);
+
+export const openChest = async ({ account, chestInstanceId, heroInstanceId, nextId, random = Math.random, keyless = false }) => {
   const gm = await loadGameMaster();
 
   const chest = (account.account_chests ?? []).find((entry) => entry.id === chestInstanceId);
@@ -310,7 +317,7 @@ export const openChest = async ({ account, chestInstanceId, heroInstanceId, next
   if (!hero) throw new ChestError(NOTHING_AWARDED, `no hero for avatar ${heroInstanceId}`);
 
   const picked = pickWeighted(distribution, random);
-  const keyColumn = KEY_COLUMN_BY_RARITY[gmChest.Rarity];
+  const keyColumn = keyless ? null : KEY_COLUMN_BY_RARITY[gmChest.Rarity];
 
   /**
    * Not a weapon but an offer, which is the chest ladder pulling the player up

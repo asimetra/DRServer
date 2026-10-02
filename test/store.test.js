@@ -317,3 +317,32 @@ test("a skin already owned is not sold again", async () => {
   assert.equal(target.premium_currency, 650, "nothing charged");
   assert.equal(target.account_skins.length, 1, "no second row");
 });
+
+/**
+ * An offer that sells a chest by itself, the way a deployment can add one to
+ * its GameMaster. The chest lands in the account unopened — its key is bought
+ * separately — and it takes a weapon slot, so a full storage refuses it the
+ * way it refuses a weapon: the client counts chests in its own store guard.
+ */
+test("a chest bought by itself lands unopened, and needs a free slot", async () => {
+  const gm = await loadGameMaster();
+  const CHEST_OFFER = 99_990_001;
+  gm.raw.Offers.push({ Release: "L", Id: CHEST_OFFER, Price: 25000, Name: "Uncommon Chest", CurrencyType: "BASIC", Tab: "KEY", Location: "STORE" });
+  gm.raw.OfferDetails.push({ Release: "L", OfferId: CHEST_OFFER, Name: "Uncommon Chest", ChestId: 60002 });
+  try {
+    const target = account();
+    const { touched } = await buy(target, CHEST_OFFER);
+    assert.deepEqual(touched, ["account_chests"]);
+    assert.deepEqual(target.account_chests.map((chest) => [chest.chest_id, chest.is_new]), [[60002, 1]]);
+    assert.equal(target.basic_keys, 0, "no key with it");
+    assert.equal(target.basic_currency, 100000 - 25000);
+
+    const full = account({ buckets_weapon: 0 });
+    await assert.rejects(() => buy(full, CHEST_OFFER), { code: REFUSED });
+    assert.equal(full.basic_currency, 100000, "nothing is charged");
+    assert.equal(full.account_chests, undefined, "and nothing is added");
+  } finally {
+    gm.raw.Offers = gm.raw.Offers.filter((row) => row.Id !== CHEST_OFFER);
+    gm.raw.OfferDetails = gm.raw.OfferDetails.filter((row) => row.OfferId !== CHEST_OFFER);
+  }
+});

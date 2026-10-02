@@ -191,6 +191,10 @@ const applyDetail = async ({ account, detail, gm, nextId, granted }) => {
   }
 
   if (detail.ChestId) {
+    // A chest takes a weapon slot, here as in the client's own count.
+    if (occupiedSlots(account) >= storageLimit(account)) {
+      throw new StoreError(REFUSED, "weapon storage is full");
+    }
     account.account_chests = [
       ...(account.account_chests ?? []),
       // `is_new` is written rather than left out. The column is NOT NULL, and
@@ -201,6 +205,7 @@ const applyDetail = async ({ account, detail, gm, nextId, granted }) => {
       { id: await nextId(), account_id: account.id, chest_id: detail.ChestId, is_new: 1 },
     ];
     touched.add("account_chests");
+    granted.add(`chest:${account.account_chests.at(-1).id}`);
   }
 
   /**
@@ -393,7 +398,12 @@ export const purchaseOffer = async ({ account, offerId, nextId, free = false }) 
   // Charged only once the grant succeeded, so a refusal costs nothing.
   if (!free) account[column] = Number(account[column] ?? 0) - Number(offer.Price ?? 0);
 
-  return { offer, touched: [...touched] };
+  return {
+    offer,
+    touched: [...touched],
+    // The instances of the chests this purchase added, for a caller that opens them.
+    chests: [...granted].filter((entry) => entry.startsWith("chest:")).map((entry) => Number(entry.slice(6))),
+  };
 };
 
 /**

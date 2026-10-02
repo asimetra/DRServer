@@ -13,9 +13,10 @@ import {
   withAccountLock,
   withTwoAccountLocks,
 } from "./accounts.js";
-import { openChest, pickWeighted, ChestError, NOTHING_AWARDED } from "./chests.js";
+import { openChest, pickWeighted, ChestError, NOTHING_AWARDED, isKeyedChest } from "./chests.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { moveConsumableToSlot, reconcileConsumables } from "./consumables.js";
+import { forTheClient } from "./server-only-fields.js";
 import { purchaseOffer, weaponSaleValue, stackableSaleValue, petSaleValue, StoreError } from "./store.js";
 import { statPointsEarned, heroLevel, STAT_CAP, STAT_SLOTS } from "./progression.js";
 import {
@@ -294,9 +295,10 @@ register("store/AskAboutDailyReward", async ([accountId]) =>
  * Lists are dropped by shape rather than by name, so the header keeps following
  * the schema on its own.
  */
+/** The account's scalar fields, less the server's own records (server-only-fields.js). */
 const accountHeader = (account, include = []) => {
   const header = Object.fromEntries(
-    Object.entries(account).filter(([, value]) => !Array.isArray(value))
+    Object.entries(forTheClient(account)).filter(([, value]) => !Array.isArray(value))
   );
   for (const field of include) header[field] = account[field] ?? [];
   return header;
@@ -600,19 +602,54 @@ register("avatarrecord/setActiveAvatar", async ([, accountId, avatarInstanceId])
  * ask for a discount or invent what it receives. Unknown offers, real-money
  * offers and unaffordable ones are refused.
  */
-register("store/PurchaseOffer", async ([accountId, , offerId]) => {
+register("store/PurchaseOffer", async ([accountId, heroId, offerId]) => {
   const account = await loadAccount(Number(accountId));
 
-  const { offer, touched } = await purchaseOffer({
+  const { offer, touched, chests } = await purchaseOffer({
     account,
     offerId: Number(offerId),
     nextId: () => nextObjectId(account),
   });
 
+  const opened = await openBoughtChest(account, chests, Number(heroId), touched);
+
   await saveAccount(account);
   info(`rpc: bought "${offer.Name}" (${offer.Price} ${offer.CurrencyType}) for ${accountId}`);
-  return accountHeader(account, touched);
+  const answer = accountHeader(account, touched);
+  return opened ? { ...answer, customResult: { purchasedChestResults: opened } } : answer;
 });
+
+/**
+ * A chest sold in the shop is bought and opened in one go. The client's chest
+ * offer (UIChestOffer) shows the reveal straight after buying and reads the
+ * loot from `customResult.purchasedChestResults`; the price is the opening, so
+ * no key is asked for. A chest that cannot be opened now — no weapon for this
+ * hero, say — stays in the account, paid for, to be opened with a key later.
+ */
+const openBoughtChest = async (account, chests, heroInstanceId, touched) => {
+  const gm = await loadGameMaster();
+  const bought = (chests ?? []).filter((id) =>
+    isKeyedChest(gm, account.account_chests?.find((entry) => entry.id === id)?.chest_id)
+  );
+  if (bought.length !== 1) return null;
+  try {
+    const reward = await openChest({
+      account,
+      chestInstanceId: bought[0],
+      heroInstanceId,
+      nextId: () => nextObjectId(account),
+      keyless: true,
+    });
+    for (const field of ["account_items", "account_chests", "account_stackables"]) {
+      if (!touched.includes(field)) touched.push(field);
+    }
+    return reward;
+  } catch (problem) {
+    if (!(problem instanceof ChestError)) throw problem;
+    warn(`store: a bought chest stays unopened for ${account.id}: ${problem.message}`);
+    return null;
+  }
+};
 
 /**
  * store/SellStackable — params [accountId, stackableInstanceId, token].
