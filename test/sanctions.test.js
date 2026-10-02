@@ -37,8 +37,8 @@ test("rule disposition separates proof from suspicion and operations", () => {
   );
   assert.equal(
     dispositionFor("movement.step_too_large"),
-    DISPOSITION.REJECT_AND_TERMINATE_PATTERN,
-    "three impossible teleport steps may end this socket without touching the account"
+    DISPOSITION.REJECT_ONLY,
+    "a stalled connection delivers steps this long, so they are refused and never a pattern"
   );
   assert.equal(
     dispositionFor("movement.budget_exceeded"),

@@ -147,6 +147,8 @@ const installHeroActor = (member, world, position) => {
   member.reportedHeroPositionAt = member.heroPositionAt;
   member.movementCredit = 1000;
   member.movementCreditAt = member.heroPositionAt;
+  member.movementStallCredit = 0;
+  member.movementBehind = false;
 };
 
 const sendRemoteHeroState = (recipient, peer, world) => {

@@ -61,8 +61,15 @@ const POLICY = new Map([
   ["position.not_a_place", DISPOSITION.REJECT_AND_TERMINATE_PATTERN],
   ["movement.endpoint_off_tile", DISPOSITION.REJECT_AND_TERMINATE_PATTERN],
   ["movement.segment_left_authored_tiles", DISPOSITION.REJECT_AND_TERMINATE_PATTERN],
-  ["movement.step_too_large", DISPOSITION.REJECT_AND_TERMINATE_PATTERN],
 
+  /**
+   * Refused, but never a reason to close a socket. A connection that stalls
+   * delivers its backlog at once, and past what the server will accept every
+   * claim in it is a step this long: three of them ended the session of a
+   * player who had only walked. A pattern is for what honest play cannot
+   * produce, and a bad connection produces this.
+   */
+  ["movement.step_too_large", DISPOSITION.REJECT_ONLY],
   ["movement.budget_exceeded", DISPOSITION.REJECT_ONLY],
   ["cast.not_granted", DISPOSITION.REJECT_ONLY],
   ["combat.no_matching_cast", DISPOSITION.REJECT_ONLY],

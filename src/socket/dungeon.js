@@ -2557,6 +2557,9 @@ const buildPartyHeroes = async (session, floor, floorDoid) => {
     context.reportedHeroPositionAt = context.heroPositionAt;
     context.movementCredit = 1000;
     context.movementCreditAt = context.heroPositionAt;
+    // A hero seated by the server is where the server says, with nothing owed.
+    context.movementStallCredit = 0;
+    context.movementBehind = false;
     context.heroManaPoints = spawn.manaPoints;
     context.maxHeroManaPoints = spawn.manaPoints;
   }
@@ -3630,6 +3633,9 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "reportedHeroPositionAt",
     "movementCredit",
     "movementCreditAt",
+    "movementStallCredit",
+    "movementStallUntil",
+    "movementBehind",
     "navigation",
     "generators",
     "triggerableDoids",

@@ -164,13 +164,18 @@ test("a direct same-floor teleport cannot activate the exit", async () => {
   assert.equal(session.violations.get(RULE.movementStepTooLarge).count, 1);
   assert.equal(socket.destroyed, false, "one large step is survivable");
 
-  // Repeating the same impossible claim is a session pattern, not an account verdict.
+  /**
+   * And so is repeating it. A step this long is what a stalled connection
+   * delivers, so it is refused rather than counted towards closing the
+   * socket — see movement-stall.test.js. It still goes nowhere.
+   */
   socket.emit("data", positionFrame(500, 1900, 100));
   await settle(session);
   socket.emit("data", positionFrame(500, 1900, 100));
   await settle(session);
-  assert.equal(socket.destroyed, true, "the third direct teleport closes this socket");
-  assert.equal(session.terminationRequested.rule, RULE.movementStepTooLarge);
+  assert.equal(socket.destroyed, false);
+  assert.deepEqual(session.heroPosition, { x: 100, y: 100 });
+  assert.equal(session.floorTransition, false);
 });
 
 test("invented sub-1000 waypoints cannot compress a route into one packet burst", async () => {

@@ -8,6 +8,7 @@
  *   node tools/probe.js                 # log in, print what comes back
  *   node tools/probe.js request-entry   # ...then ask to enter the tutorial dungeon
  *   node tools/probe.js pickup          # ...then walk onto a doober and check pickup
+ *   node tools/probe.js stall           # ...then walk through a stalled connection
  *   node tools/probe.js trap            # ...then verify an arrow trap fires
  *   node tools/probe.js arrow-flight    # ...then verify arrow damage waits for contact
  *   node tools/probe.js spikes          # ...then verify floor spikes appear and retract
@@ -66,6 +67,18 @@ const expectedByMode = {
     "pickup",
   ],
   trap: ["connected", "matchmaker", "area", "floor", "player", "hero", "arrow", "trap-attack"],
+  /**
+   * A connection that stalls while its player walks.
+   *
+   * The hero walks for two seconds, then keeps walking and says nothing for
+   * `ODS_STALL_SECONDS` (ten by default), then delivers every step it took in
+   * one write — which is what a stalled TCP connection does when it comes back.
+   * The server is then asked where it has the hero, with `/where`, and has to
+   * answer with the place the client walked to, on a socket that is still open.
+   * It used to close it: past the first thousand units every late step read as
+   * a teleport.
+   */
+  stall: ["connected", "matchmaker", "area", "floor", "player", "hero", "stalled", "caught-up"],
   /**
    * Walks onto the floor's exit trigger and checks the dungeon moves on rather
    * than ending. Clearing a floor only opens the gate; reaching the exit behind
@@ -1120,6 +1133,85 @@ const walkHeroPath = (waypoints, options) => {
   walkHeroTo(next, options, () => walkHeroPath(rest, options));
 };
 
+const chatPacket = (doid, text) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD).u32(doid).u16(182).utf(text).frame();
+
+const STALL_SECONDS = Math.max(0, Number(envSetting("STALL_SECONDS") ?? 10));
+const WALK_SPEED = 250; // units a second, which is a hero walking
+const CLAIMS_PER_SECOND = 20;
+
+/** A polyline as the claims a walking client makes along it, one every 50ms. */
+const stepsAlong = (from, waypoints, count) => {
+  const stride = WALK_SPEED / CLAIMS_PER_SECOND;
+  const steps = [];
+  let at = { ...from };
+  let owed = stride;
+  for (const corner of waypoints) {
+    let left = Math.hypot(corner.x - at.x, corner.y - at.y);
+    while (left >= owed && steps.length < count) {
+      at = {
+        x: at.x + ((corner.x - at.x) * owed) / left,
+        y: at.y + ((corner.y - at.y) * owed) / left,
+      };
+      left -= owed;
+      owed = stride;
+      steps.push(at);
+    }
+    owed -= left;
+    at = { ...corner };
+    if (steps.length >= count) break;
+  }
+  return steps;
+};
+
+/**
+ * Walks, stalls, delivers the backlog at once, and asks the server where it
+ * has the hero. See the `stall` scenario.
+ */
+const walkThroughStall = () => {
+  // Tile centres of the tutorial floor, short of its exit: adjacent authored
+  // tiles, so every step is one the movement rules allow a walking hero.
+  const route = [
+    { x: 2250, y: 6750 },
+    { x: 3150, y: 5850 },
+    { x: 3150, y: 4950 },
+    { x: 3150, y: 4050 },
+    { x: 4050, y: 4050 },
+    { x: 4950, y: 4050 },
+  ];
+  const live = 2 * CLAIMS_PER_SECOND;
+  const late = STALL_SECONDS * CLAIMS_PER_SECOND;
+  const steps = stepsAlong(state.heroPosition, route, live + late);
+  if (steps.length < live + late) return fail(`the route is only ${steps.length} steps long`);
+
+  let sent = 0;
+  const timer = setInterval(() => {
+    const step = steps[sent++];
+    state.heroPosition = step;
+    socket.write(positionPacket(state.heroDoid, step.x, step.y));
+    if (sent < live) return;
+    clearInterval(timer);
+
+    const backlog = steps.slice(live);
+    const last = backlog.at(-1);
+    console.log(
+      `-> stalling for ${STALL_SECONDS}s while the hero walks ` +
+        `${Math.round((backlog.length * WALK_SPEED) / CLAIMS_PER_SECOND)} units`
+    );
+    setTimeout(() => {
+      socket.write(Buffer.concat(backlog.map((step) => positionPacket(state.heroDoid, step.x, step.y))));
+      state.heroPosition = last;
+      state.seen.add("stalled");
+      console.log(
+        `-> delivered ${backlog.length} late steps at once; hero is at ` +
+          `${Math.round(last.x)},${Math.round(last.y)}`
+      );
+      // Asked a moment later, so the burst has been through the server's queue.
+      setTimeout(() => socket.write(chatPacket(state.playerDoid, "/where")), 500);
+    }, STALL_SECONDS * 1000);
+  }, 1000 / CLAIMS_PER_SECOND);
+};
+
 const attackProposalPacket = (doid, attackType, weaponSlot = 0) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
     .u32(doid)
@@ -1417,6 +1509,24 @@ const describeIncoming = (body) => {
         state.seen.add("exit-complete");
       }
       return `exit complete doid=${doid} value=${value}`;
+    }
+    // The server's answer to `/where`: its own idea of where the hero is.
+    if (mode === "stall" && fieldId === 182 && state.seen.has("stalled")) {
+      const text = reader.utf();
+      const said = /x (-?\d+), y (-?\d+)/.exec(text);
+      if (!said) return `chat doid=${doid} ${JSON.stringify(text)}`;
+      const server = { x: Number(said[1]), y: Number(said[2]) };
+      const client = state.heroPosition;
+      const apart = Math.hypot(server.x - client.x, server.y - client.y);
+      if (apart > 2) {
+        fail(
+          `the server has the hero at ${server.x},${server.y} and the client is at ` +
+            `${Math.round(client.x)},${Math.round(client.y)} — ${Math.round(apart)} units apart`
+        );
+      } else {
+        state.seen.add("caught-up");
+      }
+      return `server has the hero at ${server.x},${server.y}`;
     }
     if (mode === "pickup" && doid === state.playerDoid && fieldId === 181) {
       const basicCurrency = reader.u32();
@@ -1937,6 +2047,18 @@ socket.on("data", (chunk) => {
       state.seen.add("walked-to-exit");
     }
 
+    if (
+      mode === "stall" &&
+      state.heroDoid &&
+      state.playerDoid &&
+      state.heroPosition &&
+      !state.walked
+    ) {
+      state.walked = true;
+      console.log(`-> walking hero ${state.heroDoid} into a stalled connection`);
+      walkThroughStall();
+    }
+
     if (mode === "pickup" && state.heroDoid && state.doober && !state.walked) {
       state.walked = true;
       console.log(`-> walking hero ${state.heroDoid} onto a doober`);
@@ -2189,6 +2311,7 @@ socket.on("data", (chunk) => {
     if (
       (mode === "request-entry" ||
         mode === "pickup" ||
+        mode === "stall" ||
         mode === "trap" ||
         mode === "arrow-flight" ||
         mode === "spikes" ||
@@ -2228,6 +2351,8 @@ socket.on("close", () => {
 const timeoutMs =
   mode === "login"
     ? 3000
+    : mode === "stall"
+      ? (STALL_SECONDS + 15) * 1000
     : // A tour is as long as the walking it does, and the walking is the point.
       mode === "tour"
       ? Number(envSetting("TOUR_STOPS") ?? 14) * 12000

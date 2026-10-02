@@ -70,6 +70,38 @@ const MOVEMENT_CREDIT_PER_MS = 1; // 1000 world units/second, above known buffed
 const MAX_UNGRANTED_MOVEMENT_STEP = 1000;
 
 /**
+ * What silence earns: the walking a hero could have done while nothing was
+ * heard from it.
+ *
+ * The budget above is for a client that is talking. One whose connection has
+ * stalled is not: it walks on, says nothing for ten seconds, and then delivers
+ * all of it in one burst. A thousand units of that were affordable and the rest
+ * were not — and past a thousand units from where the server stopped, every
+ * claim was a step too large. Three closed the socket, and all three came in
+ * the same burst: a player on a bad connection was dropped for having walked.
+ *
+ * Putting the hero back is not available. The client takes its own hero's
+ * position from its physics body every frame (`InputController`), so a
+ * position sent to it is overwritten before it is drawn. Only the server can
+ * move to meet the client, and the burst says how: it is the walk itself, one
+ * small step after another, and each step is still held to the floor's tiles.
+ *
+ * So a claim that arrives after more than a second of nothing brings an
+ * allowance with it — 600 units for each silent second, ten seconds at most.
+ * An honest hero's best ten seconds are 577 a second across 24481 measured
+ * windows. It is spent after the ordinary budget and it does not keep: a
+ * backlog arrives at once, so what is not used within two seconds is gone.
+ *
+ * It buys a modified client nothing. Standing silent for ten seconds and then
+ * claiming 7000 units is 700 a second, and the ordinary budget already gives a
+ * client that keeps talking 1000.
+ */
+const STALL_GAP_MS = 1000;
+const STALL_MAX_MS = 10_000;
+const STALL_CREDIT_PER_MS = 0.6;
+const STALL_SPEND_WINDOW_MS = 2000;
+
+/**
  * Everything a player sends about their own dungeon.
  *
  * Split out of socket/index.js, which keeps what belongs to the connection —
@@ -146,6 +178,15 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
     session.movementCreditAt = claimAt;
     session.movementCredit = movementCredit;
 
+    // See STALL_GAP_MS: silence earns an allowance, and an unused one lapses.
+    if (elapsed > STALL_GAP_MS) {
+      session.movementStallCredit = Math.min(elapsed, STALL_MAX_MS) * STALL_CREDIT_PER_MS;
+      session.movementStallUntil = claimAt + STALL_SPEND_WINDOW_MS;
+    } else if (claimAt > (session.movementStallUntil ?? 0)) {
+      session.movementStallCredit = 0;
+    }
+    const stallCredit = session.movementStallCredit ?? 0;
+
     /**
      * These four reject the claim; the two geometry rules below only report.
      * `movementMode` decides whether rejecting still happens, and defaults to
@@ -163,16 +204,25 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
           `${Math.round(session.heroPosition.y)} to ${Math.round(position.x)},` +
           `${Math.round(position.y)}`
       );
-      if (config.movementMode === "enforce") return;
+      if (config.movementMode === "enforce") {
+        session.movementBehind = true;
+        return;
+      }
     }
-    if (acceptedBody && movementDistance > movementCredit) {
+    if (acceptedBody && movementDistance > movementCredit + stallCredit) {
       noteViolation(
         session,
         RULE.movementBudgetExceeded,
         `hero movement needs ${Math.round(movementDistance)} with ` +
-          `${Math.round(movementCredit)} available`
+          `${Math.round(movementCredit + stallCredit)} available`
       );
-      if (config.movementMode === "enforce") return;
+      if (config.movementMode === "enforce") {
+        // Behind, and expected to catch up by itself: the budget refills faster
+        // than a hero walks. Remembered because the next claim that is accepted
+        // is a line from here to wherever the hero has got to, not a path.
+        session.movementBehind = true;
+        return;
+      }
     }
 
     /**
@@ -196,14 +246,30 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
       acceptedBody &&
       !segmentStaysOnAuthoredTiles(session.navigation, acceptedBody, reportedBody)
     ) {
-      noteViolation(
-        session,
-        RULE.movementSegmentOffTile,
-        `hero claim crossed an absent tile from ` +
-          `${Math.round(session.heroPosition.x)},${Math.round(session.heroPosition.y)} to ` +
-          `${Math.round(position.x)},${Math.round(position.y)}`
-      );
-      if (config.movementMode === "enforce") return;
+      /**
+       * A line from an accepted position is a path, and a path across a tile
+       * the floor does not have is somebody walking where there is no floor.
+       *
+       * A line from where the server fell behind is not a path. The hero walked
+       * the corridor and turned the corner while its claims were being refused
+       * for budget; the first one affordable again joins the two ends straight
+       * across the corner. That is the server's gap, not the player's route, so
+       * it is not counted — but it is not accepted either, since accepting it
+       * is the bridge this rule exists to refuse. It stays refused until the
+       * line between the two is one a hero could walk.
+       */
+      if (session.movementBehind) {
+        if (config.movementMode === "enforce") return;
+      } else {
+        noteViolation(
+          session,
+          RULE.movementSegmentOffTile,
+          `hero claim crossed an absent tile from ` +
+            `${Math.round(session.heroPosition.x)},${Math.round(session.heroPosition.y)} to ` +
+            `${Math.round(position.x)},${Math.round(position.y)}`
+        );
+        if (config.movementMode === "enforce") return;
+      }
     }
 
     /**
@@ -253,7 +319,11 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
      */
     session.heroPositionAt = Date.now();
     session.heroPosition = position;
-    session.movementCredit = Math.max(0, movementCredit - movementDistance);
+    session.movementBehind = false;
+    // The ordinary budget first; the allowance covers what it could not.
+    const fromBudget = Math.min(movementCredit, movementDistance);
+    session.movementCredit = movementCredit - fromBudget;
+    session.movementStallCredit = Math.max(0, stallCredit - (movementDistance - fromBudget));
     if (hero) hero.position = position;
     if (session.world) {
       session.broadcast(
