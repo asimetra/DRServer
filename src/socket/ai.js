@@ -981,6 +981,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   for (const [doid, actor] of actors) {
     const ai = actor.ai;
     if (!ai || actor.dead || !actor.position) continue;
+    // Reeling from a hit that staggered it — see holdStaggered in combat.js.
+    // It neither walks nor swings until the stun is over.
+    if (now < (ai.staggeredUntil ?? 0)) continue;
     let followingOwner = false;
     let victim;
     if (ai.kind === "pet") {

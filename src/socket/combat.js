@@ -873,8 +873,8 @@ const trapDamage = async (session, attackerDoid, attack, victimDoid, victim, wea
  * damaging trap result carries both, near enough always: 123 of 123 cave mace
  * results against monsters, 67 of 67 crusher, 50 of 50 blade, 261 of 273
  * arrows. The hero shrugs some of them off, and what decides that turned out
- * to be timing: a trap hit within 0.3s of the last one does not stagger — see
- * `trapStaggerFor`.
+ * to be timing: a hero staggered a moment ago is not staggered again — see
+ * `heroStaggerFor`, which is where the rule itself now lives.
  *
  * Two things do decide it here, and both are measured:
  *
@@ -974,13 +974,67 @@ const payBusterForKill = (session) => {
   return after - before;
 };
 
-const staggerFor = (attack, damage) =>
-  damage <= 0
-    ? { suffer: 0, knockback: 0 }
-    : {
-        suffer: Number(attack.SufferChance ?? attack.StunChance ?? 0) > 0 ? 1 : 0,
-        knockback: Number(attack.Knockback ?? 0) !== 0 ? 1 : 0,
-      };
+const NO_STAGGER = Object.freeze({ suffer: 0, knockback: 0 });
+
+/**
+ * Whether a hit that landed makes its victim flinch, and whether it throws it.
+ *
+ * Two bytes the client proposes as zero and reads back as orders: it plays the
+ * stagger or the knockback only when the result says so. The official decides
+ * them the same way for a hero's hit and a monster's:
+ *
+ *   an attack that authors a `Knockback`   both, every time
+ *   one that does not                      suffer alone, by its `SufferChance`
+ *
+ * KATANA_SOUL_BANG (chance 1, knockback 50) is 6583 of 6583 staggered;
+ * KATANA_COMBO_2 (chance 0.1, knockback 15) is 170 of 170, so the chance is
+ * not consulted where there is a knockback. LONG_BOW_SHOT (0.1, none) is 8%
+ * of 109 and THROW_FAR_AXE_KN (0.15, none) 11% of 287.
+ *
+ * This set both whenever the row authored anything, which staggered a hero on
+ * every thrown axe instead of one in nine.
+ */
+export const staggerFor = (attack, damage, random = Math.random) => {
+  if (!(damage > 0)) return NO_STAGGER;
+  if (Number(attack?.Knockback ?? 0) !== 0) return { suffer: 1, knockback: 1 };
+  const chance = Number(attack?.SufferChance ?? attack?.StunChance ?? 0);
+  return { suffer: chance > 0 && random() < chance ? 1 : 0, knockback: 0 };
+};
+
+/** The least a stagger shelters a hero from the next one. */
+const MIN_STAGGER_GRACE_MS = 300;
+
+/**
+ * The same, for a hit on a hero — who is not staggered twice in a row.
+ *
+ * Sorted by the time since the hero last staggered, the official's 684
+ * knockback hits by monsters carry the flags 1% of the time within 0.3s, 31%
+ * up to 0.7s, 83% up to 2s and on every one of the 345 after that. That is a
+ * pack swinging together — the first blow throws the hero and the rest land on
+ * a hero already thrown.
+ *
+ * The shelter is taken to last as long as the blow that gave it says the hero
+ * reels: its `HitStunDur` and `KnockbackDur`, up to 1.2s for a tackle, which
+ * fits that curve. A buff that makes its bearer `SUFFER_IMMUNE` — the
+ * Berserker's rage is the one — shelters outright.
+ *
+ * For a monster's own attack. The floor's traps keep the rule that was
+ * measured on them — see `trapStaggerFor`. Heroes only; on a monster the
+ * official staggers near enough every hit.
+ */
+export const heroStaggerFor = (session, attack, damage, victimDoid, random = Math.random) => {
+  const stagger = staggerFor(attack, damage, random);
+  if (!stagger.suffer) return stagger;
+  if (session.objects?.get(victimDoid) !== CLID.HeroGameObject) return stagger;
+  if (hasAbility(session, victimDoid, "SUFFER_IMMUNE")) return NO_STAGGER;
+
+  session.heroStaggeredUntil ??= new Map();
+  const now = Date.now();
+  if (now < (session.heroStaggeredUntil.get(victimDoid) ?? 0)) return NO_STAGGER;
+  const reels = (Number(attack?.HitStunDur ?? 0) + Number(attack?.KnockbackDur ?? 0)) * 1000;
+  session.heroStaggeredUntil.set(victimDoid, now + Math.max(MIN_STAGGER_GRACE_MS, reels));
+  return stagger;
+};
 
 /**
  * How soon after one trap hit the hero shrugs off the next one's stagger.
@@ -989,18 +1043,23 @@ const staggerFor = (attack, damage) =>
  * since that hero's previous trap hit: within 0.3s only 15% of 95 carry suffer
  * and knockback; 0.3 to 0.7s, 81%; after that 81 to 88%. It is the beds of a
  * row biting together — the first throws the hero, the rest land on a hero
- * already thrown. Here every one of them threw.
+ * already thrown.
  *
  * The same holds for every floor trap the corpus has — mace 0% against 94%,
  * blade 25% against 89%, arrows 0% against 97% — so it is the rule for the
  * floor's traps, not for spikes. Heroes only, because that is what was
- * measured; on monsters the official staggers near enough every hit. And
- * floor traps only: enemy placeables land here too, and nothing measured them.
+ * measured; on monsters the official staggers near enough every hit.
+ *
+ * And the floor's named traps only, on their own clock. This was folded into
+ * `heroStaggerFor` once, which measures from the hero's last stagger and for as
+ * long as that blow says he reels: the slicers, whose attack is not a `TRAP_`
+ * and whose every recorded hit throws the hero, dropped to 29% and the trap
+ * conformance report said so. What was measured for traps stays as measured.
  */
 const TRAP_STAGGER_GRACE_MS = 300;
 
 const trapStaggerFor = (session, attack, damage, victimDoid) => {
-  const stagger = staggerFor(attack, damage);
+  const stagger = staggerFor(attack, damage, session.random ?? Math.random);
   if (session.objects?.get(victimDoid) !== CLID.HeroGameObject || damage <= 0) return stagger;
   if (!/^TRAP_/.test(String(attack?.Constant ?? ""))) return stagger;
   session.lastTrapHitAt ??= new Map();
@@ -1008,7 +1067,7 @@ const trapStaggerFor = (session, attack, damage, victimDoid) => {
   const previous = session.lastTrapHitAt.get(victimDoid);
   session.lastTrapHitAt.set(victimDoid, now);
   return previous !== undefined && now - previous < TRAP_STAGGER_GRACE_MS
-    ? { suffer: 0, knockback: 0 }
+    ? NO_STAGGER
     : stagger;
 };
 
@@ -1850,7 +1909,7 @@ export const performPlaceableAttack = async (
             targetActorDoid: 0,
             criticalHit: critical ? 1 : 0,
             effectiveness,
-            ...staggerFor(attack, damage),
+            ...staggerFor(attack, damage, session.random ?? Math.random),
           },
         ],
       })
@@ -2025,7 +2084,7 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
           attackType,
           targetActorDoid: 0,
           effectiveness: priced.effectiveness,
-          ...staggerFor(attack, damage),
+          ...heroStaggerFor(session, attack, damage, victimDoid, session.random ?? Math.random),
         },
       ],
     })
@@ -2953,6 +3012,34 @@ const withDamage = (bytes, wireDamage) => {
  */
 const CRITICAL_HIT_BYTE = 26; // attacker, attackee, damage, Attack(10), when, suffer, knockback, blocked
 const KNOCKBACK_BYTE = 24; // attacker, attackee, damage, Attack(10), when, suffer
+const SUFFER_BYTE = 23; // attacker, attackee, damage, Attack(10), when
+const withSuffer = (bytes, enabled = true) => {
+  const copy = Buffer.from(bytes);
+  copy.writeUInt8(enabled ? 1 : 0, SUFFER_BYTE);
+  return copy;
+};
+
+/**
+ * Keeps a monster that was just staggered from acting, for as long as the
+ * attack says it reels.
+ *
+ * The flag alone is a picture: the client plays the flinch and the monster
+ * would go on swinging through it. The official's do not — after a hit that
+ * staggered it a monster's next attack comes 1.0s later at the quartile and
+ * 1.4s at the median, against 0.16s and 0.56s after one that did not (809 and
+ * 135 hits). `HitStunDur` is a second on the attacks that make up most of
+ * those, which is what the quartile shows.
+ *
+ * Read by the AI tick, which leaves a held monster where it is. Never
+ * shortened: a second blow inside the first one's stun does not release it.
+ */
+const holdStaggered = (session, victimDoid, attack) => {
+  const ai = session.actors?.get(victimDoid)?.ai;
+  const reels = Number(attack?.HitStunDur ?? 0) * 1000;
+  if (!ai || !(reels > 0)) return;
+  ai.staggeredUntil = Math.max(ai.staggeredUntil ?? 0, Date.now() + reels);
+};
+
 const withKnockback = (bytes, enabled = true) => {
   const copy = Buffer.from(bytes);
   copy.writeUInt8(enabled ? 1 : 0, KNOCKBACK_BYTE);
@@ -3628,24 +3715,43 @@ const applyProposals = async (session, proposals) => {
     const damage = critical ? Math.round(plain * multiplier) : plain;
     const ticksFrom = critical ? Math.round(priced.neutral * multiplier) : priced.neutral;
 
-    const authoredShove = proposal.blocked ? 0 : knockbackFor(await loadGameMaster(), swung);
-    const shoveAbility = authoredShove < 0 ? "PULL_IMMUNE" : "KNOCKBACK_IMMUNE";
-    const shove = authoredShove && hasAbility(session, proposal.attackee, shoveAbility)
-      ? 0
-      : authoredShove;
     /**
-     * Not gated on the client's flag, which is the mistake the first version
-     * made: the client proposes that byte as 0 on 13624 of 13626 recorded
-     * results. It is the server that sets it — the official does so on 13024 of
-     * its echoes — exactly as it decides the crit beside it. Waiting for the
-     * client to ask meant the push never happened at all.
+     * Whether it flinches and whether it is thrown — `staggerFor`, which is the
+     * same rule a monster's hit goes by. A weapon's `KNOCKBACK` or `PULL` names
+     * its own distance and takes the place of the attack's; either way the
+     * victim is thrown, so either way it flinches.
+     */
+    const landed = !proposal.blocked && damage > 0 && statOffsetsFor(attack);
+    const weaponShove = landed ? knockbackFor(await loadGameMaster(), swung) : 0;
+    const stagger = landed
+      ? staggerFor(attack, damage, session.random ?? Math.random)
+      : NO_STAGGER;
+    const authoredShove = weaponShove || (stagger.knockback ? Number(attack?.Knockback) || 0 : 0);
+    const shoveAbility = authoredShove < 0 ? "PULL_IMMUNE" : "KNOCKBACK_IMMUNE";
+    const thrown = authoredShove && !hasAbility(session, proposal.attackee, shoveAbility);
+    const suffers =
+      (stagger.suffer || authoredShove !== 0) &&
+      !hasAbility(session, proposal.attackee, "SUFFER_IMMUNE");
+    /**
+     * Told it was thrown and actually moved are two things. A barrel is told —
+     * 722 of the official's hits on props with these attacks carry both flags,
+     * which is the client shaking it — and a barrel does not go anywhere. Only
+     * what can walk is carried by the attack's own knockback; a weapon's
+     * modifier moves what it always moved.
+     */
+    const walks = (session.actors?.get(proposal.attackee)?.ai?.moveSpeed ?? 0) > 0;
+    const shove = thrown && (weaponShove || walks) ? authoredShove : 0;
+    /**
+     * Not gated on the client's flags, which is the mistake the first version
+     * made: the client proposes both bytes as 0 on all but two of 13626
+     * recorded results. It is the server that sets them — exactly as it decides
+     * the crit beside them — and the client reacts to nothing it is not told.
      *
-     * Only for a weapon that carries one of the two modifiers. The attack's own
-     * `Knockback` column is deliberately not used here: `KATANA_SOUL_BANG`
-     * authors 50 and the official's monsters do not move for it — 6568 flagged
-     * hits, median displacement zero — so a hero's ordinary swing does not
-     * shove, whatever its row says. What the corpus cannot show is a `Hitback`
-     * or a `Trapper`, since no recorded player carried one.
+     * The attack's own `Knockback` throws the victim. That was held back once
+     * on a measurement that had the monsters standing still; measured over the
+     * 0.7 seconds after the hit, they do not: KATANA_SOUL_BANG authors 50 and
+     * moves its victim a median 48 (1618 hits), the health bomb 140 and 141,
+     * EARTHQUAKE 30 and 50, against a median 9 for a hit that carries no flag.
      *
      * And not on a blocked result. The client's own resolver clears blocked
      * hits before it ever considers a knockback flag; letting a modifier push
@@ -3658,8 +3764,8 @@ const applyProposals = async (session, proposals) => {
     let bytes = withPowerMultiplier(proposal.bytes, powerMultiplier);
     bytes = withCrit(bytes, critical);
     bytes = withEffectiveness(bytes, priced.effectiveness);
-    if (proposal.blocked) bytes = withKnockback(bytes, false);
-    else if (shove) bytes = withKnockback(bytes);
+    bytes = withSuffer(bytes, Boolean(suffers));
+    bytes = withKnockback(bytes, Boolean(suffers && thrown));
     const echo = receiveCombatResult(proposal.attackee, fieldId, withDamage(bytes, -damage));
 
     /**
@@ -3716,6 +3822,7 @@ const applyProposals = async (session, proposals) => {
      */
 
     if (shove) pushVictim(session, proposal.attackee, proposal.attacker, shove);
+    if (suffers) holdStaggered(session, proposal.attackee, attack);
 
     const actor = session.actors?.get(proposal.attackee);
     const wasDead = Boolean(actor?.dead);
