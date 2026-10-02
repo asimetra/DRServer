@@ -96,7 +96,7 @@ test("a collecting pet takes progression stars for its owner but leaves food alo
   assert.equal(collected.u32(), session.heroDoid, "the owner remains the wire collector");
 });
 
-test("GameMaster pickup rewards update live state and persist exactly once", async () => {
+test("GameMaster pickup rewards update live state at once and storage at the next checkpoint", async () => {
   const sent = [];
   const saved = [];
   const avatar = { experience: 90 };
@@ -147,6 +147,12 @@ test("GameMaster pickup rewards update live state and persist exactly once", asy
   assert.equal(session.heroManaPoints, 45);
   assert.equal(account.basic_currency, 1010);
   assert.equal(avatar.experience, 95);
+  // Not written for the pickup itself — see run-checkpoint.test.js — and once,
+  // whole, when the run's next checkpoint comes.
+  assert.deepEqual(saved, []);
+  const { saveChangedAccounts } = await import("../src/socket/rewards.js");
+  saveChangedAccounts(session);
+  await session.rewardSavePromise;
   assert.deepEqual(saved, [
     { id: 42, basic_currency: 1010, account_avatars: [{ experience: 95 }] },
   ]);

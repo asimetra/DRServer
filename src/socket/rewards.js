@@ -8,6 +8,8 @@ import { PacketWriter } from "./packet.js";
 import { buffMultiplierFor } from "./buffs.js";
 import { infiniteFloorGold, infiniteProgressFor, infiniteTrophiesFor } from "../infinite.js";
 import { followRunSave } from "./run-saves.js";
+import { membersOf, worldOf } from "./match-world.js";
+import { config } from "../config.js";
 
 export { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 
@@ -71,6 +73,9 @@ export const completionTeamXpBonus = (node, account) => {
 export const queueAccountSave = (session) => {
   const account = session.dungeonAccount;
   if (!account) return null;
+  // Whatever was waiting for a checkpoint goes with this save: it writes the
+  // account, and the account is where the coins already are.
+  session.accountChanged = false;
 
   const persist = session.persistDungeonAccount ?? matchHost().saveAccount;
   const previous = session.rewardSavePromise ?? Promise.resolve();
@@ -85,6 +90,52 @@ export const queueAccountSave = (session) => {
     warn(`[${session.id}] could not persist dungeon reward: ${error.message}`)
   );
   return pending;
+};
+
+/**
+ * Writes the accounts of a run that have changed since they were last written.
+ *
+ * Gold and experience used to queue a save each as they were picked up — on a
+ * player's own recordings a third of a save a second, four a second in a
+ * fight, every one of them the whole account. Nothing about a coin needs
+ * storage that instant: the client is told the new total from the account in
+ * memory, and that account is what every later save writes.
+ *
+ * So a pickup only marks the account, and this is what writes it: when a floor
+ * ends, and on the run's clock. The other endings write the account themselves
+ * and always did — the report, leaving, being dropped, the server stopping —
+ * and anything else that saves in between (a chest, an Infinite floor's
+ * reward, a bomb spent) takes the coins along, because a save is of the
+ * account and not of the thing that prompted it.
+ */
+export const saveChangedAccounts = (session) => {
+  let saved = 0;
+  for (const member of membersOf(worldOf(session) ?? session)) {
+    const context = member.world && !member.world.destroyed ? member.world.contextFor(member) : member;
+    if (!context.accountChanged) continue;
+    queueAccountSave(context);
+    saved += 1;
+  }
+  return saved;
+};
+
+/**
+ * The run's clock: every so often, whatever changed is written.
+ *
+ * For the endings nothing can announce. A match worker that dies takes its
+ * memory with it, and so does a process that is killed; neither gets to save
+ * on the way out. The clock is what bounds those to one interval of gold and
+ * experience — thirty seconds unless `ODS_RUN_CHECKPOINT_SECONDS` says
+ * otherwise, and none at all at zero, for an operator who would rather have no
+ * write that an ending did not ask for.
+ *
+ * One a run, on the run's own scope, so it stops with the run.
+ */
+export const startRunCheckpoints = (session, intervalMs = config.runCheckpointMs) => {
+  const scope = session.runScope;
+  if (!scope || !(intervalMs > 0) || session.runCheckpoint) return false;
+  session.runCheckpoint = scope.interval(() => saveChangedAccounts(session), intervalMs);
+  return true;
 };
 
 /**
@@ -215,8 +266,9 @@ export const applyProgressReward = (
     }
   }
 
-  // Crowd is run-local; only account-backed Gold/XP need a persistence write.
-  if (gold || xp) queueAccountSave(session);
+  // Crowd is run-local; only account-backed Gold/XP have anything to write,
+  // and not now — see saveChangedAccounts.
+  if ((gold || xp) && session.dungeonAccount) session.accountChanged = true;
   return true;
 };
 

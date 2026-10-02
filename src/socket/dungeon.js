@@ -175,7 +175,7 @@ import {
   membersOf,
   worldOf,
 } from "./match-world.js";
-import { noteInfiniteFloorReached } from "./rewards.js";
+import { noteInfiniteFloorReached, saveChangedAccounts, startRunCheckpoints } from "./rewards.js";
 
 /**
  * Everything a client earned the right to do, forgotten together.
@@ -2799,6 +2799,7 @@ export const enterDungeon = async (
   session.floorCleared = false;
   session.enemiesSeen = 0;
   beginRunXp(session);
+  startRunCheckpoints(session);
   // Production creates DistributedDungeonSummary in the dungeon interest zone.
   session.dungeonZone = 10;
   session.mapNodeId = mapNodeId;
@@ -3432,6 +3433,9 @@ const advanceFloorUnlocked = async (session) => {
   const dungeonEpoch = session.dungeonEpoch;
   const isActive = () => session.dungeonActive && session.dungeonEpoch === dungeonEpoch;
 
+  // What the floor paid is written as it ends — see saveChangedAccounts.
+  saveChangedAccounts(session);
+
   // Per-floor work belongs to the floor that is ending.
   const party = dungeonMembers(session);
   if (!endFloorScope(session)) clearFloorRuntime(session);
@@ -3652,6 +3656,7 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "dungeonContribution",
     "dungeonTreasures",
     "runAssisted",
+    "accountChanged",
     "healthBombsUsed",
     "partyBombsUsed",
     // The run's remaining chest allowance, rolled once from the node.

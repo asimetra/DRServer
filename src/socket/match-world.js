@@ -113,6 +113,8 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   // Whether a floor of this run was ended by command; the run then counts for
   // nobody on it — see `/complete`.
   "runAssisted",
+  // The run's checkpoint clock: one for the match, not one a member.
+  "runCheckpoint",
   "rewardGenerators",
   "floorExits",
   "floorTransition",

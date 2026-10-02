@@ -192,6 +192,33 @@ start waits. Use the internal API for account changes while players are connecte
 stop the server before running maintenance tools such as `tools/grant.js` or an
 account-ID repair.
 
+### When a run is written down
+
+Gold and experience picked up in a dungeon go into the account in memory at
+once, which is what the player is shown, and reach storage at the run's
+endings:
+
+| When | What is written |
+|---|---|
+| A floor ends | Every account on the run that changed |
+| The run ends, or a player leaves, quits or is disconnected | That player's account, always |
+| A chest, an Infinite floor's reward, a spent bomb | That account, at once |
+| The server is stopped | Every account still in a dungeon |
+| Every 30 seconds while a run lasts | Every account on it that changed |
+
+The last row is for the endings that cannot save on the way out: a match
+worker that dies, or a server that is killed rather than stopped. Those lose
+whatever was picked up since the last write, which the interval bounds.
+`ODS_RUN_CHECKPOINT_SECONDS` sets it; `0` turns the clock off and leaves only
+the rows above it.
+
+In PostgreSQL mode a save sends only the rows that differ from what the server
+last read or wrote, so a pickup's worth of change is one small statement
+whatever the account holds. The `version` column on `accounts` is how the
+server knows its picture of an account is still true; it rises with every save.
+Changing an account's rows directly in the database while the server is
+running is not supported — stop the server, or use the internal API.
+
 ## Running as a service
 
 `npm start` in a terminal stops when the terminal does. For a server that

@@ -522,6 +522,19 @@ export const loadServerConfig = (environment = process.env) => {
       setting(environment, "ACTIVITY_THRESHOLDS") ?? defaults.activityThresholds
     ),
 
+    /**
+     * How often a running dungeon writes the accounts that changed, in
+     * milliseconds; 0 for never. Gold and experience are written when a floor
+     * or the run ends and when a player leaves or is dropped — this is for the
+     * endings that cannot save on the way out, a worker dying or the process
+     * being killed, and it is what bounds their loss. See `startRunCheckpoints`.
+     */
+    runCheckpointMs:
+      Math.max(
+        0,
+        asInt(setting(environment, "RUN_CHECKPOINT_SECONDS"), defaults.runCheckpointSeconds ?? 30)
+      ) * 1000,
+
     /** Production delay between dungeonEnding and DistributedDungeonSummary. */
     dungeonSummaryDelayMs: asInt(
       setting(environment, "DUNGEON_SUMMARY_DELAY_MS"),
