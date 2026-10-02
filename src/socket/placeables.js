@@ -636,6 +636,14 @@ export const spawnPlaceable = async (
     collisionRadius,
     heading,
     ai: summonAi,
+    /**
+     * Killed rather than expired: monsters can hit a placed thing, and the
+     * poison pot's chicken is often dead within a second of landing. Its beat
+     * went on regardless until the lifetime ran out — announcing an attack for
+     * an object the client had already removed, and dealing it, poisoning
+     * whatever stood where it had been for ten more seconds.
+     */
+    onGone: () => stopAttacking(session, doid),
   });
 
   session.send(
@@ -1137,6 +1145,23 @@ export const schedulePlaceables = async (
 };
 
 /** Clears pending spawns and everything still standing, on teardown. */
+/**
+ * No new attacks from a placed thing that was killed: its repeating beat and an
+ * activation not yet begun. Only those. A swing already under way keeps its
+ * remaining hits — a bomb killed mid-blast still lands the blast — and the
+ * expiry still runs, finding the object gone and only tidying up after it.
+ */
+const stopAttacking = (session, doid) => {
+  const live = session.placeables?.get(doid);
+  if (!live) return false;
+  cancelFloorTimer(session, live.ticker, clearInterval);
+  live.ticker = null;
+  cancelFloorTimer(session, live.activation);
+  live.activation = null;
+  live.spent = true;
+  return true;
+};
+
 export const clearDungeonPlaceables = (session) => {
   for (const timer of session.placeableSpawnTimers ?? []) cancelFloorTimer(session, timer);
   session.placeableSpawnTimers?.clear();

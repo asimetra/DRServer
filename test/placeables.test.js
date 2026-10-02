@@ -321,6 +321,52 @@ test("a cloud that has burned out dies rather than standing there as a corpse", 
   assert.equal(session.actors.get(doid), undefined);
 });
 
+/**
+ * Killed rather than burned out. Monsters hit the poison pot's chicken, and a
+ * recorded session shows it gone within a second of landing — and the server
+ * still announcing its attack, and dealing it, every second for the ten it was
+ * meant to live: a dead cloud that went on poisoning, and a client logging an
+ * update for an object it no longer has on every beat.
+ */
+test("a cloud that is killed stops, rather than attacking until it would have expired", async () => {
+  const { applyDamage } = await import("../src/socket/combat.js");
+  const session = sessionWith();
+  session.objects.set(700, CLID.DistributedNPCGameObject);
+  session.actors.set(700, {
+    hitPoints: 5000,
+    maxHitPoints: 5000,
+    constant: "KNIGHT_TUTORIAL",
+    isEnemy: true,
+    collisionRadius: 30,
+    position: { x: 1040, y: 1000 },
+  });
+  const doid = await spawnPlaceable(session, { action: POISON_ACTION, origin: { x: 1000, y: 1000 }, heading: 0 });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  applyDamage(session, doid, 1_000_000);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const sentAtDeath = session.sent.length;
+  // The poison it left before it died runs its own course, as it should, so
+  // what is counted is poison put on after the death — which every hit leaves.
+  const poisonedBefore = new Set(
+    [...(session.activeBuffs?.entries() ?? [])].filter(([, active]) => active.affectedActor === 700).map(([key]) => key)
+  );
+
+  // Past two of its beats.
+  await new Promise((resolve) => setTimeout(resolve, 2200));
+  const later = session.sent.slice(sentAtDeath).filter((packet) => packet.length >= 8 && packet.readUInt32LE(4) === doid);
+  assert.deepEqual(later.map((packet) => packet.readUInt16LE(8)), [], "nothing more about an object that is gone");
+  assert.deepEqual(
+    [...(session.activeBuffs?.entries() ?? [])]
+      .filter(([key, active]) => active.affectedActor === 700 && !poisonedBefore.has(key))
+      .map(([, active]) => active.buff?.Constant),
+    [],
+    "and nobody poisoned again by it"
+  );
+
+  clearDungeonPlaceables(session);
+});
+
 test("teardown cancels a scheduled cloud that never got to land", async () => {
   const session = sessionWith();
   await schedulePlaceables(session, {
