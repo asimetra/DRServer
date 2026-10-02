@@ -62,8 +62,10 @@ EXPOSE 8080 7198 8082
 
 # The status listener answers before anything else does, so it is the honest
 # readiness signal — /healthz checks web, socket, storage, saves and workers.
+# On whatever port ODS_STATUS_PORT moved it to: a fixed 8082 read a server on
+# another port as unhealthy for as long as it ran.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:8082/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.ODS_STATUS_PORT||process.env.DR_STATUS_PORT||8082)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "src/index.js"]

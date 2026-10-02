@@ -1,20 +1,26 @@
-# Everything the image must not carry. The first group is the licence boundary
-# — no client, no assets, no compatibility data, no captures — and the rest is
-# weight or local state that would be stale the moment it was copied.
-local-data/
-content/
-game-data/
-data/
-backups/
-logs/
-logs-fresh/
-reports/
-docs/
+# Only what the server needs to run, named one by one. Everything else stays
+# out — including whatever lands in the checkout later. A list of what to leave
+# out let an agent's 7 GB working folder, recordings included, into the image;
+# an image is the thing that gets published, so the safe default is "not in".
+#
+# The licence boundary is part of this: no client, no assets, no compatibility
+# data, no captures. local-data/, content/ and game-data/ are supplied at run
+# time from a copy the operator may use.
+*
 
-node_modules/
-.git/
-.github/
-.env
-*.log
-test/
-monitoring/
+!src/
+!config/
+!db/
+!tools/
+!package.json
+!package-lock.json
+!.env.example
+!LICENSE
+!NOTICE.md
+!README.md
+
+# Inside those, what a deployment or a developer keeps for itself (all of it
+# also in .gitignore).
+config/content-packs.json
+config/floors.*.json
+tools/client-patches/
