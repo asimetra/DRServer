@@ -260,6 +260,12 @@ export class WebSocketStream extends EventEmitter {
     this.externallyPaused = false;
     this.controlWindowStartedAt = Date.now();
     this.controlFrames = 0;
+    // A cork coalesces a burst of game packets into one WebSocket frame — see
+    // `cork`. Depth counts nested corks; `pending` holds the raw packets and
+    // `pendingBytes` their total so `writableLength` can still account for them.
+    this.corkDepth = 0;
+    this.pending = [];
+    this.pendingBytes = 0;
     socket.on("data", (chunk) => this.receive(chunk));
     socket.on("drain", () => {
       this.emit("drain");
@@ -279,7 +285,9 @@ export class WebSocketStream extends EventEmitter {
   }
 
   get writableLength() {
-    return this.socket.writableLength;
+    // Including what a cork is holding keeps the outbound-saturation guard in
+    // `session.send` honest: a burst buffered here is memory held just the same.
+    return this.socket.writableLength + this.pendingBytes;
   }
 
   receive(chunk) {
@@ -370,7 +378,46 @@ export class WebSocketStream extends EventEmitter {
 
   write(bytes, callback) {
     if (this.closing || this.socket.destroyed) return false;
+    // While corked, a packet is held rather than framed. The desktop client
+    // reads a TCP stream and these coalesce for free; a browser gets one
+    // `SOCKET_DATA` per frame, so a floor's worth of generates on entry was a
+    // floor's worth of events. `DcSocket` reassembles a byte stream by length
+    // prefix, so one frame carrying the concatenation reads identically.
+    if (this.corkDepth > 0) {
+      this.pending.push(bytes);
+      this.pendingBytes += bytes.length;
+      if (callback) this.pendingCallback = callback;
+      return this.writableLength <= MAX_FRAME_BYTES;
+    }
     return this.socket.write(encodeFrame(OP.binary, bytes), callback);
+  }
+
+  /**
+   * Hold writes until the matching `uncork`, then send them as one frame.
+   *
+   * Mirrors `net.Socket.cork`/`uncork` so `flushOutputBatch` can treat both
+   * transports the same — it already corks the member socket around a batch and
+   * skips any socket without a `cork`. Nested corks are counted; only the last
+   * `uncork` flushes.
+   */
+  cork() {
+    this.corkDepth += 1;
+  }
+
+  uncork() {
+    if (this.corkDepth === 0) return;
+    this.corkDepth -= 1;
+    if (this.corkDepth > 0 || this.pending.length === 0) return;
+
+    const payload = this.pending.length === 1 ? this.pending[0] : Buffer.concat(this.pending);
+    this.pending = [];
+    this.pendingBytes = 0;
+    const callback = this.pendingCallback;
+    this.pendingCallback = undefined;
+    // A socket that died mid-burst gets nothing; the batch is dropped, as a
+    // direct write to a destroyed socket would have been refused anyway.
+    if (this.closing || this.socket.destroyed) return;
+    this.socket.write(encodeFrame(OP.binary, payload), callback);
   }
 
   end() {
