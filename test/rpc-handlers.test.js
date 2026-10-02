@@ -185,9 +185,104 @@ test("the daily payout is the streak tier times the hero count", async () => {
   const first = await dispatch("store", "RequestRedeemDailyRewards", [ACCOUNT, "token", 0, false, {}]);
   assert.equal(first[5], 10, "5 for day one, doubled by two heroes");
 
-  await freshAccount({ concurrent_days: 6, account_avatars: avatars(6) });
+  // Already claimed today, six days in: the day shown is the one it was paid.
+  await freshAccount({
+    concurrent_days: 6,
+    last_reward_date: new Date().toISOString(),
+    account_avatars: avatars(6),
+  });
   const long = await dispatch("store", "AskAboutDailyReward", [ACCOUNT]);
   assert.deepEqual([long[0], long[1]], [3, 6], "the streak caps at three");
+});
+
+/** Midnight UTC, `days` calendar days before today, plus `hours` into that day. */
+const utcDaysAgo = (days, hours = 0) => {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days, hours)
+  ).toISOString();
+};
+
+const heroes = (count) =>
+  Array.from({ length: count }, (_, index) => ({ id: index + 1, avatar_id: 101 + index }));
+
+/**
+ * The question answers with the day that is about to be paid, not the one that
+ * was. An official account that had claimed day one answered `[2, 3, …, 0]` the
+ * next day and was then paid 10 × 3; fourteen of fourteen first spins were paid
+ * exactly what the question had just shown. Answering with the stored day
+ * instead put one figure on the screen and another on the account.
+ */
+test("the reward screen shows the day it is about to pay", async () => {
+  await freshAccount({
+    premium_currency: 0,
+    concurrent_days: 1,
+    last_reward_date: utcDaysAgo(1, 12),
+    account_avatars: heroes(3),
+  });
+
+  const asked = await dispatch("store", "AskAboutDailyReward", [ACCOUNT]);
+  assert.deepEqual([asked[0], asked[3]], [2, 0], "claimed yesterday: day two is on offer");
+
+  const redeemed = await dispatch("store", "RequestRedeemDailyRewards", [ACCOUNT, "token", 0, false, {}]);
+  assert.equal(redeemed[5], 30, "and day two is what is paid: 10 for the tier, three heroes");
+  assert.equal((await loadAccount(ACCOUNT)).concurrent_days, 2);
+
+  const after = await dispatch("store", "AskAboutDailyReward", [ACCOUNT]);
+  assert.equal(after[0], 2, "once claimed, the day shown is the one just paid");
+  assert.ok(after[3] > 0);
+});
+
+/**
+ * The streak is counted in calendar days. The official account that claimed on
+ * the 19th and came back on the 21st was shown day one and paid 5 × 6, with a
+ * streak of eleven behind it. Measuring the gap in hours let a claim late one
+ * evening and another early two mornings later pass for consecutive.
+ */
+test("a missed day starts the streak again, however few hours it was", async () => {
+  await freshAccount({
+    premium_currency: 0,
+    concurrent_days: 11,
+    last_reward_date: utcDaysAgo(2, 23),
+    account_avatars: heroes(6),
+  });
+
+  const asked = await dispatch("store", "AskAboutDailyReward", [ACCOUNT]);
+  assert.deepEqual([asked[0], asked[3]], [1, 0], "back to day one");
+
+  const redeemed = await dispatch("store", "RequestRedeemDailyRewards", [ACCOUNT, "token", 0, false, {}]);
+  assert.equal(redeemed[5], 30, "5 for day one, six heroes");
+  assert.equal((await loadAccount(ACCOUNT)).concurrent_days, 1);
+});
+
+/**
+ * The free spin is once a day and the server is what says so. The client only
+ * shows the boxes while the countdown is zero, but nothing stopped the request
+ * itself being sent again, and each one paid the day's gems and a box.
+ *
+ * The answer is the one the client already has a branch for: zeros where the
+ * boxes and the account would be make it print "already claimed" and start the
+ * countdown from the third element.
+ */
+test("a second free spin on the same day pays nothing", async () => {
+  await freshAccount({
+    premium_currency: 50,
+    concurrent_days: 1,
+    last_reward_date: null,
+    account_avatars: heroes(2),
+    account_stackables: [],
+  });
+  await dispatch("store", "RequestRedeemDailyRewards", [ACCOUNT, "token", 0, false, {}]);
+  const once = await loadAccount(ACCOUNT);
+
+  const again = await dispatch("store", "RequestRedeemDailyRewards", [ACCOUNT, "token", 0, false, {}]);
+  const twice = await loadAccount(ACCOUNT);
+
+  assert.deepEqual([again[0], again[1]], [0, 0], "the client's \"already claimed\" answer");
+  assert.ok(again[2] > 0, "with the countdown it starts its timer from");
+  assert.equal(twice.premium_currency, once.premium_currency, "no second bonus");
+  assert.deepEqual(twice.account_stackables, once.account_stackables, "and no second box");
+  assert.equal(twice.concurrent_days, once.concurrent_days);
 });
 
 /**

@@ -170,8 +170,17 @@ const webServerTimestamp = () => [new Date().toISOString(), EPOCH_DURATION, EPOC
 register("storeGetWebServerTimestamp/getWebServerTimestamp", webServerTimestamp, { account: null });
 register("webMagicWord/getWebServerTimestamp", webServerTimestamp, { account: null });
 
-const isToday = (isoDate) =>
-  Boolean(isoDate) && new Date(isoDate).toUTCString().slice(0, 16) === new Date().toUTCString().slice(0, 16);
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Whole UTC days since the epoch, which is what a streak is counted in. */
+const utcDayOf = (date) => Math.floor(new Date(date).getTime() / DAY_MS);
+
+/** Calendar days since the last claim; null for an account that never claimed. */
+const daysSinceReward = (account) =>
+  account.last_reward_date ? utcDayOf(Date.now()) - utcDayOf(account.last_reward_date) : null;
+
+/** One free spin per UTC day. */
+const dailyRewardClaimed = (account) => daysSinceReward(account) === 0;
 
 /**
  * Seconds until the daily reward is available again, or zero when it already
@@ -180,18 +189,35 @@ const isToday = (isoDate) =>
  * reads: the box screen appears only while this is zero.
  */
 const secondsUntilDailyReset = (account) => {
-  if (!isToday(account.last_reward_date)) return 0;
+  if (!dailyRewardClaimed(account)) return 0;
   const midnight = new Date();
   midnight.setUTCHours(24, 0, 0, 0);
   return Math.max(0, Math.round((midnight - Date.now()) / 1000));
 };
 
 /**
+ * The streak the next claim will stand at.
+ *
+ * Counted in calendar days, as the official counts it: claimed yesterday is one
+ * more, anything older starts again at one. An account eleven days in that
+ * skipped a single day was shown, and paid, day one.
+ */
+const nextStreak = (account) =>
+  daysSinceReward(account) === 1 ? Math.max(0, Number(account.concurrent_days ?? 0)) + 1 : 1;
+
+/**
  * The day of the streak, which runs 1..3 and then stays there. Two accounts pin
  * it: one on its first consecutive day reported 1, one on its sixth reported 3.
+ *
+ * Before today's claim it is the day about to be paid, not the one last paid.
+ * The official's question and its payout agree on every recorded first spin —
+ * `[2, 3, …]` asked, 10 × 3 paid — and they only can if the question looks
+ * ahead.
  */
-const dailyRewardDay = (account) =>
-  Math.min(DAILY_REWARD_TIERS.length, Math.max(1, account.concurrent_days ?? 1));
+const dailyRewardDay = (account) => {
+  const streak = dailyRewardClaimed(account) ? Number(account.concurrent_days ?? 1) : nextStreak(account);
+  return Math.min(DAILY_REWARD_TIERS.length, Math.max(1, streak));
+};
 
 /**
  * The multiplier is the number of heroes on the account, not the streak — the
@@ -621,6 +647,17 @@ register("store/RequestRedeemDailyRewards", async ([accountId, , boxIndex = 0, p
     account.premium_currency = balance - DAILY_REPLAY_COST;
   }
 
+  /**
+   * The free spin is once a day, and it is refused here rather than trusted to
+   * the client hiding the boxes. Zeros in place of the boxes and the account
+   * are the answer UIDailyRewards already reads as "already claimed": it prints
+   * that and starts its countdown from the third element.
+   */
+  if (!replaying && dailyRewardClaimed(account)) {
+    warn(`rpc: daily reward for ${accountId} refused — already claimed today`);
+    return [0, 0, secondsUntilDailyReset(account), false, dailyRewardStatus(account), 0];
+  }
+
   const row = gm.raw.ChestDropRates.find((entry) => entry.Rarity === "CONSUMABLE_DAILY");
   const weights = Object.fromEntries(
     Object.entries(row ?? {})
@@ -638,21 +675,16 @@ register("store/RequestRedeemDailyRewards", async ([accountId, , boxIndex = 0, p
     warn(`rpc: daily reward ${chosen} could not be granted: ${error.message}`);
   }
 
-  const today = new Date();
-  const claimedBefore = account.last_reward_date ? new Date(account.last_reward_date) : null;
-
   // The login bonus is only for the first spin of the day; a paid replay
   // re-rolls the boxes but does not pay the day out again.
   let awarded = 0;
   if (!replaying) {
-    account.concurrent_days =
-      claimedBefore && today - claimedBefore < 2 * 24 * 60 * 60 * 1000
-        ? (account.concurrent_days ?? 0) + 1
-        : 1;
+    // The streak first, the date after: the date is what the streak is read from.
+    account.concurrent_days = nextStreak(account);
+    account.last_reward_date = new Date().toISOString();
     awarded = dailyRewardAmount(account);
     account.premium_currency = Number(account.premium_currency ?? 0) + awarded;
   }
-  account.last_reward_date = today.toISOString();
 
   await saveAccount(account);
   info(
