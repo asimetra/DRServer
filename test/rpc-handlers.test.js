@@ -47,6 +47,35 @@ test("every handler the client calls is registered", async () => {
   }
 });
 
+/**
+ * An attribute is whatever text the client sends, and it is stored as text. A
+ * zero character is the one thing PostgreSQL will not take there, and the save
+ * that carries it fails. On an account a dungeon is holding, that save is the
+ * dungeon's own, tried again for as long as the server runs — and while any
+ * save is waiting nobody is let into a dungeon. One option value could close
+ * the server's dungeons to everybody.
+ */
+test("an attribute carrying a zero character is refused before it reaches the account", async () => {
+  await freshAccount({ account_attributes: [] });
+
+  await assert.rejects(
+    () => dispatch("account", "AlterAttribute", [ACCOUNT, "token", "optionsMusic", "0.4\u0000"]),
+    /invalid account attribute/
+  );
+  await assert.rejects(
+    () => dispatch("account", "AlterAttribute", [ACCOUNT, "token", "options\u0000Music", "0.4"]),
+    /invalid account attribute/
+  );
+
+  const kept = (await loadAccount(ACCOUNT)).account_attributes;
+  assert.equal(
+    kept.some((row) => /Music$/.test(row.name) && /\u0000/.test(row.name + row.value)),
+    false,
+    "neither reached the account"
+  );
+  assert.equal(kept.some((row) => row.name === "optionsMusic"), false);
+});
+
 test("option changes replace one account attribute and survive the next login", async () => {
   await freshAccount({ account_attributes: [] });
 

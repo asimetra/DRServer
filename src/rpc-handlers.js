@@ -91,7 +91,9 @@ register("account/GetFacebookId", async () => "", { account: 1 });
 register("account/AlterAttribute", async ([accountId, , rawName, rawValue]) => {
   const name = String(rawName ?? "");
   const value = String(rawValue ?? "");
-  if (!name || name.length > 128 || value.length > 4096) {
+  // No zero character: text storage refuses it, and on an account a dungeon
+  // holds the save that fails is the dungeon's, retried for ever.
+  if (!name || name.length > 128 || value.length > 4096 || /\u0000/.test(name + value)) {
     throw new Error("invalid account attribute");
   }
 
