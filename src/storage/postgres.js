@@ -519,6 +519,11 @@ export const ping = async () => {
  * one. Neither table references `accounts`, so this never contends with the
  * account write path.
  */
+/**
+ * A standing carries the hero that set it, and keeps carrying it while it
+ * stands. The hero used to be taken from every run: a best set on one hero was
+ * shown under whichever hero the account played last, however badly.
+ */
 const BOARD_FOLD = {
   speedrun: "LEAST(dungeon_bests.value, EXCLUDED.value)",
   hero_experience: "GREATEST(dungeon_bests.value, EXCLUDED.value)",
@@ -538,7 +543,13 @@ export const purgeBoard = async (key) => {
  * this is the same fold `recordRuns` applies, fed from the accounts rather
  * than from a run.
  */
-export const seedStanding = async (key, accountId, { value, at, name, trophies, heroId }) => {
+export const seedStanding = async (
+  key,
+  accountId,
+  // `hero_id`, as the entry carries it. It was read as `heroId`, which no caller
+  // passes, so every standing seeded from an account named no hero at all.
+  { value, at, name, trophies, hero_id: heroId }
+) => {
   await connect().query(
     `INSERT INTO dungeon_bests (board_key, account_id, name, trophies, hero_id, value, achieved_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -581,7 +592,9 @@ export const recordRuns = async (runs, boards) => {
              SET value = ${BOARD_FOLD[metric]},
                  name = EXCLUDED.name,
                  trophies = EXCLUDED.trophies,
-                 hero_id = EXCLUDED.hero_id,
+                 hero_id = CASE
+                   WHEN ${BOARD_FOLD[metric]} <> dungeon_bests.value
+                   THEN EXCLUDED.hero_id ELSE dungeon_bests.hero_id END,
                  achieved_at = CASE
                    WHEN ${BOARD_FOLD[metric]} <> dungeon_bests.value
                    THEN EXCLUDED.achieved_at ELSE dungeon_bests.achieved_at END`,
