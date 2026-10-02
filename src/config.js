@@ -529,6 +529,20 @@ export const loadServerConfig = (environment = process.env) => {
     trophyGems: Math.max(0, asInt(setting(environment, "TROPHY_GEMS"), defaults.trophyGems ?? 25)),
 
     /**
+     * The Infinite dungeon floors that pay the trophy and the gems. The game's
+     * table authors its own (`TrophyFloor` 25, `GemFloor` 20); these are what
+     * the game is remembered paying on, and 0 hands a floor back to the table.
+     */
+    infiniteTrophyFloor: Math.max(
+      0,
+      asInt(setting(environment, "INFINITE_TROPHY_FLOOR"), defaults.infiniteTrophyFloor ?? 16)
+    ),
+    infiniteGemFloor: Math.max(
+      0,
+      asInt(setting(environment, "INFINITE_GEM_FLOOR"), defaults.infiniteGemFloor ?? 25)
+    ),
+
+    /**
      * How often a running dungeon writes the accounts that changed, in
      * milliseconds; 0 for never. Gold and experience are written when a floor
      * or the run ends and when a player leaves or is dropped — this is for the

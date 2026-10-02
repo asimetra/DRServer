@@ -6,7 +6,12 @@ import { hitPointsUpdate } from "./combat.js";
 import { CLID, OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 import { buffMultiplierFor } from "./buffs.js";
-import { infiniteFloorGold, infiniteProgressFor, infiniteTrophiesFor } from "../infinite.js";
+import {
+  claimInfiniteGems,
+  claimInfiniteTrophy,
+  infiniteFloorGold,
+  infiniteProgressFor,
+} from "../infinite.js";
 import { followRunSave } from "./run-saves.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { config } from "../config.js";
@@ -351,10 +356,29 @@ export const awardInfiniteFloor = (session) => {
   session.infiniteAwardedFloors.add(floorNumber);
 
   const gold = infiniteFloorGold(definition, floorNumber);
-  const gems = floorNumber === Number(definition.GemFloor)
-    ? rewardAmount(definition.GemRewardAmount)
-    : 0;
-  const trophy = floorNumber === Number(definition.TrophyFloor) ? 1 : 0;
+  /**
+   * The trophy and the gems, each claimed and remembered.
+   *
+   * Both were paid on the floor number alone, with nothing recording that
+   * either had been given — so every run that got deep enough was paid again,
+   * a trophy a night and twenty-five gems with it, on any of the nine nodes.
+   * The chests below were always claimed once and remembered; these two were
+   * simply left out of it.
+   *
+   * The rule is the maintainer's, from the game as it was played: a hero earns
+   * the trophy once, ever, and the gems once a week. So are the floors, which
+   * are settings — 16 and 25 — because the table's own `TrophyFloor` and
+   * `GemFloor` say 25 and 20; zero hands a floor back to the table. How many
+   * gems is still the table's `GemRewardAmount`.
+   */
+  const hero = session.dungeonAvatar?.id ?? session.heroDoid;
+  const trophyFloor = config.infiniteTrophyFloor || Number(definition.TrophyFloor);
+  const gemFloor = config.infiniteGemFloor || Number(definition.GemFloor);
+  const gems =
+    floorNumber === gemFloor && claimInfiniteGems(account, hero, session.infiniteEpoch)
+      ? rewardAmount(definition.GemRewardAmount)
+      : 0;
+  const trophy = floorNumber === trophyFloor && claimInfiniteTrophy(account, hero) ? 1 : 0;
   const reward = [1, 2, 3, 4]
     .map((slot) => ({
       dooberId: Number(definition[`Reward${slot}`] ?? 0),
@@ -370,10 +394,7 @@ export const awardInfiniteFloor = (session) => {
     epoch: session.infiniteEpoch,
     create: true,
   });
-  if (trophy) {
-    account.infinite_progress.trophies = infiniteTrophiesFor(account) + trophy;
-    account.trophies = rewardAmount(account.trophies) + trophy;
-  }
+  if (trophy) account.trophies = rewardAmount(account.trophies) + trophy;
   // Reaching a room, rather than clearing it, owns the score. Keep this max as
   // a compatibility guard for callers that award a synthetic floor without
   // first building its world; production records it in noteInfiniteFloorReached.

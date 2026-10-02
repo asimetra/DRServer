@@ -538,6 +538,13 @@ those are settings:
 | Setting | Default | What it is |
 |---|---|---|
 | `ODS_TROPHY_GEMS` | 25 | Gems paid with a boss trophy, the first time that boss is beaten |
+| `ODS_INFINITE_TROPHY_FLOOR` | 16 | The Infinite dungeon floor that pays a hero its trophy — once per hero, ever |
+| `ODS_INFINITE_GEM_FLOOR` | 25 | The Infinite dungeon floor that pays a hero its gems — once per hero each week |
+
+The game's table names floors of its own for the two Infinite ones (25 and
+20); setting either to `0` uses the table's. How many gems the Infinite floor
+pays is the table's. A week turns on Tuesday at 08:00 UTC, which is when the
+client's own countdown ends.
 
 What a new account starts with — gold, gems, keys, bag size, its first hero and
 weapon — is `config/account-template.json`, or a file of your own named by

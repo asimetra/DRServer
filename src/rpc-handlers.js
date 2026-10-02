@@ -1,4 +1,5 @@
 import { register } from "./rpc.js";
+import { EPOCH_DURATION_SECONDS, EPOCH_OFFSET_SECONDS } from "./infinite.js";
 import { issueToken } from "./auth.js";
 import {
   isRemoteAccountCopy,
@@ -152,22 +153,18 @@ register("account/addAccountBits", async ([accountId, , rawFlags]) => {
 });
 
 /**
- * Epoch parameters, taken from a live capture of the official server rather
- * than guessed: a one-week window offset by 40 hours. The offset is what lines
- * the reset up with the operator's chosen boundary, so a zero here would drift
- * every recurring window in the game.
- */
-const EPOCH_DURATION = 604800;
-const EPOCH_OFFSET = 144000;
-
-/**
  * GameClock.finishSetWebServerTime reads this positionally:
  *   [0] W3C-DTF timestamp, [1] epoch duration (s), [2] epoch offset (s).
- * The epoch pair drives recurring windows such as weekly resets; the client's
+ * The epoch pair drives recurring windows such as weekly resets — see
+ * infinite.js, which counts this server's weeks by the same pair; the client's
  * own defaults are one week with no offset. Returning null here segfaults the
  * client, which indexes result[0] without a null check.
  */
-const webServerTimestamp = () => [new Date().toISOString(), EPOCH_DURATION, EPOCH_OFFSET];
+const webServerTimestamp = () => [
+  new Date().toISOString(),
+  EPOCH_DURATION_SECONDS,
+  EPOCH_OFFSET_SECONDS,
+];
 
 register("storeGetWebServerTimestamp/getWebServerTimestamp", webServerTimestamp, { account: null });
 register("webMagicWord/getWebServerTimestamp", webServerTimestamp, { account: null });

@@ -172,12 +172,12 @@ test("cleared Infinite floors pay capped coins and authored milestones once", as
   assert.equal(awardInfiniteFloor(session), null, "one floor paid twice");
   session.floorIndex = 2;
   assert.equal(awardInfiniteFloor(session).reward, 30104);
-  session.floorIndex = 19;
-  assert.equal(awardInfiniteFloor(session).gems, 25);
+  session.floorIndex = 15;
+  assert.equal(awardInfiniteFloor(session).trophy, 1, "the trophy is the sixteenth floor's");
   session.floorIndex = 24;
   const last = awardInfiniteFloor(session);
   assert.equal(last.gold, 3000, "coin cap was ignored");
-  assert.equal(last.trophy, 1);
+  assert.equal(last.gems, 25, "and the gems are the twenty-fifth's");
   await session.rewardSavePromise;
 
   assert.equal(account.basic_currency, 1000 + 600 + 1200 + 3000 + 3000);
@@ -248,4 +248,114 @@ test("entering an Infinite room records it even when that room is lost", async (
     4,
     "a defeat on room four must remain a score of four"
   );
+});
+
+/**
+ * What an Infinite dungeon pays beyond its chests, and how often.
+ *
+ * The trophy and the gems were paid on the floor number alone. Nothing recorded
+ * that either had been given, so every run that got deep enough was paid again:
+ * a trophy a night for as long as anybody cared to, and twenty-five gems with
+ * it — the only place this server raised the premium currency at all. The
+ * chests in the same function were already claimed once and remembered.
+ *
+ * The maintainer's rule, from the game as it was played: the trophy is the
+ * sixteenth floor's and a hero earns it once, ever; the gems are the
+ * twenty-fifth's and a hero earns them once a week. The table's own columns
+ * say 25 and 20, so the floors are settings — these are their defaults — and
+ * zero hands a floor back to the table.
+ */
+const infiniteRun = async ({ account, avatar = 1200, epoch = 2957, node = 50150 }) => {
+  const gm = await loadGameMaster();
+  return {
+    id: 60,
+    playerDoid: 60,
+    heroDoid: 600,
+    mapNodeId: node,
+    dungeonAvatar: { id: avatar },
+    infiniteEpoch: epoch,
+    infiniteDefinition: gm.raw.InfiniteDungeons[0],
+    dungeonAccount: account,
+    dungeonRewards: { gold: 0, gems: 0, xp: 0 },
+    dungeonTreasures: [],
+    persistDungeonAccount: async () => {},
+    send: () => {},
+  };
+};
+
+const reach = (session, floorNumber) => {
+  session.floorIndex = floorNumber - 1;
+  return awardInfiniteFloor(session);
+};
+
+test("a hero earns the Infinite trophy once, on the sixteenth floor, and never again", async () => {
+  const account = { id: 60, basic_currency: 0, premium_currency: 0, trophies: 3 };
+
+  assert.equal(reach(await infiniteRun({ account }), 15).trophy, 0);
+  assert.equal(reach(await infiniteRun({ account }), 16).trophy, 1);
+  assert.equal(account.trophies, 4);
+
+  // Another night, another week, another of the nine nodes: the same hero.
+  assert.equal(reach(await infiniteRun({ account }), 16).trophy, 0);
+  assert.equal(reach(await infiniteRun({ account, epoch: 2958 }), 16).trophy, 0);
+  assert.equal(reach(await infiniteRun({ account, node: 50162 }), 16).trophy, 0);
+  assert.equal(account.trophies, 4, "one hero, one trophy");
+
+  // A different hero has its own to earn.
+  assert.equal(reach(await infiniteRun({ account, avatar: 1201 }), 16).trophy, 1);
+  assert.equal(account.trophies, 5);
+  assert.equal(account.infinite_progress.trophies, 2);
+});
+
+test("a hero earns the Infinite gems once a week, on the twenty-fifth floor", async () => {
+  const account = { id: 61, basic_currency: 0, premium_currency: 0, trophies: 0 };
+
+  assert.equal(reach(await infiniteRun({ account }), 20).gems, 0, "not the table's twentieth");
+  assert.equal(reach(await infiniteRun({ account }), 25).gems, 25);
+  assert.equal(reach(await infiniteRun({ account }), 25).gems, 0, "not twice in a week");
+  assert.equal(reach(await infiniteRun({ account, node: 50162 }), 25).gems, 0, "on whichever node");
+  assert.equal(account.premium_currency, 25);
+
+  assert.equal(reach(await infiniteRun({ account, avatar: 1201 }), 25).gems, 25, "another hero's are its own");
+  assert.equal(reach(await infiniteRun({ account, epoch: 2958 }), 25).gems, 25, "and next week they come again");
+  assert.equal(account.premium_currency, 75);
+});
+
+test("the Infinite reward floors are settings, and zero hands one back to the table", async () => {
+  const { config, loadServerConfig } = await import("../src/config.js");
+  assert.equal(loadServerConfig({}).infiniteTrophyFloor, 16);
+  assert.equal(loadServerConfig({}).infiniteGemFloor, 25);
+  assert.equal(loadServerConfig({ ODS_INFINITE_TROPHY_FLOOR: "30" }).infiniteTrophyFloor, 30);
+
+  const usual = [config.infiniteTrophyFloor, config.infiniteGemFloor];
+  try {
+    config.infiniteTrophyFloor = 0;
+    config.infiniteGemFloor = 0;
+    const account = { id: 62, basic_currency: 0, premium_currency: 0, trophies: 0 };
+    assert.equal(reach(await infiniteRun({ account }), 16).trophy, 0);
+    assert.equal(reach(await infiniteRun({ account }), 25).trophy, 1, "the table's TrophyFloor");
+    assert.equal(reach(await infiniteRun({ account }), 20).gems, 25, "the table's GemFloor");
+  } finally {
+    [config.infiniteTrophyFloor, config.infiniteGemFloor] = usual;
+  }
+});
+
+/**
+ * The client is told when a week turns — a week of seven days, offset by forty
+ * hours, as the official's clock was recorded — and counts weeks by it. This
+ * server counted its own from the Unix epoch with no offset, so for forty hours
+ * of every week the two were in different weeks: the map's countdown reached
+ * zero on Tuesday morning and the scores it promised to reset stayed until
+ * Thursday.
+ */
+test("the server's week turns when the client's does", async () => {
+  const { infiniteEpoch, EPOCH_DURATION_SECONDS, EPOCH_OFFSET_SECONDS } = await import("../src/infinite.js");
+  // GameClock.getEpoch: int((seconds + offset) / duration).
+  const clientEpoch = (ms) => Math.floor((ms / 1000 + EPOCH_OFFSET_SECONDS) / EPOCH_DURATION_SECONDS);
+
+  const turn = Date.UTC(2026, 9, 6, 8, 0, 0); // a Tuesday, 08:00 UTC
+  assert.equal(infiniteEpoch(turn) - infiniteEpoch(turn - 1), 1, "the week turns there");
+  for (const at of [turn - 1, turn, turn + 3_600_000, Date.UTC(2026, 9, 8, 0, 0, 0), Date.UTC(2026, 9, 9, 12, 0, 0)]) {
+    assert.equal(infiniteEpoch(at), clientEpoch(at), new Date(at).toISOString());
+  }
 });

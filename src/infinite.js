@@ -1,10 +1,60 @@
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * The week, as the client counts it.
+ *
+ * Epoch parameters, taken from a live capture of the official server rather
+ * than guessed: a one-week window offset by 40 hours. The client is sent both
+ * with the server's time and counts weeks as `int((seconds + offset) /
+ * duration)` (GameClock.getEpoch), which turns on Tuesday at 08:00 UTC.
+ *
+ * This server told the client that and then counted its own weeks from the
+ * Unix epoch with no offset, which turn on Thursday at midnight. For forty
+ * hours of every week the two were in different weeks: the map's countdown
+ * reached zero and the scores it promised to reset stayed where they were.
+ * One clock now, here, for the answer the client is given and for everything
+ * this server resets by it.
+ */
+export const EPOCH_DURATION_SECONDS = 604800;
+export const EPOCH_OFFSET_SECONDS = 144000;
 
 /** Trophies earned outside boss-clear masks, kept with Infinite progress. */
 export const infiniteTrophiesFor = (account) =>
   Math.max(0, Math.trunc(Number(account?.infinite_progress?.trophies ?? 0)));
 
-export const infiniteEpoch = (now = Date.now()) => Math.floor(Number(now) / WEEK_MS);
+export const infiniteEpoch = (now = Date.now()) =>
+  Math.floor((Number(now) / 1000 + EPOCH_OFFSET_SECONDS) / EPOCH_DURATION_SECONDS);
+
+const progressRootOf = (account) => {
+  if (!account.infinite_progress || typeof account.infinite_progress !== "object") {
+    account.infinite_progress = {};
+  }
+  return account.infinite_progress;
+};
+
+/**
+ * A hero's Infinite trophy: once, ever, whichever node it was earned on.
+ *
+ * Kept beside the count, by hero, because the count alone could not say who
+ * had been paid — and so everybody was, every run. Returns whether this hero
+ * had it still to earn, and records that it now has.
+ */
+export const claimInfiniteTrophy = (account, avatarId) => {
+  const root = progressRootOf(account);
+  const hero = Number(avatarId);
+  const earned = Array.isArray(root.trophy_heroes) ? root.trophy_heroes.map(Number) : [];
+  if (earned.includes(hero)) return false;
+  root.trophy_heroes = [...earned, hero];
+  root.trophies = infiniteTrophiesFor(account) + 1;
+  return true;
+};
+
+/** A hero's Infinite gems: once in each week, whichever node they were earned on. */
+export const claimInfiniteGems = (account, avatarId, epoch) => {
+  const root = progressRootOf(account);
+  const weeks = root.gem_weeks && typeof root.gem_weeks === "object" ? root.gem_weeks : {};
+  if (Number(weeks[Number(avatarId)]) === Number(epoch)) return false;
+  root.gem_weeks = { ...weeks, [Number(avatarId)]: Number(epoch) };
+  return true;
+};
 
 export const infiniteDefinitionForNode = (gm, node) => {
   if (node?.NodeType !== "INFINITE") return null;
