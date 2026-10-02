@@ -38,7 +38,7 @@ import { beginFloorFailing, checkFloorCleared } from "./floorstate.js";
 import { objectDisable } from "./objects.js";
 import { grantMana, queueAccountSave } from "./rewards.js";
 import { collisionPointOf, hasLineOfSight, isPositionBlocked } from "./navigation.js";
-import { heroMembersOf, matchStateOf, memberForHero, worldOf } from "./match-world.js";
+import { heroMembersOf, heroOnFloor, matchStateOf, memberForHero, worldOf } from "./match-world.js";
 import { npcAttackSpeed, npcAttackSpeedStat } from "./npc-attacks.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
@@ -1630,9 +1630,14 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
       session.dungeonContribution.damage += Math.min(perTick, hitPointsBefore);
       if (actor.dead) {
         session.dungeonContribution.kills += 1;
-        payBusterForKill(session);
+        // The kill counts on the report either way; the Buster it pays is
+        // an update on the hero, which has to still be there to take it.
+        if (heroOnFloor(session)) payBusterForKill(session);
       }
     }
+    // The floater is drawn by the hero owner; a hero that has walked out has
+    // nobody to draw it, though what it set alight goes on burning.
+    if (!heroOnFloor(session)) return;
     session.send(
       buffEffectReport({
         heroDoid: session.heroDoid,
@@ -1874,7 +1879,10 @@ export const performPlaceableAttack = async (
      * proposes a hit and nowhere else, so a scroll that lands through a
      * placeable gave nothing back.
      */
-    if (Number(attack?.ManaPerHit) > 0) grantMana(session, Number(attack.ManaPerHit));
+    // A bomb or a snare left behind goes on working after its hero walks out;
+    // what it would pay the hero has nowhere to go by then.
+    const heroPresent = heroOnFloor(session);
+    if (heroPresent && Number(attack?.ManaPerHit) > 0) grantMana(session, Number(attack.ManaPerHit));
 
     const wasDead = Boolean(victim.actor.dead);
     const before = victim.actor.hitPoints ?? 0;
@@ -1891,7 +1899,7 @@ export const performPlaceableAttack = async (
         session.dungeonContribution.damage += Math.min(damage, before);
         if (!wasDead && victim.actor.dead) {
           session.dungeonContribution.kills += 1;
-          payBusterForKill(session);
+          if (heroPresent) payBusterForKill(session);
         }
       }
       /**

@@ -2,6 +2,7 @@ import { heroById, loadGameMaster } from "../gamemaster.js";
 import { grantMana } from "./rewards.js";
 import { info } from "../log.js";
 import { buffMultiplierFor } from "./buffs.js";
+import { heroOnFloor } from "./match-world.js";
 
 /**
  * Mana coming back on its own.
@@ -64,7 +65,9 @@ export const startManaRegen = async (session) => {
    */
   let carry = 0;
   const timer = setInterval(() => {
-    if (!session.dungeonActive || !session.heroDoid) return;
+    // A hero taken off the floor is sent nothing; see removeHeroFromFloor,
+    // which also stops this clock, and a late joiner's can start after it ran.
+    if (!session.dungeonActive || !heroOnFloor(session)) return;
     const heroActor = session.actors?.get(session.heroDoid);
     if (heroActor?.dead) return;
 

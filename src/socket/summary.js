@@ -48,6 +48,7 @@ export const removeHeroFromFloor = (session) => {
       world.objects.delete(owner.heroDoid);
       world.actors.delete(owner.heroDoid);
       owner.objects?.delete(owner.heroDoid);
+      stopHeroUpkeep(owner);
     }
     return true;
   }
@@ -55,7 +56,22 @@ export const removeHeroFromFloor = (session) => {
   if (!doid || !session.objects?.has(doid)) return false;
   session.objects.delete(doid);
   session.send(objectDisable(doid, true));
+  stopHeroUpkeep(session);
   return true;
+};
+
+/**
+ * Ends what only exists to keep a standing hero topped up.
+ *
+ * The floor runs on for five seconds after a party walks out, and Mana kept
+ * arriving on its clock for a hero that was no longer there. The official sends
+ * a removed hero nothing at all; the other things that used to reach one — a
+ * burn's floater, Buster and Mana for what a bomb left behind kills — ask
+ * `heroOnFloor` where they are sent.
+ */
+const stopHeroUpkeep = (member) => {
+  member.stopManaRegen?.();
+  member.stopManaRegen = null;
 };
 
 

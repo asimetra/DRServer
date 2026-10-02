@@ -815,6 +815,22 @@ export const worldOf = (value) => {
   return isMatchWorld(viaMatch) ? viaMatch : null;
 };
 
+/**
+ * Whether the client still holds this member's hero.
+ *
+ * `heroDoid` does not say: it names the hero for the whole run, and the hero
+ * leaves the floor before the run is over — at once when the party walks out,
+ * five seconds ahead of the report. The object table is what removeHeroFromFloor
+ * clears and so the only thing that knows; anything addressed to the hero after
+ * that is an update for an object the client has already destroyed.
+ */
+export const heroOnFloor = (session) => {
+  const doid = session?.heroDoid;
+  if (!doid) return false;
+  const objects = worldOf(session)?.objects ?? session.objects;
+  return Boolean(objects?.has(doid));
+};
+
 /** Explicit shared-state ownership; standalone sessions remain their own state. */
 export const matchStateOf = (value) => {
   if (isMatchState(value)) return value;

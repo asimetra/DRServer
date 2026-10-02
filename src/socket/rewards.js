@@ -382,12 +382,15 @@ export const awardDungeonCompletion = async (session) => {
 
   session.completionXpBonus = experience;
   session.completionTeamXpBonus = teamExperience;
+  /**
+   * Banked, and not announced on the hero. The report carries both lines and
+   * the client counts the bar up from `completionXpBase`; the official sends no
+   * experience update after dungeonEnding on any of 47 recorded endings. By now
+   * a party that walked out has no hero on the floor to send one to.
+   */
   if (avatar) {
     session.completionXpBase = rewardAmount(avatar.experience);
     avatar.experience = session.completionXpBase + experience + teamExperience;
-    if ((experience || teamExperience) && session.heroDoid) {
-      session.send?.(heroExperienceUpdate(session.heroDoid, avatar.experience));
-    }
   }
 
   session.dungeonRewards ??= { gold: 0, gems: 0, xp: 0 };

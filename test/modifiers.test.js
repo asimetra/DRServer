@@ -153,7 +153,7 @@ test("a crit reaches the client as double damage, flagged", async () => {
       dungeonAvatar: { avatar_id: 104, experience: 0 },
       heroWeapons: [{ type: KATANA, power: 30, modifier1: 70111 }], // Critical L1
       random,
-      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
       actors: new Map([[ENEMY, {
         hitPoints: 500000, maxHitPoints: 500000, collisionRadius: 25,
         constant: "BRUTE", isEnemy: true, position: { x: 1050, y: 1000 },
@@ -232,7 +232,7 @@ const arena = async (weapon) => {
     dungeonAvatar: { avatar_id: 104, experience: 0 },
     heroWeapons: [weapon],
     random: () => 1, // never crits, so the damage assertions stay readable
-    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
     actors: new Map([[ENEMY, {
       hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
       constant: "BRUTE", isEnemy: true, position: { x: 1050, y: 1000 },
@@ -974,7 +974,7 @@ test("a placed bomb burns with the modifiers of the weapon that threw it", async
       dungeonAvatar: { avatar_id: 104, experience: 0 },
       heroWeapons: [weapon ?? {}],
       random: () => 1,
-      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
       actors: new Map([[ENEMY, actor]]),
       allocateDoid: () => 901,
       send: () => {},
@@ -1018,7 +1018,7 @@ test("a bomb crits when the weapon that threw it can, and not otherwise", async 
       id: 46, heroDoid: 500, floorDoid: 400, dungeonActive: true,
       dungeonAvatar: { avatar_id: 104, experience: 0 },
       heroWeapons: [weapon ?? {}], random,
-      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
       actors: new Map([[ENEMY, actor]]),
       allocateDoid: () => 901,
       send: (packet) => sent.push(packet),
@@ -1131,7 +1131,7 @@ test("a Sticky bomb roots whatever its fire catches, not only what it struck", a
       id: 48, heroDoid: 500, floorDoid: 400, dungeonActive: true, dungeonZone: 10,
       dungeonAvatar: { avatar_id: 104, experience: 0 },
       heroWeapons: [weapon ?? {}], random: () => 1,
-      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
       actors: new Map([[ENEMY, actor]]),
       allocateDoid: () => ++nextDoid, send: () => {},
     };
@@ -1188,7 +1188,7 @@ test("the fire a bomb leaves keeps the weapon that lit it", async (t) => {
     heroPosition: { x: 1000, y: 1000 }, heroHeading: 0,
     dungeonAvatar: { avatar_id: 104, experience: 0 },
     heroWeapons: [weapon],
-    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
     // Something for the blast to catch, or it never performs and never chains.
     actors: new Map([[ENEMY, {
       hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
@@ -1357,7 +1357,7 @@ test("a knocked-back monster is actually moved, and a Trapper pulls it in", asyn
     const session = {
       id: 50, heroDoid: HERO, floorDoid: 400, dungeonActive: true,
       heroPosition: { x: 1000, y: 1000 },
-      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
       actors: new Map([
       [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
         [ENEMY, victim],
@@ -1403,7 +1403,7 @@ test("swinging a Trapper weapon drags the monster in", async () => {
       heroManaPoints: 1000, maxHeroManaPoints: 1000, dungeonBusterPoints: 0,
       dungeonAvatar: { avatar_id: 104, experience: 0 },
       heroWeapons: [weapon], random: () => 1,
-      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
       actors: new Map([
         [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
         [ENEMY, victim],
@@ -1463,7 +1463,7 @@ test("a blocked hit clears forged modifier flags and does not reposition the vic
     dungeonAvatar: { avatar_id: 104, experience: 0 },
     heroWeapons: [{ type: 12502, power: 30, modifier1: BLASTBACK }],
     random: () => 1,
-    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
     actors: new Map([
       [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
       [ENEMY, victim],
@@ -1524,7 +1524,7 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
     dungeonAvatar: { avatar_id: 104, experience: 0 },
     heroWeapons: [{ type: mallet.Id, power: 30, modifier1: BLASTBACK }],
     random: () => 1,
-    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
     actors: new Map([
       [HERO, { position: { x: 1000, y: 1000 }, collisionRadius: 22 }],
       [ENEMY, victim],
@@ -1570,7 +1570,7 @@ test("a placeable's hits count on the report, pay Mana and drop food", async () 
       heroManaPoints: 10, maxHeroManaPoints: 200,
       dungeonAvatar: { avatar_id: 104, experience: 0 },
       heroWeapons: [weapon ?? {}], random: () => 0,
-      objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+      objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
       actors: new Map([[ENEMY, actor]]),
       allocateDoid: () => ++nextDoid,
       sent, send: (packet) => sent.push(packet),
@@ -1749,7 +1749,7 @@ test("Buster Gen pays a point for a kill, and stops at the bar's top", async () 
     dungeonAvatar: { avatar_id: 104, experience: 0 },
     heroWeapons: [{ type: 12502, power: 30, legendarymodifier: 7 }],
     random: () => 1,
-    objects: new Map([[ENEMY, CLID.DistributedNPCGameObject]]),
+    objects: new Map([[500, CLID.HeroGameObject], [ENEMY, CLID.DistributedNPCGameObject]]),
     actors: new Map([[ENEMY, actor]]),
     allocateDoid: () => 901, send: () => {},
   };

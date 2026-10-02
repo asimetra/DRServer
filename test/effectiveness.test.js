@@ -181,7 +181,11 @@ test("a burn ticks twice as hard on a monster weak to fire, and flashes", async 
       dungeonActive: true,
       floorDoid: 55,
       allocateDoid: () => 900,
-      objects: new Map([[20, CLID.DistributedNPCGameObject]]),
+      // The floater goes to the hero owner, so the hero has to be on the floor.
+      objects: new Map([
+        [10, CLID.HeroGameObject],
+        [20, CLID.DistributedNPCGameObject],
+      ]),
       actors: new Map([
         [20, {
           hitPoints: 100_000,

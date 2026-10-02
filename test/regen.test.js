@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { loadGameMaster } from "../src/gamemaster.js";
 import { manaRegenFor, startManaRegen } from "../src/socket/regen.js";
+import { CLID } from "../src/socket/opcodes.js";
 
 test("the authored regen is the hero's own, and training feeds three of them", async () => {
   const gm = await loadGameMaster();
@@ -40,6 +41,8 @@ test("mana arrives on the game's clock, not a second's", async (t) => {
   const session = {
     id: 80,
     heroDoid: 500,
+    // Regeneration is for a hero standing on the floor.
+    objects: new Map([[500, CLID.HeroGameObject]]),
     dungeonActive: true,
     heroManaPoints: 0,
     maxHeroManaPoints: 200,
@@ -68,6 +71,8 @@ test("a fractional trained rate is carried between ticks rather than rounded awa
   const session = {
     id: 81,
     heroDoid: 500,
+    // Regeneration is for a hero standing on the floor.
+    objects: new Map([[500, CLID.HeroGameObject]]),
     dungeonActive: true,
     heroManaPoints: 0,
     maxHeroManaPoints: 500,
@@ -92,6 +97,8 @@ test("a live MP_REGEN buff multiplies the server's mana ticks", async (t) => {
   const session = {
     id: 82,
     heroDoid: HERO,
+    // Regeneration is for a hero standing on the floor.
+    objects: new Map([[HERO, CLID.HeroGameObject]]),
     dungeonActive: true,
     heroManaPoints: 0,
     maxHeroManaPoints: 200,
@@ -113,6 +120,8 @@ test("mana comes back on its own, and stops when the hero is down", async () => 
   const session = {
     id: 80,
     heroDoid: 500,
+    // Regeneration is for a hero standing on the floor.
+    objects: new Map([[500, CLID.HeroGameObject]]),
     dungeonActive: true,
     heroManaPoints: 0,
     maxHeroManaPoints: 200,
