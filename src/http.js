@@ -193,7 +193,9 @@ const handle = async (req, res, { routeTable, rateLimited, callers, quiet = fals
     req.headers["x-forwarded-for"],
     trustedFrom(config.trustedProxies)
   );
-  if (rateLimited && !withinRate(address, Date.now(), callers)) {
+  // A listener may say which callers it counts at all (see listen).
+  const counted = typeof rateLimited === "function" ? rateLimited(req) : rateLimited;
+  if (counted && !withinRate(address, Date.now(), callers)) {
     warn(`rate limit: ${address} on ${req.method} ${url.pathname}`);
     count("http_rate_limited");
     req.destroy();
@@ -259,7 +261,8 @@ const handle = async (req, res, { routeTable, rateLimited, callers, quiet = fals
  * `rateLimited` is the one thing they disagree about. The player-facing limit
  * is calibrated per address against what a game client does, and a web front
  * end is a single address making every call there is; measuring it against a
- * budget meant for one player would refuse it under ordinary load.
+ * budget meant for one player would refuse it under ordinary load. It may be a
+ * function of the request, for a listener that counts only some callers.
  */
 export const listen = ({
   routeTable,

@@ -54,6 +54,7 @@ const usualAdmins = config.adminAccounts;
 before(async () => {
   admin = await register();
   player = await register();
+  await call("POST", "/internal/v1/accounts", { body: { name: "Lookupable" } });
   config.adminAccounts = [admin];
 });
 
@@ -93,6 +94,8 @@ const ADMIN_ROUTES = [
   ["GET", () => "/internal/v1/online"],
   ["GET", () => "/internal/v1/restrictions"],
   ["GET", () => "/internal/v1/admin-actions"],
+  ["GET", () => "/internal/v1/players/Lookupable/account"],
+  ["GET", () => "/internal/v1/match-workers"],
 ];
 
 test("an administrative call names the admin making it, or is refused", async () => {
@@ -231,4 +234,28 @@ test("the restricted accounts, with why and until when", async () => {
   assert.equal(row.restriction.reason, "a");
   assert.equal(row.restriction.until, until);
   assert.ok("name" in row);
+});
+
+/**
+ * A profile is addressed by name and leaves the account id out on purpose; an
+ * admin acting on a player they only know by name needs the id, and whether
+ * they are restricted or online, before doing anything.
+ */
+test("an admin finds an account by its name", async () => {
+  const found = await call("GET", "/internal/v1/players/lookupable/account", { actor: admin });
+  assert.equal(found.status, 200);
+  const body = await found.json();
+  assert.equal(body.name, "Lookupable");
+  assert.ok(Number.isSafeInteger(body.account_id));
+  assert.equal(body.restriction, null);
+  assert.equal(body.online, false);
+
+  assert.equal((await call("GET", "/internal/v1/players/Nobody%20Here/account", { actor: admin })).status, 404);
+});
+
+/** The website shows its admin pages to admins; the rule is this server's, so it says. */
+test("an account's summary says whether it is an admin", async () => {
+  const summary = async (id) => (await (await call("GET", `/internal/v1/accounts/${id}/summary`)).json()).admin;
+  assert.equal(await summary(admin), true);
+  assert.equal(await summary(player), false);
 });

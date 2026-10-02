@@ -117,3 +117,39 @@ test("the limit an operator sets is the limit that applies", async () => {
   assert.equal(loadServerConfig({ ODS_HTTP_RATE_LIMIT: "2000" }).httpRateLimit, 2000);
   assert.equal(loadServerConfig({ ODS_HTTP_RATE_LIMIT: "0" }).httpRateLimit, 1, "never none at all");
 });
+
+/**
+ * The website is one address making every call its visitors cause, so a budget
+ * per address was a budget for the whole site: a few busy visitors and every
+ * player's market, profile and sign-up failed for the rest of the window. The
+ * internal API limits what it is protecting against — callers without the
+ * token — and lets the holder of the token through.
+ */
+test("a listener can leave its trusted callers out of the count", async (t) => {
+  const { listen } = await import("../src/http.js");
+  const routeTable = [
+    { method: "GET", pattern: "/ping", handler: () => ({ status: 200, headers: {}, body: "pong" }) },
+  ];
+  const server = listen({
+    routeTable,
+    host: "127.0.0.1",
+    port: 0,
+    rateLimit: 3,
+    rateLimited: (req) => req.headers["x-key"] !== "trusted",
+  });
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}/ping`;
+  const answered = (headers = {}) =>
+    fetch(url, { headers: { connection: "close", ...headers } }).then(
+      (response) => response.status === 200,
+      () => false
+    );
+
+  const trusted = [];
+  for (let i = 0; i < 6; i++) trusted.push(await answered({ "x-key": "trusted" }));
+  assert.deepEqual(trusted, [true, true, true, true, true, true], "never counted");
+  const strangers = [];
+  for (let i = 0; i < 5; i++) strangers.push(await answered());
+  assert.deepEqual(strangers, [true, true, true, false, false], "everybody else is");
+});

@@ -81,6 +81,13 @@ const json = (body, status = 200) => ({
  */
 const digest = (value) => createHash("sha256").update(String(value)).digest();
 
+/** Whether a call carries the internal token, quietly: the rate limit asks every call. */
+const holdsInternalToken = (req) => {
+  const offered = req.headers?.["x-internal-token"];
+  return typeof offered === "string" && offered !== "" &&
+    timingSafeEqual(digest(offered), digest(config.internalToken));
+};
+
 const authorise = (req) => {
   const offered = req.headers?.["x-internal-token"];
   if (typeof offered !== "string" || !offered) {
@@ -122,6 +129,10 @@ const accountExists = async (id) => (await listAccountIds()).includes(id);
  * It cannot stop a website that has been taken over from naming a real admin:
  * that is what keeping the internal API off the internet is for.
  */
+/** The chat commands' rule: named in ODS_ADMIN_ACCOUNTS, or holding the rank. */
+const isAdmin = (id, account) =>
+  Boolean(account) && (config.adminAccounts?.includes(id) || roleOf(account) >= ROLE.ADMIN);
+
 const actingAdmin = async (req, { self = null } = {}) => {
   const refusal = authorise(req);
   if (refusal) return { refusal };
@@ -136,8 +147,7 @@ const actingAdmin = async (req, { self = null } = {}) => {
   const account = await loadExistingAccount(actor);
   // Some calls an account may make about itself: deleting it, for one.
   if (self !== null && actor === self && account) return { actor };
-  const admin = account && (config.adminAccounts?.includes(actor) || roleOf(account) >= ROLE.ADMIN);
-  if (!admin) {
+  if (!isAdmin(actor, account)) {
     warn(`internal: refused an administrative call by account ${actor}, which is not an admin`);
     return { refusal: json({ error: `account ${actor} is not an admin` }, 403) };
   }
@@ -528,6 +538,9 @@ const readSummary = async (req, [capture]) => {
     clears: standings.clears ?? 0,
     /* For the website to tell the player why and until when: the client cannot. */
     restriction: restrictionOf(account),
+    /* Whether to offer the admin pages. Only an offer: every admin call is
+       checked again here, by X-Acting-Account. */
+    admin: isAdmin(account.id, account),
     /* Same answer as the profile's, and by the same reasoning. */
     experience_total: (account.account_avatars ?? []).reduce(
       (total, avatar) => total + Number(avatar.experience ?? 0),
@@ -1073,9 +1086,12 @@ const readStatus = async (req) => {
   });
 };
 
-/** GET /internal/v1/match-workers — how the matches are spread, when workers run them. */
+/**
+ * GET /internal/v1/match-workers — how the matches are spread, when workers run them.
+ * An admin's question, asked from the same page that restarts one.
+ */
 const readMatchWorkers = async (req) => {
-  const refusal = authorise(req);
+  const { refusal } = await actingAdmin(req);
   if (refusal) return refusal;
   const pool = activeMatchWorkerPool();
   if (!pool) return json({ workers: [], enabled: false });
@@ -1242,6 +1258,28 @@ const removeAccount = async (req, [capture]) => {
   return json({ accountId: id, deleted: true });
 };
 
+/**
+ * GET /internal/v1/players/:name/account — the account behind a name, for an admin.
+ *
+ * The profile leaves the account id out on purpose; an admin acting on a player
+ * they only know by name needs it, and whether they are already restricted or
+ * online, before doing anything.
+ */
+const findAccountByName = async (req, [capture]) => {
+  const { refusal } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const id = await accountIdNamed(capture ?? "", { listAccountIds, loadAccount });
+  if (id === null) return json({ error: "no such player" }, 404);
+  const account = await loadExistingAccount(id);
+  if (!account) return json({ error: "no such player" }, 404);
+  return json({
+    account_id: id,
+    name: account.name ?? null,
+    restriction: restrictionOf(account),
+    online: activeSessions().some((session) => session.accountId === id),
+  });
+};
+
 /** GET /internal/v1/restrictions — the accounts restricted now, why and until when. */
 const readRestrictions = async (req) => {
   const { refusal } = await actingAdmin(req);
@@ -1267,6 +1305,7 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/announcements", handler: makeAnnouncement },
   { method: "GET", pattern: "/internal/v1/online", handler: readOnline },
   { method: "GET", pattern: "/internal/v1/restrictions", handler: readRestrictions },
+  { method: "GET", pattern: "/internal/v1/players/:name/account", handler: findAccountByName },
   { method: "GET", pattern: "/internal/v1/admin-actions", handler: readAdminActions },
   { method: "GET", pattern: "/internal/v1/match-workers", handler: readMatchWorkers },
   { method: "POST", pattern: "/internal/v1/match-workers/:index/restart", handler: restartMatchWorker },
@@ -1345,10 +1384,12 @@ export const start = () => {
     routeTable: internalRoutes,
     host: config.internalHost,
     port: config.internalPort,
-    // DRWeb itself admits at most 300 requests per minute, while this listener
-    // allows 320 per ten seconds. Normal proxy traffic therefore has ample
-    // room, but a leaked/guessed-token flood no longer has an unlimited path.
-    rateLimited: true,
+    // Callers without the token are limited per address, so guessing at it
+    // or flooding without it is cut off. The website holds the token and is
+    // one address making every call its visitors cause: counted, a few busy
+    // visitors used up the budget and every player's calls failed until the
+    // window turned. It has its own per-visitor limits.
+    rateLimited: (req) => !holdsInternalToken(req),
     onReady: () =>
       info(`internal API listening on http://${config.internalHost}:${config.internalPort}`),
   });

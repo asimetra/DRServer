@@ -137,6 +137,11 @@ ODS_HTTP_RATE_LIMIT=2000                  # requests per address per ten seconds
 ODS_MAX_SOCKET_CONNECTIONS_PER_IP=500     # game sockets per address (default 64)
 ```
 
+The internal API has its own count with the same limit, but it counts only calls
+without the internal token. The website holds the token and is one address
+making every call its visitors cause, so it is not counted; it limits its own
+visitors.
+
 ## Player credentials
 
 The compatible client has no login screen. It reads `AccountId` and
@@ -198,7 +203,7 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 | `POST /internal/v1/accounts` | Register an account and return its id and token |
 | `GET /internal/v1/accounts/:id` | Read the account as the client receives it |
 | `DELETE /internal/v1/accounts/:id` | Delete an account (see [Deleting an account](#deleting-an-account)) |
-| `GET /internal/v1/accounts/:id/summary` | Read a web-ready account and active-hero summary |
+| `GET /internal/v1/accounts/:id/summary` | Read a web-ready account and active-hero summary, with its restriction and whether it is an admin |
 | `GET /internal/v1/accounts/:id/inventory` | Read items eligible for web inventory/market views |
 | `POST /internal/v1/accounts/:id/token` | Issue a replacement token |
 | `DELETE /internal/v1/accounts/:id/token` | Invalidate the account's issued tokens |
@@ -213,6 +218,7 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 | `POST /internal/v1/accounts/:id/disconnect` | Disconnect a player (`{"reason": "…"}` is optional) |
 | `GET /internal/v1/admin-actions` | What admins did, newest first (`?limit=`, `?account=`) |
 | `GET /internal/v1/players/:name` | Read a public player profile by name |
+| `GET /internal/v1/players/:name/account` | For an admin: the account id behind a name, its restriction, and whether it is online |
 | `GET /internal/v1/leaderboards/:metric` | Read a paged leaderboard |
 | `POST /internal/v1/trades` | Move weapons and gold atomically between two accounts |
 | `GET /internal/v1/market` | Search paged listings with item details and facets |
@@ -235,9 +241,10 @@ admin making them, in an `X-Acting-Account` header:
 
 - restricting an account and lifting a restriction;
 - closing and opening the dungeons, and announcements;
-- the list of who is online, disconnecting a player, the list of restrictions;
+- the list of who is online, disconnecting a player, the list of restrictions,
+  and finding the account behind a name;
 - the action log;
-- restarting a match worker.
+- the list of match workers, and restarting one.
 
 The account named there must be an admin by the same rule the chat commands use:
 listed in `ODS_ADMIN_ACCOUNTS`, or holding the admin rank. Otherwise the call is
