@@ -499,10 +499,44 @@ const findItem = (account, itemInstanceId) =>
   (account.account_items ?? []).find((item) => item.id === Number(itemInstanceId));
 
 /** params: [accountId, avatarInstanceId, itemInstanceId, equipSlot, token] */
+/**
+ * Whether this hero may hold this weapon in this slot, or why not.
+ *
+ * The client's own rules (DBInventoryInfo.canThisAvatarEquipThisItem): the
+ * hero's class allows the weapon's master type, and the hero is at least the
+ * weapon's required level. Its inventory screen will not ask for anything else,
+ * so these refuse only a client that is not the game's — which could otherwise
+ * put a sword in an archer's hand or a level-90 weapon on a level-3 hero, and
+ * have a dungeon fight with it. Four slots, as a dungeon reads them
+ * (socket/dungeon.js weaponsForAvatar).
+ */
+const EQUIP_SLOTS = 4;
+const equipProblem = (gm, account, avatarId, item, slot) => {
+  const avatar = (account.account_avatars ?? []).find((row) => row.id === Number(avatarId));
+  if (!avatar) return `no hero ${avatarId} on account ${account.id}`;
+  const index = Number(slot);
+  if (!Number.isInteger(index) || index < 0 || index >= EQUIP_SLOTS) return `slot ${slot} is not a weapon slot`;
+  const hero = gm.heroById.get(Number(avatar.avatar_id));
+  const weapon = gm.weaponById.get(Number(item.item_id));
+  if (!hero || !weapon) return `unknown hero ${avatar.avatar_id} or weapon ${item.item_id}`;
+  if (!weapon.Mastertype || !hero[weapon.Mastertype]) {
+    return `${hero.Constant ?? hero.Id} cannot use ${weapon.Mastertype ?? "this weapon"}`;
+  }
+  const level = heroLevel(gm, hero, avatar.experience ?? 0);
+  const required = Number(item.requiredlevel ?? 1);
+  if (level < required) return `hero is level ${level}, the weapon needs level ${required}`;
+  return null;
+};
+
 register("avatarmanager/equipItemOnAvatar", async ([accountId, avatarId, itemId, slot]) => {
   const account = await loadAccount(Number(accountId));
   const item = findItem(account, itemId);
   if (!item) throw new Error(`no item ${itemId} on account ${accountId}`);
+  const problem = equipProblem(await loadGameMaster(), account, avatarId, item, slot);
+  if (problem) {
+    warn(`rpc: refused to equip item ${itemId} on account ${accountId}: ${problem}`);
+    throw new Error(problem);
+  }
 
   // A slot holds one weapon: whatever was there is displaced back to the bag.
   for (const other of account.account_items) {
