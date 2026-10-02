@@ -23,6 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
+import { checkPlayPass, playPassCookie, playPassFrom, renewedPlayPass } from "./play-pass.js";
 
 const gzip = promisify(zlib.gzip);
 
@@ -96,7 +97,17 @@ const notFound = (res) => {
 };
 
 /** Answers a GET or HEAD under /play/ from `root`. */
-export const serveWebClient = async (req, res, pathname, root) => {
+/**
+ * What a gated /play/ answers to anybody: the entry page, which is what trades
+ * the website's one-time code for a token and a play pass, and its icon.
+ */
+const OPEN_BEHIND_GATE = new Set(["index.html", "favicon.png"]);
+
+/**
+ * `gated` (ODS_WEB_CLIENT_GATE) keeps every other file for a browser holding a
+ * play pass, which only a signed-in website visitor gets; see play-pass.js.
+ */
+export const serveWebClient = async (req, res, pathname, root, { gated = false } = {}) => {
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.writeHead(405, { Allow: "GET, HEAD" });
     res.end();
@@ -117,6 +128,17 @@ export const serveWebClient = async (req, res, pathname, root) => {
     return;
   }
   if (rest === "" || rest.endsWith("/")) rest += "index.html";
+
+  let renewal = null;
+  if (gated && !OPEN_BEHIND_GATE.has(rest)) {
+    const held = checkPlayPass(playPassFrom(req.headers.cookie));
+    if (!held) {
+      res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+      res.end("Open the game with the Play button on the website.");
+      return;
+    }
+    renewal = renewedPlayPass(held);
+  }
 
   let canonicalRoot;
   try {
@@ -170,6 +192,7 @@ export const serveWebClient = async (req, res, pathname, root) => {
     ETag: etag,
     "Last-Modified": stat.mtime.toUTCString(),
     Vary: "Accept-Encoding",
+    ...(renewal ? { "Set-Cookie": playPassCookie(renewal) } : {}),
   };
   const offered = req.headers["if-none-match"];
   const since = Date.parse(req.headers["if-modified-since"] ?? "");

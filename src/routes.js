@@ -1,13 +1,16 @@
 import { config, publicBaseUrl } from "./config.js";
-import { AccountLeasedError, loadAccount, saveAccount, withAccountLock } from "./accounts.js";
+import { AccountLeasedError, loadAccount, loadExistingAccount, saveAccount, withAccountLock } from "./accounts.js";
 import { dispatch } from "./rpc.js";
 import { info, warn } from "./log.js";
 import { serveContent } from "./content.js";
-import { tokenProblem } from "./auth.js";
+import { issueToken, tokenProblem } from "./auth.js";
+import { redeemLaunchCode } from "./launch-codes.js";
+import { issuePlayPass, playPassCookie } from "./play-pass.js";
 import { count } from "./metrics.js";
 import { gameStatusFor } from "./game-status.js";
 import { declare, declaredView, jsonFor, viewForOwnAccount, viewFromDemographics } from "./content-packs.js";
 import { sessionHolding } from "./socket/presence.js";
+import { forTheClient } from "./server-only-fields.js";
 
 const json = (body, status = 200) => ({
   status,
@@ -155,21 +158,14 @@ const accountDetails = async (req) => {
   }
   const account = await accountAtLaunch(accountId);
   info(`api: served account details for ${accountId}`);
-  /*
-   * The market is this server's, not the client's. `market_listings` is a child
-   * of the account so that listing a weapon is one atomic write, but the client
-   * was never told such a thing exists and this response is parsed by code this
-   * server does not change — so it is left out rather than sent and hoped over.
-   * So are the server's own market bar, restriction and anti-cheat record
-   * (restrictions.js).
-   */
-  const { market_listings, market_barred, restriction, sanctions, ...forTheClient } = account;
+  // Without the server's own records about the account (server-only-fields.js).
+  const visible = forTheClient(account);
   // The first question a launching client asks, before it has said what it
   // has: answered in its last declaration, until this launch confirms it.
   const view = viewForOwnAccount(accountId, {
     connected: Boolean(sessionForRequest(accountId, req)),
   });
-  return jsonAs(view, forTheClient);
+  return jsonAs(view, visible);
 };
 
 /**
@@ -211,11 +207,44 @@ const rpcCall = async (req, [service, method]) => {
 /**
  * Routes are matched in order. `pattern` segments starting with ":" capture.
  */
+/**
+ * POST /launch — `{ "code": "…" }`, the one-time code from the website's Play
+ * link, traded for a session token by the page that loads the browser client.
+ *
+ * The code is spent here whether or not anything follows, and every refusal is
+ * the same answer: a code that never existed, one already used and one that
+ * lapsed are all "get another". The token is the short session one; the
+ * client renews its own as it plays.
+ */
+const launch = async (req) => {
+  const accountId = redeemLaunchCode(req.json?.code);
+  if (accountId === null || !(await loadExistingAccount(accountId))) {
+    return json({ error: "that play link has expired; press Play on the website again" }, 400);
+  }
+  const token = issueToken(accountId, { term: "session" });
+  info(`launch: opened the browser client for account ${accountId}`);
+  return {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      // What loads the client's files when they are gated (play-pass.js).
+      "Set-Cookie": playPassCookie(issuePlayPass(accountId)),
+    },
+    body: JSON.stringify({
+      accountId,
+      token,
+      expires: new Date(Number(token.split(":")[0]) * 1000).toISOString(),
+    }),
+  };
+};
+
 export const routes = [
   { method: "GET", pattern: "/game-status/service-discovery", handler: serviceDiscovery },
   { method: "GET", pattern: "/game-status", handler: gameStatus },
   { method: "GET", pattern: "/api/dbAccountInfo/accountdetails", handler: accountDetails },
   { method: "POST", pattern: "/rpc/:service/:method", handler: rpcCall },
+  { method: "POST", pattern: "/launch", handler: launch },
   /**
    * Whatever this server chooses to hand the client, under one prefix so that
    * everything it does not hand over keeps loading from the player's own copy.

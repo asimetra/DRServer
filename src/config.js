@@ -312,9 +312,21 @@ export const loadServerConfig = (environment = process.env) => {
      * and the web services share one origin, so the browser needs no CORS; the
      * game socket takes the browser's WebSocket on its usual port.
      *
-     *   ODS_WEB_CLIENT_DIR=/srv/web-client   then   http://host:8080/play/#account=…&token=…
+     *   ODS_WEB_CLIENT_DIR=/srv/web-client   then   http://host:8080/play/#code=…
+     *
+     * The code is a one-time one from the website's Play button, which the
+     * page trades at POST /launch for a session token (launch-codes.js).
      */
     webClientDir: setting(environment, "WEB_CLIENT_DIR") ?? "",
+
+    /**
+     * Whether the browser client's files are for signed-in website visitors
+     * only. On, /play/ answers its entry page to anybody and every other file
+     * only to a browser holding the play pass that trading a Play link's code
+     * hands out (play-pass.js). Off by default: a client opened by hand, with
+     * no website in front, has no way to get one.
+     */
+    webClientGate: setting(environment, "WEB_CLIENT_GATE") === "1",
 
     /**
      * Where the client should fetch overridden assets from, or "" to override

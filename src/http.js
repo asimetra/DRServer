@@ -178,7 +178,7 @@ const handle = async (req, res, { routeTable, rateLimited, callers, quiet = fals
 
   // The browser client's files: streamed, and ahead of the budget below — see web-client.js.
   if (webClientDir && isWebClientPath(url.pathname)) {
-    await serveWebClient(req, res, url.pathname, webClientDir);
+    await serveWebClient(req, res, url.pathname, webClientDir, { gated: config.webClientGate });
     return;
   }
 

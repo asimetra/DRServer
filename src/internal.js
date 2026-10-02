@@ -9,6 +9,7 @@ import { listen } from "./http.js";
 import { createNewAccount, listAccountIds, loadAccount, loadExistingAccount } from "./accounts.js";
 import { NameRefused, accountIdNamed, checkName, nameKey, nameTaken, tidyName } from "./account-names.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
+import { createLaunchCode } from "./launch-codes.js";
 import { TradeRefused, settleTrade } from "./trade.js";
 import {
   MarketRefused,
@@ -254,6 +255,24 @@ const reissueToken = async (req, [capture]) => {
     term,
     expires: new Date(Number(token.split(":")[0]) * 1000).toISOString(),
   });
+};
+
+/**
+ * POST /internal/v1/accounts/:id/launch-code — a one-time code for the Play link.
+ *
+ * The website puts it after "#" in the link that opens the browser client, and
+ * the client's page trades it at POST /launch for a session token. Spent by
+ * that, and good for a minute until then; see launch-codes.js.
+ */
+const issueLaunchCode = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  return json(createLaunchCode(id));
 };
 
 /**
@@ -1316,6 +1335,7 @@ export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/accounts/:id/summary", handler: readSummary },
   { method: "GET", pattern: "/internal/v1/accounts/:id/inventory", handler: readInventory },
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },
+  { method: "POST", pattern: "/internal/v1/accounts/:id/launch-code", handler: issueLaunchCode },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/token", handler: revokeTokens },
   { method: "PUT", pattern: "/internal/v1/accounts/:id/restriction", handler: restrictAccount },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/restriction", handler: liftRestriction },

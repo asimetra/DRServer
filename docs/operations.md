@@ -122,6 +122,18 @@ The server stays on loopback and needs no `ODS_ALLOW_INSECURE_REMOTE`; only the
 proxy's port is open. Players use `/play/` in the browser, at
 `https://play.example.net/play/`.
 
+With a website in front (DRWeb), players open the browser client with its Play
+button:
+- The link carries a one-time code after `#`. The client's page trades it at
+  `POST /launch` for a session token. The code lasts a minute and can be used once.
+- `ODS_WEB_CLIENT_GATE=1` keeps the client's files for those players. `/play/`
+  then answers only its entry page and icon to anybody.
+- Every other file needs the play pass, an HttpOnly cookie scoped to `/play`
+  that the trade hands out. It lasts 12 hours and is renewed while the game
+  keeps loading files.
+- The pass opens the files and nothing else; it is not a game credential.
+- Leave the gate off when the client is opened by hand with no website in front.
+
 **Only the browser client can play over https.** The desktop client's game
 socket is plain TCP and has no TLS, so it cannot connect through the proxy. It
 keeps working against a server that is reached without https.
@@ -207,6 +219,7 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 | `GET /internal/v1/accounts/:id/inventory` | Read items eligible for web inventory/market views |
 | `POST /internal/v1/accounts/:id/token` | Issue a replacement token |
 | `DELETE /internal/v1/accounts/:id/token` | Invalidate the account's issued tokens |
+| `POST /internal/v1/accounts/:id/launch-code` | A one-time code for the website's Play link: good for a minute, traded once at the public `POST /launch` for a session token |
 | `GET /internal/v1/maintenance` | Whether the dungeons are closed, since when, and why |
 | `PUT /internal/v1/maintenance` | Close the dungeons (see [Restarting without cutting runs short](#restarting-without-cutting-runs-short)) |
 | `DELETE /internal/v1/maintenance` | Open the dungeons again |
