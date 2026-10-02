@@ -1,0 +1,20 @@
+# Everything the image must not carry. The first group is the licence boundary
+# — no client, no assets, no compatibility data, no captures — and the rest is
+# weight or local state that would be stale the moment it was copied.
+local-data/
+content/
+game-data/
+data/
+backups/
+logs/
+logs-fresh/
+reports/
+docs/
+
+node_modules/
+.git/
+.github/
+.env
+*.log
+test/
+monitoring/
