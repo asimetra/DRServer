@@ -1,3 +1,4 @@
+import { config } from "../config.js";
 import { info, warn } from "../log.js";
 import { CLID, OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
@@ -71,7 +72,8 @@ const FLID = {
  * is the same split every other hero attack uses.
  */
 const BOMB_ATTACK = { health: "HEALTH_BOMB_ATTACK", party: "PARTY_BOMB_ATTACK" };
-const HEALTH_BOMB_REVIVE_SHARE = 0.4;
+/** The share of both bars a Health Bomb revives with; forty per cent as shipped. */
+const healthBombReviveShare = () => config.healthBombReviveShare ?? 0.4;
 
 /**
  * `HeroGameObject::PartyBomb(u32)` — who set it off.
@@ -312,7 +314,7 @@ export const handleProposeSelfRevive = async (session, reader) => {
     if (wasDead) revived++;
     const healthBombRevive = !reviveAll && doid === session.heroDoid && wasDead;
     actor.hitPoints = healthBombRevive
-      ? Math.max(1, Math.round(actor.maxHitPoints * HEALTH_BOMB_REVIVE_SHARE))
+      ? Math.max(1, Math.round(actor.maxHitPoints * healthBombReviveShare()))
       : actor.maxHitPoints;
     actor.dead = false;
     const target = member.world?.contextFor(member) ?? member;
@@ -320,7 +322,7 @@ export const handleProposeSelfRevive = async (session, reader) => {
     if (healthBombRevive && target.maxHeroManaPoints > 0) {
       target.heroManaPoints = Math.max(
         0,
-        Math.round(target.maxHeroManaPoints * HEALTH_BOMB_REVIVE_SHARE)
+        Math.round(target.maxHeroManaPoints * healthBombReviveShare())
       );
       target.send(heroManaPointsUpdate(doid, target.heroManaPoints));
     }

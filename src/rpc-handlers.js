@@ -1,4 +1,5 @@
 import { register } from "./rpc.js";
+import { config } from "./config.js";
 import { EPOCH_DURATION_SECONDS, EPOCH_OFFSET_SECONDS } from "./infinite.js";
 import { issueToken } from "./auth.js";
 import {
@@ -215,7 +216,7 @@ const nextStreak = (account) =>
  */
 const dailyRewardDay = (account) => {
   const streak = dailyRewardClaimed(account) ? Number(account.concurrent_days ?? 1) : nextStreak(account);
-  return Math.min(DAILY_REWARD_TIERS.length, Math.max(1, streak));
+  return Math.min(config.dailyRewardTiers.length, Math.max(1, streak));
 };
 
 /**
@@ -231,29 +232,25 @@ const heroCount = (account) => Math.max(1, (account.account_avatars ?? []).lengt
  * works out at 5 × 2 = 10, exactly the gems it received.
  */
 const dailyRewardAmount = (account) =>
-  DAILY_REWARD_TIERS[dailyRewardDay(account) - 1] * heroCount(account);
+  config.dailyRewardTiers[dailyRewardDay(account) - 1] * heroCount(account);
 
 /** The positional array UIDailyRewards reads, shared by both endpoints. */
 const dailyRewardStatus = (account) => [
   dailyRewardDay(account),
   heroCount(account),
-  DAILY_REWARD_TIERS,
+  config.dailyRewardTiers,
   secondsUntilDailyReset(account),
-  DAILY_REPLAY_COST,
+  config.dailyReplayCost,
 ];
 
 /**
- * Values observed on the live server: three reward tiers worth 5/10/15 gold.
- * The trailing element's meaning is still unknown; the client only forwards it
- * to setRewardAmounts.
+ * The tiers and the replay price are settings (`dailyRewardTiers`,
+ * `dailyReplayCost`), because no table authors them. Their defaults are what
+ * the live server was seen to use: three tiers worth 5/10/15 gems, and five
+ * gems to spin the boxes again — gems, not gold. The capture is unambiguous:
+ * across four redeems the account's gold never moved while its gems went +10
+ * once and then -5 per replay.
  */
-const DAILY_REWARD_TIERS = [5, 10, 15];
-/**
- * Gems charged to spin the boxes again — gems, not gold. The capture is
- * unambiguous: across four redeems the account's gold never moved while its
- * gems went +10 once and then -5 per replay.
- */
-const DAILY_REPLAY_COST = 5;
 
 /** Constant tail element of the redeem response; its meaning is unknown. */
 
@@ -640,10 +637,10 @@ register("store/RequestRedeemDailyRewards", async ([accountId, , boxIndex = 0, p
   const replaying = Boolean(payToReplay);
   if (replaying) {
     const balance = Number(account.premium_currency ?? 0);
-    if (balance < DAILY_REPLAY_COST) {
-      throw new Error(`a replay costs ${DAILY_REPLAY_COST} gems, account has ${balance}`);
+    if (balance < config.dailyReplayCost) {
+      throw new Error(`a replay costs ${config.dailyReplayCost} gems, account has ${balance}`);
     }
-    account.premium_currency = balance - DAILY_REPLAY_COST;
+    account.premium_currency = balance - config.dailyReplayCost;
   }
 
   /**
@@ -688,7 +685,7 @@ register("store/RequestRedeemDailyRewards", async ([accountId, , boxIndex = 0, p
   await saveAccount(account);
   info(
     `rpc: daily reward box ${boxIndex} -> offer ${chosen} for ${accountId}` +
-      (replaying ? ` (replay, -${DAILY_REPLAY_COST} gems)` : ` (+${awarded} gems)`)
+      (replaying ? ` (replay, -${config.dailyReplayCost} gems)` : ` (+${awarded} gems)`)
   );
 
   /**

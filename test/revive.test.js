@@ -181,6 +181,26 @@ test("a health bomb revives with forty percent health and mana", async () => {
   assert.equal(state.reader.utf(), "");
 });
 
+/** How much of the bars a Health Bomb brings back is the server's to say. */
+test("what a health bomb revives with follows its setting", async () => {
+  const { config } = await import("../src/config.js");
+  const { session, heroDoid } = makeSession();
+  const hero = session.actors.get(heroDoid);
+  hero.hitPoints = 0;
+  hero.dead = true;
+  const usual = config.healthBombReviveShare;
+
+  try {
+    config.healthBombReviveShare = 0.5;
+    await handleProposeSelfRevive(session, new PacketReader(Buffer.from([0])));
+  } finally {
+    config.healthBombReviveShare = usual;
+  }
+
+  assert.equal(hero.hitPoints, 100);
+  assert.equal(session.heroManaPoints, 125);
+});
+
 test("a bomb used while up tops the health bar back and still goes off", async () => {
   const { sent, session, stock } = makeSession();
   const hero = session.actors.get(10);

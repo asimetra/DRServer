@@ -224,6 +224,41 @@ test("the daily payout is the streak tier times the hero count", async () => {
   assert.deepEqual([long[0], long[1]], [3, 6], "the streak caps at three");
 });
 
+/**
+ * The tiers and the replay price are the server's own: nothing in the game's
+ * tables authors them, and the client shows whatever it is told. What is shown
+ * and what is paid or charged have to be the same setting.
+ */
+test("the daily tiers and the replay price follow their settings", async () => {
+  const { config } = await import("../src/config.js");
+  const usual = [config.dailyRewardTiers, config.dailyReplayCost];
+  await freshAccount({
+    premium_currency: 20,
+    concurrent_days: 1,
+    last_reward_date: null,
+    account_avatars: [{ id: 1, avatar_id: 101, skin_type: 151 }, { id: 2, avatar_id: 102, skin_type: 152 }],
+  });
+
+  try {
+    config.dailyRewardTiers = [7, 14, 21];
+    config.dailyReplayCost = 9;
+
+    const asked = await dispatch("store", "AskAboutDailyReward", [ACCOUNT]);
+    assert.deepEqual(asked[2], [7, 14, 21], "the screen is told the tiers");
+    assert.equal(asked[4], 9, "and the price of another spin");
+
+    const first = await dispatch("store", "RequestRedeemDailyRewards", [ACCOUNT, "token", 0, false, {}]);
+    assert.equal(first[5], 14, "7 for day one, two heroes");
+
+    const before = (await loadAccount(ACCOUNT)).premium_currency;
+    const replay = await dispatch("store", "RequestRedeemDailyRewards", [ACCOUNT, "token", 0, true, {}]);
+    const fromBox = await gemsInside(replay[0][0]);
+    assert.equal((await loadAccount(ACCOUNT)).premium_currency, before - 9 + fromBox, "nine for the replay");
+  } finally {
+    [config.dailyRewardTiers, config.dailyReplayCost] = usual;
+  }
+});
+
 /** Midnight UTC, `days` calendar days before today, plus `hours` into that day. */
 const utcDaysAgo = (days, hours = 0) => {
   const now = new Date();

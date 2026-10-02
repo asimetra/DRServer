@@ -41,6 +41,33 @@ const asWorkerCount = (value, fallback = 0) => {
 /** Public ODS_* settings take precedence; DR_* remains a compatibility alias. */
 const setting = (environment, name) => envSetting(name, environment);
 
+/**
+ * A number no lower than `least`; one that cannot be read is the fallback.
+ * Unlike `asInt` it keeps a fraction, for the settings that are a share or a
+ * part of an hour.
+ */
+const asAmount = (value, fallback, least = 0) => {
+  const parsed = value === undefined || value === null || String(value).trim() === "" ? NaN : Number(value);
+  return Number.isFinite(parsed) ? Math.max(least, parsed) : fallback;
+};
+
+/** A share of something: between none of it and all of it. */
+const asShare = (value, fallback) => Math.min(1, asAmount(value, fallback));
+
+const DEFAULT_DAILY_REWARD_TIERS = [5, 10, 15];
+
+/**
+ * Three amounts, from a list or "5,10,15"; the defaults otherwise. Three
+ * because the reward screen has three labels and reads three numbers.
+ */
+const dailyRewardTiersOf = (value) => {
+  const list = (Array.isArray(value) ? value : String(value ?? "").split(","))
+    .map((entry) => (String(entry).trim() === "" ? NaN : Number(String(entry).trim())));
+  const valid = list.length === 3 && list.every((entry) => Number.isSafeInteger(entry) && entry >= 0);
+  return valid ? list : null;
+};
+const dailyRewardTiersFrom = (value) => dailyRewardTiersOf(value) ?? DEFAULT_DAILY_REWARD_TIERS;
+
 const DEFAULT_ACTIVITY_THRESHOLDS = [1, 5, 9, 17];
 
 /** Four ascending positive counts, from a list or "1,5,9,17"; the defaults otherwise. */
@@ -464,6 +491,25 @@ export const loadServerConfig = (environment = process.env) => {
       0,
       asInt(setting(environment, "MARKET_LISTING_DELAY_SECONDS"), defaults.marketListingDelaySeconds ?? 180)
     ),
+    /**
+     * The market's limits on what one account can do (see market-rules.js for
+     * why each exists): listings an account may have up per hero it owns, the
+     * most a weapon may be asked for as a multiple of what the shop would pay,
+     * and the least that ceiling is ever allowed to be.
+     */
+    marketSlotsPerHero: Math.max(
+      1,
+      asInt(setting(environment, "MARKET_SLOTS_PER_HERO"), defaults.marketSlotsPerHero ?? 5)
+    ),
+    marketPriceCeilingMultiple: asAmount(
+      setting(environment, "MARKET_PRICE_CEILING_MULTIPLE") ?? defaults.marketPriceCeilingMultiple,
+      50,
+      1
+    ),
+    marketMinCeiling: Math.max(
+      0,
+      asInt(setting(environment, "MARKET_MIN_CEILING"), defaults.marketMinCeiling ?? 1000)
+    ),
     allowInsecureInternal:
       setting(environment, "ALLOW_INSECURE_INTERNAL") === undefined
         ? defaults.allowInsecureInternal === true
@@ -540,6 +586,61 @@ export const loadServerConfig = (environment = process.env) => {
     infiniteGemFloor: Math.max(
       0,
       asInt(setting(environment, "INFINITE_GEM_FLOOR"), defaults.infiniteGemFloor ?? 25)
+    ),
+
+    /**
+     * What a day's login pays in gems on the first, second and third day of a
+     * streak — multiplied by the heroes on the account — and what spinning the
+     * boxes again costs. Neither is in the game's tables; the client shows the
+     * numbers it is sent.
+     */
+    dailyRewardTiers: dailyRewardTiersFrom(
+      setting(environment, "DAILY_REWARD_TIERS") ?? defaults.dailyRewardTiers
+    ),
+    dailyReplayCost: Math.max(
+      0,
+      asInt(setting(environment, "DAILY_REPLAY_COST"), defaults.dailyReplayCost ?? 5)
+    ),
+
+    /** How long before the same friend can be sent another gift, in hours. */
+    giftCooldownHours: asAmount(
+      setting(environment, "GIFT_COOLDOWN_HOURS") ?? defaults.giftCooldownHours,
+      24
+    ),
+
+    /**
+     * How often one account may speak on the global channel: so many lines at
+     * once, then one every so many seconds.
+     */
+    globalChatBurst: Math.max(
+      1,
+      asInt(setting(environment, "GLOBAL_CHAT_BURST"), defaults.globalChatBurst ?? 3)
+    ),
+    globalChatLineSeconds: asAmount(
+      setting(environment, "GLOBAL_CHAT_LINE_SECONDS") ?? defaults.globalChatLineSeconds,
+      2,
+      0.1
+    ),
+
+    /** The share of its health and Mana a hero stands back up with from a Health Bomb. */
+    healthBombReviveShare: asShare(
+      setting(environment, "HEALTH_BOMB_REVIVE_SHARE") ?? defaults.healthBombReviveShare,
+      0.4
+    ),
+
+    /**
+     * When food is worth walking over (see pickups.js): the share of what a
+     * piece offers that the hero must be able to use, and the size — as a share
+     * of the bar — at or under which a piece is a scrap and taken whenever
+     * anything at all is missing.
+     */
+    pickupUsableShare: asShare(
+      setting(environment, "PICKUP_USABLE_SHARE") ?? defaults.pickupUsableShare,
+      0.5
+    ),
+    pickupScrapShare: asShare(
+      setting(environment, "PICKUP_SCRAP_SHARE") ?? defaults.pickupScrapShare,
+      0.25
     ),
 
     /**
@@ -795,6 +896,14 @@ export const configProblems = (environment = process.env) => {
       `listening on ${settings.host} but advertising ${publicHost}: a client on another machine ` +
         "will be told to connect to itself. Set ODS_PUBLIC_HOST to this machine's address as " +
         "the players reach it"
+    );
+  }
+
+  const tiers = spelled(environment, "DAILY_REWARD_TIERS");
+  if (tiers && tiers.value !== "" && !dailyRewardTiersOf(tiers.value)) {
+    warnings.push(
+      `${tiers.key} must be three amounts such as 5,10,15, not ${JSON.stringify(tiers.value)}: ` +
+        `the daily reward stays at ${settings.dailyRewardTiers.join(",")}`
     );
   }
 

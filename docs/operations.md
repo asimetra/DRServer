@@ -540,11 +540,41 @@ those are settings:
 | `ODS_TROPHY_GEMS` | 25 | Gems paid with a boss trophy, the first time that boss is beaten |
 | `ODS_INFINITE_TROPHY_FLOOR` | 16 | The Infinite dungeon floor that pays a hero its trophy — once per hero, ever |
 | `ODS_INFINITE_GEM_FLOOR` | 25 | The Infinite dungeon floor that pays a hero its gems — once per hero each week |
+| `ODS_DAILY_REWARD_TIERS` | 5,10,15 | Gems for the first, second and third day of a login streak, each multiplied by the heroes on the account |
+| `ODS_DAILY_REPLAY_COST` | 5 | Gems to spin the daily reward boxes again |
 
 The game's table names floors of its own for the two Infinite ones (25 and
 20); setting either to `0` uses the table's. How many gems the Infinite floor
 pays is the table's. A week turns on Tuesday at 08:00 UTC, which is when the
 client's own countdown ends.
+
+The daily reward list is always three amounts — the reward screen has three
+labels — and the client shows whatever it is sent, so what a player sees and
+what is paid stay the same number.
+
+### Rules the server decides
+
+The same goes for a few limits. These are this server's own choices, not the
+game's, and a server with a different economy or a different crowd may want
+others:
+
+| Setting | Default | What it is |
+|---|---|---|
+| `ODS_MARKET_SLOTS_PER_HERO` | 5 | Listings an account may have up at once, per hero it owns |
+| `ODS_MARKET_PRICE_CEILING_MULTIPLE` | 50 | The most a weapon may be asked for, as a multiple of what the shop pays for it |
+| `ODS_MARKET_MIN_CEILING` | 1000 | The least that ceiling is ever allowed to be |
+| `ODS_GIFT_COOLDOWN_HOURS` | 24 | Hours before the same friend can be sent another gift |
+| `ODS_GLOBAL_CHAT_BURST` | 3 | Lines one account may say on the global channel at once |
+| `ODS_GLOBAL_CHAT_LINE_SECONDS` | 2 | Seconds each further line takes to come back |
+| `ODS_HEALTH_BOMB_REVIVE_SHARE` | 0.4 | The share of its health and Mana a hero revives with from a Health Bomb |
+| `ODS_PICKUP_USABLE_SHARE` | 0.5 | Food is taken once the hero is missing this share of what the piece offers |
+| `ODS_PICKUP_SCRAP_SHARE` | 0.25 | A piece no larger than this share of the bar is taken whenever anything is missing |
+
+The market's tax and listing delay are `ODS_MARKET_TAX_RATE` and
+`ODS_MARKET_LISTING_DELAY_SECONDS`. A setting that cannot be read is replaced by
+its default, and one out of range is held to the nearest value that makes
+sense; neither stops the server. A daily reward list that is not three amounts
+is named in a warning at startup.
 
 What a new account starts with — gold, gems, keys, bag size, its first hero and
 weapon — is `config/account-template.json`, or a file of your own named by

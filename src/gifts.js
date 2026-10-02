@@ -1,3 +1,4 @@
+import { config } from "./config.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { friendIdsOf } from "./social.js";
 
@@ -30,9 +31,10 @@ import { friendIdsOf } from "./social.js";
  *             here instead; the client's is read and discarded.
  */
 
-/** A day per recipient. */
+/** A day per recipient, unless `giftCooldownHours` says otherwise. */
 const HOUR = 60 * 60 * 1000;
 export const GIFT_COOLDOWN_MS = 24 * HOUR;
+const giftCooldownMs = () => (config.giftCooldownHours ?? 24) * HOUR;
 
 /**
  * How long the cooldown really is, as far as the recordings can say.
@@ -74,7 +76,7 @@ const sendHistoryOf = (account) =>
 
 /** Who this account has given to recently, newest first, expired ones dropped. */
 const recentSends = (account, now) =>
-  sendHistoryOf(account).filter((row) => now - Number(row.at ?? 0) < GIFT_COOLDOWN_MS);
+  sendHistoryOf(account).filter((row) => now - Number(row.at ?? 0) < giftCooldownMs());
 
 /**
  * The accounts the client must not offer as gift targets.

@@ -18,36 +18,38 @@
  * right name, coloured in the right place, indistinguishable from somebody
  * standing next to you.
  */
+import { config } from "../config.js";
 import { info } from "../log.js";
 import { ignoredIdsOf } from "../social.js";
 import { activeSessions } from "./presence.js";
 import { giveVoice, say } from "./speech.js";
 
 /**
- * How often one account may speak here: three lines at once, then one every
- * two seconds. One line is a frame to everybody on a floor anywhere, so with
- * nothing but the socket's own packet ceiling one player could send thousands
- * a minute to everyone. Kept by the main thread, which every line passes
- * through whether or not match workers run, so a player cannot reset it by
- * walking into a dungeon on another worker.
+ * How often one account may speak here: as shipped, three lines at once, then
+ * one every two seconds (`globalChatBurst`, `globalChatLineSeconds`). One line
+ * is a frame to everybody on a floor anywhere, so with nothing but the socket's
+ * own packet ceiling one player could send thousands a minute to everyone. Kept
+ * by the main thread, which every line passes through whether or not match
+ * workers run, so a player cannot reset it by walking into a dungeon on another
+ * worker.
  */
-const LINE_EVERY_MS = 2000;
-const LINES_SAVED = 3;
 const allowances = new Map();
 
 /** Whether this account may say a line now; takes it from the allowance if so. */
 export const admitGlobalLine = (account, now = Date.now()) => {
+  const lineEveryMs = (config.globalChatLineSeconds ?? 2) * 1000;
+  const linesSaved = config.globalChatBurst ?? 3;
   const id = Number(account);
   const last = allowances.get(id);
   const saved = last
-    ? Math.min(LINES_SAVED, last.saved + (now - last.at) / LINE_EVERY_MS)
-    : LINES_SAVED;
+    ? Math.min(linesSaved, last.saved + (now - last.at) / lineEveryMs)
+    : linesSaved;
   if (saved < 1) return false;
   allowances.set(id, { saved: saved - 1, at: now });
   // Somebody whose allowance has refilled is somebody who can be forgotten.
   if (allowances.size > 4096) {
     for (const [key, entry] of allowances) {
-      if (now - entry.at >= LINE_EVERY_MS * LINES_SAVED) allowances.delete(key);
+      if (now - entry.at >= lineEveryMs * linesSaved) allowances.delete(key);
     }
   }
   return true;

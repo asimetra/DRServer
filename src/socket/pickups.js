@@ -69,7 +69,7 @@ const withinReach = (a, b, radius) => {
  * same idea with a lighter hand: a steak is still for a bad wound, but a
  * scratch is enough reason to eat something small.
  */
-const USABLE_SHARE = 0.5;
+const usableShare = () => config.pickupUsableShare ?? 0.5;
 
 /**
  * And below this, size stops mattering — anything missing is reason enough.
@@ -80,7 +80,7 @@ const USABLE_SHARE = 0.5;
  * player at 97%, so a quarter of the bar or less is taken whenever anything at
  * all is gone. Only being genuinely full turns them down.
  */
-const SCRAP_SHARE = 0.25;
+const scrapShare = () => config.pickupScrapShare ?? 0.25;
 
 const shareMissing = (current, maximum) => {
   const top = Number(maximum ?? 0);
@@ -128,7 +128,7 @@ const worthTaking = (session, doober) => {
   return offers.some(([offered, missing]) => {
     if (missing <= 0) return false;
     // A scrap needs only somewhere to go; anything larger has to be worth it.
-    return offered <= SCRAP_SHARE || missing >= offered * USABLE_SHARE;
+    return offered <= scrapShare() || missing >= offered * usableShare();
   });
 };
 

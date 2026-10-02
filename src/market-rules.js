@@ -12,7 +12,8 @@ import { weaponSaleValue } from "./store.js";
  * of accounts can always meet in a dungeon.
  *
  * The numbers below come from measuring this server rather than from a feel for
- * what sounds strict.
+ * what sounds strict. They are the defaults: each is a setting (`ODS_MARKET_*`,
+ * see config.js), since another server's economy is not this one's.
  */
 
 /**
@@ -66,11 +67,14 @@ export const TAX_RATE = 0.1;
 
 /** The most a weapon may be asked for, given what the shop would pay for it. */
 export const ceilingFor = (gm, item) =>
-  Math.max(MIN_CEILING, weaponSaleValue(gm, item) * PRICE_CEILING_MULTIPLE);
+  Math.max(
+    config.marketMinCeiling ?? MIN_CEILING,
+    weaponSaleValue(gm, item) * (config.marketPriceCeilingMultiple ?? PRICE_CEILING_MULTIPLE)
+  );
 
 /** How many listings this account may have up at once. */
 export const slotsFor = (account) =>
-  Math.max(1, (account?.account_avatars ?? []).length) * SLOTS_PER_HERO;
+  Math.max(1, (account?.account_avatars ?? []).length) * (config.marketSlotsPerHero ?? SLOTS_PER_HERO);
 
 /**
  * What the seller is owed when a listing sells, and what the market keeps.

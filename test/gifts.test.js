@@ -135,6 +135,28 @@ test("the cooldown is one recipient a day, and it is the exclude list", async ()
   assert.equal(pendingGiftsFor(await loadAccount(THEM)).length, 2, "and the gift goes through");
 });
 
+test("how long the cooldown lasts follows its setting", async () => {
+  const { config } = await import("../src/config.js");
+  const usual = config.giftCooldownHours;
+  await reset();
+  await send(HEALTH_BOMB, [THEM]);
+
+  // Two hours ago, under a one-hour cooldown, is long enough ago.
+  const sender = await loadAccount(ME);
+  sender.gift_sends = sender.gift_sends.map((row) => ({ ...row, at: row.at - 2 * 60 * 60 * 1000 }));
+  await saveAccount(sender);
+  assert.deepEqual((await inbox(ME)).excludeIds, [String(THEM)], "a day has not passed");
+
+  try {
+    config.giftCooldownHours = 1;
+    assert.deepEqual((await inbox(ME)).excludeIds, [], "an hour has");
+    await send(HEALTH_BOMB, [THEM]);
+  } finally {
+    config.giftCooldownHours = usual;
+  }
+  assert.equal(pendingGiftsFor(await loadAccount(THEM)).length, 2);
+});
+
 test("gifting a stranger or yourself does nothing", async () => {
   await reset();
   await send(HEALTH_BOMB, [ME]);
