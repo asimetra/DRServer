@@ -269,7 +269,12 @@ const grant = async () => {
       console.error(`account ${account.id} has no hero, and a weapon is rolled against one`);
     } else {
       account.account_items ??= [];
-      const rarities = gm.raw.Rarity.filter((row) => (row.ChestWeight ?? 0) > 0);
+      /* The shipped table carries no chest weights, which left every roll
+         falling back to uncommon; then the four a chest gives, alike. */
+      const weighted = gm.raw.Rarity.filter((row) => (row.ChestWeight ?? 0) > 0);
+      const rarities = weighted.length
+        ? weighted
+        : gm.raw.Rarity.filter((row) => ["COMMON", "UNCOMMON", "RARE", "LEGENDARY"].includes(row.Type));
       for (let made = 0; made < wanted; made++) {
         const hero = heroes[Math.floor(Math.random() * heroes.length)];
         const rarity = rarities.length
@@ -312,7 +317,7 @@ const grant = async () => {
         id: await nextObjectId(account),
         item_id: weapon.Id,
         account_id: account.id,
-        power: weapon.Power ?? 1,
+        power: Math.max(1, Math.round(Number(weapon.Power) || 1)),
         avatar_id: null,
         avatar_slot: null,
         is_new: 1,
@@ -384,7 +389,7 @@ const grant = async () => {
           id: await nextObjectId(account),
           item_id: weapon.Id,
           account_id: account.id,
-          power: weapon.Power ?? 1,
+          power: Math.max(1, Math.round(Number(weapon.Power) || 1)),
           avatar_id: null,
           avatar_slot: null,
           is_new: 1,
