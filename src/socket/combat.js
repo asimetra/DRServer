@@ -2864,6 +2864,21 @@ const DEFENCE_FIELD = {
 
 const NOT_RATED = Object.freeze({ rated: false, multiplier: 1, effectiveness: 0 });
 
+/**
+ * The level from which a monster's ratings count.
+ *
+ * The first dungeons have none. Every rated hit in the official's recordings on
+ * a monster of level 1 to 4 (map nodes 50002-50005) is neutral — 63 of 63,
+ * knights and juggernauts rated +1 against melee among them — and from level 7
+ * (50008, Icewater Caverns) they count, 41 of 41. It is also where the client
+ * first explains them: its RESISTANCES tutorial opens once seven dungeons are
+ * done. Levels 5 and 6 are not in the recordings; the line is drawn at the
+ * tutorial. Rating the knights of the first floors made nearly every early hit
+ * a weak one.
+ */
+const RATED_FROM_LEVEL = 7;
+const NEUTRAL_MONSTER = Object.freeze({ rated: true, multiplier: 1, effectiveness: 0 });
+
 const rowOf = async (session, doid) => {
   const constant = session.actors?.get(doid)?.constant ?? session.trapNames?.get(doid)?.constant;
   return constant ? npcForConstant(constant) : null;
@@ -2889,6 +2904,10 @@ const categoryFor = async (session, attackerDoid, victimDoid, attack) => {
   if (ignoresResistances(session, attackerDoid)) {
     return { rated: true, multiplier: 1, effectiveness: 1 };
   }
+  // Still a monster, whose defence is its category — only the category is
+  // neutral. A level that is not known is not a reason to drop the rating.
+  const level = Number(session.actors?.get(victimDoid)?.level);
+  if (Number.isFinite(level) && level < RATED_FROM_LEVEL) return NEUTRAL_MONSTER;
   // Its own rating, and whatever a buff on it adds — the Infinite modifiers
   // that make enemies resist a type are exactly that. See `buffRatingFor`.
   const rating = Math.round(Number(victim[field] ?? 0)) + buffRatingFor(session, victimDoid, field);

@@ -29,7 +29,7 @@ const readEcho = (frame) => ({
   effectiveness: frame.readInt8(37),
 });
 
-const heroHit = async (constant, attackId, { activeBuffs, weapon = { power: 500 }, after } = {}) => {
+const heroHit = async (constant, attackId, { activeBuffs, weapon = { power: 500 }, after, level } = {}) => {
   const sent = [];
   const session = {
     id: 91,
@@ -43,7 +43,7 @@ const heroHit = async (constant, attackId, { activeBuffs, weapon = { power: 500 
       [VICTIM, CLID.DistributedNPCGameObject],
     ]),
     actors: new Map([
-      [VICTIM, { hitPoints: 9_000_000, maxHitPoints: 9_000_000, constant, isEnemy: true }],
+      [VICTIM, { hitPoints: 9_000_000, maxHitPoints: 9_000_000, constant, isEnemy: true, ...(level ? { level } : {}) }],
     ]),
     activeBuffs,
     allocateDoid: () => 900,
@@ -91,6 +91,29 @@ test("the columns are read straight: shooting against SHOOT_DEF, magic against M
   const flat = await heroHit("BRUTE", ATTACK.KATANA_SOUL_BANG);
   assert.equal(bang.effectiveness, 1);
   assert.equal(bang.damage, flat.damage * 2);
+});
+
+/**
+ * The first dungeons have no resistances. In the official's recordings every
+ * rated hit on a monster of level 1 to 4 (map nodes 50002-50005) is neutral —
+ * 63 of 63, knights and juggernauts rated +1 among them — and from level 7
+ * (50008, Icewater Caverns) they count, 41 of 41. That is also where the client
+ * first explains them: its RESISTANCES tutorial opens once seven dungeons are
+ * done. Levels 5 and 6 are not in the recordings; the line is drawn at the
+ * tutorial.
+ */
+test("a monster below level 7 takes every hit as neutral, whatever its rating", async () => {
+  const neutral = await heroHit("BRUTE", ATTACK.AXE_COMBO_1, { level: 4 });
+  const knight = await heroHit("KNIGHT", ATTACK.AXE_COMBO_1, { level: 4 });
+  const weak = await heroHit("SKELETON_WARRIOR", ATTACK.AXE_COMBO_1, { level: 4 });
+  assert.equal(knight.effectiveness, 0, "a knight rated +1 against melee is not resistant yet");
+  assert.equal(knight.damage, neutral.damage);
+  assert.equal(weak.effectiveness, 0, "nor is a weak monster weak yet");
+  assert.equal(weak.damage, neutral.damage);
+
+  const later = await heroHit("KNIGHT", ATTACK.AXE_COMBO_1, { level: 7 });
+  assert.equal(later.effectiveness, -1, "from level 7 the rating counts");
+  assert.equal(later.damage, Math.round(neutral.damage / 2));
 });
 
 /**
