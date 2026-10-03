@@ -268,7 +268,10 @@ const applyDetail = async ({ account, detail, gm, nextId, granted }) => {
             id: await nextId(),
             item_id: weapon.Id,
             account_id: account.id,
-            power: weapon.Power,
+            // The table's power, which the official hands a starter over at, made
+            // whole: the Battle Chef's knife is 5.25 there, and the column holds
+            // whole numbers — it refused the whole purchase.
+            power: Math.max(1, Math.round(Number(weapon.Power) || 1)),
             avatar_id: avatarId,
             avatar_slot: slot,
             is_new: 0,

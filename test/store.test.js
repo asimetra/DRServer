@@ -86,6 +86,7 @@ test("refuses a weapon when storage is full", async () => {
 });
 
 const RANGER = 51011; // 150 PREMIUM, grants hero 102
+const BATTLE_CHEF = 51013; // 800 PREMIUM, grants hero 104
 
 // A hero purchase that grants nothing is worse than a refusal: the shop takes
 // the payment and the client then tries to draw a hero the account lacks.
@@ -119,6 +120,30 @@ test("a bought hero arrives with two equipped starter weapons", async () => {
   assert.equal(starters.length, 2);
   assert.deepEqual(starters.map((item) => item.avatar_slot).sort(), [0, 1]);
   assert.ok(starters.every((item) => item.requiredlevel === 1 && item.rarity === 1));
+});
+
+/**
+ * The Battle Chef's starter knife is the one weapon in the table whose power is
+ * not whole — HERO_BUTCHERS_KNIFE is 5.25, its BACON_BOOSTER sibling 12.25 —
+ * and a power is a whole number on the account: the database column refused
+ * 5.25 and with it the whole purchase ("invalid input syntax"). The official
+ * hands a starter over at the table's power (a level-1 HERO_HAND_AXE, power 5,
+ * is 5 on its accounts), so the knife is that, rounded.
+ */
+test("a bought Battle Chef's starter weapons carry whole powers", async () => {
+  const target = account({
+    premium_currency: 1000,
+    account_avatars: [{ id: 1, avatar_id: 101, skin_type: 151 }],
+  });
+
+  await buy(target, BATTLE_CHEF);
+  const added = target.account_avatars.find((avatar) => avatar.avatar_id === 104);
+  const starters = target.account_items.filter((item) => item.avatar_id === added.id);
+
+  assert.equal(starters.length, 2);
+  for (const item of starters) assert.ok(Number.isInteger(item.power), `power ${item.power} of item ${item.item_id}`);
+  const knife = starters.find((item) => item.item_id === 15001);
+  if (knife) assert.equal(knife.power, 5);
 });
 
 // Charging for a hero the account already owns is the shape of bug a player
