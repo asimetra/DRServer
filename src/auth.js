@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { issuedBeforeSignOut } from "./browser-sessions.js";
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
@@ -325,8 +326,21 @@ export const tokenProblem = (accountId, token, options = {}) => {
   if (!shape) return "malformed: not an expiry and a signature";
 
   const [, expiry, signature] = shape;
-  if (Number(expiry) <= Math.floor(Date.now() / 1000)) {
+  const now = Math.floor(Date.now() / 1000);
+  if (Number(expiry) <= now) {
     return `expired ${new Date(Number(expiry) * 1000).toISOString()}`;
+  }
+  /**
+   * A browser session the website has since signed out of. Its term says when
+   * it was issued: a session token runs out six hours after it was made, and a
+   * token with no more than that left is one (a kept one runs a year). The
+   * desktop client's kept token is the operator's, and stays good.
+   */
+  if (
+    Number(expiry) - now <= SESSION_TTL_SECONDS &&
+    issuedBeforeSignOut(accountId, (Number(expiry) - SESSION_TTL_SECONDS) * 1000)
+  ) {
+    return "the browser session ended when its player signed out of the website";
   }
 
   /**

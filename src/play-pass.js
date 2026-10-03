@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
+import { issuedBeforeSignOut } from "./browser-sessions.js";
 
 /**
  * The play pass: what lets a browser load the web client's files.
@@ -42,6 +43,8 @@ export const checkPlayPass = (pass, now = Date.now(), secret = config.tokenSecre
   const expected = Buffer.from(signature(accountId, expiry, secret), "hex");
   if (!timingSafeEqual(offered, expected)) return null;
   if (expiry * 1000 <= now) return null;
+  // A pass from before its player signed out of the website loads nothing more.
+  if (issuedBeforeSignOut(accountId, (expiry - PLAY_PASS_TTL_SECONDS) * 1000)) return null;
   return { accountId, expiry };
 };
 

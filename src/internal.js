@@ -1,4 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { endBrowserSessions } from "./browser-sessions.js";
+import { WebSocketStream } from "./socket/websocket.js";
 import { config } from "./config.js";
 import { BOARDS, boardFor, runsSince, standingsFor, titleFor } from "./leaderboard.js";
 import { STAT_CAP, heroLevel, statPointsEarned } from "./progression.js";
@@ -1310,6 +1312,33 @@ const disconnectAccount = async (req, [capture]) => {
 };
 
 /**
+ * POST /internal/v1/accounts/:id/browser-signout — its player signed out of the
+ * website, so its browser game ends.
+ *
+ * The website's Play link opens the browser client with a session token and a
+ * play pass, and both outlived signing out: the game played on, and a reloaded
+ * tab came straight back in. Every one issued until now is refused from here
+ * on (browser-sessions.js), and a browser connection still open is closed. The
+ * desktop client is not the website's: its kept token and its connection stay.
+ *
+ * By the account itself, or by an admin.
+ */
+const browserSignOut = async (req, [capture]) => {
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  const { refusal } = await actingAdmin(req, { self: id });
+  if (refusal) return refusal;
+
+  endBrowserSessions(id);
+  const browsers = activeSessions().filter(
+    (session) => session.accountId === id && session.socket instanceof WebSocketStream
+  );
+  for (const session of browsers) session.close?.("signed out on the website", { flush: true });
+  info(`internal: account ${id} signed out of the website; ${browsers.length} browser game(s) closed`);
+  return json({ accountId: id, disconnected: browsers.length });
+};
+
+/**
  * DELETE /internal/v1/accounts/:id — delete an account, at its player's request.
  *
  * By the account itself (X-Acting-Account is its own id) or by an admin. Its
@@ -1404,6 +1433,7 @@ export const internalRoutes = [
   { method: "PUT", pattern: "/internal/v1/accounts/:id/restriction", handler: restrictAccount },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/restriction", handler: liftRestriction },
   { method: "POST", pattern: "/internal/v1/accounts/:id/disconnect", handler: disconnectAccount },
+  { method: "POST", pattern: "/internal/v1/accounts/:id/browser-signout", handler: browserSignOut },
   { method: "POST", pattern: "/internal/v1/trades", handler: settleTradeRoute },
   /* A listing is addressed under /market; a seller's own stall is a fact about
      their account, so it hangs off /accounts/:id like the summary does. */
