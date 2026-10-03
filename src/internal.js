@@ -699,24 +699,60 @@ export const describeListings = (listings, gm) => {
   });
 };
 
-const MARKET_SORTS = new Set(["newest", "price_asc", "price_desc", "power_desc", "level_asc"]);
+const MARKET_SORTS = new Set(["relevance", "newest", "price_asc", "price_desc", "power_desc", "level_asc"]);
 
-const marketText = (listing) =>
-  nameKey([
-    listing.name,
-    listing.seller_name,
-    listing.mastertype,
-    listing.rarity_name,
-    listing.weapon?.classType,
-    listing.weapon?.tap?.title,
-    listing.weapon?.tap?.description,
-    listing.weapon?.hold?.title,
-    listing.weapon?.hold?.description,
-    ...(listing.modifiers ?? []).flatMap((modifier) => [modifier.name, modifier.description]),
-    listing.legendary?.name,
-    listing.legendary?.description,
-    ...(listing.usable_by ?? []).map((hero) => hero.name),
-  ].filter(Boolean).join(" "));
+/** The words of a text, folded the way names are: "Axe of the North" → axe, of, the, north. */
+const wordsOf = (text) => nameKey(String(text ?? "")).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+/**
+ * What a search looks in, and how much a match there counts. The name first,
+ * then who is selling, then what kind of thing it is and what was rolled onto
+ * it. Not the descriptions: a sentence about swinging in an arc matches
+ * "arc", "in" and "the", and a search for a weapon came back as the market.
+ */
+const SEARCHED = [
+  [3, (listing) => [listing.name]],
+  [2, (listing) => [listing.seller_name]],
+  [
+    1,
+    (listing) => [
+      String(listing.mastertype ?? "").replace(/_TYPE$/, "").replace(/_/g, " "),
+      listing.rarity_name,
+      listing.weapon?.classType,
+      listing.weapon?.tap?.title,
+      listing.weapon?.hold?.title,
+      ...(listing.modifiers ?? []).map((modifier) => modifier.name),
+      listing.legendary?.name,
+      ...(listing.usable_by ?? []).map((hero) => hero.name),
+    ],
+  ],
+];
+
+/** The words of a query worth searching for: one letter is not a search. */
+const queryWords = (q) => wordsOf(String(q ?? "").slice(0, 64)).filter((word) => word.length >= 2);
+
+/**
+ * How well a listing answers a query, or 0 when it does not: every word of the
+ * query has to begin a word somewhere it looks. A name that is the query, or
+ * begins with it, comes before a name that merely has it.
+ */
+const relevance = (listing, words) => {
+  let score = 0;
+  for (const word of words) {
+    let best = 0;
+    for (const [weight, fields] of SEARCHED) {
+      if (weight <= best) continue;
+      if (fields(listing).some((field) => wordsOf(field).some((each) => each.startsWith(word)))) best = weight;
+    }
+    if (!best) return 0;
+    score += best;
+  }
+  const name = nameKey(listing.name ?? "");
+  const query = words.join(" ");
+  if (name === query) score += 10;
+  else if (name.startsWith(query)) score += 5;
+  return score;
+};
 
 const countBy = (rows, valueOf) => {
   const counts = new Map();
@@ -730,15 +766,23 @@ const countBy = (rows, valueOf) => {
 };
 
 export const filterMarketListings = (all, options = {}) => {
-  const q = nameKey(String(options.q ?? "").trim().slice(0, 64));
+  const words = queryWords(options.q);
   const type = String(options.type ?? "").trim();
   const rarity = Number(options.rarity) || 0;
   const hero = Number(options.hero) || 0;
   const maxPrice = Number(options.maxPrice) || 0;
-  const sort = MARKET_SORTS.has(options.sort) ? options.sort : "newest";
+  /* Unless an order was asked for, what was searched for comes by how well it
+     answers, and everything else newest first. */
+  const asked = MARKET_SORTS.has(options.sort) ? options.sort : null;
+  const sort = asked && !(asked === "relevance" && !words.length) ? asked : words.length ? "relevance" : "newest";
 
+  const scores = new Map();
   const rows = all.filter((listing) => {
-    if (q && !marketText(listing).includes(q)) return false;
+    if (words.length) {
+      const score = relevance(listing, words);
+      if (!score) return false;
+      scores.set(listing, score);
+    }
     if (type && listing.mastertype !== type) return false;
     if (rarity && Number(listing.rarity) !== rarity) return false;
     if (hero && !(listing.usable_by ?? []).some((candidate) => Number(candidate.id) === hero)) {
@@ -754,6 +798,10 @@ export const filterMarketListings = (all, options = {}) => {
     if (sort === "price_desc") return number(right.price) - number(left.price);
     if (sort === "power_desc") return number(right.power) - number(left.power);
     if (sort === "level_asc") return number(left.requiredlevel) - number(right.requiredlevel);
+    if (sort === "relevance") {
+      const better = (scores.get(right) ?? 0) - (scores.get(left) ?? 0);
+      if (better) return better;
+    }
     return String(right.listed_at).localeCompare(String(left.listed_at));
   });
   return rows;
@@ -783,7 +831,7 @@ const readMarket = async (req) => {
     rarity: req.query?.get("rarity") ?? 0,
     hero: req.query?.get("hero") ?? 0,
     maxPrice: req.query?.get("maxPrice") ?? 0,
-    sort: req.query?.get("sort") ?? "newest",
+    sort: req.query?.get("sort") ?? "",
   };
   const filtered = filterMarketListings(all, options);
   const limit = Math.max(1, Math.min(100, Number(req.query?.get("limit")) || 12));

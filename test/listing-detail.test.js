@@ -188,3 +188,45 @@ test("market search covers names, sellers, attacks, modifiers and compatible her
     "seller-name search uses the same Turkish-I folding as account names"
   );
 });
+
+/**
+ * A search finds what was asked for. It matched the query anywhere in one long
+ * run of every text a listing has, descriptions included, so a single letter
+ * — or "the" — found the whole market, and the best match came wherever its
+ * listing date put it.
+ */
+test("market search matches the starts of words, all of them, and ranks the name first", () => {
+  const row = (id, name, extra = {}) => ({
+    id,
+    name,
+    seller_name: "Mira",
+    mastertype: "SWORD_TYPE",
+    rarity: 1,
+    rarity_name: "common",
+    price: 100,
+    listed_at: `2026-09-01T0${id}:00:00Z`,
+    weapon: { tap: { title: "Slash", description: "Swing the sword in an arc" } },
+    modifiers: [],
+    usable_by: [{ id: 101, name: "Berserker" }],
+    ...extra,
+  });
+  const rows = [
+    row(1, "Heavy Katana"),
+    row(2, "Axe of the North", { seller_name: "Katarina" }),
+    row(3, "Katana"),
+    row(4, "Rusty Blade", { modifiers: [{ name: "Katabatic", description: "Wind" }] }),
+  ];
+  const ids = (q) => filterMarketListings(rows, { q }).map((listing) => listing.id);
+
+  assert.deepEqual(ids("katana"), [3, 1], "the name that is the query first, then a name that has it");
+  assert.deepEqual(ids("kat"), [3, 1, 2, 4], "names, then sellers, then modifiers");
+  assert.deepEqual(ids("heavy kat"), [1], "every word has to be found");
+  assert.deepEqual(ids("ana"), [], "the middle of a word is not a match");
+  assert.deepEqual(ids("arc"), [], "descriptions are not searched");
+  assert.deepEqual(ids("e"), [4, 3, 2, 1], "one letter is not a search: everything, newest first, as unsearched");
+  assert.deepEqual(
+    filterMarketListings(rows, { q: "kat", sort: "newest" }).map((listing) => listing.id),
+    [4, 3, 2, 1],
+    "an order somebody chose still applies to what was found"
+  );
+});
