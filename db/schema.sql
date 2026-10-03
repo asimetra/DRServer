@@ -255,7 +255,10 @@ CREATE TABLE IF NOT EXISTS market_sales (
     price         BIGINT      NOT NULL,
     tax           BIGINT      NOT NULL DEFAULT 0,
     proceeds      BIGINT      NOT NULL,
-    listed_at     TIMESTAMPTZ
+    listed_at     TIMESTAMPTZ,
+    modifier1         INTEGER,
+    modifier2         INTEGER,
+    legendarymodifier INTEGER
 );
 
 -- A profile asks for one person's history, both sides of it, newest first.
@@ -378,6 +381,12 @@ ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS market_barred BOOLEAN NO
 -- were dropped on every save and a gift never arrived.
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gifts JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS gift_sends JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- A sale's modifiers, which are most of what a weapon was bought for. Sales
+-- written before these existed keep none, rather than a guess.
+ALTER TABLE IF EXISTS market_sales ADD COLUMN IF NOT EXISTS modifier1 INTEGER;
+ALTER TABLE IF EXISTS market_sales ADD COLUMN IF NOT EXISTS modifier2 INTEGER;
+ALTER TABLE IF EXISTS market_sales ADD COLUMN IF NOT EXISTS legendarymodifier INTEGER;
 
 -- See `version` on the accounts table.
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;

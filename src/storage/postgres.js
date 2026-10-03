@@ -647,12 +647,14 @@ export const recordSale = async (sale) => {
   await connect().query(
     `INSERT INTO market_sales
        (listing_id, at, seller_id, seller_name, buyer_id, buyer_name,
-        item_id, rarity, power, requiredlevel, price, tax, proceeds, listed_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        item_id, rarity, power, requiredlevel, price, tax, proceeds, listed_at,
+        modifier1, modifier2, legendarymodifier)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
     [
       sale.listing_id, sale.at, sale.seller_id, sale.seller_name, sale.buyer_id,
       sale.buyer_name, sale.item_id, sale.rarity, sale.power, sale.requiredlevel,
       sale.price, sale.tax, sale.proceeds, sale.listed_at,
+      sale.modifier1 ?? null, sale.modifier2 ?? null, sale.legendarymodifier ?? null,
     ]
   );
 };
@@ -661,7 +663,8 @@ export const recordSale = async (sale) => {
 export const salesFor = async (accountId, limit) => {
   const { rows } = await connect().query(
     `SELECT listing_id, at, seller_id, seller_name, buyer_id, buyer_name,
-            item_id, rarity, power, requiredlevel, price, tax, proceeds, listed_at
+            item_id, rarity, power, requiredlevel, price, tax, proceeds, listed_at,
+            modifier1, modifier2, legendarymodifier
        FROM market_sales
       WHERE seller_id = $1 OR buyer_id = $1
       ORDER BY at DESC LIMIT $2`,

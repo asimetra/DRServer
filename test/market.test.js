@@ -573,6 +573,27 @@ test("a completed sale is written down, and survives the claim", async () => {
 });
 
 /**
+ * A weapon's modifiers are most of what makes one worth its price, and a
+ * history that kept the rarity and the power but not them could not say what
+ * was actually bought.
+ */
+test("a sale remembers the weapon's modifiers", async () => {
+  const { salesFor } = await import("../src/market-history.js");
+  const seller = await anAccount({
+    items: [weapon(7705, { rarity: 4, modifier1: 70045, modifier2: 70005, legendarymodifier: 10 })],
+  });
+  const buyer = await anAccount({ gold: 5000 });
+
+  await listForSale({ sellerId: seller.id, itemId: 7705, price: 400 });
+  await buyListing({ listingId: 7705, buyerId: buyer.id });
+
+  const [sale] = await salesFor(buyer.id);
+  assert.equal(sale.modifier1, 70045);
+  assert.equal(sale.modifier2, 70005);
+  assert.equal(sale.legendarymodifier, 10);
+});
+
+/**
  * Both sides. The question a profile is opened to ask is what somebody has been
  * doing in the market, and half an answer invites the wrong conclusion.
  */
