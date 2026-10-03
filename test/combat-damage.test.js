@@ -289,9 +289,49 @@ test("a projectile's repeated hits are each worth half the last", async () => {
 
   const first = await hitAt(0);
   assert.ok(first > 8, "the first collision lands in full");
-  assert.equal(await hitAt(1), Math.max(1, Math.round(first / 2)), "the second is half");
-  assert.equal(await hitAt(2), Math.max(1, Math.round(first / 4)), "the third a quarter");
-  assert.equal(await hitAt(3), Math.max(1, Math.round(first / 8)), "and so on down");
+  const half = (hit) => Math.max(1, Math.round(hit / 2));
+  assert.equal(await hitAt(1), half(first), "the second is half");
+  assert.equal(await hitAt(2), half(half(first)), "the third half of that");
+  assert.equal(await hitAt(3), half(half(half(first))), "and so on down");
+});
+
+/**
+ * Half of the hit before, rounded — not the first hit over a power of two.
+ *
+ * A Sonic Slash from a Shichiseiken in the official's recording (2026-10-03)
+ * caught fourteen monsters in one flight: 5623, 2812, 1406, 703, 352, 176, 88,
+ * 44, 22, 11, 6, 3, 2, 1. That is each one half the last, a half rounded up —
+ * 2811.5 to 2812, 351.5 to 352, 5.5 to 6, 1.5 to 2 — where the first over a
+ * power of two gives 351, 5 and 1. The storm's 2877 and 720 fit it as well.
+ */
+test("a projectile's collisions go down by halves of the last, as the official's Sonic Slash did", async () => {
+  const { handleProposeCombatResults } = await import("../src/socket/combat.js");
+  const { PacketWriter, PacketReader } = await import("../src/socket/packet.js");
+  const { CLID } = await import("../src/socket/opcodes.js");
+  const SONIC_SLASH = 902510; // KATANA_SONIC_SLASH: DamageMod -2.5, shooting
+  // 2249 × 2.5 is 5622.5, which lands as the recording's 5623.
+  const weapon = await weaponWith(SONIC_SLASH, { power: 2249 });
+  const landed = [];
+  for (let generation = 0; generation < 14; generation++) {
+    const victim = 700 + generation;
+    const session = {
+      id: 93,
+      heroDoid: 500,
+      floorDoid: 400,
+      heroWeapons: [weapon],
+      objects: new Map([[500, CLID.HeroGameObject], [victim, CLID.DistributedNPCGameObject]]),
+      actors: new Map([[victim, { hitPoints: 900000, maxHitPoints: 900000, constant: "KNIGHT", level: 45, isEnemy: true }]]),
+      allocateDoid: () => 900,
+      send: () => {},
+    };
+    const result = new PacketWriter()
+      .u32(500).u32(victim).i32(0).u8(0).u8(0).u32(SONIC_SLASH).u32(0)
+      .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0).i32(0).f32(1).u8(generation)
+      .body();
+    await handleProposeCombatResults(session, new PacketReader(new PacketWriter().u16(result.length).raw(result).body()));
+    landed.push(900000 - session.actors.get(victim).hitPoints);
+  }
+  assert.deepEqual(landed, [5623, 2812, 1406, 703, 352, 176, 88, 44, 22, 11, 6, 3, 2, 1]);
 });
 
 test("a lethal hero result credits damage and one kill to that member's report", async () => {

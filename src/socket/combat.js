@@ -2589,13 +2589,26 @@ const statsFor = async (session, doid) => {
  * The client counts each collision of a projectile in `generation`, and the
  * captures show the damage halving with it. One victim caught by two different
  * storms settles it: at generation 0 it took 2877, and at generation 2 it took
- * 720, which is 2877 over four. So a cloud mauls the first thing it reaches and
- * is nearly spent by the fifth.
+ * 720 — half of half, 1439 and then 720. So a cloud mauls the first thing it
+ * reaches and is nearly spent by the fifth.
  *
  * Harmless for everything else — an ordinary swing is generation zero and
  * divides by one.
  */
-const generationFalloff = (generation) => 2 ** Math.max(0, Number(generation ?? 0));
+const generationFalloff = (hit, generation) => {
+  /**
+   * Each collision half of the one before, rounded — not the first over a
+   * power of two. A Sonic Slash in the official's recording (2026-10-03) went
+   * 5623, 2812, 1406, 703, 352, 176, 88, 44, 22, 11, 6, 3, 2, 1: halves rounded
+   * up, 2811.5 to 2812 and 351.5 to 352, where 5623 over sixteen is 351. The
+   * storm's 2877 and 720 above are the same rule.
+   */
+  let landed = hit;
+  for (let step = 0; step < Math.max(0, Number(generation ?? 0)) && landed > 1; step++) {
+    landed = Math.max(1, Math.round(landed / 2));
+  }
+  return landed;
+};
 
 /** The equipment belonging to a hero doid, including a remote party member. */
 const weaponsForHero = (session, doid) => {
@@ -2778,7 +2791,7 @@ const priceHit = async (session, proposal, attack, weaponPower, weapon = null) =
    */
   const none = { damage: 0, neutral: 0, effectiveness: 0 };
   if (signed >= 0) return none; // a heal is `computeHealing`'s to price
-  const raw = -signed / generationFalloff(proposal.generation);
+  const raw = -signed;
 
   /**
    * And then what the defender's buffs take off it, by the type of the hit.
@@ -2826,8 +2839,8 @@ const priceHit = async (session, proposal, attack, weaponPower, weapon = null) =
     offsets &&
     heroResists(session, proposal.attackee, ["MELEE", "SHOOTING", "MAGIC"][offsets.type]);
   return {
-    damage: Math.max(1, round(raw * category.multiplier * (1 - reduction))),
-    neutral: Math.max(1, round(raw * (1 - reduction))),
+    damage: generationFalloff(Math.max(1, round(raw * category.multiplier * (1 - reduction))), proposal.generation),
+    neutral: generationFalloff(Math.max(1, round(raw * (1 - reduction))), proposal.generation),
     effectiveness: shielded ? -1 : category.effectiveness,
   };
 };
@@ -2975,7 +2988,7 @@ const computeHealing = async (session, proposal, attack, weaponPower) => {
     defenderBuff: 1,
   });
   if (signed <= 0) return 0;
-  return Math.max(1, Math.round(signed / generationFalloff(proposal.generation)));
+  return generationFalloff(Math.max(1, Math.round(signed)), proposal.generation);
 };
 
 /**
