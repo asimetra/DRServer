@@ -2916,7 +2916,7 @@ export const enterDungeon = async (
   const entryReady = await waitForHandshake(
     session,
     PLAYER_REQUEST_ENTRY,
-    config.floorDelayMs
+    config.entryHandshakeMs
   );
   if (!entryReady) warn(`[${session.id}] requestentry timed out; using compatibility fallback`);
   if (!isActive()) return false;
@@ -2948,7 +2948,7 @@ export const enterDungeon = async (
   const heroReady = await waitForHandshake(
     session,
     PLAYER_REQUEST_HERO,
-    config.floorDelayMs
+    config.entryHandshakeMs
   );
   if (!heroReady) warn(`[${session.id}] requesthero timed out; using compatibility fallback`);
   if (!isActive()) return false;

@@ -39,3 +39,19 @@ test("teardown releases a pending handshake without waiting for its timeout", as
   assert.equal(await waiting, false);
   assert.equal(session.entryHandshake, undefined);
 });
+
+/**
+ * A connection can go while its entry is still on the way: the worker hears it
+ * leave before the account it was waiting for even arrives, and the build then
+ * carries on into a wait for a signal that cannot come. With a short wait that
+ * cost five seconds; the wait is long now, because a browser's loading screen
+ * can take that long, and a wait that outlives its member holds the account —
+ * the player could not get back in. A member already closed is not waited for.
+ */
+test("a member already gone is not waited for", async () => {
+  const closed = { closed: true };
+  assert.equal(await waitForEntryHandshake(closed, PLAYER_REQUEST_ENTRY, 60_000), false);
+  const leaving = { member: { closed: true } };
+  assert.equal(await waitForEntryHandshake(leaving, PLAYER_REQUEST_HERO, 60_000), false);
+  assert.equal(leaving.member.entryHandshake, undefined, "and nothing is left behind on it");
+});

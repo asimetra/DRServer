@@ -35,6 +35,7 @@
   "floorCatalogFile": "floors.json",
   "dungeonsEnabled": true,
   "floorDelayMs": 5000,
+  "entryHandshakeMs": 120000,
   "npcFilter": "all",
   "npcAggroRadius": 900,
   "trapCycleMs": 2000,

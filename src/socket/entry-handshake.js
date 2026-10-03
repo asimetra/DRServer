@@ -22,6 +22,10 @@ export const noteEntryHandshake = (session, fieldId) => {
  * fallback for clients/probes that do not implement the handshake.
  */
 export const waitForEntryHandshake = (session, fieldId, timeoutMs) => {
+  // A member already gone sends nothing more. Its entry can still reach here —
+  // the leave can overtake the account the build was waiting for — and a wait
+  // for it would hold that account until the wait ran out.
+  if (session?.closed || session?.member?.closed) return Promise.resolve(false);
   const { member, state } = stateOf(session);
   if (state.pending.delete(fieldId)) {
     if (!state.waiters.size && !state.pending.size) delete member.entryHandshake;

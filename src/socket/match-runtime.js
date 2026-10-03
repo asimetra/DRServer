@@ -72,7 +72,7 @@ const requireJoinableWorld = (match, world, member) => {
 };
 
 const waitForPlayerSignal = (session, fieldId) =>
-  waitForEntryHandshake(session, fieldId, config.floorDelayMs);
+  waitForEntryHandshake(session, fieldId, config.entryHandshakeMs);
 
 const memberPosition = (member, fallback = { x: 0, y: 0 }) =>
   member?.heroPosition ?? member?.actors?.get(member?.heroDoid)?.position ?? fallback;

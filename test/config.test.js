@@ -26,6 +26,20 @@ test("JSON defaults make the server independent from the client repository", () 
   assert.equal(loaded.matchWorkerCount, 0);
 });
 
+/**
+ * How long entry waits for the client to say it is ready for the floor, and
+ * then for its hero. The browser client keeps its loading screen up until the
+ * art the area asked for has downloaded, which on a home connection is longer
+ * than the five seconds floorDelayMs gives; the server then sent the hero
+ * before the client had a HUD to put it in, and the client crashed
+ * ("Cannot read properties of null (reading 'initializeHud')"). The wait is a
+ * fallback for tools that never send the signal; every real client does.
+ */
+test("entry waits two minutes for the client's ready signals, and can be told otherwise", () => {
+  assert.equal(loadServerConfig({}).entryHandshakeMs, 120_000);
+  assert.equal(loadServerConfig({ ODS_ENTRY_HANDSHAKE_MS: "30000" }).entryHandshakeMs, 30_000);
+});
+
 test("auto match workers leave the main thread a core and stop at four", async () => {
   const { availableParallelism } = await import("node:os");
   const loaded = loadServerConfig({ ODS_MATCH_WORKERS: "auto" });

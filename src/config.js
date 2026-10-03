@@ -431,6 +431,19 @@ export const loadServerConfig = (environment = process.env) => {
     floorDelayMs: asInt(setting(environment, "FLOOR_DELAY_MS"), defaults.floorDelayMs),
 
     /**
+     * How long entry waits for the client to say it is ready for the floor
+     * (`requestentry`) and then for its hero (`requesthero`), before going on
+     * without it.
+     *
+     * Every real client sends both; the fallback is for tools that do not. It
+     * was floorDelayMs, five seconds, and the browser client keeps its loading
+     * screen up until the art the area asked for has downloaded — longer than
+     * that on a home connection. The server then sent the hero before the
+     * client had made its HUD, and the client crashed on it.
+     */
+    entryHandshakeMs: asInt(setting(environment, "ENTRY_HANDSHAKE_MS"), defaults.entryHandshakeMs ?? 120_000),
+
+    /**
      * Which NPCs to place: "all", "props" (barrels and crates only), "enemies"
      * or "none". A bisecting aid — when the client misbehaves in a dungeon it is
      * usually one class of actor that causes it, and this narrows it down in one
