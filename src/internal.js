@@ -996,7 +996,7 @@ const readBoard = async (req, [metric]) => {
     metric,
     better: board.better,
     scope: board.scope === "node" ? scope : null,
-    entries: withHeroes(await boardFor(metric, scope), await loadGameMaster()),
+    entries: await withHeroes(await boardFor(metric, scope), await loadGameMaster()),
   });
 };
 
@@ -1015,15 +1015,31 @@ const readBoard = async (req, [metric]) => {
  * player picked it.
  */
 const withHeroes = (entries, gm) =>
-  (entries ?? []).map((entry) => {
-    const hero = entry.hero_id ? gm.heroById.get(entry.hero_id) : null;
-    return {
-      ...entry,
-      hero: hero
-        ? { id: hero.Id, name: hero.Name ?? hero.Constant, icon: hero.IconName ?? null }
-        : null,
-    };
-  });
+  Promise.all(
+    (entries ?? []).map(async (entry) => {
+      const hero = entry.hero_id ? gm.heroById.get(entry.hero_id) : null;
+      return {
+        ...entry,
+        hero: hero
+          ? { id: hero.Id, name: hero.Name ?? hero.Constant, icon: hero.IconName ?? null }
+          : null,
+        level: await heroLevelNow(entry.account_id, entry.hero_id, gm),
+      };
+    })
+  );
+
+/**
+ * A standing's hero's level as it is now, by the Leveling table (this server's
+ * rule): the line under each name on a board. Null when the account cannot be
+ * read or no longer has the hero.
+ */
+const heroLevelNow = async (accountId, heroId, gm) => {
+  if (!accountId || !heroId) return null;
+  const account = await loadExistingAccount(Number(accountId)).catch(() => null);
+  const avatar = (account?.account_avatars ?? []).find((row) => Number(row.avatar_id) === Number(heroId));
+  const hero = gm.heroById.get(Number(heroId));
+  return avatar && hero ? heroLevel(gm, hero, Number(avatar.experience) || 0) : null;
+};
 
 /**
  * The store, which is not the market.
