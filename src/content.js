@@ -49,6 +49,13 @@ const insideRoot = (root, rest) => {
 
 const missing = { status: 404, headers: { "Content-Type": "application/json" }, body: "{}" };
 
+/** Whether an If-None-Match header names this tag: any of its list, weak or strong, or `*`. */
+const matchesETag = (offered, etag) => {
+  if (!offered) return false;
+  const bare = (tag) => tag.trim().replace(/^W\//, "");
+  return String(offered).split(",").some((tag) => tag.trim() === "*" || bare(tag) === bare(etag));
+};
+
 /**
  * Whether this server holds its own copy of an asset.
  *
@@ -112,6 +119,21 @@ export const serveContent = async ({ contentDir } = config, captures = [], reque
     if (!stat.isFile()) return missing;
     if (!insideRoot(root, await fs.promises.realpath(file))) return missing;
 
+    /**
+     * A validator, so a client that keeps what it fetched can ask "still this
+     * one?" and be told so in a header instead of four megabytes. Size and
+     * mtime, like the cache below: replacing a file changes it, and nothing
+     * is hashed. Weak, because the gzip and the plain body are the same file.
+     * `no-cache` is "ask every time", not "never keep": the browser the web
+     * client runs in revalidates and gets the 304; the desktop client's loader
+     * keeps nothing between launches and is sent the body as before.
+     */
+    const etag = `W/"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
+    const caching = { ETag: etag, "Cache-Control": "no-cache" };
+    if (matchesETag(request?.headers?.["if-none-match"], etag)) {
+      return { status: 304, headers: caching, body: "" };
+    }
+
     const { body, encoding } = await bodyOf(file, stat, wantsGzip);
     return {
       status: 200,
@@ -119,6 +141,7 @@ export const serveContent = async ({ contentDir } = config, captures = [], reque
         "Content-Type": TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream",
         "Content-Length": String(body.length),
         ...(encoding ? { "Content-Encoding": encoding } : {}),
+        ...caching,
       },
       body,
     };

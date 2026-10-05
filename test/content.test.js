@@ -151,3 +151,31 @@ test("nothing is overridden when no content directory is set", () => {
     forgetOverrides();
   }
 });
+
+/**
+ * A client that kept what it fetched asks with If-None-Match and is told
+ * "still that one" in a header. The web client's browser does this by itself;
+ * the desktop loader keeps nothing and is simply sent the body.
+ */
+test("an unchanged file is answered 304 to a client that offers its tag, and the tag follows the file", async () => {
+  const file = path.join(root, "Levels", "tagged.json");
+  fs.writeFileSync(file, '{"v":1}');
+  const first = await get("Levels/tagged.json");
+  assert.equal(first.status, 200);
+  assert.match(first.headers.ETag, /^W\/"[0-9a-f]+-[0-9a-f]+"$/);
+  assert.equal(first.headers["Cache-Control"], "no-cache", "ask every time, keep meanwhile");
+
+  const again = await serveContent({ contentDir: root }, ["Levels/tagged.json"], { headers: { "if-none-match": first.headers.ETag } });
+  assert.equal(again.status, 304);
+  assert.equal(again.body, "");
+  assert.equal(again.headers.ETag, first.headers.ETag);
+
+  const strong = await serveContent({ contentDir: root }, ["Levels/tagged.json"], { headers: { "if-none-match": `"x", ${first.headers.ETag.slice(2)}` } });
+  assert.equal(strong.status, 304, "a list, and a strong spelling of a weak tag, still match");
+
+  fs.writeFileSync(file, '{"v":2,"longer":true}');
+  const changed = await serveContent({ contentDir: root }, ["Levels/tagged.json"], { headers: { "if-none-match": first.headers.ETag } });
+  assert.equal(changed.status, 200, "a replaced file is sent whole");
+  assert.notEqual(changed.headers.ETag, first.headers.ETag);
+  assert.match(changed.body.toString(), /"v":2/);
+});
