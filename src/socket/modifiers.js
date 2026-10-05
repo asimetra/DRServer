@@ -100,9 +100,10 @@ import { superStatValue } from "../hero-stats.js";
  * median of 134, a 75th of 270 and a maximum of 499, which is the neighbourhood
  * of the two distances the account carries.
  *
- * So the modifier's distance drives the push and the attack's own column does
- * not: `KATANA_SOUL_BANG` authors 50 and moves nothing over 6568 flagged hits,
- * because that katana carried no knockback modifier.
+ * The attack's own column drives a smaller one: `KATANA_SOUL_BANG` authors 50
+ * and, over 6568 flagged hits, moves a median of nothing counting every victim
+ * and 47 counting the ones still alive to be moved (1803) — the dead do not
+ * send positions. The same corpus read in combat.js by the second count.
  *
  * So all twenty-four are accounted for. Fifteen are this server's and are
  * done; `MANA_COST` and `COOLDOWN_REDUC` were already; six are the client's and
@@ -308,7 +309,8 @@ export const cookingFoodChance = (gm, hero, avatar, column) => {
 };
 
 /**
- * How far a weapon's `KNOCKBACK` or `PULL` modifiers throw what they hit.
+ * How far a weapon's `KNOCKBACK` or `PULL` modifiers throw what they hit, and
+ * over how long.
  *
  * Absolute rather than added, and the levels say so: `Hitback` through
  * `Blastback` run 50, 100, 150, 200, 250 and `Grabber` through `Trapper` run
@@ -322,14 +324,27 @@ export const cookingFoodChance = (gm, hero, avatar, column) => {
  *
  * The larger magnitude wins when a weapon somehow carries both, since one hit
  * throws a body one way.
+ *
+ * `KNOCKBACK_DURATION` (0.2s at the first level to 0.4s at the fifth) is how
+ * long the throw takes, and the official spends it: a `Blastback` victim's
+ * position frames after the hit read 149 at +158ms and 230 at +408ms, which is
+ * the 250 spread over the two AI ticks that fit in 0.4s — not one frame at the
+ * far end.
  */
-export const knockbackFor = (gm, weapon) => {
-  if (!weapon) return 0;
-  let furthest = 0;
+export const knockbackOf = (gm, weapon) => {
+  const none = { distance: 0, durationMs: 0 };
+  if (!weapon) return none;
+  let furthest = none;
   for (const id of [weapon.modifier1, weapon.modifier2]) {
     if (!id) continue;
-    const authored = Number(gm?.modifiersById?.get(Number(id))?.KNOCKBACK_DISTANCE);
-    if (Number.isFinite(authored) && Math.abs(authored) > Math.abs(furthest)) furthest = authored;
+    const row = gm?.modifiersById?.get(Number(id));
+    const distance = Number(row?.KNOCKBACK_DISTANCE);
+    if (!Number.isFinite(distance) || Math.abs(distance) <= Math.abs(furthest.distance)) continue;
+    const seconds = Number(row?.KNOCKBACK_DURATION);
+    furthest = { distance, durationMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0 };
   }
   return furthest;
 };
+
+/** The distance alone. */
+export const knockbackFor = (gm, weapon) => knockbackOf(gm, weapon).distance;

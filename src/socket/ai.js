@@ -855,6 +855,41 @@ const advanceNpcRelease = (
   return true;
 };
 
+/**
+ * One tick of a shove in flight — a knockback or pull `pushVictim` (combat.js)
+ * handed to the AI with a duration, so the throw is spread over the ticks that
+ * fit in it rather than landing whole in one frame.
+ *
+ * Each tick carries the share of the distance the clock has reached and sends
+ * the position, which on a 250ms tick and a 0.4s throw is two frames, as the
+ * official's are. Through navigation: a throw that meets a wall ends there,
+ * and the share it could not cover is not tried again. While it flies the
+ * monster neither walks nor swings.
+ */
+export const slideShoved = (session, doid, actor, now) => {
+  const shove = actor.ai?.shove;
+  if (!shove) return false;
+  const share = Math.min(1, Math.max(0, (now - shove.startedAt) / shove.durationMs));
+  const step = share - shove.covered;
+  shove.covered = share;
+  if (share >= 1) actor.ai.shove = null;
+  if (step <= 0) return true;
+  const nextPosition = moveWithNavigation(
+    session.navigation,
+    actor.position,
+    { x: shove.x * step, y: shove.y * step },
+    collisionRadius(actor)
+  );
+  if (distanceTo(actor.position, nextPosition) < 0.5) {
+    actor.ai.shove = null;
+    return true;
+  }
+  actor.position.x = nextPosition.x;
+  actor.position.y = nextPosition.y;
+  session.send(npcPositionUpdate(doid, actor.position));
+  return true;
+};
+
 /** One deterministic AI step; exported so movement and combat can be locked by tests. */
 export const tickNpcAi = async (session, now, deltaSeconds) => {
   const state = matchStateOf(session);
@@ -981,6 +1016,8 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   for (const [doid, actor] of actors) {
     const ai = actor.ai;
     if (!ai || actor.dead || !actor.position) continue;
+    // Thrown by a hit — see pushVictim in combat.js. Carried, not walking.
+    if (slideShoved(session, doid, actor, now)) continue;
     // Reeling from a hit that staggered it — see holdStaggered in combat.js.
     // It neither walks nor swings until the stun is over.
     if (now < (ai.staggeredUntil ?? 0)) continue;

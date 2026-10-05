@@ -1371,7 +1371,10 @@ test("a knocked-back monster is actually moved, and a Trapper pulls it in", asyn
 
   // The monster stands 200 to the hero's right, so away is +x and toward is -x.
   assert.equal(shoved(knockbackFor(gm, { modifier1: BLASTBACK })), 250, "Blastback throws it away");
-  assert.equal(shoved(knockbackFor(gm, { modifier1: TRAPPER })), -300, "Trapper pulls it in");
+  // Trapper names -300 across a gap of 200: the pull stops where the bodies
+  // meet (radii 25 and 22), not 100 behind the hero.
+  assert.equal(shoved(knockbackFor(gm, { modifier1: TRAPPER })), -153, "Trapper pulls it in, to contact");
+  assert.equal(shoved(-100), -100, "a pull shorter than the gap is carried whole");
   assert.equal(shoved(250, ["KNOCKBACK_IMMUNE"]), 0, "knockback immunity moved anyway");
   assert.equal(shoved(-300, ["PULL_IMMUNE"]), 0, "pull immunity moved anyway");
   assert.equal(shoved(0), 0, "nothing moves without a distance");
@@ -1429,8 +1432,9 @@ test("swinging a Trapper weapon drags the monster in", async () => {
     return victim.position.x - 1200;
   };
 
+  // Named -300 across a gap of 200: dragged to contact (radii 25 and 22), not through.
   const trapper = await swungWithPull({ type: 12502, power: 30, modifier1: TRAPPER });
-  assert.equal(trapper, -300, `Trapper moved it ${trapper} instead of dragging it 300 in`);
+  assert.equal(trapper, -153, `Trapper moved it ${trapper} instead of dragging it in to contact`);
 
   const blastback = await swungWithPull({ type: 12502, power: 30, modifier1: BLASTBACK });
   assert.equal(blastback, 250, "Blastback did not throw it away");
@@ -1542,6 +1546,26 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
   });
 
   assert.equal(victim.position.x - 1200, 250, "the fissure left the monster where it stood");
+
+  /**
+   * Away from the crack, not from the hero. The official names the placeable
+   * as the attacker on these hits; a mine that threw everything away from a
+   * hero standing elsewhere would throw sideways.
+   */
+  const CRACK = 700;
+  victim.position = { x: 1200, y: 1000 };
+  session.actors.set(CRACK, { position: { x: 1200, y: 1300 }, collisionRadius: 10 });
+  await performPlaceableAttack(session, CRACK, {
+    attack: gm.raw.Attack.find((row) => row.Constant === "FISSURE_HAMMER"),
+    victims: [{ doid: ENEMY, actor: victim }],
+    weaponPower: 30,
+    weapon: session.heroWeapons[0],
+  });
+  assert.deepEqual(
+    { x: Math.round(victim.position.x), y: Math.round(victim.position.y) },
+    { x: 1200, y: 750 },
+    "thrown from the hero's side instead of the crack's"
+  );
 });
 
 test("a placeable's hits count on the report, pay Mana and drop food", async () => {

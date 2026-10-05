@@ -52,7 +52,7 @@ import {
   critRollFor,
   onHitBuffEffectsFor,
   attackMultiplierFor,
-  knockbackFor,
+  knockbackOf,
   foodChanceFor,
   cookingFoodChance,
   FOOD_ON_HIT,
@@ -916,11 +916,24 @@ const npcPositionUpdate = (doid, position) =>
  * is exactly how `PULL` is authored, at -100 through -300, and the only reading
  * under which those negatives mean anything.
  *
+ * A pull stops where the bodies meet. `Trapper` names -300 and a monster is
+ * seldom that far away when a hit lands; carried the whole distance it would
+ * pass through the attacker and land behind him, which is not a pull.
+ *
+ * Over the time the throw is given, when it is given one: a monster the AI
+ * walks is handed the push as a shove in flight (`slideShoved` in ai.js) and
+ * covers it across the next ticks, the way the official's position frames do —
+ * a `Blastback` victim reads 149 at +158ms and 230 at +408ms. One frame at
+ * the far end is a teleport, and it looked like one. What the AI does not
+ * walk, or a push with no duration, moves at once.
+ *
  * Through navigation, so a monster is not shoved into a wall or out of the
  * floor. A push that ends where it started is still a push as far as the client
  * is concerned; it plays its own animation off the flag.
  */
-export const pushVictim = (session, victimDoid, attackerDoid, distance) => {
+const NO_KNOCKBACK = Object.freeze({ distance: 0, durationMs: 0 });
+
+export const pushVictim = (session, victimDoid, attackerDoid, distance, durationMs = 0) => {
   if (!distance) return false;
   const victim = session.actors?.get(victimDoid);
   const attacker = session.actors?.get(attackerDoid);
@@ -934,10 +947,20 @@ export const pushVictim = (session, victimDoid, attackerDoid, distance) => {
   const span = Math.hypot(dx, dy);
   if (!(span > 0)) return false;
 
+  const contact =
+    Math.max(0, Number(victim.collisionRadius) || 0) +
+    Math.max(0, Number(attacker?.collisionRadius) || 0);
+  const carried = distance < 0 ? -Math.max(0, Math.min(-distance, span - contact)) : distance;
+  if (!carried) return false;
+
   const wanted = {
-    x: (dx / span) * distance,
-    y: (dy / span) * distance,
+    x: (dx / span) * carried,
+    y: (dy / span) * carried,
   };
+  if (victim.ai && durationMs > 0) {
+    victim.ai.shove = { ...wanted, startedAt: Date.now(), durationMs, covered: 0 };
+    return true;
+  }
   const landed = moveWithNavigation(
     session.navigation,
     victim.position,
@@ -1977,14 +2000,23 @@ export const performPlaceableAttack = async (
      * it opens, not through a hit the client proposes, so it never reached the
      * push in `applyProposals`.
      *
+     * Away from the placeable, which is what the official's results name as the
+     * attacker on these hits — a mine throws outward from the mine, and a
+     * `Trapper` mine reels in to the mine, not to a hero three rooms off. The
+     * hero only when the thing has no position of its own.
+     *
      * The official displaces here too, though less tidily than for a direct
-     * hit: its `FISSURE_SMASH_ATTACK` victims move a median 48 and its
-     * `FISSURE_SLOW_SMASH_ATTACK` 65, with maxima of 326 and 142 — and its
-     * `FISSURE_SMASH_AXE` a median of nothing over 52 hits, which is what a
-     * weapon without the modifier looks like.
+     * hit: its `FISSURE_SMASH_ATTACK` victims, behind a mallet carrying 200,
+     * move a median 138 (9 alive) and its `FISSURE_SLOW_SMASH_ATTACK` 142 (2).
+     * Its `FISSURE_SMASH_AXE` — the axe's charge, behind an axe carrying 250 in
+     * every recorded session — moves a median of nothing (5 alive, 5 to 37),
+     * not even the 100 its own row authors. So the official pushes through a
+     * hammer's crack and not through the axe's burst; this path pushes through
+     * both, and which is right for the axe is an open question at that n.
      */
-    const shove = knockbackFor(await loadGameMaster(), weapon);
-    if (shove) pushVictim(session, victim.doid, session.heroDoid, shove);
+    const { distance: shove, durationMs } = knockbackOf(await loadGameMaster(), weapon);
+    const placeable = session.actors?.get(attackerDoid)?.position ? attackerDoid : session.heroDoid;
+    if (shove) pushVictim(session, victim.doid, placeable, shove, durationMs);
 
     /**
      * Mana back for landing it, which `ManaPerHit` gives to exactly one attack
@@ -3876,7 +3908,8 @@ const applyProposals = async (session, proposals) => {
      * victim is thrown, so either way it flinches.
      */
     const landed = !proposal.blocked && damage > 0 && statOffsetsFor(attack);
-    const weaponShove = landed ? knockbackFor(await loadGameMaster(), swung) : 0;
+    const weaponKnockback = landed ? knockbackOf(await loadGameMaster(), swung) : NO_KNOCKBACK;
+    const weaponShove = weaponKnockback.distance;
     const stagger = landed
       ? staggerFor(attack, damage, session.random ?? Math.random)
       : NO_STAGGER;
@@ -3903,9 +3936,12 @@ const applyProposals = async (session, proposals) => {
      *
      * The attack's own `Knockback` throws the victim. That was held back once
      * on a measurement that had the monsters standing still; measured over the
-     * 0.7 seconds after the hit, they do not: KATANA_SOUL_BANG authors 50 and
-     * moves its victim a median 48 (1618 hits), the health bomb 140 and 141,
-     * EARTHQUAKE 30 and 50, against a median 9 for a hit that carries no flag.
+     * 0.7 seconds after the hit, counting only victims still alive to be moved,
+     * they do not: KATANA_SOUL_BANG authors 50 and moves its victim a median 47
+     * (1803 alive of 6996 hits — counting the dead too, who send no position,
+     * the median is 0, which is the count modifiers.js gives), the health bomb
+     * 140 and 141, EARTHQUAKE 30 and 50, against a median 9 for a hit that
+     * carries no flag.
      *
      * And not on a blocked result. The client's own resolver clears blocked
      * hits before it ever considers a knockback flag; letting a modifier push
@@ -3975,7 +4011,10 @@ const applyProposals = async (session, proposals) => {
      * one, so the corpus cannot show what a Trapper does.
      */
 
-    if (shove) pushVictim(session, proposal.attackee, proposal.attacker, shove);
+    const shoveMs = weaponShove
+      ? weaponKnockback.durationMs
+      : Math.max(0, Number(attack?.KnockbackDur) || 0) * 1000;
+    if (shove) pushVictim(session, proposal.attackee, proposal.attacker, shove, shoveMs);
     if (suffers) holdStaggered(session, proposal.attackee, attack);
 
     const actor = session.actors?.get(proposal.attackee);

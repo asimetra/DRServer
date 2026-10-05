@@ -3,6 +3,7 @@ import { weaponWith } from "./helpers/weapons.js";
 import test from "node:test";
 
 import { attackForConstant } from "../src/gamemaster.js";
+import { slideShoved } from "../src/socket/ai.js";
 import {
   dealTrapHit,
   handleProposeCombatResults,
@@ -81,6 +82,9 @@ const heroHit = async (attackId, { random = () => 0.5, abilities, moveSpeed = 18
   );
   const echo = sent.find((frame) => frame.readUInt32LE(4) === VICTIM && frame.readUInt16LE(8) === 144);
   assert.ok(echo, "the hit is echoed on the victim");
+  // The throw is spread over the attack's KnockbackDur by the AI tick
+  // (knockback-slide.test.js); settle it, so `moved` is where it ends.
+  slideShoved(session, VICTIM, monster, Date.now() + 10_000);
   return {
     suffer: echo.readUInt8(SUFFER_AT),
     knockback: echo.readUInt8(KNOCKBACK_AT),
