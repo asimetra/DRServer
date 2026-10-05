@@ -701,6 +701,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
        * and not the two its pet killed.
        */
       isEnemy: npc.CharType === "ENEMY",
+      isProp: npc.CharType === "PROP",
       holdsFloor: npc.CharType === "ENEMY" && options.countsForFloor !== false,
       /**
        * And a third: whether anything may pick it as a target. `IsAttackable`

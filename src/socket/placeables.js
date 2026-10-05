@@ -24,6 +24,7 @@ import { npcGenerate, objectDisable } from "./objects.js";
 import { variantFor } from "../content-packs.js";
 import { npcHeadingUpdate } from "./ai.js";
 import { npcAttackChoices, npcAttackSpeed } from "./npc-attacks.js";
+import { isScenery } from "./actor-roles.js";
 import { membersOf } from "./match-world.js";
 import {
   dealTrapHit,
@@ -180,7 +181,7 @@ const victimsOf = (session, doid, live, colliders, attack) =>
     ? hazardVictims(session, colliders, { attack, team: live.owner.team }).filter(
         (victim) => victim.doid !== doid
       )
-    : placeableVictims(session, doid, colliders);
+    : placeableVictims(session, doid, colliders, { attack });
 
 /**
  * And what it does to them.
@@ -225,7 +226,10 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
   const shape = await attackColliders(attack.AttackTimeline);
   const colliders = worldColliders(live.position, live.heading, shape);
   const victims = victimsOf(session, doid, live, colliders, attack);
-  if (!always && !victims.length) return 0;
+  // Scenery is hit when this goes off but never makes it go off: a mine beside
+  // a barrel rack waits for something that fights — a monster for the hero's,
+  // the hero for a dragon's.
+  if (!always && !victims.some((victim) => !isScenery(victim.actor))) return 0;
 
   const playSpeed = npcAttackSpeed(attack.AttackSpd);
   session.send(

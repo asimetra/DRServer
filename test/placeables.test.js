@@ -815,18 +815,24 @@ test("a firebomb leaves fire that burns enemies and not the trap that made it", 
   clearDungeonPlaceables(session);
 });
 
-test("scenery neither springs a trap nor is spent on", async () => {
-  const session = sessionWith();
-  // A barrel is an actor with hit points, but it is not something that fights.
-  session.objects.set(800, CLID.DistributedNPCGameObject);
-  session.actors.set(800, {
+/** A barrel rack: hit points, breakable, fights nobody. */
+const barrelAt = (session, doid, position) => {
+  session.objects.set(doid, CLID.DistributedNPCGameObject);
+  session.actors.set(doid, {
     hitPoints: 40,
     maxHitPoints: 40,
     constant: "CASTLE_PRISON_SMASH_BARRELRACK",
     isEnemy: false,
+    isProp: true,
+    attackable: true,
     collisionRadius: 30,
-    position: { x: 1040, y: 1000 },
+    position,
   });
+};
+
+test("scenery does not spring a trap", async () => {
+  const session = sessionWith();
+  barrelAt(session, 800, { x: 1040, y: 1000 });
 
   const doid = await spawnPlaceable(session, {
     action: { spawnname: "STICKY_MINE_PLACEABLE", offset: 40, timetolive: 60, frame: 6 },
@@ -835,12 +841,32 @@ test("scenery neither springs a trap nor is spent on", async () => {
   });
 
   await new Promise((resolve) => setTimeout(resolve, 1300));
-  assert.equal(session.actors.get(800).hitPoints, 40, "the barrel is untouched");
+  assert.equal(session.actors.get(800).hitPoints, 40, "the barrel set the mine off");
   assert.equal(
     session.objects.get(doid),
     CLID.DistributedNPCGameObject,
     "and the mine is still waiting for something that fights"
   );
+  clearDungeonPlaceables(session);
+});
+
+test("but a charge that goes off breaks the scenery in its way, as the official's does", async () => {
+  /**
+   * The official's hero placeables land on props as a matter of course — the
+   * axe's fissure 25 times against 54 on monsters — and every such attack
+   * authors `AffectsProps`. A Berserker's charge through a barrel rack left
+   * it standing here while a Samurai's slash, proposed by the client, broke it.
+   */
+  const session = sessionWith();
+  barrelAt(session, 800, { x: 1300, y: 1000 });
+
+  await spawnPlaceable(session, {
+    action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
+    origin: { x: 1000, y: 1000 },
+    heading: 0,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.ok(session.actors.get(800).hitPoints < 40, "the crack ran under the barrel rack and left it whole");
   clearDungeonPlaceables(session);
 });
 

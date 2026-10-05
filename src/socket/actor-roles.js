@@ -16,6 +16,13 @@
 /** Something the server may pick to hit on its own: a pet's or beast's target, what a hero's placeable catches. */
 export const isHuntable = (actor) => Boolean(actor?.isEnemy) && actor.attackable !== false;
 
+/**
+ * Scenery that breaks: a barrel, a crate, a table — a PROP row the client lets
+ * the hero hit. It fights nobody and springs nothing, but what the data says
+ * `AffectsProps` reaches it.
+ */
+export const isScenery = (actor) => Boolean(actor?.isProp) && actor.attackable !== false;
+
 /** Something the floor waits on before it is cleared. A boss's summons and Infinite's spawns are not. */
 export const holdsFloor = (actor) => Boolean(actor?.isEnemy) && actor.holdsFloor !== false;
 

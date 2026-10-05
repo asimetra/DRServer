@@ -15,7 +15,7 @@ import {
   suicideDelayMs,
 } from "../gamemaster.js";
 import { netAttackDamage, npcStats, statOffsetsFor } from "../combat-damage.js";
-import { countsAsKill, isHuntable } from "./actor-roles.js";
+import { countsAsKill, isHuntable, isScenery } from "./actor-roles.js";
 import { partyStatMultiplier } from "../npc-stats.js";
 import {
   STAT_NAMES,
@@ -927,11 +927,19 @@ const npcPositionUpdate = (doid, position) =>
  * the far end is a teleport, and it looked like one. What the AI does not
  * walk, or a push with no duration, moves at once.
  *
+ * The first frame goes out with the hit. Left to the tick alone the body stood
+ * still for up to 250ms and then set off, which read as lag — the client
+ * tweens toward each frame it is sent, so a frame it has not been sent is a
+ * body that has not moved. Half the distance now, as the official's first
+ * frame carries about that much; the tick carries the rest.
+ *
  * Through navigation, so a monster is not shoved into a wall or out of the
  * floor. A push that ends where it started is still a push as far as the client
  * is concerned; it plays its own animation off the flag.
  */
 const NO_KNOCKBACK = Object.freeze({ distance: 0, durationMs: 0 });
+/** The share of a timed throw sent with the hit itself. */
+const FIRST_FRAME_SHARE = 0.5;
 
 export const pushVictim = (session, victimDoid, attackerDoid, distance, durationMs = 0) => {
   if (!distance) return false;
@@ -957,17 +965,22 @@ export const pushVictim = (session, victimDoid, attackerDoid, distance, duration
     x: (dx / span) * carried,
     y: (dy / span) * carried,
   };
-  if (victim.ai && durationMs > 0) {
-    victim.ai.shove = { ...wanted, startedAt: Date.now(), durationMs, covered: 0 };
-    return true;
+  const timed = Boolean(victim.ai) && durationMs > 0;
+  const step = timed ? { x: wanted.x * FIRST_FRAME_SHARE, y: wanted.y * FIRST_FRAME_SHARE } : wanted;
+  if (timed) {
+    victim.ai.shove = { ...wanted, startedAt: Date.now(), durationMs, covered: FIRST_FRAME_SHARE };
   }
   const landed = moveWithNavigation(
     session.navigation,
     victim.position,
-    wanted,
+    step,
     Math.max(1, Number(victim.collisionRadius) || 1)
   );
-  if (Math.hypot(landed.x - victim.position.x, landed.y - victim.position.y) < 0.5) return false;
+  if (Math.hypot(landed.x - victim.position.x, landed.y - victim.position.y) < 0.5) {
+    // Stopped at once, by a wall: nothing for the tick to carry either.
+    if (timed) victim.ai.shove = null;
+    return false;
+  }
 
   victim.position.x = landed.x;
   victim.position.y = landed.y;
@@ -1869,22 +1882,33 @@ export const applyTargetBuff = async (session, { attack, victimDoid, attackerDoi
  * an empty room sends an animation nobody asked for — the captured clouds are
  * silent until something walks in.
  */
-export const placeableVictims = (session, attackerDoid, colliders = []) => {
+export const placeableVictims = (session, attackerDoid, colliders = [], { attack = null } = {}) => {
   if (!colliders.length) return [];
   const hazard = { combatColliders: colliders };
   const found = [];
+  /**
+   * Monsters, and the scenery the attack says it breaks.
+   *
+   * The player's own placed things — all of them on TEAM.PLAYERS — do not set
+   * each other off: a firebomb's fire was burning the trap that made it. Nor
+   * does anything nothing may target — an Infinite ice bomb is not put out by
+   * a bomb.
+   *
+   * Barrels and crates were left out altogether, and the official does not
+   * leave them out: its hero placeables land on props as a matter of course —
+   * the axe's fissure 25 times against 54 on monsters, the hammers' cracks 7
+   * against 17, sticky mines 7 against 8, garlic and firebombs too — and every
+   * one of those attacks authors `AffectsProps`. A Berserker's charge that
+   * went through a barrel rack without a splinter looked wrong beside a
+   * Samurai's, whose slash is a projectile the client proposes against
+   * scenery itself. Whether scenery *springs* a waiting trap is the caller's
+   * question (`strike` in placeables.js); here it is only whether the shape
+   * reaches it.
+   */
+  const breaksScenery = Boolean(attack?.AffectsProps);
   for (const victim of trapVictims(session)) {
     if (victim.doid === attackerDoid || victim.doid === session.heroDoid) continue;
-    /**
-     * Monsters only. Barrels, crates and tables are scenery to these: a trap
-     * is not sprung by a crate and does not go off against one, and the
-     * player's own placed things — all of them on TEAM.PLAYERS — do not set
-     * each other off either. A firebomb's fire was burning the trap that made
-     * it, and a bomb thrown past a barrel rack was spending itself on the
-     * furniture.
-     */
-    // Nor what nothing may target — an Infinite ice bomb is not put out by one.
-    if (!isHuntable(victim.actor)) continue;
+    if (!isHuntable(victim.actor) && !(breaksScenery && isScenery(victim.actor))) continue;
     const clid = session.objects?.get(victim.doid);
     if (victim.actor.dead || !RECEIVE_FIELD_BY_CLID[clid]) continue;
     // The same authored-shape test a floor trap uses, so a placed hazard and a

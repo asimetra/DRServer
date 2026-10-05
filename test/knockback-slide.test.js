@@ -56,16 +56,17 @@ test("a modifier's throw takes its authored time: two frames on a 250ms tick, no
   const { session, knight, sent } = makeSession();
   const start = Date.now();
   assert.equal(pushVictim(session, KNIGHT, HERO, distance, durationMs), true);
-  assert.equal(knight.position.x, 200, "moved before the first tick");
-  assert.equal(positionsSent(sent).length, 0, "a position frame before the first tick");
+  // Half goes out with the hit, so the client starts moving it at once.
+  assert.equal(knight.position.x, 325, "the first frame did not go with the hit");
+  assert.equal(positionsSent(sent).length, 1, "a position frame with the hit");
 
   await tickNpcAi(session, start + 250, 0.25);
   assert.equal(Math.round(knight.position.x), 200 + Math.round(250 * (250 / 400)), "the first tick's share");
-  assert.equal(positionsSent(sent).length, 1);
+  assert.equal(positionsSent(sent).length, 2);
 
   await tickNpcAi(session, start + 500, 0.25);
   assert.equal(Math.round(knight.position.x), 450, "the whole distance by the end");
-  assert.equal(positionsSent(sent).length, 2);
+  assert.equal(positionsSent(sent).length, 3);
   assert.equal(knight.ai.shove, null, "the shove outlived its duration");
 
   await tickNpcAi(session, start + 750, 0.25);
@@ -80,6 +81,7 @@ test("a pull is carried the same way and stops where the bodies meet", async () 
   const { session, knight } = makeSession();
   const start = Date.now();
   pushVictim(session, KNIGHT, HERO, distance, durationMs);
+  assert.equal(Math.round(knight.position.x), 124, "half the pull with the hit");
   await tickNpcAi(session, start + 250, 0.25);
   // 200 apart, radii 25 and 22: it lands at contact, not 100 behind the hero.
   assert.equal(Math.round(knight.position.x), 47, "the pull carried the monster through the hero");
@@ -109,8 +111,8 @@ test("the attack's own knockback is spread over its KnockbackDur too", async () 
   const start = Date.now();
   pushVictim(session, KNIGHT, HERO, 50, 200);
   assert.deepEqual(
-    { x: knight.ai.shove.x, durationMs: knight.ai.shove.durationMs },
-    { x: 50, durationMs: 200 }
+    { x: knight.ai.shove.x, durationMs: knight.ai.shove.durationMs, now: knight.position.x },
+    { x: 50, durationMs: 200, now: 225 }
   );
   await tickNpcAi(session, start + 250, 0.25);
   assert.equal(Math.round(knight.position.x), 250);
