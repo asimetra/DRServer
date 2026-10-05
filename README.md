@@ -5,7 +5,8 @@
 An independent, server-only compatibility implementation for **Dungeon
 Rampage**, covering its HTTP services and multiplayer game socket.
 
-[Watch the gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw)
+[Watch the gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw) ·
+[Watch a 1v1 ranked race](https://youtu.be/0fzvQxgv8YI)
 
 > [!IMPORTANT]
 > This repository contains server code only. It does not distribute the client,
@@ -18,6 +19,10 @@ Rampage**, covering its HTTP services and multiplayer game socket.
 - **Reconstructed dungeon behaviour:** generated and authored multi-floor maps,
   trigger graphs, scripted bosses, NPC AI, traps, rewards, trophy completion,
   and infinite runs.
+- **Game modes on the stock client:** a mode changes what a run is without the
+  core knowing it exists. [Ranked 1v1 races](#game-modes-optional) are the
+  first, with no client modification; [Writing a game mode](src/modes/README.md)
+  is the page for the next one.
 - **Web-ready platform API:** an authenticated server-owned API covers account
   registration, token lifecycle, player profiles, leaderboards, atomic trades,
   and a searchable market with listing, buying, cancellation, sales history,
@@ -126,6 +131,21 @@ equivalents instead. No custom content is required to run the server.
 See [Content packs](docs/content-packs.md) for the client bundle, GameMaster,
 declaration, compatibility, and validation requirements.
 
+## Game modes (optional)
+
+[Watch a 1v1 ranked speedrun on the unmodified client](https://youtu.be/0fzvQxgv8YI)
+
+Game modes change what a dungeon run is without the core knowing they exist.
+The first is **ranked races**: two players are matched by rating, sent into the
+same randomly drawn dungeon, and the faster clear wins. Everything is driven by
+the server on the stock client — players queue by joining a `MATCHMAKER`
+friend, the lobby, countdown, rival ghost, banners and results use the game's
+own floors, buffs and effects, and the prize arrives as an in-game gift.
+Ranked runs pay no experience or chests. Enable it with `ODS_RANKED=1`.
+
+See [Writing a game mode](src/modes/README.md) for the hooks, run rules and
+content policy a new mode builds on.
+
 ## Development
 
 Run the complete local conformance suite after importing compatibility data:
@@ -156,6 +176,7 @@ and remaining client-side boundary. Load-test scenarios and SLO gating are in
 - [Chat commands](docs/chat-commands.md)
 - [Known limitations](docs/known-limitations.md)
 - [Content packs](docs/content-packs.md)
+- [Writing a game mode](src/modes/README.md)
 - [Combat conformance](docs/combat-conformance.md)
 - [Contributing](CONTRIBUTING.md)
 

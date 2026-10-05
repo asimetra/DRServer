@@ -4,7 +4,8 @@ A mode is code that changes what a dungeon run is — who gets in, what the
 floors are, what the run pays, when it ends — without the core knowing the
 mode exists. Ranked races (`src/ranked/`) are the first one and the worked
 example; `docs/ranked.md` is its design. This page is what a second mode
-needs.
+needs. [A recorded 1v1 race](https://youtu.be/0fzvQxgv8YI) shows what the
+first one looks like on the unmodified client.
 
 ## The seam
 
