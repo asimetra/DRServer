@@ -905,6 +905,36 @@ test("a racer's own report row carries what the race did to their rating; the ch
   assert.ok(said(A).some((line) => /^Ranked: Alice vs Bob: you won/.test(line)), "the log keeps who raced whom");
 });
 
+test("a finish leaves a gift from MATCHMAKER on each racer's account, by result, and the line says so", async () => {
+  const coins = { offerId: 51101, name: "1000 Coins" };
+  const context = setup({ extraSettings: { rewards: { win: { "*": { offerId: 51102, name: "3500 Coins" } }, loss: { "*": coins } } } });
+  const { sessions, said, flush } = context;
+  await raceUnderWay(context);
+  sessions.get(A).dungeonAccount = { id: A, name: "Alice", gifts: [] };
+  sessions.get(B).dungeonAccount = { id: B, name: "Bob" };
+  clearsRace(context, A, 120);
+  await flush();
+
+  const [won] = sessions.get(A).dungeonAccount.gifts;
+  const [lost] = sessions.get(B).dungeonAccount.gifts;
+  assert.deepEqual([won.offer_id, won.from_account_id], [51102, SYSTEM_FRIEND_ID], "the winner's prize, from MATCHMAKER");
+  assert.deepEqual([lost.offer_id, lost.from_account_id], [51101, SYSTEM_FRIEND_ID], "the loser's smaller one");
+  assert.ok(said(A).some((line) => /you won.* A gift of 3500 Coins waits in town\.$/.test(line)), said(A).join("\n"));
+  assert.ok(said(B).some((line) => /you lost.* A gift of 1000 Coins waits in town\.$/.test(line)), said(B).join("\n"));
+});
+
+test("with no prizes configured, a finish leaves no gift and the line ends as it did", async () => {
+  const context = setup();
+  const { sessions, said, flush } = context;
+  await raceUnderWay(context);
+  sessions.get(A).dungeonAccount = { id: A, name: "Alice" };
+  sessions.get(B).dungeonAccount = { id: B, name: "Bob" };
+  clearsRace(context, A, 120);
+  await flush();
+  assert.equal(sessions.get(A).dungeonAccount.gifts, undefined);
+  assert.ok(said(A).some((line) => /you won.*\)\.( Up to \w+!)?$/.test(line)), said(A).join("\n"));
+});
+
 test("the rival's row on the report: read live while they race, as they began once they have gone", async () => {
   const named = async (context) => {
     const { join, service, at, sessions, adapter } = context;

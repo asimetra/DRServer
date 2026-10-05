@@ -47,6 +47,31 @@ const gateQuestions = async () => {
   };
 };
 
+/**
+ * `{ win: { league|"*": offerId }, loss: {...} }` → the same with each offer
+ * checked against the game data and carrying its name (`BundleName`, else
+ * `Name`), which the chat line says. Null or nothing pays nothing.
+ */
+export const rewardOffersOf = (rewards, gm) => {
+  if (!rewards || typeof rewards !== "object") return null;
+  const offers = gm?.raw?.Offers ?? [];
+  const out = {};
+  for (const result of ["win", "loss"]) {
+    const table = rewards[result];
+    if (!table || typeof table !== "object") continue;
+    out[result] = {};
+    for (const [league, id] of Object.entries(table)) {
+      const offer = offers.find((row) => Number(row.Id) === Number(id));
+      if (!offer) {
+        warn(`ranked: rewards.${result}.${league}: no offer ${id} in the game data; it pays nothing`);
+        continue;
+      }
+      out[result][league] = { offerId: Number(offer.Id), name: offer.BundleName || offer.Name || `offer ${offer.Id}` };
+    }
+  }
+  return out;
+};
+
 /** The main thread's half with match workers on: the connection's hooks, and a way to stop the rest. */
 const startOnMain = async (settings) => {
   const { tellSystemPresence } = await import("../socket/presence.js");
@@ -143,6 +168,8 @@ export const startRanked = async ({
     if (!row) warn(`ranked: no buff named "${raceGhost.buff}" for the race ghost; it is drawn plain`);
     raceGhost = { ...raceGhost, buff: row?.Id ?? null };
   }
+  // The prizes are offers in the game data; one that is not is dropped, with a warning.
+  const rewards = rewardOffersOf(settings.rewards, gm);
   const rules = {
     countdownMs: settings.countdownMs,
     maxDurationMs: settings.maxDurationMs,
@@ -163,7 +190,7 @@ export const startRanked = async ({
 
   adapter = createStockClientAdapter({
     service,
-    settings: { ...settings, raceTileLibraries: [...raceTileLibraries], raceGhost },
+    settings: { ...settings, raceTileLibraries: [...raceTileLibraries], raceGhost, rewards },
     sessionOf: sessionOf ?? sessionHolding,
     say: (session, text) => tellAsServer(session, text),
     show: playNotice,

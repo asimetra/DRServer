@@ -55,6 +55,7 @@
     "raceChat": true,
     "rating": { "start": 1000, "k": 40, "floor": 100 },
     "entry": { "minHeroLevel": 0, "requireTutorial": false },
+    "rewards": { "win": { "*": 51101, "Gold": 51102, "Dragon": 51103 }, "loss": { "*": 51101 } },
     "lobbyTiles": [
       { "x": 2700, "y": 2700, "tileId": "73.1335468865665" },
       { "x": 4500, "y": 2700, "tileId": "9.1312239375429" },

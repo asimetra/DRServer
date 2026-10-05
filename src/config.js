@@ -545,6 +545,18 @@ export const loadServerConfig = (environment = process.env) => {
             : setting(environment, "RANKED_REQUIRE_TUTORIAL") === "1",
       },
       /**
+       * What a race pays, as a gift from MATCHMAKER waiting in town: an offer
+       * id (`Offers` in the game data — 51101 is 1000 coins, 51102 3500, 51103
+       * 8000) per league name, `"*"` for the rest, under `win` and `loss`.
+       * Null pays nothing. The run itself pays no experience or chest
+       * (`src/socket/run-rules.js`); this is the prize, and the only reward a
+       * loser gets, so it is small.
+       */
+      rewards:
+        defaults.ranked?.rewards === undefined
+          ? { win: { "*": 51101, Gold: 51102, Dragon: 51103 }, loss: { "*": 51101 } }
+          : defaults.ranked.rewards,
+      /**
        * The rating scale (ranked/rating.js): where everybody starts, the most
        * one race moves a rating, and the least anybody falls to. The leagues'
        * edges go with it.

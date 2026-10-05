@@ -203,3 +203,26 @@ export const takeGift = (account, requestId) => {
   account.gifts = pending.filter((row) => String(row.request_id) !== id);
   return gift;
 };
+
+/**
+ * A gift the server makes, from an account of its own — a race's prize from
+ * MATCHMAKER (ranked). None of the player-to-player checks apply: the offer is
+ * whatever the server names (checked where it is configured), there is no
+ * friendship or daily limit, and the sender's day is not spent. The pile's
+ * ceiling still holds, since that bounds what one account can be made to carry.
+ * Returns the gift, or null when the pile is full.
+ */
+export const giveGift = (recipient, { offerId, fromAccountId, now = Date.now() }) => {
+  if (pendingGiftsFor(recipient).length >= MAX_PENDING_GIFTS) return null;
+  const gift = {
+    id: Number(`${now}`.slice(-9)),
+    network_id: 3,
+    to_account_key: String(recipient.id),
+    from_account_id: Number(fromAccountId),
+    offer_id: Number(offerId),
+    request_id: unusedRequestId(recipient, now),
+    created: new Date(now).toISOString(),
+  };
+  recipient.gifts = [...pendingGiftsFor(recipient), gift];
+  return gift;
+};

@@ -233,3 +233,17 @@ test("a request id is never one the recipient is already holding", async () => {
   assert.equal(held.some((row) => row.request_id === gift.request_id), false, gift.request_id);
   assert.match(gift.request_id, new RegExp(`^\\d+_${now}_${THEM}$`), "the shape the client knows");
 });
+
+test("a gift the server makes needs no friend, no day and no gift offer; only the pile's ceiling holds", async () => {
+  const { MAX_PENDING_GIFTS, giveGift, pendingGiftsFor } = await import("../src/gifts.js");
+  const account = { id: 1000000501, gifts: [] };
+  const gift = giveGift(account, { offerId: 51101, fromAccountId: 999, now: 1_700_000_000_000 });
+  assert.equal(gift.from_account_id, 999);
+  assert.equal(gift.offer_id, 51101);
+  assert.equal(gift.to_account_key, "1000000501");
+  assert.equal(pendingGiftsFor(account).length, 1);
+  assert.notEqual(giveGift(account, { offerId: 51101, fromAccountId: 999, now: 1_700_000_000_000 }).request_id, gift.request_id);
+
+  account.gifts = Array.from({ length: MAX_PENDING_GIFTS }, (_, i) => ({ request_id: `r${i}` }));
+  assert.equal(giveGift(account, { offerId: 51101, fromAccountId: 999 }), null, "a full pile takes nothing more");
+});

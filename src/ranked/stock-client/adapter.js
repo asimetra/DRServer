@@ -16,6 +16,7 @@
  * tested without a socket.
  */
 import { SYSTEM_FRIEND_ID, isSystemAccount, systemFriendRow, withSystemFriend } from "./system-friend.js";
+import { giveGift } from "../../gifts.js";
 import { insideRing, ringMarkers, ringSpot } from "./ring.js";
 import { createLobbyCopies } from "./copies.js";
 import { TILE_SIZE } from "../../socket/tilegen.js";
@@ -728,6 +729,8 @@ export const createStockClientAdapter = ({
     }
     if (notice.type === "finished") {
       keep(results, `${notice.race}:${accountId}`, { rating: notice.rating, ratingChange: notice.ratingChange });
+      const prize = reward(accountId, notice);
+      if (prize) notice = { ...notice, reward: prize };
     }
     if (notice.type === "started") settles.set(accountId, clock() + SETTLE_MS);
     const relobbying = notice.type === "cancelled" && player?.phase === "lobby" && player.countingDown === true;
@@ -755,6 +758,29 @@ export const createStockClientAdapter = ({
     }
   };
 
+  /**
+   * The prize: a gift from MATCHMAKER, waiting in town, by the result and the
+   * league the race left the player in (settings.rewards, checked in setup.js).
+   * Written on the run's own account, which the run's end saves; a racer who
+   * is gone by now (dropped, left) has no account here and gets nothing,
+   * which is also what their result deserves. Returns the offer's name, or
+   * null when nothing was given.
+   */
+  const reward = (accountId, notice) => {
+    const table = settings.rewards?.[notice.result];
+    if (!table || !notice.rating) return null;
+    const league = leagueAt({ rating: notice.rating.rating, place: notice.place, of: notice.of }, leagues);
+    const offer = table[league.name] ?? table["*"];
+    const account = sessionOf(accountId)?.dungeonAccount;
+    if (!offer || !account) return null;
+    const gift = giveGift(account, { offerId: offer.offerId, fromAccountId: SYSTEM_FRIEND_ID, now: clock() });
+    if (!gift) {
+      warn(`ranked: ${accountId} is holding too many gifts; the race's prize was not given`);
+      return null;
+    }
+    return offer.name;
+  };
+
   /** Both times, so who finished first is the server's clock on the page, not each screen's view of the other. */
   const timesOf = ({ own = null, rival = null } = {}) => {
     if (own != null && rival != null) return words.part("times.both", { own: raceClock(own), rival: raceClock(rival) });
@@ -772,6 +798,8 @@ export const createStockClientAdapter = ({
    */
   const lineOf = async (notice, accountId, player) => {
     const params = { ...notice };
+    // The prize, when the finish gave one; "" keeps the line whole otherwise.
+    params.reward = notice.reward ? words.part("reward.gift", { what: notice.reward }) : "";
     if (notice.opponentRating) {
       params.opponentRating = shownRating(notice.opponentRating);
       params.opponentLeague = leagueAt({ rating: notice.opponentRating.rating, ...placeOn(notice.opponent) }, leagues).name;
