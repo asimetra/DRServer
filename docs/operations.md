@@ -785,6 +785,25 @@ database answers; requests made in between fail. If the lock cannot be had back
 within thirty seconds, or another server has taken it, the server shuts down
 with status 1.
 
+### Notices in town
+
+`config/notices.json` is what the stock client shows on its first entry to
+town each session: one popup per notice — headline, body, a picture, a button
+into the map, shop, inventory, training or tavern, and a link that opens the
+browser — paged when there are several. The server reads the file again when
+it changes, so a notice goes up with a save and no restart. A notice carries
+`from`/`until` dates and comes down by itself. The picture is a URL, or a path
+under this server's `/content` (`ODS_CONTENT_URL`); with no content address a
+path shows no picture. The file documents its own fields; `ODS_NOTICES_FILE`
+points at another one.
+
+The popup is the game's own and ships in every client. One caveat on the
+desktop Haxe port (2026-10-05): its compat layer iterates a dynamically typed
+array as an object (`compat/ASAny.hx`, `iterator()`), so the town code's loop
+over the rows runs zero times and nothing shows until that port line is
+pointed at `ASCompat.iterateDynamicValues`. The server's side was verified on
+the wire — the request arrives and the rows go back as the client reads them.
+
 ### Rewards the server decides
 
 Most of what a run pays is in the game's own tables. A few amounts are not, and

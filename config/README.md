@@ -15,6 +15,12 @@ These JSON files are data contracts, not runtime state:
 
 - `floors.json` maps stable server floor names and map-node ids to files in the
   user-supplied, gitignored compatibility-data directory.
+- `notices.json` is the town notice board: what the client shows on its first
+  entry to town each session, read again whenever the file changes
+  (`docs/operations.md`, "Notices in town").
+- `ui-effects.json` is the effect book: what a game event shows on a dungeon
+  floor (banner, sound, shake, countdown, floater) and the chat lines that go
+  with it, read again whenever the file changes.
 
 The starter avatar (`101`/skin `151`) and weapon (`11001`) must exist in the
 locally supplied compatibility dictionary; changing them without checking the

@@ -1,0 +1,23 @@
+{
+  "_about": [
+    "What the stock client shows on its first entry to town each session: one popup per notice,",
+    "paged when there are several. Edit and save; the server reads the file again when it changes.",
+    "Fields: id, headline, body, image (a URL, or a path under this server's /content), layout",
+    "(portrait or landscape), action (MAP, SHOP, INVENTORY, TRAINING, GEMS, TAVERN, CLOSE: the",
+    "button's label and where it goes), link {name, url} (a second button, opens the browser),",
+    "from / until (ISO dates; the notice shows between them), networks (client network ids; omit",
+    "for all). The headline is drawn in capitals."
+  ],
+  "_example": {
+    "id": "ranked-season-1",
+    "headline": "Ranked races are open",
+    "body": "Find MATCHMAKER on your friend list and press JOIN. Stand in the skull ring to race.",
+    "image": "notices/ranked.png",
+    "layout": "portrait",
+    "action": "MAP",
+    "link": { "name": "Standings", "url": "https://example.net/ranked" },
+    "from": "2026-10-01",
+    "until": "2026-11-01"
+  },
+  "notices": []
+}

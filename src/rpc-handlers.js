@@ -1,4 +1,5 @@
 import { register } from "./rpc.js";
+import { noticeBoard } from "./notices.js";
 import { config } from "./config.js";
 import { EPOCH_DURATION_SECONDS, EPOCH_OFFSET_SECONDS } from "./infinite.js";
 import { issueToken } from "./auth.js";
@@ -1389,10 +1390,12 @@ register("championsboard/getTopTwenty", async ([accountId, mapNodeId]) =>
   topTwentyFor(Number(accountId), Number(mapNodeId)), { account: null });
 
 /**
- * params: [networkId] — moderation rules. The live server answers with an empty
- * list, so nothing is moderated rather than nothing being said.
+ * params: [networkId] — the notices the client shows on its way into town, one
+ * popup each (src/notices.js, config/notices.json). The live server answered
+ * with an empty list; this one answers with the board, which is empty until an
+ * operator writes to it.
  */
-register("modrpc/getmod", () => [], { account: null });
+register("modrpc/getmod", ([networkId]) => noticeBoard.rows({ networkId: Number(networkId) }), { account: null });
 
 /** params: [accountId] — timed store offers; empty in every capture. */
 register("store/GetLimitedOfferStatus", () => [], { account: null });
