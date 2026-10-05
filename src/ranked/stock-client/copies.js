@@ -57,7 +57,8 @@ const moved = (a, b) => Math.abs(a.x - b.x) > 0.5 || Math.abs(a.y - b.y) > 0.5;
 /**
  * `visibleTo(viewer, subject)` says whether a subject may stand in a viewer's
  * world now; a copy that may not any more goes at the next sync. `name` is on
- * every copy's tag ("" draws none). `buff` is a buff type to put on each copy —
+ * every copy's tag ("" draws none), or a function of the subject's account id
+ * giving each copy its own. `buff` is a buff type to put on each copy —
  * the client colours the body and plays the buff's effect for as long as the
  * buff object lives, so a race's ghost can be drawn as a shade. `onShown` is
  * told each time a copy is made.
@@ -117,18 +118,20 @@ export const createLobbyCopies = ({
     if (!set.size) watchers.delete(subject);
   };
   const seenBy = (subject) => watchers.get(subject)?.size ?? 0;
+  const nameFor = typeof name === "function" ? name : () => name;
 
   const make = (viewer, view, context, subject, of) => {
     const spawn = of.heroSpawn;
     const at = of.heroPosition;
     if (!spawn || !at) return false;
+    const tag = String(nameFor(subject) ?? "");
     const player = context.allocateDoid?.(CLID.PlayerGameObject);
     const hero = context.allocateDoid?.(CLID.HeroGameObject);
     if (!player || !hero) return false;
     context.objects?.set(player, CLID.PlayerGameObject);
     context.objects?.set(hero, CLID.HeroGameObject);
     const zone = context.dungeonZone ?? 10;
-    context.sendDirect(frames.player({ doid: player, parent: context.areaDoid ?? 0, zone, screenName: name }));
+    context.sendDirect(frames.player({ doid: player, parent: context.areaDoid ?? 0, zone, screenName: tag }));
     context.sendDirect(
       frames.hero({
         ...spawn,
@@ -137,7 +140,7 @@ export const createLobbyCopies = ({
         zone,
         position: at,
         playerId: player,
-        screenName: name,
+        screenName: tag,
         afk: Boolean(of.idleState?.marked),
       })
     );

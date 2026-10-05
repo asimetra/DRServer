@@ -173,11 +173,38 @@ export const createStockClientAdapter = ({
     return { place: index >= 0 ? index + 1 : null, of: board.length };
   };
 
-  /** The others waiting, shown in each lobby as copies (copies.js); `lobbyCopies` at most. */
+  /** The league somebody is in now, by rating and place. */
+  const leagueOf = (accountId) => {
+    const board = service.board();
+    const index = board.findIndex((row) => Number(row.accountId) === Number(accountId));
+    const rating = index >= 0 ? board[index].rating : service.statusOf(accountId).rating.rating;
+    return leagueAt({ rating, place: index >= 0 ? index + 1 : null, of: board.length }, leagues);
+  };
+  /**
+   * The others waiting, shown in each lobby as copies (copies.js); `lobbyCopies`
+   * at most. A copy has no name — but a league with a `mark` puts that on its
+   * tag, and the client colours it (leagues.js): who in the ring is Dragon or
+   * Gold is seen at a glance, and nobody is named.
+   */
   const copies =
     copyFrames && settings.lobbyCopies > 0
-      ? createLobbyCopies({ most: settings.lobbyCopies, sessionOf, contextOf, frames: copyFrames })
+      ? createLobbyCopies({
+        most: settings.lobbyCopies,
+        sessionOf,
+        contextOf,
+        frames: copyFrames,
+        name: (accountId) => leagueOf(accountId).mark ?? "",
+      })
       : null;
+  /**
+   * The start's zoom. `ranked.started` in the book may zoom the camera in;
+   * the client takes a floor zoom as the new default and never comes back on
+   * its own, so `SETTLE_MS` after the start a second event (`started_settle`,
+   * "reset" in the book) brings it home. Played from the sweep, so a second
+   * or so late — the tween in takes a second itself.
+   */
+  const SETTLE_MS = 1500;
+  const settles = new Map();
   /**
    * The race ghost (docs/ranked.md, "The race ghost"): the rival's copy in a
    * racer's own run, drawn as a shade. Whoever enters a room first is shown
@@ -702,6 +729,7 @@ export const createStockClientAdapter = ({
     if (notice.type === "finished") {
       keep(results, `${notice.race}:${accountId}`, { rating: notice.rating, ratingChange: notice.ratingChange });
     }
+    if (notice.type === "started") settles.set(accountId, clock() + SETTLE_MS);
     const relobbying = notice.type === "cancelled" && player?.phase === "lobby" && player.countingDown === true;
     if (notice.type === "cancelled" && player?.phase === "lobby") {
       player.queued = notice.requeued === true;
@@ -850,6 +878,11 @@ export const createStockClientAdapter = ({
   const sweep = () => {
     const now = clock();
     for (const [accountId, at] of joining) if (now - at >= JOINING_FOR_MS) joining.delete(accountId);
+    for (const [accountId, at] of settles) {
+      if (now < at) continue;
+      settles.delete(accountId);
+      if (players.get(accountId)?.phase === "race") present(accountId, { type: "started_settle" }, { line: false });
+    }
     for (const [accountId, player] of players) {
       if (player.phase === "race" && player.over && !player.ended) endRun(accountId, player);
       if (player.phase !== "lobby") continue;

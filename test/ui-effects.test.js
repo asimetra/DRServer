@@ -315,6 +315,8 @@ const REAL_NOTICES = [
   { type: "queued", waiting: 1, ready: 0 },
   { type: "paired", race: "r", opponent: 2, opponentRating: 1500, countdownSeconds: 5 },
   { type: "started", race: "r" },
+  // The stock adapter's own: the start's zoom brought home a moment later.
+  { type: "started_settle" },
   { type: "progress", race: "r", floor: 2, of: 3 },
   { type: "finished", race: "r", result: "win", rating: 1520, ratingChange: 20 },
   { type: "finished", race: "r", result: "loss", rating: 1480, ratingChange: -20 },
@@ -417,6 +419,8 @@ test("every line in the shipped book is one the server says, and every one it sa
   // The core's notices, and the stock adapter's own: its welcome, a cooldown, an idle player.
   const said = new Set([...REAL_NOTICES, { type: "welcome" }, { type: "cooldown" }, { type: "idle" }].map(eventForNotice));
   const lines = Object.keys(shipped.lines).filter((name) => !name.startsWith("_"));
+  // Said with `line: false` by the adapter: a camera brought home has nothing to say.
+  const silent = new Set(["ranked.started_settle"]);
   for (const name of lines) assert.ok(said.has(name), `the line "${name}" belongs to nothing the server says`);
-  for (const name of said) assert.ok(lines.includes(name), `nothing would be said for ${name}`);
+  for (const name of said) if (!silent.has(name)) assert.ok(lines.includes(name), `nothing would be said for ${name}`);
 });

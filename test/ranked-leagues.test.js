@@ -47,6 +47,18 @@ test("the shipped leagues: bands from 0, 1050 and 1200 under the game's chest ti
   assert.equal(leaguesOf(null), DEFAULT_LEAGUES, "unset is the defaults");
 });
 
+test("a league may carry a mark for the stock client's tags: a character or two, no spaces", () => {
+  const [gold, dragon] = parseLeagues([
+    { name: "Gold", from: 0, color: "#E8B830", mark: "⚡" },
+    { name: "Dragon", top: 0.1, color: "#9B59D0", mark: "★" },
+  ]);
+  assert.deepEqual([gold.mark, dragon.mark], ["⚡", "★"]);
+  assert.equal(parseLeagues([{ name: "Plain", from: 0, color: "#ffffff" }])[0].mark, undefined, "none unless given");
+  assert.deepEqual(DEFAULT_LEAGUES.map((l) => l.mark), [undefined, undefined, "⚡", "★"], "the shipped marks: Gold a bolt, Dragon a star");
+  assert.throws(() => parseLeagues([{ name: "A", from: 0, color: "#ffffff", mark: "a b" }]), /one or two characters/);
+  assert.throws(() => parseLeagues([{ name: "A", from: 0, color: "#ffffff", mark: "" }]), /one or two characters/);
+});
+
 test("a league list that cannot be read is refused, and says why", () => {
   const band = (name, from) => ({ name, from, color: "#ffffff" });
   for (const [list, why] of [

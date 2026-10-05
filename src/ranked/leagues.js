@@ -18,12 +18,20 @@
 export const DEFAULT_LEAGUES = Object.freeze([
   Object.freeze({ name: "Wooden", from: 0, color: "#A0703C" }),
   Object.freeze({ name: "Silver", from: 1050, color: "#5B8FD9" }),
-  Object.freeze({ name: "Gold", from: 1200, color: "#E8B830" }),
-  Object.freeze({ name: "Dragon", top: 0.03, color: "#9B59D0" }),
+  Object.freeze({ name: "Gold", from: 1200, color: "#E8B830", mark: "⚡" }),
+  Object.freeze({ name: "Dragon", top: 0.03, color: "#9B59D0", mark: "★" }),
 ]);
 
 const NAME = /^[A-Za-z][A-Za-z ]{0,15}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
+/**
+ * `mark`: a character or two put in front of a name the stock client draws
+ * for somebody in the league — a lobby copy's tag. The client colours a name
+ * by its first character (`PlayerSpecialStatus`): `★` green, `⚡` orange,
+ * anything else the plain colour; so a mark is the one way a league shows on
+ * a floor without content installed.
+ */
+const MARK = /^\S{1,2}$/u;
 
 /**
  * The leagues a configuration names, checked: a name of letters, a `#rrggbb`
@@ -35,18 +43,22 @@ export const parseLeagues = (list) => {
   if (!Array.isArray(list) || !list.length) throw new Error("leagues must be a non-empty list");
   return Object.freeze(
     list.map((league, i) => {
-      const { name, from, top, color } = league ?? {};
+      const { name, from, top, color, mark } = league ?? {};
       const last = i === list.length - 1;
       if (typeof name !== "string" || !NAME.test(name)) throw new Error(`league ${i + 1} needs a name of letters`);
       if (typeof color !== "string" || !COLOR.test(color)) throw new Error(`league "${name}" needs a #rrggbb colour`);
+      if (mark !== undefined && (typeof mark !== "string" || !MARK.test(mark))) {
+        throw new Error(`league "${name}": a mark is one or two characters, no spaces`);
+      }
+      const marked = mark === undefined ? {} : { mark };
       if (top !== undefined) {
         if (!last || i === 0) throw new Error(`league "${name}": only the last league, above another, can be a share of the board`);
         if (!(Number.isFinite(top) && top > 0 && top < 1)) throw new Error(`league "${name}" needs a share between 0 and 1`);
-        return Object.freeze({ name, top, color });
+        return Object.freeze({ name, top, color, ...marked });
       }
       if (!Number.isFinite(from)) throw new Error(`league "${name}" needs a number to start from`);
       if (i > 0 && from <= list[i - 1].from) throw new Error(`league "${name}" must start above "${list[i - 1].name}"`);
-      return Object.freeze({ name, from, color });
+      return Object.freeze({ name, from, color, ...marked });
     })
   );
 };

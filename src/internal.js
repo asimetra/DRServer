@@ -504,7 +504,7 @@ const readRankedBoard = async (req) => {
   if (refusal) return refusal;
 
   // A band has `from`; the top league may instead be a share of the board, `top`.
-  const leagues = leaguesOf(config.ranked?.leagues).map(({ name, from, top, color }) => ({ name, from, top, color }));
+  const leagues = leaguesOf(config.ranked?.leagues).map(({ name, from, top, color, mark }) => ({ name, from, top, color, mark }));
   if (!config.ranked?.enabled) return json({ enabled: false, leagues, players: [] });
 
   const asked = Number(req.query?.get("limit") ?? 100);

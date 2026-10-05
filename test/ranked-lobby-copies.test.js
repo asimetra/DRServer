@@ -306,3 +306,19 @@ test("a copy may be named, shaded with a buff, and shown only where a rule allow
   assert.deepEqual(sentTo(A, "disable").map((frame) => frame.doid), [shade.doid, hero.doid, player.doid]);
   assert.equal(worlds.get(A).objects.size, 0);
 });
+
+test("a copy's tag may be the subject's own: a league mark for some, nothing for the rest", () => {
+  const worlds = new Map([A, B, C].map((id, i) => [id, lobbyWorld(id, { skinType: 151 + i, at: { x: 4000 + i * 10, y: 4200 } })]));
+  const copies = createLobbyCopies({
+    most: 8,
+    sessionOf: (id) => worlds.get(id),
+    contextOf: (world) => world,
+    frames,
+    name: (subject) => (subject === B ? "★" : ""),
+  });
+  for (const id of [A, B, C]) copies.floorUp(id, worlds.get(id).floorDoid);
+  copies.sync([A, B, C]);
+  const tags = worlds.get(A).sent.filter((f) => f.kind === "hero").map((f) => f.screenName).sort();
+  assert.deepEqual(tags, ["", "★"], "B wears the star in A's lobby, C wears nothing");
+  assert.deepEqual(worlds.get(B).sent.filter((f) => f.kind === "hero").map((f) => f.screenName), ["", ""], "and B sees two plain copies");
+});

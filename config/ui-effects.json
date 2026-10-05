@@ -53,8 +53,12 @@
         "DEFEAT_THE_RIVAL"
       ],
       "shake": "light",
+      "zoom": 1.15,
       "sound": "Lightning2",
       "replacesChat": true
+    },
+    "ranked.started_settle": {
+      "zoom": "reset"
     },
     "ranked.progress": {
       "banner": "RANKED_RIVAL_FLOOR_{floor}",

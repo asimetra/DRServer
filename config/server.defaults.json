@@ -67,8 +67,8 @@
     "leagues": [
       { "name": "Wooden", "from": 0, "color": "#A0703C" },
       { "name": "Silver", "from": 1050, "color": "#5B8FD9" },
-      { "name": "Gold", "from": 1200, "color": "#E8B830" },
-      { "name": "Dragon", "top": 0.03, "color": "#9B59D0" }
+      { "name": "Gold", "from": 1200, "color": "#E8B830", "mark": "⚡" },
+      { "name": "Dragon", "top": 0.03, "color": "#9B59D0", "mark": "★" }
     ]
   },
   "npcFilter": "all",

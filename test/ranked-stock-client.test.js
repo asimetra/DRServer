@@ -1210,6 +1210,21 @@ test("the ghost is a moment: shown for showMs after the follower came in, then g
   assert.equal(sentTo(A, "hero").length, 2, "shown again for a moment in the next room");
 });
 
+test("the start's zoom is brought home a moment after the start, from the sweep", async () => {
+  const { adapter, at, shown } = await ghostRace();
+  const settles = () => shown.filter((s) => s.session.accountId === A && s.notice.type === "started_settle").length;
+  assert.equal(settles(), 0, "not with the start itself");
+  at(16);
+  adapter.sweep();
+  assert.equal(settles(), 0, "nor a second in: the zoom is still tweening");
+  at(17);
+  adapter.sweep();
+  assert.equal(settles(), 1, "a second and a half after the start");
+  at(20);
+  adapter.sweep();
+  assert.equal(settles(), 1, "once");
+});
+
 test("two who enter a room together are shown nothing of each other", async () => {
   const { adapter, at, move, sentTo } = await ghostRace();
   at(20);
