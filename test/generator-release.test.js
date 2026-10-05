@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { generatorCadenceFor, generatorSpawn } from "../src/socket/dungeon.js";
+import { createPackDoor, generatorCadenceFor, generatorSpawn } from "../src/socket/dungeon.js";
 import { loadFloor } from "../src/socket/floors.js";
 import { createNavigationState, isPositionBlocked } from "../src/socket/navigation.js";
 import { emitSignal } from "../src/socket/triggers.js";
@@ -148,4 +148,49 @@ test("the Golem's toggled generators resume on a later SUMMON event", async (t) 
 
   pulse(); // the next GOLEM_SUMMON opens the same generators again
   await settle(() => waves.every((runtime) => runtime.attemptedSpawns === 2));
+});
+
+test("a cave's door: a pack on the input, the next pack on the first death, five at once one pack", () => {
+  /**
+   * The official's Battleheim boss caves (socket-20261005-165901): ten out at
+   * a tenth of a second, then ten more a tenth of a second after the first
+   * death among them — nine still alive or not — and five dying together open
+   * one pack. This server refilled one for one.
+   */
+  const door = createPackDoor({ maxPopulation: 10, maxSpawns: 25 });
+  let out = 0;
+  const drain = () => { while (door.open) { door.spawned(); out++; } };
+  drain();
+  assert.equal(out, 10, "a whole pack on the input");
+  assert.equal(door.open, false, "and the door shuts behind it");
+  assert.equal(door.died(), true, "the first death reopens it");
+  assert.equal(door.died(), false, "a second at the same moment adds nothing");
+  drain();
+  assert.equal(out, 20, "the next pack is a whole one, however many still stand");
+  door.died();
+  drain();
+  assert.equal(out, 25, "the last pack is what maxSpawns leaves");
+  assert.equal(door.exhausted, true);
+  assert.equal(door.died(), false, "nothing more to give");
+});
+
+test("a jail with a population of one is one out, one dead, one out, as it always was", () => {
+  const door = createPackDoor({ maxPopulation: 1, maxSpawns: 3 });
+  door.spawned();
+  assert.equal(door.open, false);
+  assert.equal(door.died(), true);
+  door.spawned();
+  door.died();
+  door.spawned();
+  assert.equal(door.exhausted, true);
+});
+
+test("a death while the pack is still coming out is absorbed", () => {
+  const door = createPackDoor({ maxPopulation: 6, maxSpawns: 12 });
+  door.spawned();
+  door.spawned();
+  assert.equal(door.died(), false, "the pack is already coming");
+  for (let i = 0; i < 4; i++) door.spawned();
+  assert.equal(door.open, false);
+  assert.equal(door.died(), true);
 });

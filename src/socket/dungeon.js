@@ -218,6 +218,71 @@ const generatorSleep = (runtime, ms) => {
   });
 };
 
+/**
+ * Waits for one of this generator's spawns to die, or for the generator to be
+ * stopped. The door below is what asks.
+ */
+const generatorWaitForDeath = (runtime) => {
+  if (runtime.stopped) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      if (runtime.wakeDeath === finish) runtime.wakeDeath = null;
+      if (runtime.cancelWait === finish) runtime.cancelWait = null;
+      resolve();
+    };
+    runtime.wakeDeath = finish;
+    runtime.cancelWait = finish;
+  });
+};
+
+/**
+ * A generator's door: open for one pack of `maxPopulation` at a time, and
+ * reopened by a death.
+ *
+ * Measured on the official's Battleheim boss floor (socket-20261005-165901:
+ * 14 cave generators, `maxPopulation` 2 to 10, `maxSpawns` 8 to 25,
+ * `spawnInterval` 0.1): every generator releases a whole pack on its input —
+ * ten at a tenth of a second — and every later pack starts a tenth of a
+ * second after the *first* death among its own spawns since the previous
+ * pack ended (26 of 28; the two others are a second generator at the same
+ * mouth starting on its timer). Five dying at once open one pack, not five.
+ * Nine of the first pack still alive do not hold the second back, and
+ * nothing waits for the mouth to clear. So the population is not "how many
+ * stand", it is the size of a pack, and a death is the signal for the next.
+ *
+ * This server refilled one for one — a death, a spawn — which turned a cave
+ * that pours ten out into one that leaks them, and is why two caves authored
+ * alike felt unlike. A jail with `maxPopulation` 1 is the same either way:
+ * one out, one dead, one out.
+ *
+ * Deaths while the door is open are absorbed: the pack is already coming.
+ */
+export const createPackDoor = ({ maxPopulation, maxSpawns }) => {
+  const pack = Math.max(1, Number(maxPopulation) || 1);
+  const total = Math.max(1, Number(maxSpawns) || 1);
+  let spawned = 0;
+  let left = Math.min(pack, total);
+  return {
+    get open() {
+      return left > 0 && spawned < total;
+    },
+    get exhausted() {
+      return spawned >= total;
+    },
+    /** One out: the pack shrinks by one. */
+    spawned() {
+      spawned++;
+      left = Math.max(0, left - 1);
+    },
+    /** One dead: reopens a closed door for the next pack; true when it did. */
+    died() {
+      if (left > 0 || spawned >= total) return false;
+      left = Math.min(pack, total - spawned);
+      return true;
+    },
+  };
+};
+
 /** Nearby spawns are one burst; a five-second jail spawn is intentionally not. */
 const WAVE_JOIN_WINDOW_MS = 500;
 
@@ -1761,20 +1826,20 @@ const spawnGeneratorWave = async (context, runtime) => {
   const { intervalMs, maxPopulation } = generatorCadenceFor(placement);
 
   const firstAttempt = runtime.attemptedSpawns;
-  while (runtime.attemptedSpawns < maxSpawns) {
+  /**
+   * The door (createPackDoor): a pack of `maxPopulation` on the input, the
+   * next pack on a death. Kept on the runtime so `onDeath` can knock.
+   */
+  const door = createPackDoor({ maxPopulation, maxSpawns: maxSpawns - firstAttempt });
+  runtime.door = door;
+  while (!door.exhausted && runtime.attemptedSpawns < maxSpawns) {
+    if (!door.open) {
+      await generatorWaitForDeath(runtime);
+      if (!context.isActive() || runtime.stopped) break;
+      continue;
+    }
     if (runtime.attemptedSpawns > firstAttempt && intervalMs > 0) {
       await generatorSleep(runtime, intervalMs);
-    }
-    if (!context.isActive() || runtime.stopped) break;
-
-    /**
-     * maxPopulation is how many of this generator's spawns may stand at once,
-     * and it is usually one. Ignoring it turns a jail that should trickle out a
-     * single brute at a time into ten of them at once.
-     */
-    while (runtime.alive >= maxPopulation) {
-      if (!context.isActive() || runtime.stopped) return;
-      await generatorSleep(runtime, 250);
     }
     if (!context.isActive() || runtime.stopped) break;
 
@@ -1799,6 +1864,8 @@ const spawnGeneratorWave = async (context, runtime) => {
         resolveSpawn: (npc) => generatorSpawn(session, runtime, npc),
         onDeath: (deadDoid) => {
           runtime.alive = Math.max(0, runtime.alive - 1);
+          // A death is the next pack's signal, when the door is shut.
+          if (runtime.door?.died()) runtime.wakeDeath?.();
           // Breaking the chest is what pays the node out; the chest's own row
           // is blank on purpose.
           if (session.rewardGenerators?.has(placement.id)) {
@@ -1827,6 +1894,7 @@ const spawnGeneratorWave = async (context, runtime) => {
       }
     );
     runtime.attemptedSpawns++;
+    door.spawned();
     if (doid) {
       runtime.alive++;
       runtime.spawnedDoids.add(doid);
@@ -1908,6 +1976,7 @@ const buildGenerators = async (context, placements) => {
       runtime.stopped = true;
       runtime.cancelWait?.();
       runtime.cancelWait = null;
+      runtime.wakeDeath = null;
       info(`[${session.id}] generator ${placement.id} stopped — input went low`);
     });
     session.generatorHandlers.set(placement.id, start);
