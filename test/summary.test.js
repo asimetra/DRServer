@@ -742,3 +742,42 @@ test("a ranked rival's row is tied to a player object that leaves once the repor
   assert.deepEqual(after, [{ opcode: OP.CLIENT_OBJECT_DISABLE_RESP, doid: ghost }], "it leaves, though the report quiesced the run");
   world.destroy();
 });
+
+
+/**
+ * A hero that is nobody's — a ranked rival's ghost, a lobby copy — leaves at
+ * the report like an NPC, before the floor. Kept with the members' heroes it
+ * was torn down by the client with the floor instead of by its disable, and
+ * one generated in the run's last instant went on drawing after the run.
+ */
+test("a hero on the floor that is no member's goes before the floor, by its own disable", () => {
+  const sent = [];
+  const session = {
+    id: 6,
+    areaDoid: 100,
+    floorDoid: 101,
+    heroDoid: 102,
+    playerDoid: 103,
+    dungeonActive: true,
+    allocateDoid: () => 999,
+    objects: new Map([
+      [100, CLID.DistributedDungionArea],
+      [101, CLID.DistributedDungeonFloor],
+      [102, CLID.HeroGameObject],
+      [103, CLID.PlayerGameObject],
+      [150, CLID.HeroGameObject],
+      [151, CLID.PlayerGameObject],
+      [200, CLID.DistributedNPCGameObject],
+    ]),
+    actors: new Map(),
+    doobers: new Map(),
+    send: (frame) => sent.push(frame),
+  };
+  assert.equal(sendDungeonSummary(session, true), true);
+  const disabled = sent
+    .map((frame) => new PacketReader(frame.subarray(2)))
+    .filter((reader) => reader.u16() === OP.CLIENT_OBJECT_DISABLE_RESP)
+    .map((reader) => reader.u32());
+  assert.deepEqual(disabled, [150, 200, 101], "the ghost with the NPCs, before the floor; the player object stays for the report");
+  assert.ok(!session.objects.has(150), "and is forgotten with them");
+});

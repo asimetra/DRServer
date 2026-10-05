@@ -1175,6 +1175,38 @@ const ghostRace = async ({ startGap, ...options } = {}) => {
   return { ...context, sentTo, move };
 };
 
+test("a ghost standing as the winner crosses the line is taken off by its own disable before the run ends", async () => {
+  const context = await ghostRace();
+  const { adapter, at, move, sentTo, sessions, flush, won, defeated } = context;
+  at(20);
+  move(A, 100, 100);
+  at(25);
+  move(B, 150, 120); // B follows A into the last room: A is shown B
+  adapter.sweep();
+  const [hero] = sentTo(A, "hero");
+  const [shade] = sentTo(A, "buff");
+  const [player] = sentTo(A, "player");
+  assert.ok(hero && shade && player, "the ghost stands in A's room");
+  assert.equal(sentTo(A, "disable").length, 0);
+
+  // A crosses the line with the ghost still standing: the race ends in A's favour.
+  const a = sessions.get(A);
+  a.floorIndex = 2;
+  at(60);
+  assert.equal(adapter.hooks.floorCompleting(a), true, "the floor completes into the game's own victory");
+  await flush();
+  assert.deepEqual(sentTo(A, "disable").map((frame) => frame.doid), [shade.doid, hero.doid, player.doid], "the ghost left by its own disables");
+  assert.ok(!a.objects.has(hero.doid), "and is no longer among the floor's objects");
+  assert.deepEqual(defeated, [B]);
+  assert.equal(won.length, 0, "A's victory is the floor's own, not a forced one");
+
+  // Shown nothing more: the race is over for A.
+  at(61);
+  move(B, 100, 100);
+  adapter.sweep();
+  assert.equal(sentTo(A, "hero").length, 1, "no new ghost on a finished floor");
+});
+
 test("the race ghost: whoever enters a room first is shown the one who follows, who is shown nobody", async () => {
   const { adapter, at, move, sentTo, shown } = await ghostRace();
   at(20);

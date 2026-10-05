@@ -268,6 +268,28 @@ export const createLobbyCopies = ({
     afk: (subject, marked) => toCopiesOf(Number(subject), (copy) => frames.afk(copy.hero, marked)),
 
     /**
+     * The viewer's floor is about to end: whatever stands on it for them goes
+     * now, by its own disable, while the floor is still there to send it from.
+     * A copy left to the floor's end is torn down by the client with the floor
+     * rather than by its disable, and one generated in the run's last instant
+     * went on drawing after the run (adapter.js, finishLine). Their view is
+     * kept, with no floor, until the next floorUp.
+     */
+    clear(accountId) {
+      const viewer = Number(accountId);
+      const view = views.get(viewer);
+      if (!view) return 0;
+      const context = live(viewer);
+      let gone = 0;
+      for (const subject of [...view.shown.keys()]) {
+        unmake(viewer, view, context, subject);
+        gone += 1;
+      }
+      view.floor = null;
+      return gone;
+    },
+
+    /**
      * Out of the lobby — into a race, or out of the run: their copies go from
      * every other lobby, and theirs of the others go with their floor.
      */

@@ -345,8 +345,20 @@ const KEPT_AT_SUMMARY = new Set([
  */
 const clearFloorObjects = (session) => {
   removeHeroFromFloor(session);
+  /**
+   * A hero is kept only if it is a member's — those have just left as owner
+   * disables. Any other hero on the floor is somebody's copy: a ranked rival's
+   * ghost, a lobby copy, a speaker's body. Left to the floor, the client
+   * destroyed it with the floor's own teardown rather than by its disable,
+   * and a copy generated in the run's last instant (a rival's ghost appearing
+   * as the winner crossed the line, twice in four races on 2026-10-05) kept
+   * drawing after that: its sheet gone with the run, every frame threw, and
+   * the thrown frames ran the next run fast. So it goes before the floor, as
+   * the heroes do.
+   */
+  const memberHeroes = new Set([session.heroDoid, ...[...membersOf(session)].map((member) => member.heroDoid)]);
   const doomed = [...(session.objects?.entries() ?? [])]
-    .filter(([, clid]) => !KEPT_AT_SUMMARY.has(clid))
+    .filter(([doid, clid]) => !KEPT_AT_SUMMARY.has(clid) || (clid === CLID.HeroGameObject && !memberHeroes.has(doid)))
     .sort(([doidA, clidA], [doidB, clidB]) => {
       const floorLast = (clid) => (clid === CLID.DistributedDungeonFloor ? 1 : 0);
       return floorLast(clidA) - floorLast(clidB) || doidA - doidB;

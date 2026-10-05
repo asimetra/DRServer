@@ -450,7 +450,8 @@ export const createStockClientAdapter = ({
       const accountId = idOf(session);
       const player = players.get(accountId);
       if (player?.phase !== "race") return;
-      // The run's own failure is its defeat, already on screen.
+      // The run's own failure is its defeat, already on screen; the ghost goes with it.
+      ghosts?.clear(accountId);
       player.over = true;
       player.ended = true;
       service.runEvent(accountId, "failed");
@@ -555,8 +556,18 @@ export const createStockClientAdapter = ({
     } finally {
       player.finishing = false;
     }
+    // Not decided: the floor holds, and the wait is watching the rival (the ghost stays).
     if (!player.over) return false;
     if (player.outcome === "win") {
+      /**
+       * The floor ends now, into the game's own victory, so whatever ghost
+       * stands here goes first, by its own disable. The rival following the
+       * winner into the last room is shown exactly as the winner crosses the
+       * line — the same millisecond, twice in four races on 2026-10-05 — and a
+       * hero generated into a run's last instant and left to the floor's end
+       * outlived the run on the client (summary.js, clearFloorObjects).
+       */
+      ghosts?.clear(accountId);
       player.ended = true;
       return true;
     }
@@ -686,6 +697,8 @@ export const createStockClientAdapter = ({
     const session = sessionOf(accountId);
     if (!session) return;
     const failed = (problem) => warn(`ranked: could not end ${accountId}'s run: ${problem?.message ?? problem}`);
+    // The rival's ghost goes first, by its own disable, while the floor stands (copies.js, clear).
+    ghosts?.clear(accountId);
     let delivered;
     try {
       delivered = ENDINGS[player.outcome](contextOf(session));
