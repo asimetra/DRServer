@@ -1329,8 +1329,12 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * charge.
      */
     if (ai.lunge && now < ai.lunge.until) {
-      chaseX = ai.lunge.x * mobility * deltaSeconds;
-      chaseY = ai.lunge.y * mobility * deltaSeconds;
+      // Not before its frame: a lunge waiting on its wind-up holds the body
+      // where the swing left it, as the lock below does.
+      if (now >= (ai.lunge.from ?? 0)) {
+        chaseX = ai.lunge.x * mobility * deltaSeconds;
+        chaseY = ai.lunge.y * mobility * deltaSeconds;
+      }
     } else if (attackLocked) {
       // The swing owns this window. Ordinary chase here turns a dodgeable
       // melee windup into a homing hit; only authored lunge movement may run.
@@ -1466,25 +1470,6 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     chosen.readyAt = now + (chosen.rechargeMs ?? 0);
 
     /**
-     * The lunge the attack itself carries, if it carries one.
-     *
-     * A constant velocity for `MoveDuration` at `MoveAngle` degrees off the way
-     * it is facing, which is what the client does for the player and what the
-     * corpus shows the official doing for monsters. `faceTarget` ran a moment
-     * ago, so the heading is at the victim and an angle of 0 is a charge at
-     * them while 180 is a hop backwards.
-     */
-    if (chosen.moveAmount > 0 && chosen.moveDurationMs > 0) {
-      const angle = ((actor.heading + chosen.moveAngle) * Math.PI) / 180;
-      const speed = chosen.moveAmount / (chosen.moveDurationMs / 1000);
-      ai.lunge = {
-        until: now + chosen.moveDurationMs,
-        x: Math.cos(angle) * speed,
-        y: Math.sin(angle) * speed,
-      };
-    }
-
-    /**
      * Both authored speed layers pace the cast.
      *
      * `AttackSpd` belongs to the selected attack, while an active buff modifies
@@ -1497,6 +1482,34 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const authoredSpeed = npcAttackSpeed(chosen.attackSpeed);
     const castSpeed = authoredSpeed * (buffSpeed > 0 ? buffSpeed : 1);
     const buffSlowness = buffSpeed > 0 ? 1 / buffSpeed : 1;
+    const frameMs = (frame) => Math.max(0, Number(frame ?? 0)) * (1000 / FRAMES_PER_SECOND) / castSpeed;
+
+    /**
+     * The lunge the attack itself carries, if it carries one.
+     *
+     * A constant velocity for `MoveDuration` at `MoveAngle` degrees off the way
+     * it is facing, which is what the client does for the player and what the
+     * corpus shows the official doing for monsters. `faceTarget` ran a moment
+     * ago, so the heading is at the victim and an angle of 0 is a charge at
+     * them while 180 is a hop backwards.
+     *
+     * From the frame the timeline puts `attackautomove` on (gamemaster.js,
+     * `autoMoveFrame`), at the pace the cast plays: a frost troll winds its
+     * drill up for fifteen frames and then goes, and started here on the swing
+     * it had arrived before its own animation left the ground. An attack with
+     * no frame of its own (a test's hand-made one) goes at once, as before.
+     */
+    if (chosen.moveAmount > 0 && chosen.moveDurationMs > 0) {
+      const angle = ((actor.heading + chosen.moveAngle) * Math.PI) / 180;
+      const speed = chosen.moveAmount / (chosen.moveDurationMs / 1000);
+      const from = now + frameMs(chosen.moveFrame ?? 0);
+      ai.lunge = {
+        from,
+        until: from + chosen.moveDurationMs,
+        x: Math.cos(angle) * speed,
+        y: Math.sin(angle) * speed,
+      };
+    }
     ai.attackLockedUntil = now +
       Math.max(0, Number(chosen.attackLockFrame ?? chosen.impactFrame ?? 0)) *
         (1000 / FRAMES_PER_SECOND) /

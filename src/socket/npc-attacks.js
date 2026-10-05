@@ -2,8 +2,7 @@ import {
   attackColliders,
   attackForConstant,
   projectileForConstant,
-  projectileLaunches,
-} from "../gamemaster.js";
+  projectileLaunches, autoMoveFrame } from "../gamemaster.js";
 
 const NPC_ATTACK_SLOTS = ["Attack1", "Attack2", "Attack3", "Attack4", "Attack5", "Attack6"];
 
@@ -56,9 +55,12 @@ export const npcAttackChoices = async (
       ? await projectileForConstant(attack.Projectile)
       : null;
     const launches = await projectileLaunches(attack.AttackTimeline);
+    const moveFrame = await autoMoveFrame(attack.AttackTimeline);
     const actionFrames = [
       ...shape.map((collider) => Number(collider.frame ?? 0)),
       ...launches.map((launch) => Number(launch.frame ?? 0)),
+      // A move not yet started is still the attack's: the chase waits for it.
+      ...(moveFrame === null ? [] : [moveFrame]),
     ];
     attackSet.push({
       attackType: attack.Id,
@@ -80,9 +82,13 @@ export const npcAttackChoices = async (
       // Ordinary chase and target tracking pause through the last authored
       // damaging action. Attack-specific MoveAmount remains active.
       attackLockFrame: Math.max(0, ...actionFrames),
-      moveAmount: Math.max(0, Number(attack.MoveAmount ?? 0)),
+      // The attack's own move (ai.js, `lunge`): how far, which way off the
+      // facing, how long, and the timeline frame it starts on. Only a timeline
+      // that authors the action moves — null is "this attack stands still".
+      moveAmount: moveFrame === null ? 0 : Math.max(0, Number(attack.MoveAmount ?? 0)),
       moveAngle: Number(attack.MoveAngle ?? 0),
       moveDurationMs: Math.max(0, Number(attack.MoveDuration ?? 0) * 1000),
+      moveFrame,
     });
   }
   return attackSet;

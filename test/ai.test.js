@@ -1380,6 +1380,26 @@ test("an attack that authors a backwards move takes the monster backwards", asyn
   assert.ok(Math.abs(npc.position.y) < 40, "and straight back, not off to one side");
 });
 
+test("a move authored on a later frame waits for it: the troll winds its drill up, then goes", async () => {
+  const { session, knightDoid } = makeSession();
+  const npc = session.actors.get(knightDoid);
+  npc.position = { x: 300, y: 0 };
+  npc.ai.engaged = true;
+  // EN_TROLL_DRILL's shape: 70 units over 0.3s, authored on frame 15 (625ms at 24fps).
+  npc.ai.attacks = [
+    { attackType: 921250, range: 400, minRange: 0, rechargeMs: 0, readyAt: 0, damage: 1, impactFrame: 22, attackLockFrame: 30, moveAmount: 70, moveAngle: 0, moveDurationMs: 300, moveFrame: 15 },
+  ];
+  npc.ai.attackRange = 400;
+
+  await tickNpcAi(session, 1000, 0.1);
+  assert.equal(npc.ai.lunge?.from, 1625, "the lunge is dated from frame 15");
+  for (let tick = 1; tick <= 5; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+  assert.ok(Math.abs(npc.position.x - 300) < 5, `nothing but the usual drift during the wind-up: x=${npc.position.x.toFixed(0)}`);
+
+  for (let tick = 7; tick <= 10; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+  assert.ok(npc.position.x < 260 && npc.position.x > 200, `then it drilled forward, to x=${npc.position.x.toFixed(0)}`);
+});
+
 test("a forward attack lunge stops on the near side instead of teleporting through the hero", async () => {
   const { session, knightDoid } = makeSession();
   const monster = session.actors.get(knightDoid);

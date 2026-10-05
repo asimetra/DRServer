@@ -259,6 +259,32 @@ export const spawnDooberActions = async (attackTimeline) => {
   return actions;
 };
 
+/**
+ * The frame an attack's own move starts on, or null for an attack that has none.
+ *
+ * `attackautomove` is the timeline saying "now the body goes": the client
+ * builds the action only for the player's own hero (`AttackAutoMoveTimelineAction`,
+ * `if (isOwner)`), reads the distance, time and angle off the attack row, and
+ * starts the move on that frame — not on the swing. A monster's is the
+ * server's to do, on the same frame: a frost troll's drill authors it on
+ * frame 15, 625ms into a 50-frame wind-up, and a brown warthog's charge on
+ * frame 30. Of the seventeen monster attacks with a move, every one carries
+ * the action; an attack row with a move and no action would not move on the
+ * client either.
+ */
+export const autoMoveFrame = async (attackTimeline) => {
+  if (!attackTimeline) return null;
+  const { timelines } = await load();
+  const timeline = timelines.get(attackTimeline);
+  if (!timeline) return null;
+  for (const frame of timeline.frames ?? []) {
+    for (const action of frame.actions ?? []) {
+      if (String(action.type ?? "").toLowerCase() === "attackautomove") return Number(frame.frame ?? 0);
+    }
+  }
+  return null;
+};
+
 /** The first of them, which is all the ownership check needs to know. */
 export const spawnDooberAction = async (attackTimeline) =>
   (await spawnDooberActions(attackTimeline))[0] ?? null;
