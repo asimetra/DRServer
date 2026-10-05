@@ -2800,3 +2800,53 @@ test("a monster's corpse does not shield the hero from a trap arrow", async () =
     "the arrow reaches the hero through the corpse"
   );
 });
+
+test("a bomb with a wire waits on it: flat until the pad is crossed, disarmed when the signal drops", async (t) => {
+  /**
+   * The official's Frostgaard boss floor (socket-20261005-172249) generates
+   * its two mines and two firebombs at trigger state 0, raises them to 1 when
+   * the hero crosses the pad in front of the troll — an AND of the pad and
+   * the troll's life — and lowers the mine still lying there at his death.
+   * Here every bomb was armed on arrival, so the hero or the troll stepping
+   * near one before the fight blew it early.
+   */
+  const { buildFloor, npcsNamed } = await import("./helpers/floor.js");
+  const { restingTriggerState } = await import("../src/socket/dungeon.js");
+  const { npcForConstant, attackForConstant } = await import("../src/gamemaster.js");
+  const world = await buildFloor("nordic/temple/db_floor_TEMPLE_FROST_TROLL_BOSS.json", { npcLevel: 42 });
+  const { session, floor } = world;
+  t.after(() => {
+    for (const stop of session.generatorStops?.values() ?? []) stop();
+    session.stopAi?.();
+    session.stopTriggers?.();
+    session.stopTrapProjectiles?.();
+  });
+
+  const bombs = [...npcsNamed(world, "MINE_PLACEABLE_ALL"), ...npcsNamed(world, "FIREBOMB_PLACEABLE_ALL")];
+  assert.equal(bombs.length, 4);
+  assert.deepEqual(bombs.map((b) => b.triggerState), [0, 0, 0, 0], "generated flat, as the official's");
+  const bombIds = [...floor.placements.triggerable].filter((p) => /MINE_PLACEABLE_ALL|FIREBOMB_PLACEABLE_ALL/.test(p.constant)).map((p) => p.id);
+  assert.equal(bombIds.length, 4);
+  for (const id of bombIds) assert.ok(!session.hazardContactZones?.has(id), `${id} armed on arrival`);
+
+  // The AND gate the pad and the troll's life feed; raising it arms them.
+  const [gateId] = [...floor.wiring].filter(([, targets]) =>
+    (Array.isArray(targets) ? targets : targets?.targets ?? []).some((target) => bombIds.includes(typeof target === "string" ? target : target.target ?? target.id))
+  ).map(([source]) => source);
+  assert.ok(gateId, "the bombs hang off a gate");
+  const sent = [];
+  session.send = (frame) => sent.push(frame);
+  emitSignal(session, gateId, true);
+  for (const id of bombIds) assert.ok(session.hazardContactZones?.has(id), `${id} did not arm on the signal`);
+  const states = sent.map(readUpdateHead).filter((head) => head.fieldId === 141);
+  assert.equal(states.length, 4, "each bomb is told it is armed");
+  emitSignal(session, gateId, false);
+  for (const id of bombIds) assert.ok(!session.hazardContactZones?.has(id), `${id} stayed armed after the signal dropped`);
+
+  // And the rule on its own: a wire makes the difference, not the bomb.
+  const mine = await npcForConstant("MINE_PLACEABLE_ALL");
+  const blast = await attackForConstant(mine.Attack1);
+  assert.equal(restingTriggerState({ npc: mine, attack: blast, projectile: null, inert: false, wired: false, hasInput: true }), 0);
+  assert.equal(restingTriggerState({ npc: mine, attack: blast, projectile: null, inert: false, wired: true, hasInput: true }), 1);
+  assert.equal(restingTriggerState({ npc: mine, attack: blast, projectile: null, inert: false, wired: false, hasInput: false }), 1, "unwired: armed on arrival");
+});

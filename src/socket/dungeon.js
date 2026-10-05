@@ -2091,9 +2091,18 @@ const strandingCosts = (npc) => /EXIT_?GATE/.test(String(npc?.Constant ?? ""));
  * official's rates per constant. It has to be the same code the builder runs or
  * the comparison measures the copy instead of the server.
  */
-export const restingTriggerState = ({ npc, attack, projectile, inert, wired }) => {
-  const { togglesRenderer, restsUnlit } = classifyHazard({ npc, attack, projectile });
+export const restingTriggerState = ({ npc, attack, projectile, inert, wired, hasInput = false }) => {
+  const { togglesRenderer, restsUnlit, contactBomb } = classifyHazard({ npc, attack, projectile });
   if (restsUnlit) return 0;
+  /**
+   * A bomb with a wire waits on it. The official's Frostgaard boss floor
+   * generates its two mines and two firebombs at 0, raises them to 1 when the
+   * hero crosses the pad in front of the troll (an AND of the pad and the
+   * troll's life), and lowers the one still lying there when the troll dies
+   * (socket-20261005-172249: +53.44 generated, +58.98 raised, +85.62 lowered).
+   * One without a wire is armed on arrival, as every bomb was.
+   */
+  if (contactBomb && hasInput) return wired ? 1 : 0;
   if (attack && !togglesRenderer) return 1;
   if (inert && strandingCosts(npc)) return 0;
   return wired ? 1 : 0;
@@ -2213,12 +2222,14 @@ const buildTriggerables = async (context, placements) => {
      * disagreeing: before it, a stranded bed was generated flat and unarmed,
      * which at least agreed with itself.
      */
+    const hasInput = (session.signalIncoming?.get(placement.id)?.length ?? 0) > 0;
     const resting = restingTriggerState({
       npc,
       attack,
       projectile,
       inert,
       wired: initialTargetState(session, placement.id),
+      hasInput,
     });
 
     const launch = attack ? await projectileLaunch(attack.AttackTimeline) : null;
@@ -2323,7 +2334,8 @@ const buildTriggerables = async (context, placements) => {
         heroOnly: layerFor(npc, placement.layer) < LAYER_SORTED,
       });
     }
-    if (togglesRenderer) session.triggerableStatefulAttacks.add(placement.id);
+    // A wired bomb is told its state, as the official tells its mines (0, then 1, then 0).
+    if (togglesRenderer || (contactBomb && hasInput)) session.triggerableStatefulAttacks.add(placement.id);
 
     if (attack && inert) {
       session.inertTraps?.set(
@@ -2368,7 +2380,9 @@ const buildTriggerables = async (context, placements) => {
       attack &&
       (alwaysLive ||
         burnsOnContact ||
-        contactBomb ||
+        // A bomb without a wire is armed on arrival; one with a wire waits on
+        // it, and comes up armed only where its graph already rests high.
+        (contactBomb && (!hasInput || resting)) ||
         (togglingLauncher && !inert) ||
         // Exactly what was drawn: a bed standing up bites, a flat one does not.
         (togglesRenderer && resting))
