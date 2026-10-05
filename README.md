@@ -5,8 +5,7 @@
 An independent, server-only compatibility implementation for **Dungeon
 Rampage**, covering its HTTP services and multiplayer game socket.
 
-[Watch the gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw) ·
-[Watch a 1v1 ranked race](https://youtu.be/0fzvQxgv8YI)
+[Watch the gameplay demo](https://www.youtube.com/watch?v=fa_nxNU_Jkw) 
 
 > [!IMPORTANT]
 > This repository contains server code only. It does not distribute the client,
