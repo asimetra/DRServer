@@ -512,7 +512,18 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
    * nothing at all.
    */
   const team = TEAM_BY_CHAR_TYPE[npc.CharType] ?? TEAM.ENEMIES;
-  const nativeWeapon = npc.Weapon1 && (await weaponForConstant(npc.Weapon1));
+  /**
+   * Every weapon the row carries, in slot order. A rival hero carries four —
+   * the official's RIVAL_SORCERER generate lists its staff and three books —
+   * and the client draws the one each swing names; sending only the first
+   * drew the staff for every spell.
+   */
+  const nativeWeapons = await Promise.all(
+    ["Weapon1", "Weapon2", "Weapon3", "Weapon4"].map((key) =>
+      npc[key] ? weaponForConstant(npc[key]) : null
+    )
+  );
+  const nativeWeapon = nativeWeapons[0];
   const npcLevel = Math.max(1, Number(options.level ?? session.npcLevel ?? 1));
   const nativeWeaponPower = Math.max(
     1,
@@ -540,7 +551,7 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
    * This helper now reads Attack1..6, which keeps `FISSURE` on the rival
    * berserkers and the later dragon / boss specials in the rotation.
    */
-  const attackSet = await npcAttackChoices(npc, nativeWeapon, nativeWeaponPower);
+  const attackSet = await npcAttackChoices(npc, nativeWeapon, nativeWeaponPower, { weapons: nativeWeapons });
   const petRangedStandoff = options.petOwnerDoid
     ? Math.max(
         0,
@@ -555,16 +566,19 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       ? await deathRewardDataForNpc(npc)
       : null;
   if (!context.isActive()) return emptyResult;
-  const weapons = nativeWeapon
-    ? [
-        {
-          type: nativeWeapon.Id,
-          power: nativeWeaponPower,
-          requiredlevel: 1,
-          rarity: 1,
-        },
-      ]
-    : [];
+  const weapons = nativeWeapons
+    .map((weapon, index) =>
+      weapon
+        ? {
+            type: weapon.Id,
+            // The first slot is priced as the row's own; the others as authored.
+            power: index === 0 ? nativeWeaponPower : Math.max(1, Number(weapon.Power ?? 1)),
+            requiredlevel: 1,
+            rarity: 1,
+          }
+        : null
+    )
+    .filter(Boolean);
 
 
   const npcDoid = session.allocateDoid(CLID.DistributedNPCGameObject);
@@ -921,8 +935,17 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
       position: { x: at.x, y: at.y },
       collisionRadius,
       heading: spawnHeading,
+      /**
+       * `isAlly`: on the players' side without being a player — the chef to be
+       * saved, a princess, a barricade, a defence orb. The official's monsters
+       * go for these as for anybody: Battleheim's warhogs land 517 hits on
+       * barricades and 308 on defence orbs, and the Cretaceous sorcerers put
+       * 20 on the chef. Targeted by distance like a hero (ai.js), and the one
+       * that walks (the chef) fights back with an AI of its own.
+       */
+      isAlly: npc.CharType === "HERO" && !options.petOwnerDoid && Boolean(npc.IsAttackable),
       ai:
-        (["ENEMY", "BEAST"].includes(npc.CharType) || options.petOwnerDoid) &&
+        (["ENEMY", "BEAST", "HERO"].includes(npc.CharType) || options.petOwnerDoid) &&
         (npc.IsMover || (npc.IsBoss && npc.Aggro_AI_Type === "STATIONARY_AI")) &&
         nativeAttack
           ? {
@@ -930,7 +953,9 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
                 ? "pet"
                 : npc.CharType === "BEAST"
                   ? "beast"
-                  : "enemy",
+                  : npc.CharType === "HERO"
+                    ? "ally"
+                    : "enemy",
               ownerDoid: Number(options.petOwnerDoid ?? 0),
               tetherDistance: Math.max(0, Number(npc.TetherDist ?? 0)),
               tetherTimerMs: Math.max(0, Number(npc.TetherTimer ?? 0) * 1000),

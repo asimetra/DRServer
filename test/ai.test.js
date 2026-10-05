@@ -1723,3 +1723,42 @@ test("an NPC suicide action retires its caster on the authored frame", async () 
   assert.ok(!session.actors.has(knightDoid), "the suicide skill left its caster alive");
   assert.ok(!session.objects.has(knightDoid), "the retired caster stayed on the floor");
 });
+
+test("an ally fights what the player fights, and is fought: the chef and the sorcerer", async () => {
+  /**
+   * The official's RIVAL_BATTLE_CHEF (CharType HERO) walks to the nearer
+   * sorcerer and swings every two seconds, and both sorcerers shoot him (20
+   * hits). Here a HERO-type row got no AI and was nobody's target.
+   */
+  const { session, sent, heroDoid, knightDoid } = makeSession();
+  const ALLY = 30;
+  const knight = session.actors.get(knightDoid);
+  knight.team = 6;
+  knight.isEnemy = true; // what an ally hunts is what the player hunts
+  knight.position = { x: 600, y: 0 };
+  session.actors.get(heroDoid).team = 5;
+  // Well out of the test's 1000-unit contact shapes, so nothing reaches the hero by accident.
+  session.actors.get(heroDoid).position = { x: -3000, y: 0 };
+  session.heroPosition = { x: -3000, y: 0 };
+  session.objects.set(ALLY, CLID.DistributedNPCGameObject);
+  session.actors.set(ALLY, {
+    hitPoints: 500, maxHitPoints: 500, collisionRadius: 22, team: 5, isAlly: true,
+    position: { x: 540, y: 0 }, heading: 0,
+    ai: {
+      kind: "ally", state: "idle", engaged: false, aggroRadius: 600, disengageDistance: 1600,
+      moveSpeed: 230, attackRange: 80, attackTimerMs: 1000, attackRandMs: 0, nextAttackAt: 0,
+      attackType: 920050, damage: 7, attackColliders: contactShape, impactFrame: 11,
+    },
+  });
+
+  await tickNpcAi(session, 1000, 0.1);
+  assert.equal(knight.ai.targetDoid, ALLY, "the knight, 60 from the ally and 600 from the hero, goes for the ally");
+  // The knight's first blow staggers the ally for its stun; it swings once that passes.
+  for (const at of [2000, 3000, 4000]) await tickNpcAi(session, at, 0.1);
+  const swings = sent.map(readUpdate).filter((packet) => packet.fieldId === 143).map((packet) => packet.doid);
+  assert.ok(swings.includes(ALLY), "the ally swung");
+  assert.ok(swings.includes(knightDoid), "and so did the knight");
+  assert.ok(knight.hitPoints < 15, "the knight was hit by the ally");
+  assert.ok(session.actors.get(ALLY).hitPoints < 500, "and the ally by the knight");
+  assert.equal(session.actors.get(heroDoid).hitPoints, 200, "the hero, far off, was touched by neither");
+});

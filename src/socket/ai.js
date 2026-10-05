@@ -907,14 +907,17 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   const pets = [];
   const enemies = [];
   const beasts = [];
+  /** On the players' side without being players: the chef, a princess, a barricade (dungeon.js `isAlly`). */
+  const allies = [];
   for (const [doid, actor] of actors) {
     if (actor.dead || actor.teleportHidden || !(actor.hitPoints > 0) || !actor.position) continue;
     const candidate = { doid, actor, position: actor.position, member: null };
     if (actor.isPet) pets.push(candidate);
     else if (actor.isEnemy) enemies.push(candidate);
     else if (actor.isBeast) beasts.push(candidate);
+    else if (actor.isAlly) allies.push(candidate);
   }
-  if (!heroes.length && !pets.length && (!enemies.length || !beasts.length)) {
+  if (!heroes.length && !pets.length && !allies.length && (!enemies.length || !beasts.length)) {
     // Nothing has an opposing combatant left. Releasing chase state prevents
     // stale routes resuming after a revive or a new spawn.
     for (const actor of actors.values()) clearNpcTarget(actor);
@@ -934,9 +937,10 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   const heroByDoid = new Map(heroes.map((candidate) => [candidate.doid, candidate]));
   const petByDoid = new Map(pets.map((candidate) => [candidate.doid, candidate]));
   const beastByDoid = new Map(beasts.map((candidate) => [candidate.doid, candidate]));
+  const allyByDoid = new Map(allies.map((candidate) => [candidate.doid, candidate]));
   const huntable = enemies.filter(({ actor }) => isHuntable(actor));
   const petTargets = [...huntable, ...beasts];
-  const beastTargets = [...heroes, ...pets, ...huntable];
+  const beastTargets = [...heroes, ...pets, ...allies, ...huntable];
   const petAggressors = new Map();
   for (const { actor } of enemies) {
     if (!petByDoid.has(actor.ai?.targetDoid)) continue;
@@ -980,10 +984,21 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     ) return lockedPet;
     const lockedBeast = beastByDoid.get(ai.targetDoid);
     if (lockedBeast && now < (ai.nextTargetAt ?? 0)) return lockedBeast;
+    const lockedAlly = allyByDoid.get(ai.targetDoid);
+    if (lockedAlly && now < (ai.nextTargetAt ?? 0)) return lockedAlly;
 
     const hero = nearestTo(actor.position, heroes);
     const pet = nearestTo(actor.position, pets);
+    // An ally stands in for a hero as a target, by distance alone: the
+    // official's monsters hit the barricade in their way as readily as the
+    // player behind it.
+    const ally = nearestTo(actor.position, allies);
     let player = hero;
+    if (
+      ally &&
+      (!player ||
+        squaredDistanceTo(actor.position, ally.position) < squaredDistanceTo(actor.position, player.position))
+    ) player = ally;
     if (pet && (petAggressors.get(pet.doid) ?? 0) < MAX_PET_AGGRESSORS) {
       const heroDistance = hero ? distanceTo(actor.position, hero.position) : Infinity;
       const petDistance = distanceTo(actor.position, pet.position);
@@ -1060,6 +1075,23 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       }
     } else if (ai.kind === "beast") {
       victim = beastVictim(actor, ai);
+    } else if (ai.kind === "ally") {
+      // A walking ally fights what the player fights, nearest first — the
+      // official's chef walks to the nearer sorcerer and swings every two
+      // seconds; it does not follow the hero (stood 9 s at spawn, 150-600
+      // away, until an enemy appeared).
+      const locked = huntable.find(({ doid: enemyDoid }) => enemyDoid === ai.targetDoid);
+      if (locked && now < (ai.nextTargetAt ?? 0)) {
+        victim = locked;
+      } else {
+        victim = nearestTo(actor.position, huntable);
+        ai.targetDoid = victim?.doid ?? null;
+        ai.nextTargetAt = now + Math.max(250, (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0));
+      }
+      if (!victim) {
+        clearNpcTarget(actor);
+        continue;
+      }
     } else {
       victim = enemyVictim(actor, ai);
     }

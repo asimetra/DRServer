@@ -27,9 +27,25 @@ export const npcAttackSpeedStat = (attackType) =>
 export const npcAttackChoices = async (
   npc,
   nativeWeapon,
-  weaponPower = nativeWeapon?.Power ?? 1
+  weaponPower = nativeWeapon?.Power ?? 1,
+  { weapons = [nativeWeapon] } = {}
 ) => {
   const attackSet = [];
+  /**
+   * Which of the NPC's weapons an attack is swung with: the index, in
+   * `Weapon1..4` order, of the first weapon whose own `Attack1..8` names it.
+   * The official sends that index as the choreography's weapon slot — a rival
+   * sorcerer's LIGHTNING_SHOT on 0 (the staff), CHAIN_LIGHTNING on 1, BALL
+   * on 2, THUNDERBOLT on 3 (its three books), 41 of 41 in the Cretaceous
+   * Park recording — and the client draws the weapon of that slot. Anything
+   * no weapon names is slot 0, which is every single-weapon monster.
+   */
+  const slotOf = (constant) => {
+    const index = weapons.findIndex(
+      (weapon) => weapon && NPC_ATTACK_SLOTS.some((key) => weapon[key] === constant)
+    );
+    return index > 0 ? index : 0;
+  };
   for (const slot of NPC_ATTACK_SLOTS) {
     const named = npc?.[slot];
     if (!named) continue;
@@ -46,6 +62,7 @@ export const npcAttackChoices = async (
     ];
     attackSet.push({
       attackType: attack.Id,
+      weaponSlot: slotOf(named),
       attackSpeed: npcAttackSpeed(attack.AttackSpd),
       speedStat: npcAttackSpeedStat(attack.AttackType),
       range: Math.max(20, attack.Range ?? 80),

@@ -2452,6 +2452,8 @@ export const performNpcAttack = async (
       attackType: ai.attackType,
       targetActorDoid: victimDoid,
       playSpeed: attackSpeed,
+      // The weapon this swing is drawn with (npc-attacks.js `weaponSlot`).
+      weaponSlot: ai.weaponSlot ?? 0,
     })
   );
 
