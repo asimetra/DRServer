@@ -200,6 +200,8 @@ const hitVictims = async (session, doid, live, attack, victims) => {
       victims,
       weaponPower: live.weaponPower,
       weapon: live.heroWeapon,
+      // A body is thrown by this thing once in its life — see the push there.
+      pushed: (live.pushed ??= new Set()),
     });
   }
   let hits = 0;

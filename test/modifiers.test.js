@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { critRollFor } from "../src/socket/modifiers.js";
+import { slideShoved } from "../src/socket/ai.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 
 /**
@@ -1394,10 +1395,12 @@ test("swinging a Trapper weapon drags the monster in", async () => {
   const HERO = 500;
   const ENEMY = 9900;
 
-  const swungWithPull = async (weapon) => {
+  const swungWithPull = async (weapon, { moveSpeed = 180, generation = 0 } = {}) => {
     const victim = {
       hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
       constant: "BRUTE", isEnemy: true, position: { x: 1200, y: 1000 },
+      // Something that walks: a crate is told it was thrown and stays.
+      ai: { moveSpeed },
     };
     let nextDoid = 900;
     const session = {
@@ -1422,13 +1425,15 @@ test("swinging a Trapper weapon drags the monster in", async () => {
       .u32(HERO).u32(ENEMY).u32(0)
       .u8(0).u8(0).u32(SOUL_BANG).u32(ENEMY)
       .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0)
-      .u32(0).u32(0).u8(0)
+      .u32(0).u32(0).u8(generation)
       .body();
     const packet = new PacketWriter()
       .u8(0).u8(0).u32(SOUL_BANG).u32(ENEMY).u8(0).f32(1).f32(1)
       .u16(record.length).raw(record)
       .body();
     await handleProposeAttackChoreography(session, new PacketReader(packet));
+    // The throw is spread over its duration by the AI tick; settle it.
+    slideShoved(session, ENEMY, victim, Date.now() + 10_000);
     return victim.position.x - 1200;
   };
 
@@ -1438,6 +1443,14 @@ test("swinging a Trapper weapon drags the monster in", async () => {
 
   const blastback = await swungWithPull({ type: 12502, power: 30, modifier1: BLASTBACK });
   assert.equal(blastback, 250, "Blastback did not throw it away");
+
+  // The official flags 27 prop hits behind a KNOCKBACK weapon and moves none.
+  const crate = await swungWithPull({ type: 12502, power: 30, modifier1: BLASTBACK }, { moveSpeed: 0 });
+  assert.equal(crate, 0, "a Blastback swing moved a crate");
+
+  // A projectile's second collision (generation 1) lands half the hit and no throw.
+  const graze = await swungWithPull({ type: 12502, power: 30, modifier1: BLASTBACK }, { generation: 1 });
+  assert.equal(graze, 0, "a later collision of the same projectile threw again");
 });
 
 test("a blocked hit clears forged modifier flags and does not reposition the victim", async () => {
@@ -1521,6 +1534,7 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
   const victim = {
     hitPoints: 5000000, maxHitPoints: 5000000, collisionRadius: 25,
     constant: "BRUTE", isEnemy: true, position: { x: 1200, y: 1000 },
+    ai: { moveSpeed: 180 },
   };
   const session = {
     id: 52, heroDoid: HERO, floorDoid: 400, dungeonActive: true,
@@ -1544,6 +1558,7 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
     weaponPower: 30,
     weapon: session.heroWeapons[0],
   });
+  slideShoved(session, ENEMY, victim, Date.now() + 10_000);
 
   assert.equal(victim.position.x - 1200, 250, "the fissure left the monster where it stood");
 
@@ -1561,11 +1576,27 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
     weaponPower: 30,
     weapon: session.heroWeapons[0],
   });
+  slideShoved(session, ENEMY, victim, Date.now() + 10_000);
   assert.deepEqual(
     { x: Math.round(victim.position.x), y: Math.round(victim.position.y) },
     { x: 1200, y: 750 },
     "thrown from the hero's side instead of the crack's"
   );
+
+  // And once per body for the life of the thing: a cloud that ticks on the
+  // same monster throws it on the first tick only.
+  const pushed = new Set();
+  for (let tick = 0; tick < 3; tick++) {
+    await performPlaceableAttack(session, CRACK, {
+      attack: gm.raw.Attack.find((row) => row.Constant === "FISSURE_HAMMER"),
+      victims: [{ doid: ENEMY, actor: victim }],
+      weaponPower: 30,
+      weapon: session.heroWeapons[0],
+      pushed,
+    });
+    slideShoved(session, ENEMY, victim, Date.now() + 10_000);
+  }
+  assert.equal(Math.round(victim.position.y), 500, "three ticks of one crack threw three times");
 });
 
 test("a placeable's hits count on the report, pay Mana and drop food", async () => {

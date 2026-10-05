@@ -1915,7 +1915,7 @@ export const placeableVictims = (session, attackerDoid, colliders = []) => {
 export const performPlaceableAttack = async (
   session,
   attackerDoid,
-  { attack, victims = [], weaponPower, weapon = null }
+  { attack, victims = [], weaponPower, weapon = null, pushed = null }
 ) => {
   if (!attack) return 0;
 
@@ -2016,7 +2016,14 @@ export const performPlaceableAttack = async (
      */
     const { distance: shove, durationMs } = knockbackOf(await loadGameMaster(), weapon);
     const placeable = session.actors?.get(attackerDoid)?.position ? attackerDoid : session.heroDoid;
-    if (shove) pushVictim(session, victim.doid, placeable, shove, durationMs);
+    // And only what walks, as in applyProposals: a crack under a crate shakes it.
+    // Once per body for as long as the thing lasts — `pushed` is the placeable's
+    // own set, so a cloud that ticks on the same monster throws it once.
+    const walks = (victim.actor.ai?.moveSpeed ?? 0) > 0;
+    if (shove && walks && !pushed?.has(victim.doid)) {
+      pushVictim(session, victim.doid, placeable, shove, durationMs);
+      pushed?.add(victim.doid);
+    }
 
     /**
      * Mana back for landing it, which `ManaPerHit` gives to exactly one attack
@@ -3922,12 +3929,24 @@ const applyProposals = async (session, proposals) => {
     /**
      * Told it was thrown and actually moved are two things. A barrel is told —
      * 722 of the official's hits on props with these attacks carry both flags,
-     * which is the client shaking it — and a barrel does not go anywhere. Only
-     * what can walk is carried by the attack's own knockback; a weapon's
-     * modifier moves what it always moved.
+     * which is the client shaking it — and a barrel does not go anywhere. Nor
+     * does a weapon's modifier move one: behind a `KNOCKBACK` weapon the
+     * official flags 27 hits on props and moves none, as it moves none of the
+     * 2334 prop hits in the corpus. Only what can walk is carried.
      */
     const walks = (session.actors?.get(proposal.attackee)?.ai?.moveSpeed ?? 0) > 0;
-    const shove = thrown && (weaponShove || walks) ? authoredShove : 0;
+    /**
+     * And a projectile throws with its first collision only. The client counts
+     * a projectile's collisions in `generation`, and each one past the first
+     * lands half the hit before it (generationFalloff); the throw rides with
+     * the full hit. A swing is generation zero every time, so a combo throws
+     * on every hit, which is what the official's combos do (25 alive victims
+     * of a Blastback axe's first swing move a median 187, every swing). Without
+     * this a Trapper's orbiting boomerangs reeled a crowd in on every pass
+     * for twenty seconds, and a rock through a line threw everyone in it.
+     */
+    const firstCollision = !(Number(proposal.generation) > 0);
+    const shove = thrown && walks && firstCollision ? authoredShove : 0;
     /**
      * Not gated on the client's flags, which is the mistake the first version
      * made: the client proposes both bytes as 0 on all but two of 13626
