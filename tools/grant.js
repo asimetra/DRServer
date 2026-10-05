@@ -31,8 +31,7 @@ import {
   nextObjectId,
 } from "../src/accounts.js";
 import { loadGameMaster } from "../src/gamemaster.js";
-import { generateWeapon } from "../src/chests.js";
-import { experienceForLevel, statPointsEarned, maxLevel } from "../src/progression.js";
+import { giveChests, giveKeys, rollWeapons, setHeroLevel, topUpPowerups } from "../src/grants.js";
 import { config } from "../src/config.js";
 import { purchaseOffer } from "../src/store.js";
 import { acquireProcessLock, initializeProcessStorage } from "../src/process-lock.js";
@@ -77,16 +76,7 @@ const grant = async () => {
       console.error(`unknown chest ${chestId}`);
       continue;
     }
-    for (let index = 0; index < count; index++) {
-      account.account_chests.push({
-        id: await nextObjectId(account),
-        account_id: account.id,
-        chest_id: chestId,
-        // NOT NULL in the schema, and an absent field is written as an explicit
-        // null rather than falling back to the column default.
-        is_new: 1,
-      });
-    }
+    await giveChests(account, chestId, count);
     console.log(`+${count} ${chest.Name} (${chest.Rarity})`);
   }
 
@@ -94,9 +84,7 @@ const grant = async () => {
   // without keys leaves them unopenable.
   const keys = Number(argument("keys", 0));
   if (keys) {
-    for (const column of ["basic_keys", "uncommon_keys", "rare_keys", "legendary_keys"]) {
-      account[column] = (account[column] ?? 0) + keys;
-    }
+    giveKeys(account, keys);
     console.log(`+${keys} of each key`);
   }
 
@@ -109,76 +97,19 @@ const grant = async () => {
     console.log(`last_reward_date -> ${yesterday.toISOString().slice(0, 10)} (claimable again)`);
   }
 
-  /**
-   * Levelling for testing. Experience is what the game actually stores, so this
-   * sets the least amount that reads as the wanted level rather than writing a
-   * level field that does not exist.
-   *
-   * Placed stat points are left alone unless they would now exceed what the
-   * hero has earned — which happens when levelling *down* — since the training
-   * handler refuses a build it cannot account for and the hero would be stuck.
-   */
+  /** Levelling for testing (grants.js, setHeroLevel). */
   const level = argument("level");
   if (level !== undefined) {
     const onlyHero = argument("hero");
-    for (const avatar of account.account_avatars ?? []) {
-      if (onlyHero && avatar.avatar_id !== Number(onlyHero)) continue;
-
-      const hero = gm.heroById.get(avatar.avatar_id);
-      if (!hero) {
-        console.error(`avatar ${avatar.id} is hero ${avatar.avatar_id}, which is not in GameMaster`);
-        continue;
-      }
-
-      const wanted = Math.min(Number(level), maxLevel(gm, hero));
-      avatar.experience = experienceForLevel(gm, hero, wanted);
-
-      const earned = statPointsEarned(gm, hero, avatar.experience);
-      const placed = [1, 2, 3, 4].map((slot) => Number(avatar[`statupgrade${slot}`] ?? 0));
-      const spent = placed.reduce((total, value) => total + value, 0);
-      let note = `${spent}/${earned} points placed`;
-      if (spent > earned) {
-        for (const slot of [1, 2, 3, 4]) avatar[`statupgrade${slot}`] = 0;
-        note = `${earned} points, previous ${spent} cleared to keep training usable`;
-      }
-
-      console.log(
-        `${hero.Constant} (avatar ${avatar.id}) -> level ${wanted}, ` +
-          `experience ${avatar.experience}, ${note}`
-      );
-    }
+    const changed = setHeroLevel(account, { level: Number(level), hero: onlyHero ? Number(onlyHero) : null }, gm);
+    for (const { hero, level: reached } of changed) console.log(`${hero} -> level ${reached}`);
   }
 
-  /**
-   * Every powerup, for testing the two consumable slots.
-   *
-   * Read from the data rather than listed here: a slot can hold anything whose
-   * Stackables row says `ItemCategory: POWERUP`, which is the same test
-   * useConsumable applies. Twenty-seven of them today — the potions, the
-   * mushrooms, the shots and the five bombs.
-   */
+  /** Every powerup, for testing the two consumable slots: topped up to the count (grants.js). */
   if (process.argv.includes("--powerups")) {
     const count = Number(argument("powerups", 99)) || 99;
-    account.account_stackables ??= [];
-    const powerups = gm.raw.Stackables.filter((row) => row.ItemCategory === "POWERUP");
-
-    for (const row of powerups) {
-      const existing = account.account_stackables.find(
-        (entry) => Number(entry.stack_id) === Number(row.Id)
-      );
-      if (existing) {
-        existing.count = count;
-        continue;
-      }
-      account.account_stackables.push({
-        id: await nextObjectId(account),
-        account_id: account.id,
-        stack_id: row.Id,
-        count,
-        is_new: 1,
-      });
-    }
-    console.log(`${powerups.length} powerups set to ${count} each`);
+    const kinds = await topUpPowerups(account, count, gm);
+    console.log(`${kinds} powerups topped up to ${count} each`);
   }
 
   /**
@@ -249,50 +180,13 @@ const grant = async () => {
    * Granted unequipped, so they show up in the inventory to be tried against
    * whichever hero they belong to.
    */
-  /**
-   * Spare weapons to trade with.
-   *
-   * Rolled the way a chest rolls them — a rarity from the same weighted table,
-   * a power and a level for it, and the modifiers that rarity allows — so what
-   * lands in the bag is the shape a real award has rather than a flat row that
-   * would make any screen showing modifiers look like it works.
-   *
-   * Unequipped, because the market only offers what nobody is holding.
-   */
+  /** Spare weapons to trade with, rolled as a chest rolls them, unequipped (grants.js). */
   const weaponRequest = argument("weapons");
   if (weaponRequest !== undefined) {
     const wanted = Math.max(1, Number(weaponRequest) || 5);
-    const heroes = (account.account_avatars ?? [])
-      .map((avatar) => gm.heroById.get(avatar.avatar_id))
-      .filter(Boolean);
-    if (!heroes.length) {
-      console.error(`account ${account.id} has no hero, and a weapon is rolled against one`);
-    } else {
-      account.account_items ??= [];
-      /* The shipped table carries no chest weights, which left every roll
-         falling back to uncommon; then the four a chest gives, alike. */
-      const weighted = gm.raw.Rarity.filter((row) => (row.ChestWeight ?? 0) > 0);
-      const rarities = weighted.length
-        ? weighted
-        : gm.raw.Rarity.filter((row) => ["COMMON", "UNCOMMON", "RARE", "LEGENDARY"].includes(row.Type));
-      for (let made = 0; made < wanted; made++) {
-        const hero = heroes[Math.floor(Math.random() * heroes.length)];
-        const rarity = rarities.length
-          ? rarities[Math.floor(Math.random() * rarities.length)]
-          : gm.raw.Rarity[1];
-        const item = generateWeapon({
-          gm,
-          hero,
-          rarity,
-          level: 1 + Math.floor(Math.random() * 60),
-          accountId: account.id,
-          id: await nextObjectId(account),
-          random: Math.random,
-        });
-        if (item) account.account_items.push(item);
-      }
-      console.log(`rolled ${wanted} weapon(s) into account ${account.id}`);
-    }
+    const made = await rollWeapons(account, wanted, { gm });
+    if (!made) console.error(`account ${account.id} has no hero, and a weapon is rolled against one`);
+    else console.log(`rolled ${made} weapon(s) into account ${account.id}`);
   }
 
   if (process.argv.includes("--placeables")) {

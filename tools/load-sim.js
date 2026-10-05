@@ -6,6 +6,7 @@
  *   node tools/load-sim.js --scenario lobby --players 2000 --source-ips 40
  *   node tools/load-sim.js --players 300 --rpc --slow-readers 0.05
  *   node tools/load-sim.js --players 500 --slo "heartbeat.p99<200,npc.p95<400"
+ *   node tools/load-sim.js --players 2 --friend 999 --hold 30   # JOIN on MATCHMAKER: a ranked race
  *
  * One process drives every player, so a few hundred of them cost this tool
  * very little. What it measures is the server, from where a player stands:
@@ -131,6 +132,8 @@ export const parseArgs = (argv) => {
     slowReaders: number("slow-readers", 0),
     sourceIps: number("source-ips", 1),
     firstAccount: number("first-account", 1000100000),
+    // Enter by joining this friend's run instead of a node: 999 is MATCHMAKER.
+    friend: number("friend", 0),
     nodes: value("nodes", null)?.split(",").map(Number) ?? DEFAULT_NODES,
     tokenSecret: readSecret(value("token-secret-file", null)),
     slo: value("slo", ""),
@@ -307,9 +310,11 @@ class Player {
     this.hero = null;
     this.npcs.clear();
     this.askedAt = Date.now();
+    // demographics, sCode, mapNodeId, friendId, mapId, friendOnly, group
+    const friend = this.options.friend;
     this.send(
       field(this.mm, FLID.ClientRequestEntry)
-        .utf("{}").u32(0).u32(this.node).u32(0).u32(0).u8(0).utf(this.group)
+        .utf("{}").u32(0).u32(friend ? 0 : this.node).u32(friend).u32(0).u8(0).utf(friend ? "" : this.group)
         .frame()
     );
   }

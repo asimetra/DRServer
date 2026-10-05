@@ -11,6 +11,8 @@ import {
   completeFloor,
   refreshFloorFailing,
   reportFloorFailed,
+  reportRunLost,
+  reportRunWon,
 } from "../src/socket/floorstate.js";
 import { createMatchWorld } from "../src/socket/match-world.js";
 import { dungeonMatches } from "../src/socket/matches.js";
@@ -71,6 +73,50 @@ test("defeat is emitted once", async () => {
   reportFloorFailed(session);
   assert.deepEqual(sent.map(fieldId), [FLID_DUNGEON_ENDING]);
   assert.deepEqual(summaries, [false]);
+});
+
+test("a run lost on its feet is a defeat even on a cleared floor, and the floor goes no further", () => {
+  const sent = [];
+  const summaries = [];
+  const advanced = [];
+  // Cleared, and walking to the exit, when a ranked rival finishes first.
+  const session = {
+    id: 3,
+    areaDoid: 3000,
+    send: (frame) => sent.push(frame),
+    dungeonActive: true,
+    floorCleared: true,
+    floorIndex: 0,
+    floorCount: 2,
+    advanceFloor: () => advanced.push(true),
+    scheduleDungeonSummary: (_session, success) => summaries.push(success),
+  };
+
+  assert.equal(reportRunLost(session), true);
+  assert.deepEqual(sent.map(fieldId), [FLID_DUNGEON_ENDING]);
+  assert.deepEqual(summaries, [false]);
+
+  assert.equal(completeFloor(session), false, "the exit, reached now, neither advances nor wins");
+  assert.deepEqual(advanced, []);
+  assert.equal(reportRunLost(session), false, "and it is lost once");
+});
+
+test("between floors there is no floor to lose on; once the next is built there is", () => {
+  const sent = [];
+  const session = {
+    id: 4,
+    areaDoid: 4000,
+    send: (frame) => sent.push(frame),
+    dungeonActive: true,
+    floorFinished: true,
+    scheduleDungeonSummary: () => {},
+  };
+  assert.equal(reportRunLost(session), false);
+  assert.equal(sent.length, 0);
+
+  session.floorFinished = false;
+  assert.equal(reportRunLost(session), true);
+  assert.deepEqual(sent.map(fieldId), [FLID_DUNGEON_ENDING]);
 });
 
 /**
@@ -651,3 +697,54 @@ test("leaving takes the countdown with it", async (t) => {
 
   assert.deepEqual(sent, [], "no treasure to collect, and no victory");
 });
+
+test("a run won before its last floor is the game's victory, once, and the floor goes no further", () => {
+  const sent = [];
+  const summaries = [];
+  const advanced = [];
+  const session = {
+    id: 5,
+    areaDoid: 5000,
+    send: (frame) => sent.push(frame),
+    dungeonActive: true,
+    floorIndex: 0,
+    floorCount: 2,
+    advanceFloor: () => advanced.push(true),
+    scheduleDungeonSummary: (_session, success) => summaries.push(success),
+  };
+
+  assert.equal(reportRunWon(session), true);
+  assert.deepEqual(sent, [buildDungeonEnding(5000, true)], "the same victory a last floor sends");
+  assert.deepEqual(summaries, [true]);
+
+  assert.equal(completeFloor(session), false, "the exit, reached after, wins nothing twice");
+  assert.deepEqual(advanced, []);
+  assert.equal(reportRunWon(session), false);
+});
+
+test("won while down, with the defeat counting: the count stops, and no defeat follows", () => {
+  const sent = [];
+  const summaries = [];
+  const session = downedSession({
+    send: (frame) => sent.push(frame),
+    scheduleDungeonSummary: (_session, success) => summaries.push(success),
+  });
+  beginFloorFailing(session);
+  assert.deepEqual(sent.map(failingPayload), [60]);
+
+  assert.equal(reportRunWon(session), true);
+  assert.equal(failingPayload(sent[1]), 0, "the client's countdown is told to stop");
+  assert.equal(session.floorFailingTimer, null);
+
+  // Still down, so the countdown would start again — and a defeat would follow the win.
+  beginFloorFailing(session);
+  reportFloorFailed(session);
+  assert.equal(sent.length, 3, "nothing after the victory itself");
+  assert.deepEqual(summaries, [true]);
+});
+
+test("between floors there is no floor to win on yet", () => {
+  const session = { id: 6, areaDoid: 6000, send: () => {}, dungeonActive: true, floorFinished: true };
+  assert.equal(reportRunWon(session), false);
+});
+

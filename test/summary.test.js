@@ -652,3 +652,93 @@ test("a defeat's report pays no completion", () => {
   assert.deepEqual(paid, []);
   world.destroy();
 });
+
+test("a ranked racer's own row carries the race, and nothing else of it goes on the report", async (t) => {
+  const { installRankedHooks } = await import("../src/ranked/hooks.js");
+  // Two racers, each alone in a world of their own, as a ranked race is run.
+  const racer = (index) => ({
+    id: index + 1,
+    accountId: 300 + index,
+    playerDoid: 300 + index,
+    heroDoid: 400 + index,
+    dungeonAccount: { id: 300 + index, name: `R${index + 1}`, account_avatars: [{}] },
+    dungeonAvatar: { avatar_id: 101, skin_type: 151, experience: 0 },
+    dungeonRewards: { xp: 10 + index, gold: index, gems: 0 },
+    dungeonContribution: { kills: 7 + index, damage: index * 10 },
+    heroWeapons: [],
+    objects: new Map(),
+    actors: new Map(),
+    doobers: new Map(),
+    socket: { destroyed: false },
+    send: () => {},
+    allocateDoid(clid) {
+      const doid = 9500 + this.objects.size;
+      this.objects.set(doid, clid);
+      return doid;
+    },
+  });
+  const [winner, loser] = [racer(0), racer(1)];
+  const winnerWorld = createMatchWorld({ id: 31, members: new Set([winner]) }, winner);
+  const loserWorld = createMatchWorld({ id: 32, members: new Set([loser]) }, loser);
+  t.after(
+    installRankedHooks({
+      reportRows: (recipient, rows) =>
+        recipient.accountId === winner.accountId ? [{ ...rows[0], name: "R1 +20" }, ...rows.slice(1)] : rows,
+    })
+  );
+
+  const rows = projectDungeonReports(winnerWorld.contextFor(winner), winner, true);
+  assert.equal(rows.length, 1, "no row for the rival: it read as a party member who had dropped");
+  assert.equal(rows[0].name, "R1 +20");
+  assert.equal(rows[0].id, winner.playerDoid, "slot zero is still the recipient's own");
+  assert.equal(rows[0].kills, winner.dungeonContribution.kills);
+
+  const ordinary = projectDungeonReports(loserWorld.contextFor(loser), loser, false);
+  assert.equal(ordinary.length, 1, "no ranked rows asked for: the report is as it was");
+});
+
+test("a ranked rival's row is tied to a player object that leaves once the report is up, so it greys", async (t) => {
+  const { installRankedHooks } = await import("../src/ranked/hooks.js");
+  const { world, host } = reportingWorld();
+  host.transientRowLeavesAfterMs = 5;
+  let next = 940;
+  host.allocateDoid = (clid) => {
+    const doid = next++;
+    world.objects.set(doid, clid);
+    return doid;
+  };
+  // The rival left before the report: their row is the one taken when the race began.
+  const snapshot = { name: "Rival", id: 77, type: 101, skinType: 151, kills: 3, valid: 1, weaponType1: 5 };
+  t.after(
+    installRankedHooks({
+      reportRows: (recipient, rows) =>
+        recipient.accountId === host.accountId
+          ? [{ ...rows[0], name: "Host +20" }, { ...snapshot, name: "Rival -20", transient: true }]
+          : rows,
+    })
+  );
+
+  assert.equal(sendDungeonSummary(world.contextFor(host), true), true);
+  const head = (frame) => {
+    const reader = new PacketReader(frame.subarray(2));
+    const opcode = reader.u16();
+    if (opcode === OP.CLIENT_OBJECT_DISABLE_RESP) return { opcode, doid: reader.u32() };
+    reader.u32();
+    reader.u32();
+    return { opcode, clid: reader.u16(), doid: reader.u32() };
+  };
+  const frames = host.sent.map(head);
+  const summaryAt = frames.findIndex((frame) => frame.clid === CLID.DistributedDungeonSummary);
+  const ghostAt = frames.findIndex((frame) => frame.clid === CLID.PlayerGameObject);
+  assert.ok(summaryAt >= 0 && ghostAt > summaryAt, "the rival's object comes after the report");
+  const ghost = frames[ghostAt].doid;
+  assert.ok(
+    !frames.slice(ghostAt + 1).some((frame) => frame.opcode === OP.CLIENT_OBJECT_DISABLE_RESP && frame.doid === ghost),
+    "and is not cleared with the floor"
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const after = host.sent.map(head).slice(frames.length);
+  assert.deepEqual(after, [{ opcode: OP.CLIENT_OBJECT_DISABLE_RESP, doid: ghost }], "it leaves, though the report quiesced the run");
+  world.destroy();
+});

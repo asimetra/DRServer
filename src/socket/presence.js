@@ -68,6 +68,15 @@ const friendState = (doid, isOnline, accountId, mapNodeId) =>
     .u32(mapNodeId)
     .frame();
 
+/**
+ * Tells one session that an account that is not a player is online, and where.
+ * Kept out of `online`, which every "players online" count is read from.
+ */
+export const tellSystemPresence = (session, accountId, mapNodeId) => {
+  if (!session.presenceDoid) return;
+  session.send(friendState(session.presenceDoid, true, accountId, mapNodeId));
+};
+
 /** Tells one session about one account, if it asked to be told about it. */
 const tell = (session, accountId) => {
   if (!session.presenceDoid || !session.watchedFriends?.has(accountId)) return;

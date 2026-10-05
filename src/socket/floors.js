@@ -728,8 +728,16 @@ export const readPlacements = async (libraryPath, tiles) => {
 
 const cache = new Map();
 
-export const loadFloor = async (name = "arena_gauntlet") => {
-  if (cache.has(name)) return cache.get(name);
+/**
+ * `retile` stands other tiles of the same library where the file has its own:
+ * `[{ x, y, tileId }]`. The client builds whatever tile id it is sent from its
+ * own copy of the library, so the result is a floor it can draw without a file
+ * of its own; the ranked lobby stands its arena in a forest this way. A tile
+ * the library lacks would be a hole on both sides, so it is refused here.
+ */
+export const loadFloor = async (name = "arena_gauntlet", { retile = [] } = {}) => {
+  const key = retile.length ? `${name} ${JSON.stringify(retile)}` : name;
+  if (cache.has(key)) return cache.get(key);
 
   /**
    * Either a catalogue nickname or the path CustomMaps gives. The catalogue is
@@ -755,7 +763,22 @@ export const loadFloor = async (name = "arena_gauntlet") => {
     x: tile.x ?? 0,
     y: tile.y ?? 0,
     tileId: tile.tileId,
-  }));
+  })).map((tile) => {
+    const other = retile.find((swap) => Number(swap.x) === tile.x && Number(swap.y) === tile.y);
+    return other ? { ...tile, tileId: String(other.tileId) } : tile;
+  });
+
+  if (retile.length) {
+    const { definitionsById } = await loadLevelLibrary(parsed.tileLibrary);
+    const unknown = retile.filter((swap) => !definitionsById.has(String(swap.tileId)));
+    if (unknown.length) {
+      throw new Error(`${name}: ${parsed.tileLibrary} has no tile ${unknown.map((swap) => swap.tileId).join(", ")}`);
+    }
+    const nowhere = retile.filter((swap) => !tiles.some((tile) => tile.x === Number(swap.x) && tile.y === Number(swap.y)));
+    if (nowhere.length) {
+      throw new Error(`${name}: no tile stands at ${nowhere.map((swap) => `${swap.x},${swap.y}`).join(" ")}`);
+    }
+  }
 
   const placements = await readPlacements(parsed.tileLibrary, tiles);
 
@@ -769,8 +792,8 @@ export const loadFloor = async (name = "arena_gauntlet") => {
   const counts = Object.entries(floor.placements)
     .map(([kind, list]) => `${list.length} ${kind}`)
     .join(", ");
-  info(`floors: loaded "${name}" — ${floor.tiles.length} tiles, ${counts}`);
-  cache.set(name, floor);
+  info(`floors: loaded "${name}" — ${floor.tiles.length} tiles${retile.length ? ` (${retile.length} retiled)` : ""}, ${counts}`);
+  cache.set(key, floor);
   return floor;
 };
 
@@ -988,10 +1011,79 @@ export const tileLibrariesFor = async (plan) => {
  * The two kinds are interchangeable from here on: both return the same shape,
  * so a dungeon does not need to know which it is running.
  */
+/**
+ * A floor kept to its look, with nothing on it that fights, pays or ends it. A
+ * ranked lobby is one — the first boss's arena — and ends only when its race
+ * starts.
+ *
+ * Kept: where to stand, and its triggerables less any that attacks
+ * (`harmless`, buildTriggerables) — the spikes go, and the arena's four gates
+ * stay. "TRAP_JAIL" is the game's "Arena Gate"; with its openers gone a gate
+ * rests shut, as an authored floor's unreached gates do, and the arena is
+ * sealed as it is for the fight.
+ *
+ * Gone: its NPCs, crates included; enemies' generators; loot (a lobby is
+ * entered again and again); the triggers and logic that run the boss's
+ * script; its secrets; and the triggerables that are actions rather than
+ * things — the floor's banners and its completion — since nothing is left to
+ * fire them sensibly.
+ *
+ * Given instead, when the plan asks (`quiet: { npc, spawn }`): the NPCs it
+ * names, already placed (placedNpc), and where heroes arrive.
+ */
+const QUIET_KEEPS = new Set(["heroSpawn", "triggerable"]);
+const isAction = (placement) => /^FLOOR_/.test(String(placement?.constant ?? ""));
+export const quietFloor = (floor, { npc = [], spawn } = {}) => ({
+  ...floor,
+  name: `${floor.name} (quiet)`,
+  harmless: true,
+  placements: {
+    ...Object.fromEntries(
+      Object.entries(floor.placements).map(([kind, list]) => [
+        kind,
+        !QUIET_KEEPS.has(kind) ? [] : kind === "triggerable" ? list.filter((placement) => !isAction(placement)) : list,
+      ])
+    ),
+    npc,
+    ...(spawn ? { heroSpawn: [{ kind: "heroSpawn", x: spawn.x, y: spawn.y }] } : {}),
+  },
+  ...(spawn ? { spawn: { x: spawn.x, y: spawn.y } } : {}),
+  secrets: [],
+});
+
+/**
+ * An NPC no tile places, put down by the server at a world position, read as
+ * a tile's own LENPC would be: with its blocking box, so the floor's
+ * navigation keeps out of it as the client's hero does.
+ */
+export const placedNpc = async ({ id, constant, x, y, scale, flip = false, layer }) => {
+  const shape = (await loadNavigationLibrary()).get(constant);
+  const object = { constant, scale, flip };
+  return {
+    kind: "npc",
+    x,
+    y,
+    heading: 0,
+    scale,
+    flip: flip ? 1 : 0,
+    layer,
+    id,
+    constant,
+    ...(shape?.navCollisions?.length
+      ? { navigationColliders: transformColliders(object, { x, y }, shape.navCollisions) }
+      : {}),
+  };
+};
+
 export const loadFloorAt = async (plan, index) => {
   const descriptor = plan?.floors?.[Math.min(index, (plan.floors?.length ?? 1) - 1)];
   if (!descriptor) throw new Error(`No floor ${index} in this plan`);
-  if (descriptor.authored) return loadFloor(descriptor.authored);
+  if (descriptor.authored) {
+    const floor = await loadFloor(descriptor.authored, { retile: descriptor.retile ?? [] });
+    if (!descriptor.quiet) return floor;
+    const { npc = [], spawn } = descriptor.quiet === true ? {} : descriptor.quiet;
+    return quietFloor(floor, { npc: await Promise.all(npc.map(placedNpc)), spawn });
+  }
 
   const { tileLibrary, tier, tileCount, seed } = descriptor.generated;
   return buildFloor(tileLibrary, { tier, tileCount, seed });

@@ -29,6 +29,7 @@ const { loadAccount, saveAccount } = await import("../src/accounts.js");
 const { endMaintenance } = await import("../src/maintenance.js");
 const { enterPresence, leavePresence } = await import("../src/socket/presence.js");
 const { ROLE, withRole } = await import("../src/socket/roles.js");
+const { boardFor, recordRuns } = await import("../src/leaderboard.js");
 
 const server = start();
 await once(server, "listening");
@@ -96,6 +97,10 @@ const ADMIN_ROUTES = [
   ["GET", () => "/internal/v1/admin-actions"],
   ["GET", () => "/internal/v1/players/Lookupable/account"],
   ["GET", () => "/internal/v1/match-workers"],
+  ["GET", () => "/internal/v1/grants"],
+  ["GET", () => `/internal/v1/accounts/${player}/holdings`],
+  ["POST", () => `/internal/v1/accounts/${player}/grants`, { gold: 1 }],
+  ["PUT", () => `/internal/v1/accounts/${player}/name`, { name: "Renamed" }],
 ];
 
 test("an administrative call names the admin making it, or is refused", async () => {
@@ -258,4 +263,179 @@ test("an account's summary says whether it is an admin", async () => {
   const summary = async (id) => (await (await call("GET", `/internal/v1/accounts/${id}/summary`)).json()).admin;
   assert.equal(await summary(admin), true);
   assert.equal(await summary(player), false);
+});
+
+/* ----------------------------------------------------------------- grants - */
+
+test("what may be given: the four weapon chests, the heroes, and the most of each", async () => {
+  const response = await call("GET", "/internal/v1/grants", { actor: admin });
+  assert.equal(response.status, 200);
+  const { chests, rarities, heroes, limits } = await response.json();
+  assert.deepEqual(chests.map((chest) => chest.rarity), ["COMMON", "UNCOMMON", "RARE", "LEGENDARY"]);
+  assert.deepEqual(rarities, ["COMMON", "UNCOMMON", "RARE", "LEGENDARY"]);
+  assert.equal(heroes.length, 6);
+  assert.ok(heroes.every((hero) => hero.maxLevel > 1), "each hero says how far it goes");
+  assert.ok(limits.gold > 0 && limits.chests > 0);
+});
+
+test("an admin gives an account gold, gems, keys, chests, weapons, powerups and a level, and it is written down", async () => {
+  const target = await register();
+  const before = await loadAccount(target);
+  const gold = Number(before.basic_currency ?? 0);
+  const gems = Number(before.premium_currency ?? 0);
+  const chests = (before.account_chests ?? []).length;
+  const items = (before.account_items ?? []).length;
+
+  const response = await call("POST", `/internal/v1/accounts/${target}/grants`, {
+    body: { gold: 5000, gems: 100, keys: 3, weapons: 2, powerups: 7, chests: [{ id: 60004, count: 2 }], level: { level: 20 } },
+    actor: admin,
+  });
+  assert.equal(response.status, 200);
+  const { given } = await response.json();
+  assert.ok(given.some((each) => each.what === "gold" && each.amount === 5000));
+
+  const after = await loadAccount(target);
+  assert.equal(Number(after.basic_currency), gold + 5000);
+  assert.equal(Number(after.premium_currency), gems + 100);
+  assert.equal(Number(after.legendary_keys ?? 0), Number(before.legendary_keys ?? 0) + 3);
+  assert.equal(after.account_chests.length, chests + 2);
+  assert.equal(after.account_items.length, items + 2);
+  const { loadGameMaster } = await import("../src/gamemaster.js");
+  const powerups = (await loadGameMaster()).raw.Stackables.filter((row) => row.ItemCategory === "POWERUP");
+  for (const row of powerups) {
+    const held = after.account_stackables.find((entry) => Number(entry.stack_id) === Number(row.Id));
+    assert.ok(Number(held?.count) >= 7, `${row.Name} topped up to 7`);
+  }
+  assert.ok(after.account_avatars.every((avatar) => Number(avatar.experience) > 0), "every hero levelled");
+
+  const [latest] = (await (await call("GET", "/internal/v1/admin-actions?limit=1", { actor: admin })).json()).actions;
+  assert.equal(latest.action, "account.grant");
+  assert.equal(latest.target, target);
+  assert.deepEqual(latest.detail.given, given);
+});
+
+test("keys go by rarity, and weapons can be one rarity for one hero", async () => {
+  const target = await register();
+  const before = await loadAccount(target);
+  const response = await call("POST", `/internal/v1/accounts/${target}/grants`, {
+    body: { keys: { LEGENDARY: 2, RARE: 1 }, weapons: { count: 3, rarity: "LEGENDARY", hero: 102 } },
+    actor: admin,
+  });
+  assert.equal(response.status, 200);
+  const after = await loadAccount(target);
+  assert.equal(Number(after.legendary_keys ?? 0), Number(before.legendary_keys ?? 0) + 2);
+  assert.equal(Number(after.rare_keys ?? 0), Number(before.rare_keys ?? 0) + 1);
+  assert.equal(Number(after.basic_keys ?? 0), Number(before.basic_keys ?? 0), "no common keys asked for");
+  const { loadGameMaster } = await import("../src/gamemaster.js");
+  const gm = await loadGameMaster();
+  const legendary = gm.raw.Rarity.find((row) => row.Type === "LEGENDARY");
+  const rolled = after.account_items.slice((before.account_items ?? []).length);
+  assert.equal(rolled.length, 3);
+  assert.ok(rolled.every((item) => Number(item.rarity) === Number(legendary.Id)), "all three legendary");
+  const { given } = await response.json();
+  assert.ok(given.some((each) => each.what === "legendary weapons for the Ranger" && each.amount === 3), JSON.stringify(given));
+});
+
+test("what a player holds, as an admin's page shows it: purse, keys and chests by rarity, heroes, every weapon", async () => {
+  const target = await register();
+  await call("POST", `/internal/v1/accounts/${target}/grants`, {
+    body: { gold: 250, keys: { RARE: 3 }, chests: [{ id: 60003, count: 2 }], powerups: 4 },
+    actor: admin,
+  });
+  const response = await call("GET", `/internal/v1/accounts/${target}/holdings`, { actor: admin });
+  assert.equal(response.status, 200);
+  const holdings = await response.json();
+  const account = await loadAccount(target);
+  assert.equal(holdings.gold, Number(account.basic_currency));
+  assert.equal(holdings.keys.RARE, Number(account.rare_keys));
+  assert.equal(holdings.chests.RARE, 2);
+  assert.equal(holdings.chests.LEGENDARY, 0);
+  assert.ok(holdings.powerups.length > 0 && holdings.powerups.every((row) => row.count >= 4));
+  assert.equal(holdings.heroes.length, account.account_avatars.length);
+  assert.ok(holdings.heroes.every((hero) => hero.level >= 1 && hero.maxLevel >= hero.level));
+  assert.equal(holdings.items.length, account.account_items.length, "the bag and the hands both");
+  const held = holdings.items.find((item) => Number(item.avatar_id ?? 0));
+  if (held) assert.ok(held.equipped_by, "a held weapon says whose hand it is in");
+  assert.ok(holdings.items.every((item) => "name" in item && "rarity_name" in item), "described as the market describes one");
+});
+
+test("one grant sets a level of its own for each of several heroes", async () => {
+  const target = await register();
+  const heroes = (await loadAccount(target)).account_avatars.map((avatar) => Number(avatar.avatar_id));
+  const response = await call("POST", `/internal/v1/accounts/${target}/grants`, {
+    body: { level: heroes.map((hero, at) => ({ hero, level: 10 + at })) },
+    actor: admin,
+  });
+  assert.equal(response.status, 200);
+  const shown = (await (await call("GET", `/internal/v1/accounts/${target}/holdings`, { actor: admin })).json()).heroes;
+  heroes.forEach((hero, at) => assert.equal(shown.find((row) => row.id === hero).level, 10 + at));
+});
+
+test("a grant of nothing, too much, or a chest the game has not got is refused, and says why", async () => {
+  for (const [body, why] of [
+    [{}, "nothing_to_grant"],
+    [{ gold: -5 }, "bad_grant"],
+    [{ gold: 1e12 }, "bad_grant"],
+    [{ gems: 1.5 }, "bad_grant"],
+    [{ chests: [{ id: 60007, count: 1 }] }, "bad_grant"],
+    [{ level: { level: 10, hero: 999 } }, "bad_grant"],
+    [{ keys: { MYTHIC: 1 } }, "bad_grant"],
+    [{ weapons: { count: 1, rarity: "MYTHIC" } }, "bad_grant"],
+    [{ keys: { LEGENDARY: 0 } }, "nothing_to_grant"],
+  ]) {
+    const response = await call("POST", `/internal/v1/accounts/${player}/grants`, { body, actor: admin });
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal((await response.json()).reason, why, JSON.stringify(body));
+  }
+});
+
+test("a grant or a rename waits for the player to be offline", async () => {
+  const { session } = online(player);
+  enterPresence(session);
+  try {
+    const grant = await call("POST", `/internal/v1/accounts/${player}/grants`, { body: { gold: 1 }, actor: admin });
+    assert.equal(grant.status, 409);
+    assert.equal((await grant.json()).reason, "online");
+    const rename = await call("PUT", `/internal/v1/accounts/${player}/name`, { body: { name: "WhileHere" }, actor: admin });
+    assert.equal(rename.status, 409);
+    assert.equal((await rename.json()).reason, "online");
+  } finally {
+    leavePresence(session);
+  }
+});
+
+/* ----------------------------------------------------------------- rename - */
+
+test("an admin renames a player: sign-up's rules, nobody else's name, and the boards follow", async () => {
+  const target = await register();
+  const named = await call("PUT", `/internal/v1/accounts/${target}/name`, { body: { name: "Firstname" }, actor: admin });
+  assert.equal(named.status, 200);
+  assert.equal((await loadAccount(target)).name, "Firstname");
+
+  await recordRuns([
+    {
+      account_id: target, name: "Firstname", avatar_id: 1, hero_id: 101, map_node_id: 50003, party_size: 1,
+      started_at: "2026-10-01T12:00:00.000Z", finished_at: "2026-10-01T12:02:00.000Z", duration_ms: 120_000,
+      success: true, floors: 1, kills: 1, damage: 1, gold: 1, xp: 1, trophies: 0,
+    },
+  ]);
+  const renamed = await call("PUT", `/internal/v1/accounts/${target}/name`, { body: { name: "Secondname" }, actor: admin });
+  assert.equal(renamed.status, 200);
+  assert.deepEqual(await renamed.json(), { accountId: target, name: "Secondname", was: "Firstname" });
+  const board = await boardFor("clears", { limit: 100 });
+  assert.equal(board.find((entry) => Number(entry.account_id) === target)?.name, "Secondname", "the board shows the new name");
+
+  const cased = await call("PUT", `/internal/v1/accounts/${target}/name`, { body: { name: "secondName" }, actor: admin });
+  assert.equal(cased.status, 200, "its own name in other letters is no clash");
+
+  const taken = await call("PUT", `/internal/v1/accounts/${target}/name`, { body: { name: "lookupable" }, actor: admin });
+  assert.equal(taken.status, 409);
+  assert.equal((await taken.json()).reason, "name_taken");
+  const shaped = await call("PUT", `/internal/v1/accounts/${target}/name`, { body: { name: "no!" }, actor: admin });
+  assert.equal(shaped.status, 400, "a malformed name is a bad request, not a clash");
+  assert.equal((await shaped.json()).reason, "bad_name");
+
+  const [latest] = (await (await call("GET", "/internal/v1/admin-actions?limit=1", { actor: admin })).json()).actions;
+  assert.equal(latest.action, "account.rename");
+  assert.deepEqual(latest.detail, { from: "Secondname", to: "secondName" });
 });

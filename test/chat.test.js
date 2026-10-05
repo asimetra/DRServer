@@ -206,3 +206,14 @@ test("the server answers under the configured name", async () => {
   assert.equal(serverVoiceNameFor("   ", false), "★Server", "an empty name is not a bare colour");
   assert.equal(serverVoiceNameFor(undefined, true), "⚡Server");
 });
+
+test("a line said in a dungeon is offered to the modes after the room has heard it, its words alone", async (t) => {
+  const { installRankedHooks } = await import("../src/ranked/hooks.js");
+  const offered = [];
+  t.after(installRankedHooks({ heroEvent: (session, event) => event.type === "said" && offered.push(event.line) }));
+  const session = withRelay();
+  await handleChat(session, saying("Simetra: anyone racing?"));
+  assert.equal(session.relayed.length, 1, "the room first");
+  // The relay's voice carries the name; the line's own would show it twice.
+  assert.deepEqual(offered, ["anyone racing?"]);
+});

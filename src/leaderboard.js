@@ -584,6 +584,29 @@ export const boardFor = async (metric, { node, hero, party, limit = 20 } = {}) =
 };
 
 /**
+ * A rename, on the boards: every standing of the account carries the name it
+ * has now. The runs behind them keep the one they were run under, as a sale or
+ * a news post keeps its author's.
+ */
+export const renameInStandings = async (accountId, name) => {
+  const id = Number(accountId);
+  if (usingDatabase()) return (await db()).renameStandings(id, name);
+  await waitForRunRecords();
+  return withFileStoreLock(async () => {
+    const bests = await readJson(BESTS_FILE, {});
+    let changed = false;
+    for (const rows of Object.values(bests)) {
+      const row = rows?.[String(id)];
+      if (row && row.name !== name) {
+        row.name = name;
+        changed = true;
+      }
+    }
+    if (changed) await writeJson(BESTS_FILE, bests);
+  });
+};
+
+/**
  * Everything the boards keep about one account, gone: its standings and its run
  * history. For an account deleted at its player's request (account-deletion.js);
  * on PostgreSQL the deletion's own transaction does this.

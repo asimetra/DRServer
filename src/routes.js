@@ -11,6 +11,7 @@ import { gameStatusFor } from "./game-status.js";
 import { declare, declaredView, jsonFor, viewForOwnAccount, viewFromDemographics } from "./content-packs.js";
 import { sessionHolding } from "./socket/presence.js";
 import { forTheClient } from "./server-only-fields.js";
+import { publicStanding, readStandings } from "./ranked/standing.js";
 
 const json = (body, status = 200) => ({
   status,
@@ -95,6 +96,38 @@ const serviceDiscovery = () =>
     gameSocketPort: config.publicSocketPort,
     gameSocketFallbackPort: 0,
   });
+
+/**
+ * GET /desktop/game-status/service-discovery — the same answer, for the
+ * desktop client. Its game socket is plain TCP, so behind an https proxy it
+ * cannot be the proxy's port the browser's `wss://` uses: it is
+ * ODS_DESKTOP_SOCKET_HOST, which reaches the game port directly. A desktop
+ * player's ServiceDiscoveryUrl ends in `/desktop`; the client adds
+ * `/game-status/service-discovery` itself (ServiceDiscoveryLoader.hx), and
+ * takes every other address from `webServicesUrl`, so nothing else moves.
+ */
+const desktopServiceDiscovery = () =>
+  json({
+    webServicesUrl: publicBaseUrl(),
+    gameSocketAddress: config.desktopSocketHost ?? config.publicSocketHost,
+    gameSocketPort: config.desktopSocketHost ? config.desktopSocketPort : config.publicSocketPort,
+    gameSocketFallbackPort: 0,
+  });
+
+/**
+ * GET /api/ranked/standing — the caller's own ranked league, rating, place and
+ * record, as the website's profile has them (ranked/standing.js). For a client
+ * that shows them itself — a mod's title in town (docs/ranked.md, "The
+ * modded-client adapter") — and signed like every call the client makes.
+ */
+const rankedStanding = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+  const accountId = accountIdOf(req);
+  if (accountId === null) return json({ error: "missing or invalid X-Account-Id" }, 400);
+  if (!config.ranked?.enabled) return json({ error: "ranked races are off on this server" }, 404);
+  return json(publicStanding((await readStandings()).of(accountId)));
+};
 
 /** GET /game-status — how busy each dungeon is, for the world map (game-status.js). */
 const gameStatus = async () => json(await gameStatusFor());
@@ -241,8 +274,10 @@ const launch = async (req) => {
 
 export const routes = [
   { method: "GET", pattern: "/game-status/service-discovery", handler: serviceDiscovery },
+  { method: "GET", pattern: "/desktop/game-status/service-discovery", handler: desktopServiceDiscovery },
   { method: "GET", pattern: "/game-status", handler: gameStatus },
   { method: "GET", pattern: "/api/dbAccountInfo/accountdetails", handler: accountDetails },
+  { method: "GET", pattern: "/api/ranked/standing", handler: rankedStanding },
   { method: "POST", pattern: "/rpc/:service/:method", handler: rpcCall },
   { method: "POST", pattern: "/launch", handler: launch },
   /**

@@ -112,3 +112,25 @@ test("an https address with no proxy trusted is warned about", () => {
   assert.deepEqual(warnings({ ODS_PUBLIC_URL: "https://play.example.net", ODS_TRUSTED_PROXIES: "127.0.0.1" }), []);
   assert.deepEqual(warnings({ ODS_PUBLIC_URL: "http://203.0.113.7:9000" }), []);
 });
+
+/**
+ * The desktop client's socket is plain TCP, which the https proxy in front of
+ * the browser's cannot carry. Its own discovery address hands it a host that
+ * reaches the game port directly.
+ */
+test("the desktop client's socket is set apart from the browser's, and defaults to the bound game port", () => {
+  const loaded = loadServerConfig({ ODS_PUBLIC_URL: "https://play.example.net", ODS_DESKTOP_SOCKET_HOST: "game.example.net" });
+  assert.equal(loaded.desktopSocketHost, "game.example.net");
+  assert.equal(loaded.desktopSocketPort, 7198, "the game port itself: nothing in front speaks TCP");
+  assert.equal(loaded.publicSocketPort, 443, "the browser's stays the proxy's");
+
+  assert.equal(loadServerConfig({ ODS_DESKTOP_SOCKET_HOST: "[2001:db8::2]", ODS_DESKTOP_SOCKET_PORT: "9001" }).desktopSocketHost, "2001:db8::2");
+  assert.equal(loadServerConfig({ ODS_DESKTOP_SOCKET_HOST: "game.example.net", ODS_DESKTOP_SOCKET_PORT: "9001" }).desktopSocketPort, 9001);
+  assert.equal(loadServerConfig({}).desktopSocketHost, null, "unset: the desktop is told what everybody is");
+});
+
+test("a desktop socket that cannot be handed to a client stops the server", () => {
+  assert.match(refusals({ ODS_DESKTOP_SOCKET_PORT: "70000" })[0] ?? "", /ODS_DESKTOP_SOCKET_PORT/);
+  assert.match(refusals({ ODS_DESKTOP_SOCKET_HOST: "0.0.0.0" })[0] ?? "", /ODS_DESKTOP_SOCKET_HOST/);
+  assert.deepEqual(refusals({ ODS_DESKTOP_SOCKET_HOST: "game.example.net", ODS_DESKTOP_SOCKET_PORT: "7198" }), []);
+});

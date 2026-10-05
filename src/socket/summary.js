@@ -2,7 +2,7 @@ import { config } from "../config.js";
 import { matchHost } from "./match-host.js";
 import { info, warn } from "../log.js";
 import { CLID } from "./opcodes.js";
-import { dungeonSummaryGenerate, objectDisable } from "./objects.js";
+import { dungeonSummaryGenerate, objectDisable, playerGenerate } from "./objects.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { settleDungeonAccount } from "./settle-account.js";
 import { awardDungeonCompletion, completionTeamXpBonus } from "./rewards.js";
@@ -10,6 +10,8 @@ import { rankable } from "../leaderboard.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { countsAsKill } from "./actor-roles.js";
 import { presentSkin } from "../content-packs.js";
+import { modeHooks } from "../modes/hooks.js";
+import { runRulesOf } from "./run-rules.js";
 
 /**
  * Takes the hero off the floor, once.
@@ -137,8 +139,14 @@ export const runRecordFor = (session, success) => {
     hero_xp: avatar.experience ?? 0,
     // Written to the history either way; only kept off the boards. A run that
     // had a floor ended by `/complete` was not cleared, however fast it went.
+    // Nor is a run whose rules keep it off the boards (run-rules.js) — a ranked
+    // race: its dungeon was drawn, not chosen, a win can be the rival leaving,
+    // and its clock started in the lobby (docs/ranked.md).
     rankable:
-      rankable(session.mapPage?.NodeType) && startedAt !== null && !session.runAssisted,
+      rankable(session.mapPage?.NodeType) &&
+      startedAt !== null &&
+      !session.runAssisted &&
+      runRulesOf(session).rankable,
   };
 };
 
@@ -246,11 +254,52 @@ export const projectDungeonReports = (session, recipient, success) => {
       (member) => member !== recipient && !privileged?.has(member)
     ),
   ];
-  // Each peer's skin as this recipient can draw it (content-packs.js).
-  return ordered.slice(0, 4).map((member) => {
-    const report = buildDungeonReport(member.world?.contextFor(member) ?? member, success);
-    return { ...report, skinType: presentSkin(recipient?.contentView, report.skinType) };
-  });
+  const rows = ordered.slice(0, 4).map((member) =>
+    buildDungeonReport(member.world?.contextFor(member) ?? member, success)
+  );
+
+  /**
+   * A mode may reshape the rows (modes/hooks.js, reportRows): a ranked race
+   * puts what it did to the racer's rating after their name, and the rival's
+   * row beside theirs. A row for somebody not in this run is `transient`: it
+   * is given a player object of its own (transientRowLeaves), since the client
+   * reads a row by its player and greys one whose player goes.
+   */
+  const shaped = modeHooks.reportRows(recipient, rows, { success, reportOf: buildDungeonReport });
+  return (Array.isArray(shaped) ? shaped : rows)
+    .slice(0, 4)
+    .map((row) => ({
+      ...row,
+      id: row.transient ? session.allocateDoid?.(CLID.PlayerGameObject) : row.id,
+      // Each row's skin as this recipient can draw it (content-packs.js).
+      skinType: presentSkin(recipient?.contentView, row.skinType),
+    }))
+    .filter((row) => !(row.transient && !row.id));
+};
+
+/** How long a transient row shows before it greys, the report having drawn by then. */
+const TRANSIENT_ROW_LEAVES_AFTER_MS = 4000;
+
+/**
+ * The client greys a report row whose player object goes away while the report
+ * is up (DistributedDungeonSummary.onPlayerExit, listening once its screen is
+ * drawn). So a transient row — somebody who was never in this run — is given
+ * one: a name and nothing else, as a chat voice is, after the floor's objects
+ * are cleared, since that clearing takes player objects with it; and it goes
+ * once the report has had time to draw.
+ *
+ * On a plain timer, not the run's scope: the report quiesces the world, which
+ * disposes that scope and every timer in it. A player who leaves first has the
+ * object taken by the run's own teardown, and the timer then finds it gone.
+ */
+const transientRowLeaves = (session, { member, doid, name }) => {
+  const send = (frame) => (typeof member.sendDirect === "function" ? member.sendDirect(frame) : member.send(frame));
+  session.objects?.set(doid, CLID.PlayerGameObject);
+  send(playerGenerate({ doid, parent: session.areaDoid ?? 0, zone: session.dungeonZone ?? 10, screenName: name }));
+  const leave = () => {
+    if (session.objects?.delete(doid)) send(objectDisable(doid));
+  };
+  setTimeout(leave, session.transientRowLeavesAfterMs ?? TRANSIENT_ROW_LEAVES_AFTER_MS).unref?.();
 };
 
 /**
@@ -347,14 +396,17 @@ export const sendDungeonSummary = (session, success) => {
       }
     }
   }
+  const transients = [];
   for (const member of members) {
+    const reports = projectDungeonReports(session, member, success);
+    for (const row of reports) if (row.transient) transients.push({ member, doid: row.id, name: row.name });
     member.send(dungeonSummaryGenerate({
       doid,
       parent: session.areaDoid,
       zone: session.dungeonZone ?? 0,
       mapNodeId: session.mapNodeId ?? 0,
       success,
-      reports: projectDungeonReports(session, member, success),
+      reports,
     }));
   }
   /**
@@ -392,6 +444,7 @@ export const sendDungeonSummary = (session, success) => {
   removeHeroFromFloor(session);
   const cleared = clearFloorObjects(session);
   worldOf(session)?.quiesce?.();
+  for (const row of transients) transientRowLeaves(session, row);
   info(
     `[${session.id}] generated DungeonSummary doid=${doid} success=${success ? 1 : 0} ` +
       `(${cleared} dungeon object(s) disabled)`

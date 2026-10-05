@@ -1,0 +1,101 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { MODE_HOOK_NAMES, installModeHooks, modeHooks, modeInstalled, modesInstalled } from "../src/modes/hooks.js";
+import { installRankedHooks, rankedHooks, rankedHooksInstalled } from "../src/ranked/hooks.js";
+
+/**
+ * The mode seam (src/modes/hooks.js): more than one mode at once, each
+ * answering under its own name, their answers put together by each hook's rule.
+ */
+const installed = (t, ...pairs) => {
+  const undo = pairs.map(([mode, hooks]) => installModeHooks(mode, hooks));
+  t.after(() => undo.forEach((fn) => fn()));
+};
+
+test("with nothing installed every hook is the no-op that leaves the runtime as it was", async () => {
+  assert.equal(modesInstalled().length, 0);
+  const request = { mapNodeId: 1 };
+  assert.equal(modeHooks.routeEntry({}, request), request);
+  assert.equal(await modeHooks.planFor({}, 1), null);
+  assert.equal(modeHooks.floorCompleting({}), true);
+  assert.equal(modeHooks.idlingAllowed({}), false);
+  assert.equal(modeHooks.runRules({}), null);
+  assert.deepEqual(modeHooks.friendList([1, 2]), [1, 2]);
+  assert.equal(modeHooks.heroRequested({}), undefined);
+});
+
+test("two modes installed: a chain rewrites in turn, the first answer wins, all must agree, any may say yes", async (t) => {
+  installed(
+    t,
+    ["a", {
+      routeEntry: (connection, request) => (request.friendId === 1 ? { ...request, mode: "a" } : request),
+      friendList: (rows) => [...rows, "a"],
+      planFor: async (session) => (session.modeEntry === "a" ? { floors: ["a"] } : null),
+      floorCompleting: (session) => session.hold !== "a",
+      idlingAllowed: (session) => session.lobby === "a",
+      runRules: (session) => (session.modeEntry === "a" ? { mode: "a" } : null),
+      heroRequested: (session) => session.seen.push("a"),
+    }],
+    ["b", {
+      routeEntry: (connection, request) => (request.friendId === 2 ? { ...request, mode: "b" } : request),
+      friendList: (rows) => [...rows, "b"],
+      planFor: async (session) => (session.modeEntry === "b" ? { floors: ["b"] } : null),
+      floorCompleting: (session) => session.hold !== "b",
+      idlingAllowed: (session) => session.lobby === "b",
+      runRules: (session) => (session.modeEntry === "b" ? { mode: "b" } : null),
+      heroRequested: (session) => session.seen.push("b"),
+    }]
+  );
+  assert.deepEqual(modesInstalled(), ["a", "b"]);
+  assert.equal(modeHooks.routeEntry({}, { friendId: 2 }).mode, "b");
+  assert.equal(modeHooks.routeEntry({}, { friendId: 9 }).mode, undefined);
+  assert.deepEqual(modeHooks.friendList(["me"]), ["me", "a", "b"]);
+  assert.deepEqual(await modeHooks.planFor({ modeEntry: "b" }, 1), { floors: ["b"] });
+  assert.equal(await modeHooks.planFor({ modeEntry: "c" }, 1), null);
+  assert.equal(modeHooks.floorCompleting({ hold: "b" }), false, "one mode holding holds");
+  assert.equal(modeHooks.floorCompleting({}), true);
+  assert.equal(modeHooks.idlingAllowed({ lobby: "a" }), true);
+  assert.equal(modeHooks.idlingAllowed({}), false);
+  assert.deepEqual(modeHooks.runRules({ modeEntry: "b" }), { mode: "b" });
+  const session = { seen: [] };
+  modeHooks.heroRequested(session);
+  assert.deepEqual(session.seen, ["a", "b"], "news goes to every mode");
+});
+
+test("a named hook asks only the mode named: its gate, its rules", async (t) => {
+  installed(t, ["a", { entryAllowed: async () => ({ ok: false, reason: "a says no" }), modeRules: () => ({ mode: "a" }) }]);
+  assert.equal((await modeHooks.entryAllowed({}, "a")).ok, false);
+  assert.deepEqual(await modeHooks.entryAllowed({}, "b"), { ok: true }, "a mode not installed is the default");
+  assert.deepEqual(modeHooks.modeRules("a"), { mode: "a" });
+  assert.equal(modeHooks.modeRules("b"), null);
+});
+
+test("a mode's fault is logged and answered with the default, never thrown into the runtime", async (t) => {
+  installed(t, ["bad", {
+    floorCompleting: () => { throw new Error("boom"); },
+    planFor: async () => { throw new Error("boom"); },
+  }]);
+  assert.equal(modeHooks.floorCompleting({}), true);
+  assert.equal(await modeHooks.planFor({}, 1), null);
+});
+
+test("an answer under a name the runtime never asks is ignored and said so; uninstalling takes only that mode out", (t) => {
+  const undoA = installModeHooks("a", { notAHook: () => {}, idlingAllowed: () => true });
+  const undoB = installModeHooks("b", { idlingAllowed: () => false });
+  t.after(() => (undoA(), undoB()));
+  assert.ok(MODE_HOOK_NAMES.includes("idlingAllowed") && !MODE_HOOK_NAMES.includes("notAHook"));
+  assert.equal(modeHooks.idlingAllowed({}), true);
+  undoA();
+  assert.equal(modeInstalled("a"), false);
+  assert.equal(modeInstalled("b"), true);
+  assert.equal(modeHooks.idlingAllowed({}), false);
+});
+
+test("ranked's name on the seam is the same seam", (t) => {
+  assert.equal(rankedHooks, modeHooks);
+  const undo = installRankedHooks({ idlingAllowed: () => true });
+  t.after(undo);
+  assert.equal(rankedHooksInstalled(), true);
+  assert.equal(modeInstalled("ranked"), true);
+});

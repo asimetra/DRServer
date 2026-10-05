@@ -21,6 +21,7 @@ import { readNpc } from "./helpers/floor.js";
 import { EntryRefusedError } from "../src/socket/match-entry.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { setMapNodeBit } from "../src/map-progress.js";
+import { installRankedHooks } from "../src/ranked/hooks.js";
 
 let nextDoid = 9000;
 
@@ -1009,4 +1010,75 @@ test("a pending joiner that requests exit cannot be reattached after asset repla
   assert.equal(host.world.liveMembers.has(joiner), false);
   assert.equal(joined.match.members.has(joiner), false);
   assert.equal(joiner.world, null);
+});
+
+/**
+ * `dungeonActive` is the world's, written through the member's context; the
+ * member itself is handed to the leave raw, where it reads as never set. Asked
+ * only when it was set, ranked never heard that anybody left a world: a player
+ * who walked out of a ranked lobby stayed queued, was paired from town a minute
+ * later, and every race after that failed to start.
+ */
+test("walking out of a world, or dropping from it, is told to ranked", async (t) => {
+  const left = [];
+  t.after(installRankedHooks({ runLeft: (session, how) => left.push([session.accountId, how]) }));
+
+  for (const [accountId, how] of [[2301, "left"], [2302, "dropped"]]) {
+    const registry = new DungeonMatchRegistry();
+    const host = member(accountId, 1100000 + accountId);
+    const resolved = registry.reserve({ session: host, mapNodeId: 50082 });
+    await joinDungeonMatch(host, resolved, { mapNodeId: 50082 }, {
+      buildFirstMember: buildFixtureWorld,
+    });
+    if (how === "dropped") host.closed = true;
+    leaveDungeonSession(host, { registry });
+  }
+
+  assert.deepEqual(left, [[2301, "left"], [2302, "dropped"]]);
+});
+
+test("which mode a run is travels with its request, to whichever thread runs it", async () => {
+  for (const [accountId, request, expected] of [
+    [2401, { mapNodeId: 50082, mode: "ranked" }, "ranked"],
+    [2402, { mapNodeId: 50082 }, null],
+  ]) {
+    const registry = new DungeonMatchRegistry();
+    const host = member(accountId, 1100000 + accountId);
+    const resolved = registry.reserve({ session: host, mapNodeId: 50082 });
+    await joinDungeonMatch(host, resolved, request, { buildFirstMember: buildFixtureWorld });
+    assert.equal(host.modeEntry, expected);
+    leaveDungeonSession(host, { registry });
+  }
+});
+
+/**
+ * A report left open past its time used to have its world destroyed under it,
+ * silently: the exit that came later found no world, took off only the
+ * player's own object, and left the area and the report on the client — and
+ * the next dungeon opened on the old report. Sent home instead, the exit finds
+ * the world standing and takes the run off the client as any exit does.
+ */
+test("a report whose time is up is taken off the client by the exit it sends, not left behind", async () => {
+  const exitAfter = async (expireFirst) => {
+    const registry = new DungeonMatchRegistry({ finishedMatchTtlMs: 0, evictionGraceMs: 60_000 });
+    const host = member(2501 + Number(expireFirst), 1102501 + Number(expireFirst));
+    const resolved = registry.reserve({ session: host, mapNodeId: 50082 });
+    await joinDungeonMatch(host, resolved, { mapNodeId: 50082 }, { buildFirstMember: buildFixtureWorld });
+    const areaDoid = host.world.areaDoid;
+    registry.evictWith((who) => leaveDungeonSession(who, { notifyClient: true, registry }));
+    registry.finish(resolved.match);
+    host.sent.length = 0;
+
+    if (expireFirst) registry.expire(resolved.match);
+    else {
+      // What the timer did before: the match closed under the reader, then the exit.
+      registry.close(resolved.match);
+      leaveDungeonSession(host, { notifyClient: true, registry });
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    return host.sent.map(frameHead).some((frame) => frame.doid === areaDoid);
+  };
+
+  assert.equal(await exitAfter(false), false, "the old way: the area stays on the client");
+  assert.equal(await exitAfter(true), true, "sent home: the exit takes the area off");
 });

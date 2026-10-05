@@ -24,6 +24,8 @@ import {
   exitsOf,
   rewardGeneratorIds,
 } from "./floors.js";
+import { modeHooks } from "../modes/hooks.js";
+import { runRulesOf } from "./run-rules.js";
 import {
   npcForConstant,
   propForConstant,
@@ -320,10 +322,11 @@ export const heroDoidForAvatar = (avatar) => {
 /**
  * Honours DR_NPC_FILTER. The class of an actor is only known once its
  * GameMaster row is resolved, so the check lives here rather than at the
- * placement level.
+ * placement level. A quiet floor needs none of it: it is built with none of
+ * its own NPCs to begin with (floors.js, quietFloor).
  */
-const passesFilter = (npc) => {
-  switch (config.npcFilter) {
+export const passesFilter = (npc, filter = config.npcFilter) => {
+  switch (filter) {
     case "props":
       return npc.CharType === "PROP";
     case "enemies":
@@ -814,8 +817,9 @@ const spawnNpc = async (context, constant, position, scale, options = {}) => {
           const origin = session.actors.get(doid)?.position ?? at;
           // What another monster called up is outside the node's budget and
           // leaves no star. Everything else carries its share of the node,
-          // which for some is nothing — see run-xp.js.
-          const star = options.countsForFloor !== false
+          // which for some is nothing — see run-xp.js. A run that pays no
+          // experience (run-rules.js) drops no star at all.
+          const star = options.countsForFloor !== false && runRulesOf(session).pays.experience
             ? claimXpStar(session, npc, session.random ?? Math.random)
             : null;
           spawnNpcRewards(session, {
@@ -2034,6 +2038,9 @@ const buildTriggerables = async (context, placements) => {
     }
     const npc = await npcForConstant(placement.constant);
     const attack = npc?.Attack1 && (await attackForConstant(npc.Attack1));
+    // A floor that may hurt nobody (a quiet one, floors.js) keeps its gates and
+    // drops what attacks: a trap is the triggerable with an attack of its own.
+    if (session.currentFloor?.harmless && attack) continue;
     const projectile = attack?.Projectile
       ? await projectileForConstant(attack.Projectile)
       : null;
@@ -2821,7 +2828,9 @@ export const enterDungeon = async (
    * of them name a CustomTileset and the rest do not. Everything past here
    * treats the two the same.
    */
-  session.floorPlan = await floorPlanForMapNode(mapNodeId);
+  // A ranked lobby brings its own plan; its race floors are added when it starts.
+  session.floorPlan =
+    (await modeHooks.planFor(session, mapNodeId)) ?? (await floorPlanForMapNode(mapNodeId));
   session.floorCount = floorCountOf(session.floorPlan);
   /**
    * DR_START_FLOOR drops the run straight onto a floor. Clamped here rather
@@ -2867,7 +2876,9 @@ export const enterDungeon = async (
 
   const areaDoid = session.allocateDoid(CLID.DistributedDungionArea);
   // The area preloads once, for the whole run — see tileLibrariesFor.
-  const tileLibraries = await tileLibrariesFor(session.floorPlan);
+  const tileLibraries = [
+    ...new Set([...(await tileLibrariesFor(session.floorPlan)), ...(session.floorPlan.preloadTileLibraries ?? [])]),
+  ];
   /**
    * And the art that goes with them. Left empty, the client reaches a movie
    * clip whose SWF was never loaded and draws nothing without failing — which
@@ -2876,7 +2887,13 @@ export const enterDungeon = async (
   const selectedModifierRows = (gm.raw.DungeonModifier ?? []).filter((row) =>
     session.infiniteModifierIds.includes(Number(row.Id))
   );
-  const { cacheNpcs, cacheSwfs } = await preloadFor(tileLibraries, {
+  // A plan may preload the art of its first floors only (`preloadArtFloors`):
+  // a ranked lobby's, since the race is drawn after the lobby is built
+  // (docs/ranked.md, "What a change of dungeon between floors costs").
+  const artLibraries = session.floorPlan.preloadArtFloors
+    ? await tileLibrariesFor({ floors: session.floorPlan.floors.slice(0, session.floorPlan.preloadArtFloors) })
+    : tileLibraries;
+  const { cacheNpcs, cacheSwfs } = await preloadFor(artLibraries, {
     gm,
     tierConstant: session.tierConstant,
     extraNpcIds: selectedModifierRows.flatMap((row) =>
@@ -3443,6 +3460,27 @@ const advanceFloorUnlocked = async (session) => {
   const floor = await loadFloorAt(session.floorPlan, next);
   if (!isActive()) return false;
 
+  /**
+   * A floor that belongs to another node makes it the run's: a ranked lobby
+   * hands over to the race this way. The client reads the node off each floor
+   * and sets the hero up again under it; experience, presence and the summary
+   * here read the run's.
+   */
+  const floorNode = session.floorPlan.floors?.[next]?.node;
+  if (floorNode && floorNode.Id !== session.mapNodeId) {
+    info(`[${session.id}] run moves from node ${session.mapNodeId} to ${floorNode.Id} "${floorNode.Name}"`);
+    session.mapNodeId = floorNode.Id;
+    session.tierConstant = floorNode.TierRank ?? "";
+    session.mapPage = floorNode;
+    for (const member of party) matchHost().setPresenceLocation(member, floorNode.Id);
+  }
+  // A floor may say what number the client shows for it (`numbered`): a race's
+  // first floor is floor 1 of the race, whatever came before it in the run.
+  const numbered = session.floorPlan.floors?.[next]?.numbered;
+  const shownNumber = numbered
+    ? dungeonFloorNumber(numbered.of, numbered.index)
+    : dungeonFloorNumber(session.floorCount, next);
+
   for (const recipient of party) {
     const ordered = [recipient, ...party.filter((member) => member !== recipient)];
     for (const owner of ordered) {
@@ -3501,7 +3539,7 @@ const advanceFloorUnlocked = async (session) => {
       parent: session.areaDoid,
       mapNodeId: session.mapNodeId,
       floor,
-      floorNumber: dungeonFloorNumber(session.floorCount, next),
+      floorNumber: shownNumber,
       tierConstant: session.tierConstant ?? "",
       activeDungeonModifiers: (session.infiniteActiveModifiers ?? []).map((row) => ({
         id: row.Id,
@@ -3547,6 +3585,11 @@ const disablePriority = (clid) => {
  * wrote the run down, which is the ordinary ending.
  */
 export const leaveDungeon = (session, { notifyClient = false } = {}) => {
+  // Out of a ranked lobby or race: by the connection going, or by walking out.
+  // Asked on every leave: a world's member arrives here raw, and `dungeonActive`
+  // is the world's, so the member reads it as never set. Ranked knows its own
+  // players, and for anybody else this is nothing.
+  modeHooks.runLeft(session, session.closed || session.member?.closed ? "dropped" : "left");
   const settled = settleDungeonAccount(session);
   clearEntryHandshake(session);
   clearInfiniteModifierTimers(session);

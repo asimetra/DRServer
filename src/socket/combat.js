@@ -399,6 +399,13 @@ export const applyDamage = (session, doid, damage, announce) => {
   if (hasTimelineInvulnerability(session, doid)) return false;
 
   /**
+   * And everything on a harmless floor: a ranked lobby (floors.js quietFloor),
+   * whose skull piles mark the queue's ring and have to stay standing. Told
+   * nothing, as the invulnerable are.
+   */
+  if (session.currentFloor?.harmless) return false;
+
+  /**
    * An object we no longer track is not on the client's floor either.
    *
    * `announce` is what puts the CombatResult on the wire, and it used to run

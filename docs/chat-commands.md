@@ -15,7 +15,9 @@ who asked and to nobody else.
 | `/xp` | Say what this run has paid and what a kill is worth |
 | `/online` | Say how many players are on, and on which nodes |
 | `/who` | Say who you are to this server |
+| `/rank` | Say your ranked rating and place, and who leads |
 | `/stats` | Read your hero's live numbers, buffs included |
+| `/draw` | Offer to call your ranked race off; both offering ends it with no rating moved |
 
 `/where`, `/floor` and `/near` are there for bug reports. A report that carries
 their output names the map, the tile and what the floor was waiting for, which

@@ -2,13 +2,23 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { endBrowserSessions } from "./browser-sessions.js";
 import { WebSocketStream } from "./socket/websocket.js";
 import { config } from "./config.js";
-import { BOARDS, boardFor, runsSince, standingsFor, titleFor } from "./leaderboard.js";
-import { STAT_CAP, heroLevel, statPointsEarned } from "./progression.js";
+import { BOARDS, boardFor, renameInStandings, runsSince, standingsFor, titleFor } from "./leaderboard.js";
+import { STAT_CAP, heroLevel, maxLevel, statPointsEarned } from "./progression.js";
 import { loadGameMaster, weaponIconFor } from "./gamemaster.js";
 import { activeSessions, presenceSummary } from "./socket/presence.js";
 import { activeMatchWorkerPool } from "./socket/match-worker-service.js";
 import { listen } from "./http.js";
-import { createNewAccount, listAccountIds, loadAccount, loadExistingAccount } from "./accounts.js";
+import {
+  accountInPlay,
+  createNewAccount,
+  listAccountIds,
+  loadAccount,
+  loadExistingAccount,
+  renameAccount,
+  saveAccount,
+  withAccountLock,
+} from "./accounts.js";
+import { GRANT_LIMITS, GrantRefused, RARITIES, applyGrant, holdingsOf, parseGrant, weaponChests } from "./grants.js";
 import { NameRefused, accountIdNamed, checkName, nameKey, nameTaken, tidyName } from "./account-names.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
 import { createLaunchCode } from "./launch-codes.js";
@@ -48,6 +58,8 @@ import {
   stockOn,
 } from "./store-rotation.js";
 import { info, warn } from "./log.js";
+import { leaguesOf } from "./ranked/leagues.js";
+import { publicStanding, readStandings } from "./ranked/standing.js";
 
 /**
  * What a web front end is allowed to ask this server to do.
@@ -446,6 +458,8 @@ const readProfile = async (req, [capture]) => {
     trophies: account.trophies ?? 0,
     title: titleFor(account.trophies),
     clears: standings.clears ?? 0,
+    // Their ranked league and place (ranked/standing.js); null where ranked is off.
+    ranked: await rankedStandingOf(id),
     /**
      * Every point the heroes hold, which is every point they were ever paid:
      * experience is only ever added, and the ladder cap is where each hero's
@@ -462,6 +476,54 @@ const readProfile = async (req, [capture]) => {
      * record is private is one where moving gold to an alt is invisible.
      */
     sales: describeListings(sales, gm),
+  });
+};
+
+/**
+ * One player's ranked standing for their profile, or null: where ranked is off,
+ * and where its log cannot be read — a ranked fault is not a profile fault.
+ */
+const rankedStandingOf = async (accountId) => {
+  if (!config.ranked?.enabled) return null;
+  try {
+    return publicStanding((await readStandings()).of(accountId));
+  } catch (problem) {
+    warn(`internal: no ranked standing for ${accountId}: ${problem.message}`);
+    return null;
+  }
+};
+
+/**
+ * GET /internal/v1/ranked/board?limit=100 — the ranked board, best first: each
+ * player's name, league, rating, place and record, and the leagues themselves
+ * for a page to draw a key with. Names and not account ids, as on a profile.
+ */
+const RANKED_BOARD_MOST = 500;
+const readRankedBoard = async (req) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  // A band has `from`; the top league may instead be a share of the board, `top`.
+  const leagues = leaguesOf(config.ranked?.leagues).map(({ name, from, top, color }) => ({ name, from, top, color }));
+  if (!config.ranked?.enabled) return json({ enabled: false, leagues, players: [] });
+
+  const asked = Number(req.query?.get("limit") ?? 100);
+  const limit = Math.min(RANKED_BOARD_MOST, Math.max(1, Number.isInteger(asked) ? asked : 100));
+  let standings;
+  try {
+    standings = await readStandings();
+  } catch (problem) {
+    warn(`internal: the ranked board cannot be read: ${problem.message}`);
+    return json({ error: "the ranked board cannot be read right now" }, 503);
+  }
+  const rows = standings.board.slice(0, limit);
+  const names = await Promise.all(
+    rows.map((row) => loadExistingAccount(row.accountId).then((account) => account?.name ?? null, () => null))
+  );
+  return json({
+    enabled: true,
+    leagues,
+    players: rows.map((row, i) => ({ name: names[i], ...publicStanding(standings.of(row.accountId)) })),
   });
 };
 
@@ -557,6 +619,8 @@ const readSummary = async (req, [capture]) => {
         }
       : null,
     clears: standings.clears ?? 0,
+    /* The profile's standing: the website's character panel draws its frame in the league's colour. */
+    ranked: await rankedStandingOf(id),
     /* For the website to tell the player why and until when: the client cannot. */
     restriction: restrictionOf(account),
     /* Whether to offer the admin pages. Only an offer: every admin call is
@@ -1312,6 +1376,148 @@ const disconnectAccount = async (req, [capture]) => {
 };
 
 /**
+ * Whether anybody is playing on the account now. A grant or a rename waits for
+ * them to be gone: their client shows what it was sent when they signed in, and
+ * a gift or a name it cannot see would be a second opinion it never hears of.
+ */
+const playingNow = (id) => accountInPlay(id) || activeSessions().some((session) => session.accountId === id);
+const ONLINE = { error: "the player is online: disconnect them first, then try again", reason: "online" };
+
+/**
+ * GET /internal/v1/grants — what an admin may give: the weapon chests, the
+ * rarities their keys and a rolled weapon come in, the heroes and the last
+ * level each reaches, and how much of each one grant may carry.
+ */
+const readGrantOptions = async (req) => {
+  const { refusal } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const gm = await loadGameMaster();
+  return json({
+    chests: weaponChests(gm).map((chest) => ({ id: chest.Id, name: chest.Name, rarity: chest.Rarity })),
+    rarities: RARITIES,
+    heroes: gm.raw.Hero.map((hero) => ({ id: hero.Id, name: hero.Name ?? hero.Constant, maxLevel: maxLevel(gm, hero) })),
+    limits: GRANT_LIMITS,
+  });
+};
+
+/**
+ * GET /internal/v1/accounts/:id/holdings — everything an admin's page shows of
+ * one player beside what it can give them: the purse, the keys and chests by
+ * rarity, the powerups, every hero with its level, and every weapon — the bag
+ * and the hands both, described as the market describes one, each held weapon
+ * saying whose hand it is in.
+ */
+const readHoldings = async (req, [capture]) => {
+  const { refusal } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  const account = await loadAccount(id);
+  const gm = await loadGameMaster();
+  const heroes = (account.account_avatars ?? []).map((avatar) => {
+    const hero = gm.heroById.get(avatar.avatar_id);
+    return {
+      id: avatar.avatar_id,
+      avatar: avatar.id,
+      name: hero?.Name ?? hero?.Constant ?? `hero ${avatar.avatar_id}`,
+      icon: gm.raw.Skins?.find((skin) => skin.Id === avatar.skin_type)?.IconName ?? hero?.IconName ?? null,
+      level: hero ? heroLevel(gm, hero, avatar.experience ?? 0) : null,
+      maxLevel: hero ? maxLevel(gm, hero) : null,
+      experience: Number(avatar.experience ?? 0),
+      active: avatar.id === account.active_avatar,
+    };
+  });
+  const holder = new Map(heroes.map((hero) => [Number(hero.avatar), hero.name]));
+  return json({
+    accountId: id,
+    name: account.name ?? null,
+    online: playingNow(id),
+    restriction: restrictionOf(account),
+    ...holdingsOf(account, gm),
+    heroes,
+    items: describeListings(account.account_items ?? [], gm).map((item) => ({
+      ...item,
+      equipped_by: Number(item.avatar_id ?? 0) ? holder.get(Number(item.avatar_id)) ?? "a hero" : null,
+    })),
+  });
+};
+
+/**
+ * POST /internal/v1/accounts/:id/grants — an admin gives an account something:
+ *
+ *   { "gold": 5000, "gems": 100, "powerups": 10,
+ *     "keys": { "LEGENDARY": 2 }, "weapons": { "count": 3, "rarity": "RARE", "hero": 102 },
+ *     "chests": [{ "id": 60004, "count": 2 }], "level": { "level": 30, "hero": 106 } }
+ *
+ * Any of them, at once (grants.js says what each does, and why trophies are
+ * not among them). Refused while the player is online; written to the admin
+ * log with what was given.
+ */
+const grantToAccount = async (req, [capture]) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+  if (playingNow(id)) return json(ONLINE, 409);
+
+  const gm = await loadGameMaster();
+  let given;
+  try {
+    const grant = parseGrant(req.json, gm);
+    given = await withAccountLock(id, async () => {
+      // Looked at again inside the lock: they may have signed in meanwhile.
+      if (playingNow(id)) throw new GrantRefused("online", ONLINE.error);
+      const account = await loadAccount(id);
+      const gave = await applyGrant(account, grant, { gm });
+      await saveAccount(account);
+      return gave;
+    });
+  } catch (problem) {
+    if (!(problem instanceof GrantRefused)) throw problem;
+    return json({ error: problem.message, reason: problem.reason }, problem.reason === "online" ? 409 : 400);
+  }
+  info(`internal: ${actor} gave account ${id} ${given.map((each) => `${each.amount} ${each.what}`).join(", ")}`);
+  await recordAdminAction({ actor, action: "account.grant", target: id, detail: { given } });
+  return json({ accountId: id, given });
+};
+
+/**
+ * PUT /internal/v1/accounts/:id/name — an admin renames a player: `{ "name": "Sable" }`.
+ *
+ * Sign-up's rules and sign-up's uniqueness (account-names.js, renameAccount).
+ * The boards show the new name at once; what was written under the old one —
+ * a sale, a news post — keeps it. Refused while the player is online.
+ */
+const renamePlayer = async (req, [capture]) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+  if (typeof req.json?.name !== "string") return json({ error: "name is text" }, 400);
+  if (playingNow(id)) return json(ONLINE, 409);
+
+  let renamed;
+  try {
+    renamed = await renameAccount(id, req.json.name);
+  } catch (problem) {
+    if (!(problem instanceof NameRefused)) throw problem;
+    // Taken is the only clash; a malformed name is a bad request, and an account
+    // gone since the check above is not found.
+    const status = { bad_name: 400, no_account: 404 }[problem.reason] ?? 409;
+    return json({ error: problem.message, reason: problem.reason }, status);
+  }
+  await renameInStandings(id, renamed.to);
+  invalidateMarketBrowse();
+  info(`internal: ${actor} renamed account ${id} from ${renamed.from} to ${renamed.to}`);
+  await recordAdminAction({ actor, action: "account.rename", target: id, detail: renamed });
+  return json({ accountId: id, name: renamed.to, was: renamed.from });
+};
+
+/**
  * POST /internal/v1/accounts/:id/browser-signout — its player signed out of the
  * website, so its browser game ends.
  *
@@ -1422,6 +1628,7 @@ export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/match-workers", handler: readMatchWorkers },
   { method: "POST", pattern: "/internal/v1/match-workers/:index/restart", handler: restartMatchWorker },
   { method: "GET", pattern: "/internal/v1/leaderboards/:metric", handler: readBoard },
+  { method: "GET", pattern: "/internal/v1/ranked/board", handler: readRankedBoard },
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id", handler: removeAccount },
@@ -1433,6 +1640,10 @@ export const internalRoutes = [
   { method: "PUT", pattern: "/internal/v1/accounts/:id/restriction", handler: restrictAccount },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/restriction", handler: liftRestriction },
   { method: "POST", pattern: "/internal/v1/accounts/:id/disconnect", handler: disconnectAccount },
+  { method: "GET", pattern: "/internal/v1/grants", handler: readGrantOptions },
+  { method: "GET", pattern: "/internal/v1/accounts/:id/holdings", handler: readHoldings },
+  { method: "POST", pattern: "/internal/v1/accounts/:id/grants", handler: grantToAccount },
+  { method: "PUT", pattern: "/internal/v1/accounts/:id/name", handler: renamePlayer },
   { method: "POST", pattern: "/internal/v1/accounts/:id/browser-signout", handler: browserSignOut },
   { method: "POST", pattern: "/internal/v1/trades", handler: settleTradeRoute },
   /* A listing is addressed under /market; a seller's own stall is a fact about

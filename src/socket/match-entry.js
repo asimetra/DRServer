@@ -14,6 +14,9 @@
 import { isRestricted } from "../restrictions.js";
 import { loadAccount } from "../accounts.js";
 import { loadGameMaster } from "../gamemaster.js";
+import { modeHooks } from "../modes/hooks.js";
+import { rulesOfMode } from "./run-rules.js";
+import { warn } from "../log.js";
 import { areFriends, friendIdsOf } from "../social.js";
 import {
   activeAvatarMayEnter,
@@ -179,7 +182,21 @@ export const admitEntry = async (
       error: "bad_map_node",
     };
   }
-  const mayEnter = mayEnterNode(account, node, gameMaster);
+  // A ranked lobby is open to every hero: the race is drawn, not chosen, and
+  // gives no map credit. `ranked` is set by the server's own routing, never read
+  // off the wire (entry-protocol.js reads the fields one by one).
+  // A mode's entry is admitted by the mode's own gate (a least hero level, the
+  // tutorial done — docs/ranked.md, "Who may enter"), and asks the map's unlock
+  // check only if the mode's rules say so (socket/run-rules.js). `mode` is set
+  // by the server's own routing, never read off the wire.
+  const rules = rulesOfMode(request.mode);
+  const allowed = request.mode ? await modeHooks.entryAllowed(account, request.mode) : null;
+  if (allowed && allowed.ok === false) {
+    warn(`[${session.id}] ${request.mode} entry refused: ${allowed.reason ?? "not allowed"}`);
+  }
+  const mayEnter = request.mode
+    ? allowed?.ok !== false && (!rules.unlockCheck || mayEnterNode(account, node, gameMaster))
+    : mayEnterNode(account, node, gameMaster);
 
   // Knowing a friend is somewhere does not grant a hero who has not opened it
   // the way in.

@@ -25,6 +25,7 @@ import {
   sessionHolding,
   watchFriends,
 } from "./presence.js";
+import { modeHooks } from "../modes/hooks.js";
 import { listAccountIds, loadAccount } from "../accounts.js";
 import { followableAmong, friendIdsOf } from "../social.js";
 import { createDistributedObjectIdAllocator } from "./doids.js";
@@ -199,6 +200,7 @@ const tellHimAboutHisFriends = async (session) => {
      */
     const known = new Set(await listAccountIds());
     if (!known.has(Number(session.accountId))) return;
+    modeHooks.loggedIn(session);
 
     // Friends both ways and unblocked, as `addFriends` is held to.
     const account = await loadAccount(session.accountId);

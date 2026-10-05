@@ -3,7 +3,7 @@ import path from "node:path";
 import { threadId } from "node:worker_threads";
 import { config } from "./config.js";
 import { heldAccount, holdAccount } from "./account-registry.js";
-import { NameRefused, checkName, nameTaken } from "./account-names.js";
+import { NameRefused, accountIdNamed, checkName, nameTaken } from "./account-names.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { modifierIdFor } from "./store.js";
 import { readJsonFile } from "./json-file.js";
@@ -11,6 +11,7 @@ import { repairSpentPowerups } from "./powerup-slots.js";
 import { accountTrophies, getMapNodeBit } from "./map-progress.js";
 import { infiniteTrophiesFor } from "./infinite.js";
 import { info, warn, warnOnce } from "./log.js";
+import { modeHooks } from "./modes/hooks.js";
 import {
   ACCOUNT_OBJECT_ID_FLOOR,
   CLIENT_PERSISTENT_OBJECT_ID_MAX,
@@ -668,6 +669,9 @@ export const acquireAccount = (id) =>
  * player would keep nothing and nothing would report it.
  */
 const createAndPersist = async (id) => {
+  // An id that stands for something of the server's own — ranked's MATCHMAKER
+  // friend — is never a player, whatever token or request named it.
+  if (modeHooks.isSystemAccount(id)) throw new Error(`account ${id} is reserved and cannot be created`);
   info(`accounts: creating new account ${id}`);
   const account = await repairLoadedAccount(await createAccount(id));
   return saveUnlessLeased(account);
@@ -999,6 +1003,39 @@ export const createNewAccount = async ({ name } = {}) => {
     return account;
   });
   // The next allocation waits either way; a failure must not wedge the chain.
+  allocationChain = mine.then(
+    () => {},
+    () => {}
+  );
+  return mine;
+};
+
+/**
+ * Another name for an account: `{ from, to }`.
+ *
+ * Checked and claimed on the allocation chain, as a registration's name is, so
+ * a rename and a sign-up asking for the same name cannot both have it; and
+ * under the account's own lock, so it is one write with whatever else is
+ * touching the account. Its own name in other letters is not a clash: "sym"
+ * may become "Sym".
+ */
+export const renameAccount = async (id, name) => {
+  const mine = allocationChain.then(() =>
+    withAccountLock(id, async () => {
+      const wanted = checkName(name);
+      const holder = await accountIdNamed(wanted, { listAccountIds, loadAccount });
+      if (holder !== null && holder !== Number(id)) {
+        throw new NameRefused("name_taken", `${wanted} is already taken`);
+      }
+      const account = await loadExistingAccount(id);
+      if (!account) throw new NameRefused("no_account", `there is no account ${id}`);
+      const from = account.name ?? null;
+      account.name = wanted;
+      await saveAccount(account);
+      info(`accounts: account ${id} renamed from ${from} to ${wanted}`);
+      return { from, to: wanted };
+    })
+  );
   allocationChain = mine.then(
     () => {},
     () => {}

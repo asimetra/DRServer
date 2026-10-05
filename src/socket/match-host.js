@@ -62,6 +62,10 @@ let host = localMatchHost;
 /** The host this thread's matches talk to. */
 export const matchHost = () => host;
 
+// A report whose time is up sends its readers home the way an idle kick does,
+// through whichever host this thread has installed (matches.js, `expire`).
+dungeonMatches.evictWith((member) => matchHost().sendHome(member));
+
 /**
  * Replaces the host for this thread, returning the previous one. A worker does
  * this once at start-up; tests use it to watch what a match asks for.

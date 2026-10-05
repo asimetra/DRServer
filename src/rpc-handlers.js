@@ -43,6 +43,7 @@ import {
 import { excludeIdsFor, giftsFor, sendGift, takeGift } from "./gifts.js";
 import { defineAccountOperation } from "./account-operations.js";
 import { info, warn } from "./log.js";
+import { modeHooks } from "./modes/hooks.js";
 
 /**
  * Game-specific JSON-RPC handlers. `rpc.js` stays pure infrastructure
@@ -1087,6 +1088,8 @@ register("friendrequests/DRFriendRemove", async ([accountId, friendIds]) => {
   for (const id of friendIds ?? []) {
     const friendId = Number(id);
     if (!Number.isSafeInteger(friendId) || friendId === ownerId) continue;
+    // MATCHMAKER is on every list and in no account; there is nothing to remove.
+    if (modeHooks.isSystemAccount(friendId)) continue;
     const row = await removeOneFriend(ownerId, friendId);
     if (row) removed.push(row);
   }

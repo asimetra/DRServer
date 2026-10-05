@@ -14,6 +14,24 @@ const LISTENER_GRACE_MS = 2_000;
 
 /** Longest a whole shutdown may take before the process ends regardless. */
 export const SHUTDOWN_TIMEOUT_MS = 25_000;
+/**
+ * How long what runs before the sessions close may take. It ends ranked's
+ * races and writes them down, which a slow database can drag out; past this
+ * the sessions close anyway, since a shutdown that never reaches them flushes
+ * nobody's account.
+ */
+export const BEFORE_SESSIONS_TIMEOUT_MS = 10_000;
+
+/** `work`, or a rejection once `ms` have passed without it. */
+const withinMs = (work, ms, what) =>
+  new Promise((resolve, reject) => {
+    // Kept referenced: this timer is what guarantees the shutdown goes on.
+    const timer = setTimeout(() => reject(new Error(`${what} not finished after ${ms}ms; going on without it`)), ms);
+    Promise.resolve(work).then(
+      (value) => (clearTimeout(timer), resolve(value)),
+      (problem) => (clearTimeout(timer), reject(problem))
+    );
+  });
 
 /** How long a finished shutdown waits for the event loop to empty by itself. */
 const EXIT_DRAIN_MS = 3_000;
@@ -56,6 +74,8 @@ const closeListener = (server) =>
  */
 export const createGracefulShutdown = ({
   servers,
+  beforeSessions,
+  beforeSessionsMs = BEFORE_SESSIONS_TIMEOUT_MS,
   sessions,
   waitForWrites,
   closeServices,
@@ -71,6 +91,14 @@ export const createGracefulShutdown = ({
       info(`shutdown: ${reason}; refusing new connections`);
       const listening = (servers?.() ?? []).filter(Boolean);
       const listenerClosures = Promise.allSettled(listening.map((server) => closeListener(server)));
+
+      // What has to end while every player is still connected: a ranked race
+      // ends void here, where a connection closing first would decide it.
+      try {
+        await withinMs(beforeSessions?.(), beforeSessionsMs, "before closing sessions");
+      } catch (problem) {
+        warn(`shutdown: before closing sessions: ${problem.message ?? problem}`);
+      }
 
       const live = sessions?.() ?? [];
       for (const session of live) {

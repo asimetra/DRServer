@@ -39,10 +39,10 @@ import {
   isOnAuthoredTile,
   segmentStaysOnAuthoredTiles,
 } from "./navigation.js";
-import { noteEntryHandshake } from "./entry-handshake.js";
+import { PLAYER_REQUEST_HERO, noteEntryHandshake } from "./entry-handshake.js";
+import { modeHooks } from "../modes/hooks.js";
 import { noteActivity } from "./afk.js";
-
-const FLID_HERO_HEADING = 148;
+import { FLID_HERO_HEADING, heroHeadingUpdate } from "./objects.js";
 
 /**
  * What a player sends only by playing: moving, turning, attacking, reviving.
@@ -114,6 +114,11 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
   // must be allowed to send them before it becomes an active world member.
   if (doid === member.playerDoid && noteEntryHandshake(member, fieldId)) {
     reader.rest();
+    // The client asks for its hero once each floor is built: for a ranked race,
+    // that is the moment this player's own clock starts.
+    if (fieldId === PLAYER_REQUEST_HERO) {
+      modeHooks.heroRequested(member.world?.contextFor?.(member, { activate: false }) ?? member);
+    }
     return;
   }
 
@@ -336,6 +341,7 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
         { except: session.member }
       );
     }
+    modeHooks.heroEvent(session, { type: "moved", position });
     collectNearby(session, position);
     updateProximityTriggers(session, position);
     checkFloorExit(session, position);
@@ -348,15 +354,9 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
     const hero = session.actors.get(session.heroDoid);
     if (hero) hero.heading = heading;
     if (session.world) {
-      session.broadcast(
-        new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
-          .u32(session.heroDoid)
-          .u16(FLID_HERO_HEADING)
-          .f32(heading)
-          .frame(),
-        { except: session.member }
-      );
+      session.broadcast(heroHeadingUpdate(session.heroDoid, heading), { except: session.member });
     }
+    modeHooks.heroEvent(session, { type: "turned", heading });
     return;
   }
 
@@ -397,6 +397,7 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
     const choreography = withBaseAttack(Buffer.from(reader.rest()), CHOREOGRAPHY_ATTACK_AT);
     return handleProposeAttackChoreography(session, new PacketReader(choreography), {
       onAccepted: () => {
+        modeHooks.heroEvent(session, { type: "swung", choreography });
         if (!session.world) return;
         session.broadcast(
           remoteAttackChoreography(session.heroDoid, choreography, session.heroSpawn?.skinType),
@@ -416,6 +417,7 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
         except: session.member,
       });
     }
+    modeHooks.heroEvent(session, { type: "swingStopped" });
     return true;
   }
 

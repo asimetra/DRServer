@@ -19,6 +19,7 @@ import {
 } from "./preflight.js";
 import { error, info, warn } from "./log.js";
 import { createGracefulShutdown, installProcessHandlers } from "./shutdown.js";
+import { startRanked } from "./ranked/setup.js";
 import {
   ProcessLockHeldError,
   acquireProcessLock,
@@ -81,6 +82,7 @@ const refuseToStart = async (problem) => {
 };
 
 let listeners = [];
+let stopRanked = async () => {};
 try {
   /**
    * What the settings alone can be refused for, before anything is claimed or
@@ -140,6 +142,8 @@ try {
   if (config.storage === "postgres") await keepServerStateInDatabase();
   else keepDeclarationsIn(path.join(config.dataDir, "content-declarations.json"));
   await startMatchWorkers();
+  // Off unless ODS_RANKED=1; see docs/ranked.md.
+  stopRanked = await startRanked();
 
   listeners = [startWebServices(), startInternalApi(), startGameSocket()];
 } catch (problem) {
@@ -239,10 +243,13 @@ if (config.statusPort > 0) {
 
 const shutdown = createGracefulShutdown({
   servers: () => [...listeners, statusListener],
+  // Races still under way end void, and are written down, while their racers
+  // are connected: a racer whose connection closed first would have dropped.
+  beforeSessions: () => stopRanked(),
   sessions: activeSocketSessions,
   waitForWrites: waitForPersistentWrites,
   // The watch stops first: "shutting down" is not a health event worth a line.
-  closeServices: () => {
+  closeServices: async () => {
     healthWatch.stop();
     return closeMatchWorkers();
   },

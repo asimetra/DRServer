@@ -5,6 +5,7 @@ import { admitEntry } from "../src/socket/match-entry.js";
 import { DungeonMatchRegistry } from "../src/socket/matches.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { setMapNodeBit } from "../src/map-progress.js";
+import { installRankedHooks } from "../src/ranked/hooks.js";
 
 const player = (accountId) => ({ accountId });
 const request = (overrides = {}) => ({
@@ -96,6 +97,45 @@ test("direct entry to a node the active hero has not opened is refused", async (
   account.account_avatars[0].completed_mapnode_mask = setMapNodeBit("", 1);
   const opened = await admitEntry(player(2), request({ mapNodeId: 50055 }), dependencies);
   assert.equal(opened.match.mapNodeId, 50055, "open once the gate is cleared, before the node itself");
+});
+
+/**
+ * A ranked lobby (docs/ranked.md) is open to every hero; the race in it is
+ * drawn and gives no map credit. Only the server's own routing marks a request
+ * ranked — the wire reader takes the fields one by one — and a ranked match is
+ * one player's: a friend's JOIN finds nothing there.
+ */
+test("a ranked entry is let into a node the hero has not opened, and nobody can follow it in", async (t) => {
+  const registry = new DungeonMatchRegistry();
+  const { gameMaster } = gatedCatalogue();
+  const account = {
+    active_avatar: 20,
+    account_avatars: [{ id: 20, completed_mapnode_mask: "" }],
+  };
+  const dependencies = {
+    registry,
+    loadAccountById: async () => account,
+    loadGameMasterData: async () => gameMaster,
+  };
+
+  // Admission and the registry ask the mode's rules (run-rules.js); this
+  // stands in for the ranked adapter's answer: no unlock check, nobody joins.
+  const uninstallRules = installRankedHooks({
+    modeRules: (mode) => (mode === "ranked" ? { unlockCheck: false, joinable: false } : null),
+  });
+  t.after(uninstallRules);
+
+  const racer = player(2);
+  const admitted = await admitEntry(racer, { ...request({ mapNodeId: 50055, friendOnly: true }), mode: "ranked" }, dependencies);
+  assert.equal(admitted.match.mapNodeId, 50055);
+  admitted.reservation.commit();
+  assert.equal(registry.explicitTarget({ friendId: racer.accountId }), admitted.match, "findable until it is ranked");
+  admitted.match.mode = "ranked";
+  assert.equal(registry.explicitTarget({ friendId: racer.accountId }), null);
+
+  const follower = await admitEntry(player(3), request({ mapNodeId: 0, friendId: racer.accountId }), dependencies);
+  assert.equal(follower.match, null);
+  assert.equal(follower.error, "target_not_found");
 });
 
 test("direct/public Ultimate entry cannot bypass the endgame gate", async () => {
@@ -444,5 +484,19 @@ test("an unknown explicit target is rejected without loading unrelated content",
   );
 
   assert.equal(result.error, "target_not_found");
+  assert.equal(registry.matches.size, 0);
+});
+
+test("a ranked entry is admitted by ranked's own gate, and refused as content not completed", async (t) => {
+  const registry = new DungeonMatchRegistry();
+  const { gameMaster } = gatedCatalogue();
+  const account = { id: 2, active_avatar: 20, account_avatars: [{ id: 20, completed_mapnode_mask: "" }] };
+  const dependencies = { registry, loadAccountById: async () => account, loadGameMasterData: async () => gameMaster };
+  const uninstall = installRankedHooks({ entryAllowed: async () => ({ ok: false, reason: "hero level 1 is under 5" }) });
+  t.after(uninstall);
+
+  const refused = await admitEntry(player(2), { ...request({ mapNodeId: 50055, friendOnly: true }), mode: "ranked" }, dependencies);
+  assert.equal(refused.match, null);
+  assert.equal(refused.error, "content_not_completed");
   assert.equal(registry.matches.size, 0);
 });

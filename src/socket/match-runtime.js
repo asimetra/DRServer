@@ -43,6 +43,7 @@ import {
 import { infiniteFloorGold, infiniteRewards } from "../infinite.js";
 import { noteInfiniteFloorReached } from "./rewards.js";
 import { LocalMatchExecutor } from "./match-executor.js";
+import { rulesOfMode } from "./run-rules.js";
 
 const directSend = (member, frame) => {
   if (!member || member.closed || member.socket?.destroyed || typeof member.send !== "function") {
@@ -195,7 +196,8 @@ const joinDungeonMatchLocked = async (
   const match = result?.match;
   if (!match) throw new Error("joinDungeonMatch needs an admitted match");
   requireOpenMember(session);
-  const verifyAccount = (account) => requireMayEnter(account, match.mapNodeId);
+  const verifyAccount = (account) =>
+    rulesOfMode(request?.mode).unlockCheck ? requireMayEnter(account, match.mapNodeId) : undefined;
 
   if (buildHost) {
     const context = world.contextFor(session);
@@ -340,6 +342,9 @@ export const joinDungeonMatch = async (session, result, request, options = {}) =
   const match = result?.match;
   if (!match) throw new Error("joinDungeonMatch needs an admitted match");
   requireOpenMember(session);
+  // Which mode this run is, if any, is the request's to say, read on whichever
+  // thread runs the match: a mode's planFor looks here (ranked/stock-client).
+  session.modeEntry = request?.mode ?? null;
   const buildHost = !match.world;
   const world = match.world ?? createMatchWorld(match, session);
   try {

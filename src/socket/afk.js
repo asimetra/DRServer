@@ -19,6 +19,7 @@ import { info, warn } from "../log.js";
 import { tellAsServer } from "./chat.js";
 import { matchHost } from "./match-host.js";
 import { isHubNode } from "./matches.js";
+import { modeHooks } from "../modes/hooks.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 
@@ -35,6 +36,8 @@ export const heroAfkUpdate = (heroDoid, afk) =>
     .frame();
 
 const announce = (session, afk) => {
+  // Idle in a ranked lobby is not ready for a race.
+  modeHooks.idle(session, afk);
   if (!session.heroDoid) return;
   const frame = heroAfkUpdate(session.heroDoid, afk);
   // Everybody on the floor, the idle player included: the owner's own
@@ -54,7 +57,8 @@ const announce = (session, afk) => {
  * show the marker.
  */
 const TUTORIAL = "TUTORIAL";
-const staysPut = (node) => isHubNode(node) || node?.Constant === TUTORIAL;
+const staysPut = (session) =>
+  isHubNode(session.mapPage) || session.mapPage?.Constant === TUTORIAL || modeHooks.idlingAllowed(session);
 
 const warningLine = () =>
   `Idle. Move within ${Math.round((config.afkKickMs - config.afkWarnMs) / 1000)}s or you return to town.`;
@@ -93,7 +97,7 @@ export const checkIdle = (session, at = Date.now()) => {
     return;
   }
   const idleFor = at - idle.lastActiveAt;
-  const place = staysPut(session.mapPage);
+  const place = staysPut(session);
   if (config.afkWarnMs > 0 && !idle.marked && idleFor >= config.afkWarnMs) {
     idle.marked = true;
     announce(session, true);

@@ -19,6 +19,7 @@
  * frames on one account's player doid, not a single one came back inbound.
  */
 import { config } from "../config.js";
+import { modeHooks } from "../modes/hooks.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 import { RULE, noteViolation } from "./security-events.js";
@@ -182,6 +183,11 @@ export const handleChat = async (session, reader) => {
   if (await runCommand(session, spoken, serverReplyFor(session))) return;
 
   session.broadcast?.(chatFrame(session.playerDoid, line), { except: session });
+  // A ranked lobby is a private world with nobody in it to hear: ranked passes
+  // what was said to whoever else is waiting (ranked/stock-client/adapter.js).
+  // The words alone — it arrives on a voice that carries the speaker's name, as
+  // a global line does, and the line's own "name: " would print it twice.
+  modeHooks.heroEvent(session, { type: "said", line: spoken });
 };
 
 export const handleTyping = async (session, reader) => {

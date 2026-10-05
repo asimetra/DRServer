@@ -164,6 +164,24 @@ export const loadServerConfig = (environment = process.env) => {
     ),
 
     /**
+     * Where the desktop client's game socket is, when it cannot be where the
+     * browser's is. The desktop client speaks plain TCP, which an https proxy
+     * cannot carry, so behind one it needs a host that reaches the game port
+     * directly — a DNS record the proxy does not front. It is told so by its
+     * own discovery address, `/desktop/game-status/service-discovery`: a
+     * desktop player's ServiceDiscoveryUrl is the public address plus
+     * `/desktop` (routes.js). The port defaults to the one the game socket is
+     * bound to. Unset, that address answers what the ordinary one does.
+     */
+    desktopSocketHost: setting(environment, "DESKTOP_SOCKET_HOST")
+      ? unbracketed(setting(environment, "DESKTOP_SOCKET_HOST"))
+      : null,
+    desktopSocketPort: asInt(
+      setting(environment, "DESKTOP_SOCKET_PORT"),
+      asInt(setting(environment, "SOCKET_PORT"), defaults.gameSocketPort)
+    ),
+
+    /**
      * The proxies whose `X-Forwarded-For` is believed: addresses and ranges,
      * "127.0.0.1, ::1" for one on the same machine. Without them every player
      * behind a proxy is the proxy's address, and shares its limits. See
@@ -442,6 +460,100 @@ export const loadServerConfig = (environment = process.env) => {
      * client had made its HUD, and the client crashed on it.
      */
     entryHandshakeMs: asInt(setting(environment, "ENTRY_HANDSHAKE_MS"), defaults.entryHandshakeMs ?? 120_000),
+
+    /**
+     * Ranked races (docs/ranked.md). Off unless asked for: ODS_RANKED=1. The
+     * rest has the defaults the design settled on; the lobby node must be one
+     * the stock client's own game data has, and the lobby floor one of its own
+     * tile files, or the client cannot build them.
+     */
+    ranked: {
+      enabled:
+        setting(environment, "RANKED") === undefined
+          ? Boolean(defaults.ranked?.enabled)
+          : setting(environment, "RANKED") === "1",
+      lobbyNode: asInt(setting(environment, "RANKED_LOBBY_NODE"), defaults.ranked?.lobbyNode ?? 50003),
+      lobbyFloor: setting(environment, "RANKED_LOBBY_FLOOR") ??
+        defaults.ranked?.lobbyFloor ?? "castle/arena/db_floor_TUTORIAL_LEVEL_final.json",
+      nodeTypes: defaults.ranked?.nodeTypes ?? ["DUNGEON"],
+      exclude: defaults.ranked?.exclude ?? [],
+      countdownMs: asInt(setting(environment, "RANKED_COUNTDOWN_MS"), defaults.ranked?.countdownMs ?? 5_000),
+      lobbyIdleMs: asInt(setting(environment, "RANKED_LOBBY_IDLE_MS"), defaults.ranked?.lobbyIdleMs ?? 300_000),
+      maxDurationMs: asInt(setting(environment, "RANKED_MAX_DURATION_MS"), defaults.ranked?.maxDurationMs ?? 1_800_000),
+      forfeitWindowMs: asInt(setting(environment, "RANKED_FORFEIT_WINDOW_MS"), defaults.ranked?.forfeitWindowMs ?? 120_000),
+      drawWindowMs: asInt(setting(environment, "RANKED_DRAW_WINDOW_MS"), defaults.ranked?.drawWindowMs ?? 5_000),
+      loadTimeoutMs: asInt(setting(environment, "RANKED_LOAD_TIMEOUT_MS"), defaults.ranked?.loadTimeoutMs ?? 120_000),
+      /**
+       * Where in the lobby standing means waiting for a race, in floor
+       * coordinates; outside it are the stands, for talking. Its edge is drawn
+       * in skull piles (ranked/stock-client/ring.js). Belongs to the lobby
+       * floor: the default is a square around the tutorial arena's pillar,
+       * so another lobby floor needs its own, or null for "anywhere is the
+       * ring" and no piles.
+       */
+      ring: defaults.ranked?.ring === undefined ? { x0: 3830, y0: 3653, x1: 4270, y1: 4093 } : defaults.ranked.ring,
+      /**
+       * Where heroes arrive in the lobby: outside the ring, or arriving would
+       * be queueing. The default is between the ring's way in and the arena's
+       * south gate. Null keeps the floor's own spawn.
+       */
+      lobbySpawn: defaults.ranked?.lobbySpawn === undefined ? { x: 4050, y: 4200 } : defaults.ranked.lobbySpawn,
+      /**
+       * Tiles of the lobby floor's own library to stand in place of the file's,
+       * `[{ x, y, tileId }]` (floors.js, loadFloor). The default puts the
+       * arena's two forest fillers on every neighbour but the north one, whose
+       * lower half is the arena's own gate yard; empty keeps the file's.
+       */
+      lobbyTiles: defaults.ranked?.lobbyTiles ?? [],
+      /**
+       * The leagues, `[{ name, from, color }]` in rising order (ranked/leagues.js):
+       * labels over bands of the rating, the first where everybody starts.
+       * Unset, the defaults there — MCSR Ranked's bands, named for the game's
+       * chest tiers.
+       */
+      leagues: defaults.ranked?.leagues ?? null,
+      /**
+       * How many of the others waiting each lobby shows, as nameless copies of
+       * their heroes (ranked/stock-client/copies.js); the first to arrive
+       * first. 0 shows nobody: every lobby is its own world again.
+       */
+      lobbyCopies: Math.max(0, asInt(setting(environment, "RANKED_LOBBY_COPIES"), defaults.ranked?.lobbyCopies ?? 8)),
+      /**
+       * The rival's ghost in a race (ranked/stock-client/adapter.js): drawn
+       * with one of the game's buffs as a shade (`buff`, a Buff constant;
+       * SHADOW_SLOW is a dark, pulsing one), under `name`, and shown to whoever
+       * entered the room first; two entering within `graceMs` see nothing of
+       * each other. Null draws no ghost.
+       */
+      raceGhost:
+        defaults.ranked?.raceGhost === undefined
+          ? { buff: "SHADOW_SLOW", name: "RIVAL", graceMs: 2000 }
+          : defaults.ranked.raceGhost,
+      /** Whether the two racers hear each other's chat. */
+      raceChat: defaults.ranked?.raceChat !== false,
+      /**
+       * Who may enter ranked: a least level for the active hero, and the
+       * tutorial done. Both off by default — the bar an operator raises when
+       * throwaway accounts start trading wins.
+       */
+      entry: {
+        minHeroLevel: Math.max(0, asInt(setting(environment, "RANKED_MIN_HERO_LEVEL"), defaults.ranked?.entry?.minHeroLevel ?? 0)),
+        requireTutorial:
+          setting(environment, "RANKED_REQUIRE_TUTORIAL") === undefined
+            ? defaults.ranked?.entry?.requireTutorial === true
+            : setting(environment, "RANKED_REQUIRE_TUTORIAL") === "1",
+      },
+      /**
+       * The rating scale (ranked/rating.js): where everybody starts, the most
+       * one race moves a rating, and the least anybody falls to. The leagues'
+       * edges go with it.
+       */
+      rating: {
+        start: asInt(setting(environment, "RANKED_RATING_START"), defaults.ranked?.rating?.start ?? 1000),
+        k: asInt(setting(environment, "RANKED_RATING_K"), defaults.ranked?.rating?.k ?? 40),
+        floor: asInt(setting(environment, "RANKED_RATING_FLOOR"), defaults.ranked?.rating?.floor ?? 100),
+      },
+    },
 
     /**
      * Which NPCs to place: "all", "props" (barrels and crates only), "enemies"
@@ -876,7 +988,7 @@ export const configProblems = (environment = process.env) => {
   const warnings = [];
   const settings = loadServerConfig(environment);
 
-  for (const name of ["PORT", "SOCKET_PORT", "INTERNAL_PORT", "PUBLIC_PORT", "PUBLIC_SOCKET_PORT"]) {
+  for (const name of ["PORT", "SOCKET_PORT", "INTERNAL_PORT", "PUBLIC_PORT", "PUBLIC_SOCKET_PORT", "DESKTOP_SOCKET_PORT"]) {
     const given = spelled(environment, name);
     // Assigned nothing is the default, as it always has been.
     if (!given || given.value === "") continue;
@@ -1006,10 +1118,12 @@ export const configProblems = (environment = process.env) => {
 
   const publicHost = String(settings.publicHost ?? "");
   const publicProblem = hostProblem(spelled(environment, "PUBLIC_HOST")?.key ?? "publicHost", publicHost);
-  const socketHost = spelled(environment, "PUBLIC_SOCKET_HOST");
-  const socketProblem =
-    socketHost && socketHost.value ? hostProblem(socketHost.key, unbracketed(socketHost.value)) : null;
-  if (socketProblem) refusals.push(socketProblem);
+  for (const name of ["PUBLIC_SOCKET_HOST", "DESKTOP_SOCKET_HOST"]) {
+    const socketHost = spelled(environment, name);
+    const socketProblem =
+      socketHost && socketHost.value ? hostProblem(socketHost.key, unbracketed(socketHost.value)) : null;
+    if (socketProblem) refusals.push(socketProblem);
+  }
   if (publicProblem) {
     refusals.push(publicProblem);
   } else if (!LOOPBACK.test(String(settings.host)) && LOOPBACK.test(publicHost)) {

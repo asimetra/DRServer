@@ -8,6 +8,7 @@ import { membersOf } from "./match-world.js";
 import { matchHost } from "./match-host.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { holdsFloor } from "./actor-roles.js";
+import { modeHooks } from "../modes/hooks.js";
 
 /**
  * Floor outcome.
@@ -305,6 +306,8 @@ export const zoomFloorCamera = (session, triggerable) => {
  */
 export const completeFloor = (session, { immediate = false } = {}) => {
   if (session.floorFinished) return false;
+  // A ranked lobby ends only when its race starts, and a race floor is news.
+  if (!modeHooks.floorCompleting(session)) return false;
   session.floorFinished = true;
   for (const member of membersOf(session)) {
     awardInfiniteFloor(member.world?.contextFor(member) ?? member);
@@ -517,4 +520,46 @@ export const reportFloorFailed = (session) => {
   session.send(buildDungeonEnding(session.areaDoid, false));
   (session.scheduleDungeonSummary ?? scheduleDungeonSummary)(session, false);
   info(`[${session.id}] floor failed — defeat sent`);
+  for (const member of membersOf(session)) modeHooks.runFailed(member.world?.contextFor(member) ?? member);
+};
+
+/**
+ * The run is lost while its players are on their feet: a ranked rival finished
+ * first. It ends as a wiped party's does, and the floor is held where it is:
+ * the exit, which looks at nothing but the floor's own transition, would
+ * otherwise still advance a beaten player or hand them the win. A floor
+ * already cleared is lost all the same.
+ *
+ * False between floors, where there is no floor to lose on yet; the caller
+ * tries again once there is.
+ */
+export const reportRunLost = (session) => {
+  if (session.floorFinished || !session.areaDoid || !session.dungeonActive) return false;
+  session.floorFinished = true;
+  session.floorCleared = false;
+  reportFloorFailed(session);
+  return true;
+};
+
+/**
+ * The run is won without its last floor: a ranked rival left, or died. It ends
+ * now, as a finished dungeon's does — the victory and then the report — with
+ * no door to walk through, and the floor is held where it is, so reaching the
+ * exit afterwards wins nothing twice. A party that was down with the defeat
+ * countdown running has won all the same, and the countdown stops.
+ *
+ * False between floors; the caller tries again once there is a floor.
+ */
+export const reportRunWon = (session) => {
+  if (session.floorFinished || !session.areaDoid || !session.dungeonActive) return false;
+  session.floorFinished = true;
+  // Won, so it cannot also be lost: no defeat countdown starts again after this.
+  session.floorCleared = true;
+  cancelFloorFailing(session);
+  const match = session.dungeonMatch ?? session.world?.match;
+  if (match) matchHost().matchFinished(match);
+  session.send(buildDungeonEnding(session.areaDoid, true));
+  (session.scheduleDungeonSummary ?? scheduleDungeonSummary)(session, true);
+  info(`[${session.id}] run won before its last floor — victory sent`);
+  return true;
 };

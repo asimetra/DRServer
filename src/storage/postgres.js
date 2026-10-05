@@ -613,6 +613,11 @@ export const recordRuns = async (runs, boards) => {
   }
 };
 
+/** A rename on the boards: the account's standings take its new name (leaderboard.js). */
+export const renameStandings = async (accountId, name) => {
+  await connect().query("UPDATE dungeon_bests SET name = $2 WHERE account_id = $1", [accountId, name]);
+};
+
 /** One board, already ordered by the caller's direction. */
 export const boardRows = async (key, { ascending = true, limit = 20 } = {}) => {
   const { rows } = await connect().query(
@@ -675,6 +680,45 @@ export const salesFor = async (accountId, limit) => {
     at: row.at instanceof Date ? row.at.toISOString() : row.at,
     listed_at: row.listed_at instanceof Date ? row.listed_at.toISOString() : row.listed_at,
   }));
+};
+
+/** One decided ranked pairing. Written once; see src/ranked/records.js. */
+export const recordRankedMatch = async (record) => {
+  const [first, second] = record.players;
+  await connect().query(
+    `INSERT INTO ranked_matches (id, decided_at, state, first_id, second_id, winner_id, record)
+     VALUES ($1, to_timestamp($2 / 1000.0), $3, $4, $5, $6, $7)
+     ON CONFLICT (id) DO NOTHING`,
+    [record.id, record.decidedAt, record.state, first, second, record.winner ?? null, record]
+  );
+};
+
+/** Every ranked match, oldest first: what ratings are replayed from. */
+export const rankedMatches = async () => {
+  const { rows } = await connect().query("SELECT record FROM ranked_matches ORDER BY decided_at, id");
+  return rows.map((row) => row.record);
+};
+
+/**
+ * Something that changes whenever the log does, without reading it: the log is
+ * only ever appended to, so its length and its latest decision are enough.
+ */
+export const rankedMatchesVersion = async () => {
+  const { rows } = await connect().query(
+    "SELECT count(*)::text AS n, coalesce(extract(epoch FROM max(decided_at)), 0)::text AS latest FROM ranked_matches"
+  );
+  return `${rows[0].n}:${rows[0].latest}`;
+};
+
+/** One account's ranked matches, newest first. */
+export const rankedMatchesFor = async (accountId, limit) => {
+  const { rows } = await connect().query(
+    `SELECT record FROM ranked_matches
+      WHERE first_id = $1 OR second_id = $1
+      ORDER BY decided_at DESC, id DESC LIMIT $2`,
+    [accountId, limit]
+  );
+  return rows.map((row) => row.record);
 };
 
 /** How many runs finished since a moment, for the front page's counter. */

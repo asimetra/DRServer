@@ -267,6 +267,25 @@ CREATE INDEX IF NOT EXISTS market_sales_buyer ON market_sales(buyer_id, at DESC)
 -- What the market page reads: everything still up, newest first.
 CREATE INDEX IF NOT EXISTS market_listings_open ON market_listings(listed_at DESC) WHERE sold_to IS NULL;
 
+-- Ranked races (docs/ranked.md): one row per pairing, written once when it is
+-- decided. It is the only thing ranked keeps — ratings are replayed from it —
+-- so the whole record goes in as written, and the columns beside it are only
+-- what it is looked up by. Ids, no names: a deleted account leaves its matches,
+-- and everybody else's ratings, standing.
+CREATE TABLE IF NOT EXISTS ranked_matches (
+    id          TEXT        PRIMARY KEY,
+    decided_at  TIMESTAMPTZ NOT NULL,
+    state       TEXT        NOT NULL,
+    first_id    BIGINT      NOT NULL,
+    second_id   BIGINT      NOT NULL,
+    winner_id   BIGINT,
+    record      JSONB       NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ranked_matches_decided ON ranked_matches(decided_at, id);
+CREATE INDEX IF NOT EXISTS ranked_matches_first ON ranked_matches(first_id, decided_at DESC);
+CREATE INDEX IF NOT EXISTS ranked_matches_second ON ranked_matches(second_id, decided_at DESC);
+
 -- Chests a player holds unopened. The shape is not inferred from captures: this
 -- server writes these rows itself, in awardTreasureChest and tools/grant.js, and
 -- account/OpenChest and DropChest read them back.

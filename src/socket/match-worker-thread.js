@@ -56,6 +56,10 @@ import { installFriendshipRelay, mirrorPresence } from "./presence.js";
 import { RULE, flushViolations, noteViolation } from "./security-events.js";
 import { createWorkerChannel, deferred } from "./worker-channel.js";
 import { frameFor, readyContentPacks, viewFromKey } from "../content-packs.js";
+import { startRanked } from "../ranked/setup.js";
+import { RANKED_WORKER } from "../ranked/remote.js";
+import { modeInstalled } from "../modes/hooks.js";
+import { RANKED_MODE } from "../ranked/hooks.js";
 
 if (!parentPort) throw new Error("the match worker needs a parent port");
 
@@ -204,6 +208,18 @@ function flushOutbox() {
 
 const members = new Map();
 
+/** A player's run on this thread, by account: who ranked can reach from here. */
+const memberHolding = (accountId) => {
+  const id = Number(accountId);
+  for (const member of members.values()) {
+    if (member.accountId === id && !member.leaving) return member;
+  }
+  return null;
+};
+
+/** Ranked, on the worker that runs it (ranked/remote.js); nothing on the others. */
+let stopRanked = async () => {};
+
 const channel = createWorkerChannel({
   port: parentPort,
   beforePost: flushOutbox,
@@ -225,6 +241,8 @@ const channel = createWorkerChannel({
         return deliverGlobalLine(args, [...members.values()].filter((member) => !member.closed));
       case "announce":
         return announceTo([...members.values()], args.text);
+      case "rankedStop":
+        return stopRanked().then(() => true);
       case "drain":
         return drain();
       default:
@@ -540,6 +558,7 @@ const adoptMatch = (details) => {
     privateMatch: details.private,
     floorIndex: details.floorIndex,
   });
+  if (details.mode) match.mode = details.mode;
   let floorIndex = match.floorIndex;
   let state = match.state;
   Object.defineProperties(match, {
@@ -629,6 +648,8 @@ const createMember = ({ sid, gen, member: details }) => {
   if (details.infiniteEpoch !== undefined) member.infiniteEpoch = details.infiniteEpoch;
   if (details.securityStrikes?.length) member.securityStrikes = new Map(details.securityStrikes);
   member.contentView = viewFromKey(details.contentView);
+  member.uiStrings = details.uiStrings ?? null;
+  member.capabilities = Object.freeze([...(details.capabilities ?? [])]);
   member.send = (frame) => {
     if (member.closed) return false;
     return enqueueFrame(member, frameFor(frame, member.contentView));
@@ -677,6 +698,11 @@ const join = (message) => {
 
   member.entry = (async () => {
     try {
+      // Without the mode running here this would be an ordinary run of the
+      // node, which a mode's entry was admitted to without the map's unlock check.
+      if (message.request?.mode && !modeInstalled(message.request.mode)) {
+        throw new EntryRefusedError("game_not_enterable", `${label}: ${message.request.mode} is not running here`);
+      }
       const result = await joinDungeonMatch(member, { match }, message.request, {
         onPlayerReady: () => enqueueControl(member, { c: "ready" }),
       });
@@ -831,6 +857,8 @@ const leave = (message) => {
 
 /** Everything settled and written, for a server that is stopping. */
 const drain = async () => {
+  // Races end void before their racers leave: a leave now would decide them.
+  await stopRanked();
   const everyone = [...members.values()];
   for (const member of everyone) {
     if (!member.leaving) leave({ sid: member.id, gen: member.generation, closed: true });
@@ -864,5 +892,21 @@ if (config.storage === "postgres") {
   const storage = await import("../storage/postgres.js");
   await keepGenerationsIn(storage.tokenGenerationStore);
 }
+// Before ready: a ranked entry routed here first would otherwise be built as an
+// ordinary run of the lobby node.
+// Ranked failing to start is ranked's fault, not every dungeon's: logged, and the
+// worker runs the rest as before.
+if (workerIndex === RANKED_WORKER) {
+  try {
+    stopRanked = await startRanked({
+      where: "worker",
+      sessionOf: memberHolding,
+      onWaiting: (waiting) => channel.post({ t: "ranked", waiting }),
+    });
+  } catch (problem) {
+    error(`${label}: ranked did not start: ${problem?.stack ?? problem}`);
+  }
+}
 info(`${label} ready`);
-channel.post({ t: "ready" });
+// Whether ranked is running here, for the main thread to list MATCHMAKER by.
+channel.post({ t: "ready", ...(workerIndex === RANKED_WORKER ? { ranked: modeInstalled(RANKED_MODE) } : {}) });

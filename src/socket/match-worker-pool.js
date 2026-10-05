@@ -23,10 +23,12 @@
  *                    call rpc | op                   a transaction for an account held there
  *                    call account | hold | patch     a copy, a lock, a write-through
  *                    call say | ping | drain         chat, liveness, stopping
+ *                    call rankedStop                 ranked's races, void (ranked/remote.js)
  *   worker -> main   out                             frames and markers, with acks
  *                    ready, presence, match,
  *                    release, unlock                 lifecycle and bookkeeping
  *                    friendship                      a friendship made or ended there
+ *                    ranked                          how many wait in the ranked queue
  *                    call lease | lock | patch |
  *                         objectId | recordRuns |
  *                         say | door | home | account
@@ -72,6 +74,7 @@ import {
 } from "./presence.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { createWorkerChannel, deferred } from "./worker-channel.js";
+import { RANKED_WORKER, noteRankedStarted, noteRankedWaiting } from "../ranked/remote.js";
 
 /** How long a new lease waits for the previous run of the same account to hand it back. */
 const LEASE_HANDOVER_TIMEOUT_MS = 15_000;
@@ -122,15 +125,17 @@ const updateForwardedFlow = (route) => {
   route.session.pauseForWorker?.(route.forwardedPackets > RESUME_FORWARDED_AT);
 };
 
-const matchSnapshot = (match) => ({
+export const matchSnapshot = (match) => ({
   id: match.id,
   mapNodeId: match.mapNodeId,
   group: match.group ?? "",
   private: Boolean(match.private),
   floorIndex: Number(match.floorIndex ?? 0),
+  // Nobody else's to join, on the worker as here (DungeonMatchRegistry.explicitTarget).
+  mode: typeof match.mode === "string" ? match.mode : null,
 });
 
-const memberSnapshot = (session) => ({
+export const memberSnapshot = (session) => ({
   accountId: session.accountId,
   matchMakerDoid: session.matchMakerDoid,
   presenceDoid: session.presenceDoid,
@@ -138,6 +143,10 @@ const memberSnapshot = (session) => ({
   infiniteEpoch: session.infiniteEpoch,
   // What the client said it has (content-packs.js), so the worker sends it nothing else.
   contentView: session.contentView?.key ?? "",
+  // Which of this server's banner strings the client holds (ui-strings.js).
+  uiStrings: session.uiStrings ?? null,
+  // What the client does itself (capabilities.js).
+  capabilities: [...(session.capabilities ?? [])],
   // The connection's strikes, so leaving and re-entering does not reset them.
   securityStrikes: [...(session.securityStrikes ?? [])],
 });
@@ -153,7 +162,7 @@ const returnStrikes = (session, strikes) => {
   if (Array.isArray(strikes)) session.securityStrikes = new Map(strikes);
 };
 
-const requestSnapshot = (request = {}) => ({
+export const requestSnapshot = (request = {}) => ({
   demographics: String(request.demographics ?? ""),
   sCode: Number(request.sCode ?? 0),
   mapNodeId: Number(request.mapNodeId ?? 0),
@@ -161,6 +170,8 @@ const requestSnapshot = (request = {}) => ({
   mapId: Number(request.mapId ?? 0),
   friendOnly: Number(request.friendOnly ?? 0),
   matchMakerGroup: String(request.matchMakerGroup ?? ""),
+  // Set by a mode's routing on this thread, never read off the wire (match-runtime.js).
+  mode: typeof request.mode === "string" ? request.mode : null,
 });
 
 export class MatchWorkerPool {
@@ -277,6 +288,7 @@ export class MatchWorkerPool {
     thread.on("error", (problem) => error(`match worker ${index} failed: ${problem.stack ?? problem}`));
     thread.on("exit", (code) => {
       worker.alive = false;
+      if (index === RANKED_WORKER) noteRankedStarted(false);
       clearTimeout(worker.startupTimer);
       worker.channel.failAll(new Error(`match worker ${index} exited`));
       if (!worker.started) {
@@ -388,6 +400,20 @@ export class MatchWorkerPool {
   workerFor(match) {
     const assigned = this.workers.find((worker) => worker.matches.has(match.id));
     if (assigned) return assigned;
+    /**
+     * Every mode's run on the one worker that runs the modes, whatever its
+     * load: a race starts by moving two runs on together, so both racers must
+     * be in the thread that starts it (ranked/remote.js).
+     */
+    if (match.mode) {
+      const home = this.workers.find((worker) => worker.index === RANKED_WORKER && worker.alive);
+      if (!home) throw new Error(`the ranked match worker (${RANKED_WORKER}) is not running`);
+      // Refused rather than posted to a thread that is still loading or has
+      // stopped answering: a lobby built there would wait on its loading screen
+      // for an answer that is not coming, where a refusal is a popup and town.
+      if (!home.started || home.stalled) throw new Error(`the ranked match worker (${RANKED_WORKER}) is not answering`);
+      return home;
+    }
     const live = this.workers.filter((worker) => worker.alive);
     if (!live.length) throw new Error("no match worker is running");
     // A replacement still loading would win on load alone — it has no matches —
@@ -471,6 +497,7 @@ export class MatchWorkerPool {
       case "ready":
         worker.started = true;
         clearTimeout(worker.startupTimer);
+        if (worker.index === RANKED_WORKER) noteRankedStarted(message.ranked);
         return worker.ready.resolve(worker);
       case "release":
         return this.releaseLease(worker, message.accountId);
@@ -485,6 +512,9 @@ export class MatchWorkerPool {
         return this.updateMatch(message);
       case "friendship":
         return friendshipChanged(message.first, message.second, message.made === true);
+      case "ranked":
+        // How many wait in the ranked queue, which runs there.
+        return worker.index === RANKED_WORKER ? noteRankedWaiting(message.waiting) : undefined;
       case "count":
         // What that worker's dungeons counted, added to the server's totals.
         return absorb(message.counts);
@@ -832,6 +862,33 @@ export class MatchWorkerPool {
       }
     } catch (problem) {
       warn(`match worker ${worker.index} could not settle: ${problem.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Ranked's races end void on the worker that runs them. Called before any
+   * connection closes in a shutdown: a racer whose connection went first would
+   * be a racer who dropped, and the race would be decided against them.
+   */
+  async stopRanked() {
+    const home = this.workers.find((worker) => worker.index === RANKED_WORKER && worker.alive);
+    if (!home) return false;
+    // Bounded as a drain is: a worker still answering pings but stuck writing
+    // the last race down would otherwise hold the whole shutdown.
+    const limit = this.drainTimeoutMs ?? DRAIN_TIMEOUT_MS;
+    let timer;
+    try {
+      return await Promise.race([
+        home.channel.call("rankedStop"),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`no answer in ${limit} ms`)), limit);
+        }),
+      ]);
+    } catch (problem) {
+      warn(`match worker ${RANKED_WORKER}: ranked did not stop: ${problem.message}`);
+      return false;
     } finally {
       clearTimeout(timer);
     }

@@ -15,6 +15,7 @@ import {
 import { followRunSave } from "./run-saves.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { config } from "../config.js";
+import { runRulesOf } from "./run-rules.js";
 
 export { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 
@@ -225,8 +226,10 @@ export const applyProgressReward = (
    * function being called once per member with their own context is for.
    */
   const weapons = session.heroWeapons ?? [];
-  const gold = rewardAmount(offeredGold * (1 + legendaryDropBonus(weapons, "gold")));
-  const xp = wholeExperience(session, offeredXp * (1 + legendaryDropBonus(weapons, "xp")));
+  // What the run pays at all is the mode's to say (run-rules.js).
+  const { pays } = runRulesOf(session);
+  const gold = pays.gold ? rewardAmount(offeredGold * (1 + legendaryDropBonus(weapons, "gold"))) : 0;
+  const xp = pays.experience ? wholeExperience(session, offeredXp * (1 + legendaryDropBonus(weapons, "xp"))) : 0;
   const crowd = rewardAmount(
     offeredCrowd * buffMultiplierFor(session, session.heroDoid, "BUSTER")
   );
@@ -440,15 +443,22 @@ export const awardDungeonCompletion = async (session) => {
    * experience — that is why anyone farms a dungeon — but its trophy and its
    * keys are the reward for beating it, and are handed over once.
    */
-  const bitIndex = Number.isFinite(node.BitIndex) ? Number(node.BitIndex) : null;
-  const firstClear = bitIndex === null || !getMapNodeBit(account.completed_mapnode_mask, bitIndex);
+  /**
+   * What of this is paid, and whether the node is marked done, is the run's
+   * rules' to say (run-rules.js): a ranked race, drawn rather than chosen and
+   * perhaps one this hero has not reached, marks nothing and pays no
+   * experience — winning a race is not clearing the map (docs/ranked.md).
+   */
+  const rules = runRulesOf(session);
+  const bitIndex = rules.mapCredit && Number.isFinite(node.BitIndex) ? Number(node.BitIndex) : null;
+  const firstClear = rules.mapCredit && (bitIndex === null || !getMapNodeBit(account.completed_mapnode_mask, bitIndex));
 
   // Coins are collected from the floor. Completion XP is paid here for every
   // node type; boss chests therefore carry no second copy of it.
   const gold = 0;
-  const experience = rewardAmount(node.CompletionXPBonus);
-  const teamExperience = completionTeamXpBonus(node, account);
-  const basicKeys = firstClear ? rewardAmount(node.BasicKeys) : 0;
+  const experience = rules.pays.experience ? rewardAmount(node.CompletionXPBonus) : 0;
+  const teamExperience = rules.pays.experience ? completionTeamXpBonus(node, account) : 0;
+  const basicKeys = firstClear && rules.pays.keys ? rewardAmount(node.BasicKeys) : 0;
   /**
    * A trophy is for a boss, not for a dungeon.
    *
@@ -462,7 +472,7 @@ export const awardDungeonCompletion = async (session) => {
    * The amount is not in the tables — every node reports TrophyReq 0 and none
    * carries an award column — so one per boss beaten is taken from the game.
    */
-  const trophies = firstClear && node.NodeType === "BOSS" ? 1 : 0;
+  const trophies = firstClear && rules.pays.trophies && node.NodeType === "BOSS" ? 1 : 0;
   /**
    * And a trophy comes with gems.
    *
@@ -474,13 +484,13 @@ export const awardDungeonCompletion = async (session) => {
    * dungeons' own gem floor, which is the same twenty-five. So it is the
    * server's setting, `trophyGems`, and what the game paid is its default.
    */
-  const gems = trophies * rewardAmount(config.trophyGems);
+  const gems = rules.pays.gems ? trophies * rewardAmount(config.trophyGems) : 0;
 
   account.basic_currency = (account.basic_currency ?? 0) + gold;
   if (basicKeys) account.basic_keys = (account.basic_keys ?? 0) + basicKeys;
   if (trophies) account.trophies = (account.trophies ?? 0) + trophies;
   if (gems) account.premium_currency = rewardAmount(account.premium_currency) + gems;
-  account.completed_dungeons = (account.completed_dungeons ?? 0) + 1;
+  if (rules.mapCredit) account.completed_dungeons = (account.completed_dungeons ?? 0) + 1;
 
   const avatar = session.dungeonAvatar;
   if (bitIndex !== null) {
@@ -551,6 +561,11 @@ export const awardTreasureChest = async (session, dooberType) => {
   /* Six, not four: the two item boxes sit at the top of the same run, which is
      the client's own numbering rather than this server's arithmetic. */
   if (!account || chestId < FIRST_CHEST || chestId > FIRST_CHEST + 5) return null;
+  // A run that pays no chests (run-rules.js): the treasure is picked up and owes nothing.
+  if (!runRulesOf(session).pays.chests) {
+    info(`[${session.id}] treasure ${dooberType} collected — no chest, as this run pays none`);
+    return null;
+  }
 
   session.dungeonTreasures ??= [];
   session.dungeonTreasures.push({ dooberType: Number(dooberType), chestId });

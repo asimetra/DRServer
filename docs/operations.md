@@ -64,6 +64,8 @@ advertised; nothing listens on them:
 | `ODS_PUBLIC_PORT` | the port in `webServicesUrl` | `ODS_PORT` |
 | `ODS_PUBLIC_SOCKET_PORT` | `gameSocketPort` | `ODS_SOCKET_PORT` |
 | `ODS_PUBLIC_SOCKET_HOST` | `gameSocketAddress` | `ODS_PUBLIC_HOST` |
+| `ODS_DESKTOP_SOCKET_HOST` | `gameSocketAddress`, to the desktop client only | what everybody is told |
+| `ODS_DESKTOP_SOCKET_PORT` | `gameSocketPort`, to the desktop client only | `ODS_SOCKET_PORT` |
 
 ```bash
 # A router forwards 203.0.113.7:9000 -> 8080 and 203.0.113.7:9001 -> 7198
@@ -134,9 +136,29 @@ button:
 - The pass opens the files and nothing else; it is not a game credential.
 - Leave the gate off when the client is opened by hand with no website in front.
 
-**Only the browser client can play over https.** The desktop client's game
-socket is plain TCP and has no TLS, so it cannot connect through the proxy. It
-keeps working against a server that is reached without https.
+### The desktop client behind https
+
+The desktop client's game socket is plain TCP with no TLS. An https proxy
+cannot carry it, and neither can Cloudflare's, which carries HTTP only. So it
+goes to the game port directly, at an address the proxy does not front:
+
+1. A DNS record for it that is not proxied — on Cloudflare, "DNS only" (the
+   grey cloud) — pointing at the machine: `game.example.net`.
+2. The game port open on that machine: published by Docker
+   (`ports: ["7198:7198"]`) and allowed by the provider's firewall.
+3. `ODS_DESKTOP_SOCKET_HOST=game.example.net`, and `ODS_DESKTOP_SOCKET_PORT`
+   if players reach it on a port other than the game port.
+4. Desktop players' `Config.json`: `"ServiceDiscoveryUrl":
+   "https://play.example.net/desktop"`. That discovery address names the
+   desktop socket; the web services stay the proxy's, and what the browser is
+   told does not change.
+
+The price is the operator's to weigh. The socket is cleartext, so a player's
+token crosses the network unencrypted on every connection, and anybody on
+their path can read it and play as them; the stock client cannot be made to do
+otherwise. Players who can use a VPN (Tailscale, WireGuard) avoid it. A DNS-only
+record also makes the machine's own address public: allow its https port only
+from the proxy's ranges to keep web traffic behind the proxy.
 
 ### Behind a tunnel
 
@@ -195,7 +217,9 @@ Signed tokens prevent one player from claiming another account, but the bearer
 token crosses both HTTP and the game socket, so both have to be protected. The
 browser client can have both behind one https proxy (see [HTTPS](#https)). The
 desktop client's game socket cannot be encrypted, so a server it plays on
-should stay on loopback or be reached through a trusted VPN or tunnel.
+should stay on loopback or be reached through a trusted VPN or tunnel — or its
+operator accepts the cleartext token (see
+[The desktop client behind https](#the-desktop-client-behind-https)).
 
 ## Internal API
 
@@ -229,10 +253,14 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 | `GET /internal/v1/restrictions` | The accounts restricted now, why and until when |
 | `GET /internal/v1/online` | Who is connected, where they are, and from which address |
 | `POST /internal/v1/accounts/:id/disconnect` | Disconnect a player (`{"reason": "…"}` is optional) |
+| `GET /internal/v1/grants` | What an admin may give: the weapon chests, the heroes, and the most one grant carries |
+| `POST /internal/v1/accounts/:id/grants` | Give gold, gems, keys, weapon chests, rolled weapons, powerups or a hero level (`src/grants.js`); refused while the player is online, written to the admin log |
+| `PUT /internal/v1/accounts/:id/name` | Rename a player (`{"name": "…"}`), by sign-up's rules and uniqueness; the boards take the new name, sales and news keep the old; refused while the player is online |
 | `GET /internal/v1/admin-actions` | What admins did, newest first (`?limit=`, `?account=`) |
-| `GET /internal/v1/players/:name` | Read a public player profile by name |
+| `GET /internal/v1/players/:name` | Read a public player profile by name, with its ranked league, place and record (`ranked`, null while ranked is off) |
 | `GET /internal/v1/players/:name/account` | For an admin: the account id behind a name, its restriction, and whether it is online |
 | `GET /internal/v1/leaderboards/:metric` | Read a paged leaderboard |
+| `GET /internal/v1/ranked/board` | The ranked leagues, and the players who have raced, best first (`?limit=`, 100 by default, 500 at most) |
 | `POST /internal/v1/trades` | Move weapons and gold atomically between two accounts |
 | `GET /internal/v1/market` | Search paged listings with item details and facets |
 | `POST /internal/v1/market` | List an inventory weapon for sale |

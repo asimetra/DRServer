@@ -697,3 +697,33 @@ test("an old reservation cannot give back a place its session holds elsewhere no
   assert.equal(session.dungeonMatch, second.match, "still in the match it moved to");
   assert.equal(second.match.members.has(session), true);
 });
+
+test("when the report's time is up, whoever still reads it is sent home, and the last out closes it", async () => {
+  const registry = new DungeonMatchRegistry({ finishedMatchTtlMs: 5, evictionGraceMs: 1000 });
+  const sent = [];
+  registry.evictWith((member) => sent.push(member.accountId));
+  const host = player(902);
+  host.dungeonActive = true;
+  const opened = registry.reserve({ session: host, mapNodeId: 50082 });
+
+  registry.finish(opened.match);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.deepEqual(sent, [902], "an exit on their behalf, which takes the report off their screen");
+  assert.equal(opened.match.state, "finished", "not destroyed under a client still showing it");
+
+  registry.remove(host);
+  assert.equal(opened.match.state, "closed", "the exit closes it, as any last leave does");
+});
+
+test("one who never leaves after being sent home is closed out after the grace", async () => {
+  const registry = new DungeonMatchRegistry({ finishedMatchTtlMs: 5, evictionGraceMs: 5 });
+  registry.evictWith(() => {});
+  const host = player(903);
+  host.dungeonActive = true;
+  const opened = registry.reserve({ session: host, mapNodeId: 50082 });
+
+  registry.finish(opened.match);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(opened.match.state, "closed");
+  assert.equal(host.dungeonActive, false);
+});

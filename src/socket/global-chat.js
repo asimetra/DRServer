@@ -80,15 +80,22 @@ const canHear = (session) => Boolean(session?.playerDoid && session?.floorDoid);
  * it. Returns how many people it reached, which is what makes the difference
  * between talking and talking to yourself worth saying out loud.
  */
-export const sayGlobally = (speaker, text) => {
+export const sayGlobally = (speaker, text) => sayToListeners(speaker, text, activeSessions());
+
+/**
+ * The same, to a chosen set of listeners — the ranked lobbies' shared channel
+ * is one — with everything a line said past the floor answers to: a restricted
+ * account is not heard, the allowance holds, and the line is logged.
+ */
+export const sayToListeners = (speaker, text, listeners, channel = "global") => {
   const account = Number(speaker?.accountId ?? 0);
   // A restricted account is not heard here (restrictions.js).
   if (isRestricted(speaker?.dungeonAccount)) return null;
   // Null rather than zero: over the allowance is not the same as unheard.
   if (!admitGlobalLine(account)) return null;
   const name = speaker?.dungeonAccount?.name ?? `Player${account || "?"}`;
-  const heard = deliverGlobalLine({ account, name, text }, activeSessions());
-  info(`[${speaker?.id ?? "?"}] global: ${name}: ${text} (${heard} heard)`);
+  const heard = deliverGlobalLine({ account, name, text }, listeners);
+  info(`[${speaker?.id ?? "?"}] ${channel}: ${name}: ${text} (${heard} heard)`);
   return heard;
 };
 

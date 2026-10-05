@@ -2,6 +2,7 @@ import { isOnline, dungeonOf, friendshipChanged } from "./socket/presence.js";
 import { listAccountIds, loadAccount, loadExistingAccount, saveAccount, saveAccounts } from "./accounts.js";
 import { warn } from "./log.js";
 import { infiniteEpoch } from "./infinite.js";
+import { modeHooks } from "./modes/hooks.js";
 
 /**
  * Friends, gifts and the two leaderboards.
@@ -308,8 +309,9 @@ export const requestRowOf = (request, recipientId) => ({
 /** The block list as the client keeps it: `[id,...]`, as text. */
 export const blockListTextOf = (account) => encodeIdList(ignoredIdsOf(account));
 
+/** The friend list as the client gets it; ranked may add MATCHMAKER to it. */
 export const friendDataFor = async (account) =>
-  (await loadKnown(friendIdsOf(account))).map((row) => friendRowOf(row, true));
+  modeHooks.friendList((await loadKnown(friendIdsOf(account))).map((row) => friendRowOf(row, true)));
 
 export const ignoredDataFor = async (account) =>
   (await loadKnown(ignoredIdsOf(account))).map((row) => friendRowOf(row, false));

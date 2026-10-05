@@ -14,9 +14,13 @@
 
 import { getMapNodeBit } from "../map-progress.js";
 import { heroLevel } from "../progression.js";
+import { warn } from "../log.js";
+import { rulesOfMode } from "./run-rules.js";
 
 export const MAX_DUNGEON_PLAYERS = 4;
 const DEFAULT_FINISHED_MATCH_TTL_MS = 10 * 60 * 1000;
+/** How long a match whose report time is up waits for its readers to leave before it closes regardless. */
+const DEFAULT_EVICTION_GRACE_MS = 15_000;
 /** Bit 0 is reserved locally for server-authorized dungeon administration. */
 export const DUNGEON_ADMIN_OVERRIDE_FLAG = 1;
 
@@ -123,10 +127,14 @@ export class DungeonMatchRegistry {
     maxPlayers = MAX_DUNGEON_PLAYERS,
     publicFloorZeroOnly = true,
     finishedMatchTtlMs = DEFAULT_FINISHED_MATCH_TTL_MS,
+    evictionGraceMs = DEFAULT_EVICTION_GRACE_MS,
   } = {}) {
     this.maxPlayers = maxPlayers;
     this.publicFloorZeroOnly = publicFloorZeroOnly;
     this.finishedMatchTtlMs = Math.max(0, Number(finishedMatchTtlMs) || 0);
+    this.evictionGraceMs = Math.max(0, Number(evictionGraceMs) || 0);
+    /** How a member still reading the report is sent home when its time is up (`expire`). */
+    this.evict = null;
     this.nextId = 1;
     this.matches = new Map();
     this.matchByAccount = new Map();
@@ -179,9 +187,39 @@ export class DungeonMatchRegistry {
       else this.publicByKey.delete(key);
     }
     if (this.finishedMatchTtlMs > 0) {
-      match.finishTimer = setTimeout(() => this.close(match), this.finishedMatchTtlMs);
+      match.finishTimer = setTimeout(() => this.expire(match), this.finishedMatchTtlMs);
       match.finishTimer.unref?.();
     }
+    return true;
+  }
+
+  /** Installs how a member is sent home when its report's time is up; returns the undo. */
+  evictWith(evict) {
+    const previous = this.evict;
+    this.evict = evict;
+    return () => {
+      this.evict = previous;
+    };
+  }
+
+  /**
+   * The report screen's time is up. Whoever still reads it is sent home: an
+   * exit on their behalf, which takes the run off their screen as any exit
+   * does, and the last of them out closes the match. Closing it under them
+   * instead destroyed the world their client was still showing, and nothing
+   * told the client — the next dungeon they entered opened on the old report.
+   * One who has not left after the grace is closed out regardless.
+   */
+  expire(match) {
+    if (!match || match.state === "closed") return false;
+    if (!match.members.size || !this.evict) return this.close(match);
+    for (const member of [...match.members]) {
+      Promise.resolve()
+        .then(() => this.evict(member))
+        .catch((problem) => warn(`match ${match.id}: could not send ${member.accountId} home: ${problem.message}`));
+    }
+    match.finishTimer = setTimeout(() => this.close(match), this.evictionGraceMs);
+    match.finishTimer.unref?.();
     return true;
   }
 
@@ -312,9 +350,13 @@ export class DungeonMatchRegistry {
   }
 
   explicitTarget({ friendId = 0, mapId = 0 } = {}) {
-    if (mapId) return this.matches.get(Number(mapId)) ?? null;
-    if (friendId) return this.matchByAccount.get(Number(friendId)) ?? null;
-    return null;
+    const target = mapId
+      ? this.matches.get(Number(mapId))
+      : friendId
+        ? this.matchByAccount.get(Number(friendId))
+        : null;
+    // A run whose mode takes nobody in (run-rules.js): a friend's JOIN finds nothing there.
+    return target && !rulesOfMode(target.mode).joinable ? null : target ?? null;
   }
 
   /**

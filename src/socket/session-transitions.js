@@ -36,6 +36,7 @@ import { EntryRefusedError, admitEntry, checkDestination } from "./match-entry.j
 import { matchExecutor } from "./match-runtime.js";
 import { dungeonMatches } from "./matches.js";
 import { runSavesFailing } from "./run-saves.js";
+import { modeHooks } from "../modes/hooks.js";
 
 const controllers = new WeakMap();
 
@@ -108,7 +109,8 @@ export class SessionTransitions {
    * ClientRequestEntry. Refused while in a dungeon or while anything else is
    * under way — an exit still leaving included.
    */
-  requestEntry(request, { admit = admitEntry, executor = matchExecutor } = {}) {
+  requestEntry(rawRequest, { admit = admitEntry, executor = matchExecutor } = {}) {
+    const request = modeHooks.routeEntry(this.connection, rawRequest);
     if (this.current || inDungeon(this.connection)) {
       warn(
         `[${this.connection.id}] refusing dungeon entry while ${this.phase}` +
@@ -154,6 +156,9 @@ export class SessionTransitions {
         this.answer(code);
         return false;
       }
+      // The match carries its mode: whether anybody may join it is the mode's
+      // rules' to say (DungeonMatchRegistry.explicitTarget).
+      if (request.mode) result.match.mode = request.mode;
       return this.load(transition, result, request, executor);
     });
   }

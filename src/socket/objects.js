@@ -171,6 +171,15 @@ export const heroPositionUpdate = (doid, { x, y }) =>
     .f32(y)
     .frame();
 
+/** And which way it faces: field 148, which the client reports beside 147. */
+export const FLID_HERO_HEADING = 148;
+export const heroHeadingUpdate = (doid, heading) =>
+  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
+    .u32(doid)
+    .u16(FLID_HERO_HEADING)
+    .f32(heading)
+    .frame();
+
 /**
  * A length-prefixed list. The client reads `u16 byteLength` and then keeps
  * decoding entries until it has consumed that many **bytes** — the count is a
