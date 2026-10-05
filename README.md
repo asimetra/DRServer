@@ -161,6 +161,7 @@ npm test
 Useful focused checks:
 
 ```bash
+npm run test:changed         # the tests the working tree's changes reach (--direct, --list, --base <ref>)
 npm run test:public          # fresh-clone suite; missing local data is skipped
 npm run test:combat-matrix   # execute and audit authored NPC attacks
 npm run audit:account-ids    # report persistent object-id collisions
