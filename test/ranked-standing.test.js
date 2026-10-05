@@ -58,7 +58,7 @@ test("/rank says where the caller stands and who leads, in one message", async (
   assert.equal(more, undefined, "no placement, so nothing to explain about one");
 });
 
-test("/rank is a player's command, and says so when ranked is off", async (t) => {
+test("/rank is a player's command of the ranked mode: unknown with the mode off", async () => {
   resetCommands();
   registerBuiltinCommands();
   const lines = [];
@@ -66,19 +66,22 @@ test("/rank is a player's command, and says so when ranked is off", async (t) =>
   reply.warn = (text) => lines.push(`! ${text}`);
   const session = { id: 1, accountId: 500, dungeonAccount: { id: 500, name: "Simetra" } };
 
-  const enabled = config.ranked.enabled;
-  t.after(() => {
-    config.ranked.enabled = enabled;
-  });
-  config.ranked.enabled = false;
+  // Off: the core defines no /rank, so it is what any unknown command is.
   await runCommand(session, `${COMMAND_PREFIX}rank`, reply);
-  assert.deepEqual(lines, ["ranked races are off on this server"]);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /unknown|no such|not a command/i, lines[0]);
 
   // On, with the test run's empty log: no place yet.
-  config.ranked.enabled = true;
-  lines.length = 0;
-  await runCommand(session, `${COMMAND_PREFIX}rank`, reply);
-  assert.deepEqual(lines, ["Ranked: Wooden 1000, no place until your first race."]);
+  const { installRankedCommands } = await import("../src/ranked/commands.js");
+  const { bookWords } = await import("../src/socket/ui-effects.js");
+  const uninstall = installRankedCommands({ bookWords, loadExistingAccount: async () => null });
+  try {
+    lines.length = 0;
+    await runCommand(session, `${COMMAND_PREFIX}rank`, reply);
+    assert.deepEqual(lines, ["Ranked: Wooden 1000, no place until your first race."]);
+  } finally {
+    uninstall();
+  }
 });
 
 test("the top league goes by place on the board, among those in the band under it", () => {

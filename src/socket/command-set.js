@@ -33,9 +33,6 @@ import { STAT_NAMES, statTotals } from "../hero-stats.js";
 import { heroLevel } from "../progression.js";
 import { config } from "../config.js";
 import { warn } from "../log.js";
-import { rankReply, readStandings } from "../ranked/standing.js";
-import { modeHooks } from "../modes/hooks.js";
-import { bookWords } from "./ui-effects.js";
 
 const number = (text, what) => {
   const value = Number(text);
@@ -432,48 +429,6 @@ export const registerBuiltinCommands = () => {
         );
       }
       reply(lines.join("\n"));
-    },
-  });
-
-  /**
-   * The caller's ranked rating and place, and the top of the board.
-   *
-   * Read from the match log (ranked/standing.js) rather than asked of the
-   * ranked service, which runs on one thread while this may be answered in a
-   * dungeon on another. Names are read as a page shows them; the log keeps ids.
-   */
-  define({
-    name: "rank",
-    role: ROLE.PLAYER,
-    summary: "say your ranked rating and place, and who leads",
-    run: async ({ session, reply }) => {
-      const { part } = bookWords;
-      if (!config.ranked?.enabled) return reply(part("rank.off"));
-      let standings;
-      try {
-        standings = await readStandings();
-      } catch (problem) {
-        warn(`/rank: could not read the ranked log: ${problem.message}`);
-        return reply.warn(part("rank.unreadable"));
-      }
-      const { loadExistingAccount } = await import("../accounts.js");
-      const nameOf = async (id) => (await loadExistingAccount(id).catch(() => null))?.name ?? `#${id}`;
-      reply(await rankReply({ standings, accountId: session.accountId, nameOf, part }));
-    },
-  });
-
-  /**
-   * A racer asks to call the race off. Both asking ends it with nobody's
-   * rating moved: for a run that went wrong — a door that will not open — not
-   * for a race somebody is losing, since the rival has to agree.
-   */
-  define({
-    name: "draw",
-    role: ROLE.PLAYER,
-    summary: "offer to call your ranked race off; both offering ends it with no rating moved",
-    run: ({ session, reply }) => {
-      if (!modeHooks.drawOffered(session)) return reply.warn("you are not in a ranked race");
-      reply("offered: the race ends with no rating moved once your rival says /draw too");
     },
   });
 

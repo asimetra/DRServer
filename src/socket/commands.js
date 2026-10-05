@@ -26,9 +26,22 @@ export const COMMAND_PREFIX = "/";
 /** name -> definition, in registration order so `/help` reads sensibly. */
 const registry = new Map();
 
-export const define = ({ name, role = ROLE.ADMIN, usage = "", summary, run }) => {
+/**
+ * `mode` names the game mode a command belongs to (src/modes/README.md,
+ * "Commands"): the core defines its own without one, a mode defines its own
+ * with one when it starts and takes them away when it stops, so a server with
+ * the mode off has no `/draw` to misreply to.
+ */
+export const define = ({ name, role = ROLE.ADMIN, usage = "", summary, run, mode = null }) => {
   if (registry.has(name)) throw new Error(`command ${name} is already defined`);
-  registry.set(name, { name, role, usage, summary, run });
+  registry.set(name, { name, role, usage, summary, run, mode });
+};
+
+export const undefine = (name) => registry.delete(name);
+
+/** Takes away every command a mode defined. */
+export const undefineMode = (mode) => {
+  for (const [name, command] of registry) if (command.mode === mode) registry.delete(name);
 };
 
 export const commands = () => [...registry.values()];

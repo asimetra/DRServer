@@ -149,7 +149,6 @@
     "rank.leader": "{place}. {name} {league} {rating}",
     "rank.between": " · ",
     "rank.you": "you",
-    "rank.off": "ranked races are off on this server",
     "rank.unreadable": "the ranked board cannot be read right now"
   }
 }

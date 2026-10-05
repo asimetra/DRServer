@@ -103,6 +103,39 @@ friend with a JOIN button, chat lines, and the effects in `config/ui-effects.jso
 (banners, sounds, shakes, the countdown, floaters). A modded client declares
 what it does itself in `Demographics.capabilities` (`src/socket/capabilities.js`).
 
+## Commands
+
+A mode's chat commands are the mode's: define them with `define({ ..., mode })`
+(`src/socket/commands.js`) when the mode starts, on every thread that answers
+chat (the main thread for town, the match worker for a dungeon), and take them
+away with the uninstall when it stops. The core's command set keeps none of a
+mode's; with the mode off, `/draw` is an unknown command, which is the truth.
+`src/ranked/commands.js` is the shape.
+
+## Content and visuals
+
+The core never requires a picture, a string or a game-data row the stock client
+does not ship with. What it does is *offer* content: the server serves its game
+data and assets from `/content` (`docs/client-setup.md`), a client either fetches
+them from the server (`gameMasterPath`) or declares what it holds
+(`Demographics`, as `uiStrings` does in `src/socket/ui-strings.js`), and a
+client that does neither gets the stock behaviour. The rules for a mode's
+content are three:
+
+- meaning lives in the mode, decoration in the content: a player on a stock
+  client with none of it must still understand what happened, from the game's
+  own banners, sounds and summary screen;
+- every piece of content has a stock fallback, and nothing in the core or the
+  mode branches on "is the picture there" beyond choosing the fallback;
+- anything that would *break* a client without it (a map node the client does
+  not have, as a lobby node would) is gated: the server advertises its content
+  id, and the feature opens only to a client that fetched or declared it.
+
+A mode's content sits with the mode (`src/<mode>/content/`), and it comes last:
+rules, fair play and matchmaking before any of it. Ranked today needs none —
+its lobby node is the game's own `ARENA_1` — and the one optional piece it has,
+the banner strings, is gated exactly this way.
+
 ## Where it runs
 
 With match workers on, a mode's runs go to one worker (`RANKED_WORKER` in

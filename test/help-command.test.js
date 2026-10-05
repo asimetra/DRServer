@@ -81,12 +81,20 @@ test("help does not describe what the caller cannot run, or what does not exist"
  * so it is held against the registry: every command is in a table row, written
  * the way `/help <command>` writes it, and every row is a command that exists.
  */
-test("the commands page lists exactly the commands the server has", async () => {
+test("the commands page lists exactly the commands the server has, the ranked mode's apart", async () => {
   const page = await readFile(new URL("../docs/chat-commands.md", import.meta.url), "utf8");
   const rows = [...page.matchAll(/^\| `(\/[^`]+)` \|/gm)].map((match) => match[1]);
 
-  const expected = commands().map(
-    (command) => `${COMMAND_PREFIX}${command.name}${command.usage ? ` ${command.usage}` : ""}`
-  );
-  assert.deepEqual([...rows].sort(), [...expected].sort());
+  // A mode's commands are on the page under the mode, and in the registry
+  // only while the mode is on.
+  const { installRankedCommands } = await import("../src/ranked/commands.js");
+  const uninstall = installRankedCommands({ bookWords: { part: (k) => k }, loadExistingAccount: async () => null });
+  try {
+    const expected = commands().map(
+      (command) => `${COMMAND_PREFIX}${command.name}${command.usage ? ` ${command.usage}` : ""}`
+    );
+    assert.deepEqual([...rows].sort(), [...expected].sort());
+  } finally {
+    uninstall();
+  }
 });

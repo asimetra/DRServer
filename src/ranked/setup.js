@@ -51,6 +51,7 @@ const gateQuestions = async () => {
 const startOnMain = async (settings) => {
   const { tellSystemPresence } = await import("../socket/presence.js");
   const { activeMatchWorkerPool } = await import("../socket/match-worker-service.js");
+  const uninstallCommands = await rankedCommands();
   const hooks = stockClientEntryHooks({
     settings,
     waiting: rankedWaiting,
@@ -74,8 +75,17 @@ const startOnMain = async (settings) => {
   }
   return async () => {
     uninstall();
+    uninstallCommands();
     await activeMatchWorkerPool()?.stopRanked();
   };
+};
+
+/** The mode's chat commands, on whichever thread this is (ranked/commands.js). */
+const rankedCommands = async () => {
+  const { installRankedCommands } = await import("./commands.js");
+  const { bookWords } = await import("../socket/ui-effects.js");
+  const { loadExistingAccount } = await import("../accounts.js");
+  return installRankedCommands({ bookWords, loadExistingAccount });
 };
 
 export const startRanked = async ({
@@ -201,6 +211,7 @@ export const startRanked = async ({
   });
   service.onNotice(adapter.onNotice);
   const uninstall = installRankedHooks(adapter.hooks);
+  const uninstallCommands = await rankedCommands();
 
   let reported = null;
   const timer = setInterval(() => {
@@ -231,6 +242,7 @@ export const startRanked = async ({
       clearInterval(timer);
       await service.stop();
       uninstall();
+      uninstallCommands();
     })();
     return stopping;
   };
