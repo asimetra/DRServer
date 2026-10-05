@@ -51,7 +51,7 @@
     "ring": { "x0": 3830, "y0": 3653, "x1": 4270, "y1": 4093 },
     "lobbySpawn": { "x": 4050, "y": 4200 },
     "lobbyCopies": 8,
-    "raceGhost": { "buff": "SHADOW_SLOW", "name": "RIVAL", "graceMs": 2000 },
+    "raceGhost": { "buff": "SHADOW_SLOW", "name": "RIVAL", "graceMs": 2000, "showMs": 3000 },
     "raceChat": true,
     "rating": { "start": 1000, "k": 40, "floor": 100 },
     "entry": { "minHeroLevel": 0, "requireTutorial": false },

@@ -183,12 +183,19 @@ export const createStockClientAdapter = ({
    * racer's own run, drawn as a shade. Whoever enters a room first is shown
    * whoever follows them into it; the one following is shown nobody — so
    * nobody can tail the leader through the doors — and two who enter together
-   * (within `graceMs`) are shown nothing of each other. A racer who has
-   * crossed the line is shown the rival wherever they are on that floor: the
-   * wait for the rival's clock becomes watching their last stretch.
+   * (within `graceMs`) are shown nothing of each other. And the one shown is
+   * shown for a moment, not for as long as the follower stands there: `showMs`
+   * after the follower came in the ghost goes, and comes back in the next room
+   * they follow into. "Somebody is on your heels" is the information; where
+   * exactly they stand, second by second, was an advantage to the leader that
+   * nobody asked for (decided 2026-10-05). A racer who has crossed the line is
+   * shown the rival wherever they are on that floor: the wait for the rival's
+   * clock becomes watching their last stretch.
    */
   const ghost = settings.raceGhost ?? null;
   const GRACE_MS = ghost?.graceMs ?? 2000;
+  /** How long the follower's ghost stays once shown; nothing or 0 keeps it as long as they stay. */
+  const SHOW_MS = Number(ghost?.showMs) > 0 ? Number(ghost.showMs) : Infinity;
   /** accountId -> { floorIndex, tile, enteredAt }: the room a racer is in and since when. */
   const rooms = new Map();
   const noteRoom = (accountId, session, position) => {
@@ -206,7 +213,8 @@ export const createStockClientAdapter = ({
     const theirs = rooms.get(subject);
     if (!mine || !theirs || mine.floorIndex !== theirs.floorIndex) return false;
     if (me.crossed) return true;
-    return mine.tile === theirs.tile && theirs.enteredAt - mine.enteredAt > GRACE_MS;
+    const late = theirs.enteredAt - mine.enteredAt;
+    return mine.tile === theirs.tile && late > GRACE_MS && clock() - theirs.enteredAt <= SHOW_MS;
   };
   const ghosts =
     copyFrames && ghost

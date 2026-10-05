@@ -1103,7 +1103,7 @@ const SHADE = 35092;
 const ghostRace = async ({ startGap, ...options } = {}) => {
   const context = setup({
     copyFrames: ghostFrames,
-    extraSettings: { raceGhost: { buff: SHADE, name: "RIVAL", graceMs: 2000 }, lobbyCopies: 0 },
+    extraSettings: { raceGhost: { buff: SHADE, name: "RIVAL", graceMs: 2000, showMs: 3000 }, lobbyCopies: 0 },
     ...options,
   });
   options.startGap = startGap;
@@ -1181,6 +1181,33 @@ test("the race ghost: whoever enters a room first is shown the one who follows, 
   adapter.sweep();
   assert.equal(sentTo(A, "hero").length, 2, "shown again in a later room");
   assert.equal(shown.filter((s) => s.session.accountId === A && s.notice.type === "rival_seen").length, 1, "but told only once");
+});
+
+test("the ghost is a moment: shown for showMs after the follower came in, then gone, back in the next room", async () => {
+  const { adapter, at, move, sentTo } = await ghostRace();
+  at(20);
+  move(A, 100, 100);
+  at(25);
+  move(B, 150, 120); // five seconds behind
+  adapter.sweep();
+  const [hero] = sentTo(A, "hero");
+  assert.ok(hero, "shown on arrival");
+  at(27);
+  adapter.sweep();
+  assert.equal(sentTo(A, "disable").length, 0, "still there two seconds in");
+  at(29);
+  adapter.sweep();
+  assert.ok(sentTo(A, "disable").some((frame) => frame.doid === hero.doid), "gone after three, though B still stands there");
+  at(30);
+  adapter.sweep();
+  assert.equal(sentTo(A, "hero").length, 1, "and not shown again for standing there");
+
+  at(31);
+  move(A, 1000, 100);
+  at(37);
+  move(B, 1000, 120); // follows into the next room
+  adapter.sweep();
+  assert.equal(sentTo(A, "hero").length, 2, "shown again for a moment in the next room");
 });
 
 test("two who enter a room together are shown nothing of each other", async () => {

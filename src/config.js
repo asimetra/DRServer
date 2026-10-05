@@ -522,12 +522,13 @@ export const loadServerConfig = (environment = process.env) => {
        * The rival's ghost in a race (ranked/stock-client/adapter.js): drawn
        * with one of the game's buffs as a shade (`buff`, a Buff constant;
        * SHADOW_SLOW is a dark, pulsing one), under `name`, and shown to whoever
-       * entered the room first; two entering within `graceMs` see nothing of
-       * each other. Null draws no ghost.
+       * entered the room first, for `showMs` after the other came in; two
+       * entering within `graceMs` see nothing of each other. Null draws no
+       * ghost.
        */
       raceGhost:
         defaults.ranked?.raceGhost === undefined
-          ? { buff: "SHADOW_SLOW", name: "RIVAL", graceMs: 2000 }
+          ? { buff: "SHADOW_SLOW", name: "RIVAL", graceMs: 2000, showMs: 3000 }
           : defaults.ranked.raceGhost,
       /** Whether the two racers hear each other's chat. */
       raceChat: defaults.ranked?.raceChat !== false,
