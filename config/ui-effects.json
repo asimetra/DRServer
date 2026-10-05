@@ -1,0 +1,155 @@
+{
+  "_about": "What a game event shows the player, on any client. Edit and save: the next event uses it, no restart. Code: src/socket/ui-effects.js. Channels and why: docs/race-ui-channels.md.",
+  "_how": [
+    "banner: a key from the client's string table, shown big in the centre for two seconds, and cut off past about 24 characters — the longest the game's own maps use. A list is tried in order and the first key this client can show is sent, so put a game key last as the fallback. Game keys work on every client: VICTORY, DUNGEON_FAILED (reads DEFEAT), DEFEAT_THE_RIVAL, 3_SECONDS_LEFT, TREASURE_FOUND, BOSS, COLLECT_TREASURE_GO.",
+    "strings: keys of this server's own, with their text. A client shows them only after `node tools/install-ui-strings.js <client bin directory>` has written them into it; every other client is sent the next key in the list instead, never `mia:KEY`. Run the tool again after changing them: new words show once it has; a new key falls back to the next in the list until then. Use names of your own: a game key here changes that text everywhere in the game.",
+    "A key built from a {param} must be one of the strings, or the next key in the list is used.",
+    "countdown: seconds, drawn by the game's own floor countdown (the one a party sees at a door), counting down by itself. Never in an infinite dungeon, whose client pays the floor out on it.",
+    "sound: a sound in the client's soundEffects.swf, e.g. LevelUp1, Lightning2, GenericHitSound, TEMP_Explosion3, TEMP_SwitchHit1b, GolemStomp.",
+    "shake: subtle | light | medium | heavy | rumble, or [frames, strength, count]. Name your own under 'shakes'.",
+    "zoom: below 1 pulls the camera back (the game uses 0.83); 'reset' returns it to 1.",
+    "floater: { amount, color } floats a number over the player's own hero; a negative amount is drawn as damage, a positive one as healing. color 0 is the client default; 11 poison, 12 fire, 13 cold, 14 blood, 15 bacon, 16 ethereal.",
+    "replacesChat: true sends no chat line for the event when its banner was shown.",
+    "to: self (the default) shows it to this player only; party shows it to everyone on the floor.",
+    "{name} in any value is filled from the event. Ranked notices carry: queued {waiting, ready}; paired {opponentRating, countdownSeconds}; progress {floor, of}; finished {rating, ratingChange}; cancelled {reason, requeued}. ranked.stands is walking out of the lobby's ring, and carries nothing. ranked.rival_seen is the first time a race shows the rival's ghost in the room, and carries nothing. ranked.draw_offered is the rival asking to call the race off (/draw), and carries nothing.",
+    "Only a dungeon floor can show banner, sound, shake, zoom and countdown; in town they are skipped. The ranked lobby is a floor, so all of them work there.",
+    "lines: the chat line each event says, as text the server sends — nothing to install, reworded here. Said unless a banner with replacesChat showed. {name} fills from the event, formatted for reading: a rating is a number from 0, a change reads +16, and {league} is the league the rating is in (server.defaults.json ranked.leagues). A finish also has {versus}, {why}, {times} and {moved} (a league crossed), a cancel {requeued}, the lobby's welcome {standing} and {how}: each is one of the parts. A line naming a param its event lacks is not said. Not every line is a core notice: ranked.welcome, ranked.cooldown and ranked.idle come from the stock-client adapter, and rank.* make up /rank."
+  ],
+  "strings": {
+    "RANKED_SEARCHING": "IN THE RING - QUEUED",
+    "RANKED_IN_STANDS": "IN STANDS - NOT QUEUED",
+    "RANKED_FOUND": "RIVAL FOUND!",
+    "RANKED_GO": "GO!",
+    "RANKED_RIVAL_FLOOR_1": "RIVAL CLEARED FLOOR 1",
+    "RANKED_RIVAL_FLOOR_2": "RIVAL CLEARED FLOOR 2",
+    "RANKED_RIVAL_FLOOR_3": "RIVAL CLEARED FLOOR 3",
+    "RANKED_WIN": "YOU WIN!",
+    "RANKED_LOSE": "YOUR RIVAL WON",
+    "RANKED_DRAW": "DRAW!",
+    "RANKED_CANCELLED": "RACE CANCELLED",
+    "RANKED_RIVAL_SEEN": "RIVAL ON YOUR HEELS"
+  },
+  "shakes": {},
+  "events": {
+    "ranked.queued": {
+      "banner": "RANKED_SEARCHING",
+      "sound": "TEMP_SwitchHit1b",
+      "replacesChat": true
+    },
+    "ranked.stands": {
+      "banner": "RANKED_IN_STANDS",
+      "sound": "GenericHitSound",
+      "replacesChat": true
+    },
+    "ranked.paired": {
+      "banner": "RANKED_FOUND",
+      "countdown": "{countdownSeconds}",
+      "shake": "medium",
+      "sound": "LevelUp1"
+    },
+    "ranked.started": {
+      "banner": [
+        "RANKED_GO",
+        "DEFEAT_THE_RIVAL"
+      ],
+      "shake": "light",
+      "sound": "Lightning2",
+      "replacesChat": true
+    },
+    "ranked.progress": {
+      "banner": "RANKED_RIVAL_FLOOR_{floor}",
+      "floater": {
+        "amount": "{floor}",
+        "color": 12
+      },
+      "replacesChat": true
+    },
+    "ranked.finished.win": {
+      "banner": [
+        "RANKED_WIN",
+        "VICTORY"
+      ],
+      "shake": "heavy",
+      "sound": "LevelUp1",
+      "floater": {
+        "amount": "{ratingChange}"
+      }
+    },
+    "ranked.finished.loss": {
+      "banner": [
+        "RANKED_LOSE",
+        "DUNGEON_FAILED"
+      ],
+      "sound": "TEMP_StoneDeath3",
+      "floater": {
+        "amount": "{ratingChange}"
+      }
+    },
+    "ranked.finished.draw": {
+      "banner": "RANKED_DRAW",
+      "sound": "GenericHitSound"
+    },
+    "ranked.cancelled": {
+      "banner": "RANKED_CANCELLED",
+      "sound": "GenericHitSound"
+    },
+    "ranked.rival_seen": {
+      "banner": [
+        "RANKED_RIVAL_SEEN",
+        "DEFEAT_THE_RIVAL"
+      ],
+      "sound": "GenericHitSound",
+      "replacesChat": true
+    },
+    "ranked.draw_offered": {
+      "sound": "TEMP_SwitchHit1b"
+    }
+  },
+  "lines": {
+    "_about": "One chat line per event; the parts below fill its {versus}, {why}, {times}, {moved}, {requeued}, {standing} and {how}.",
+    "ranked.queued": "Ranked: in the ring, looking for an opponent ({waiting} waiting).",
+    "ranked.stands": "Ranked: in the stands: out of the queue. Walk into the skull ring to race.",
+    "ranked.paired": "Ranked: a rival ({opponentLeague} {opponentRating}) was found. Starting in {countdownSeconds} seconds.",
+    "ranked.started": "Ranked: go! Your clock is running.",
+    "ranked.progress": "Ranked: your opponent cleared floor {floor} of {of}.",
+    "ranked.finished.win": "Ranked: {versus}you won ({why}){times}. {league} {rating} ({ratingChange}).{moved}",
+    "ranked.finished.loss": "Ranked: {versus}you lost ({why}){times}. {league} {rating} ({ratingChange}).{moved}",
+    "ranked.finished.draw": "Ranked: {versus}a draw ({why}){times}. {league} {rating} ({ratingChange}).{moved}",
+    "ranked.cancelled": "Ranked: race cancelled ({reason}).{requeued}",
+    "ranked.welcome": "Ranked: you are {standing}. {how}; /rank shows the board.",
+    "ranked.cooldown": "Ranked: you can queue again in {seconds}s.",
+    "ranked.idle": "Ranked: you were idle, so you left the queue. Move to join it again.",
+    "ranked.rival_seen": "Ranked: your rival is in the room with you — a shade on your heels.",
+    "ranked.draw_offered": "Ranked: your rival offers to call the race off. /draw to agree: nobody's rating moves."
+  },
+  "parts": {
+    "_about": "Pieces of the lines above, and of /rank. A part this book lacks is left out of its line.",
+    "versus": "{me} vs {rival}: ",
+    "why.faster": "faster time",
+    "why.opponent_lost": "opponent out",
+    "why.both_lost": "both out",
+    "why.same_time": "same time",
+    "why.time": "time limit",
+    "why.forfeit": "forfeit",
+    "times.both": ", {own} vs {rival}",
+    "times.own": ", {own}; your rival had not finished",
+    "times.rival": ", your rival's {rival}",
+    "requeued": " You are back in the queue.",
+    "standing.placed": "{league} {rating}, #{place} of {of}",
+    "standing.unplaced": "{league} {rating}, no place until your first race",
+    "moved.up": " Up to {league}!",
+    "moved.down": " Down to {league}.",
+    "how.ring": "Stand in the skull ring to race",
+    "how.anywhere": "Waiting here is waiting for a race",
+    "rank.own": "Ranked: {standing}{record}.",
+    "rank.record.one": " — {games} race: {won} won, {lost} lost{drawn}",
+    "rank.record.many": " — {games} races: {won} won, {lost} lost{drawn}",
+    "rank.drawn": ", {drawn} drawn",
+    "rank.top": "Top: {leaders}",
+    "rank.leader": "{place}. {name} {league} {rating}",
+    "rank.between": " · ",
+    "rank.you": "you",
+    "rank.off": "ranked races are off on this server",
+    "rank.unreadable": "the ranked board cannot be read right now"
+  }
+}

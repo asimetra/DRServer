@@ -3,6 +3,8 @@ import { info, warn } from "../log.js";
 import { ENTRY_ERROR, FLID, buildEntryResponse, readEntryRequest } from "./entry-protocol.js";
 import { transitionsOf } from "./session-transitions.js";
 import { declare, viewFromDemographics } from "../content-packs.js";
+import { declaredUiStrings } from "./ui-strings.js";
+import { declaredCapabilities } from "./capabilities.js";
 
 export {
   ENTRY_ERROR,
@@ -23,7 +25,26 @@ export {
  * request (content-packs.js). Before anything of the run is generated, so the
  * first hero it is shown is already one it can draw.
  */
-const noteDeclaration = (session, demographics) => {
+/** Each reader's own bound on a declaration; past it, or not JSON, it declares nothing. */
+const MAX_DEMOGRAPHICS = 4096;
+
+/** The Demographics object, parsed once for the three readers below; null for nothing said. */
+const demographicsObject = (value) => {
+  if (typeof value !== "string") return value ?? null;
+  if (!value || value.length > MAX_DEMOGRAPHICS) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const noteDeclaration = (session, raw) => {
+  const demographics = demographicsObject(raw);
+  // Which of this server's banner strings the client holds (ui-strings.js).
+  session.uiStrings = declaredUiStrings(demographics);
+  // What it does itself that the server would otherwise do for it (capabilities.js).
+  session.capabilities = declaredCapabilities(demographics);
   const view = viewFromDemographics(demographics);
   if (!view) return;
   if (session.contentView?.key !== view.key) {
