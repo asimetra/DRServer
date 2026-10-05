@@ -15,6 +15,7 @@ import { heroManaPointsUpdate, queueAccountSave } from "./rewards.js";
 import { matchHost } from "./match-host.js";
 import { heroMembersOf, memberForHero } from "./match-world.js";
 import { RULE, noteViolation } from "./security-events.js";
+import { runRulesOf } from "./run-rules.js";
 
 export const FLID_PROPOSE_REVIVE = 173;
 export const FLID_PROPOSE_SELF_REVIVE = 174;
@@ -131,6 +132,13 @@ export const handleProposeRevive = (session, reader, now = Date.now()) => {
       RULE.reviveWithoutAttempt,
       `field 173 target ${targetDoid} has no live matching choreography`
     );
+    return true;
+  }
+
+  // A run whose rules allow no revive (run-rules.js, `revives`): the rescue
+  // is played, since the client already drew it, and lands on nobody.
+  if (!runRulesOf(session).revives) {
+    info(`[${session.id}] hero ${session.heroDoid} tried to rescue ${targetDoid}: no revives in this run`);
     return true;
   }
 
@@ -274,13 +282,18 @@ export const handleProposeSelfRevive = async (session, reader) => {
   // It derives that decision from the counter regenerated with every floor, so
   // the server both preserves the counter and enforces the same cap itself.
   const withinRunLimit = session.mapPage?.NodeType !== "INFINITE" || used < 3;
-  const success = usable && withinRunLimit && (await spendBomb(session, reviveAll));
+  // A run whose rules allow no revive (run-rules.js, `revives`) refuses the
+  // bomb before it is spent: the player keeps it for a run that allows one.
+  const allowed = runRulesOf(session).revives !== false;
+  const success = usable && allowed && withinRunLimit && (await spendBomb(session, reviveAll));
   if (usable && !success) {
     warn(
       `[${session.id}] revive refused: ` +
-        (!withinRunLimit
-          ? `${reviveAll ? "party" : "health"} bomb run limit reached`
-          : `no ${reviveAll ? "party" : "health"} bomb left`)
+        (!allowed
+          ? "no revives in this run"
+          : !withinRunLimit
+            ? `${reviveAll ? "party" : "health"} bomb run limit reached`
+            : `no ${reviveAll ? "party" : "health"} bomb left`)
     );
   }
 

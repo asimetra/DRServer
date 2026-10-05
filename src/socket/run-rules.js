@@ -32,6 +32,12 @@ export const STOCK_RUN_RULES = Object.freeze({
     trophies: true,
     gems: true,
   }),
+  /**
+   * A hero who falls may be got back up: a Health or Party Bomb, or an ally's
+   * rescue. Off, no bomb is accepted, no rescue lands, and a floor with
+   * nobody standing is lost at once rather than after the defeat countdown.
+   */
+  revives: true,
   /** The node marked done on the map, and counted as a dungeon completed. */
   mapCredit: true,
   /** A finished run stands on the run boards. */

@@ -36,6 +36,9 @@
   "dungeonsEnabled": true,
   "floorDelayMs": 5000,
   "entryHandshakeMs": 120000,
+  "oneLife": {
+    "enabled": false
+  },
   "ranked": {
     "enabled": false,
     "lobbyNode": 50003,

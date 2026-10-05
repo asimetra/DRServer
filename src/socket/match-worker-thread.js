@@ -56,7 +56,7 @@ import { installFriendshipRelay, mirrorPresence } from "./presence.js";
 import { RULE, flushViolations, noteViolation } from "./security-events.js";
 import { createWorkerChannel, deferred } from "./worker-channel.js";
 import { frameFor, readyContentPacks, viewFromKey } from "../content-packs.js";
-import { startRanked } from "../ranked/setup.js";
+import { startModes } from "../modes/index.js";
 import { RANKED_WORKER } from "../ranked/remote.js";
 import { modeInstalled } from "../modes/hooks.js";
 import { RANKED_MODE } from "../ranked/hooks.js";
@@ -218,7 +218,7 @@ const memberHolding = (accountId) => {
 };
 
 /** Ranked, on the worker that runs it (ranked/remote.js); nothing on the others. */
-let stopRanked = async () => {};
+let stopModes = async () => {};
 
 const channel = createWorkerChannel({
   port: parentPort,
@@ -242,7 +242,7 @@ const channel = createWorkerChannel({
       case "announce":
         return announceTo([...members.values()], args.text);
       case "rankedStop":
-        return stopRanked().then(() => true);
+        return stopModes().then(() => true);
       case "drain":
         return drain();
       default:
@@ -858,7 +858,7 @@ const leave = (message) => {
 /** Everything settled and written, for a server that is stopping. */
 const drain = async () => {
   // Races end void before their racers leave: a leave now would decide them.
-  await stopRanked();
+  await stopModes();
   const everyone = [...members.values()];
   for (const member of everyone) {
     if (!member.leaving) leave({ sid: member.id, gen: member.generation, closed: true });
@@ -893,19 +893,19 @@ if (config.storage === "postgres") {
   await keepGenerationsIn(storage.tokenGenerationStore);
 }
 // Before ready: a ranked entry routed here first would otherwise be built as an
-// ordinary run of the lobby node.
-// Ranked failing to start is ranked's fault, not every dungeon's: logged, and the
-// worker runs the rest as before.
-if (workerIndex === RANKED_WORKER) {
-  try {
-    stopRanked = await startRanked({
-      where: "worker",
-      sessionOf: memberHolding,
-      onWaiting: (waiting) => channel.post({ t: "ranked", waiting }),
-    });
-  } catch (problem) {
-    error(`${label}: ranked did not start: ${problem?.stack ?? problem}`);
-  }
+// ordinary run of the lobby node. Ranked starts on its own worker only; a mode
+// whose runs are anybody's starts on every worker (modes/index.js).
+// A mode failing to start is the mode's fault, not every dungeon's: logged, and
+// the worker runs the rest as before.
+try {
+  stopModes = await startModes({
+    where: "worker",
+    workerIndex,
+    sessionOf: memberHolding,
+    onWaiting: (waiting) => channel.post({ t: "ranked", waiting }),
+  });
+} catch (problem) {
+  error(`${label}: a mode did not start: ${problem?.stack ?? problem}`);
 }
 info(`${label} ready`);
 // Whether ranked is running here, for the main thread to list MATCHMAKER by.

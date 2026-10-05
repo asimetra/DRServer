@@ -179,6 +179,8 @@ export const modeHooks = Object.freeze(
 
 /** The names a mode may answer, for whoever writes one. */
 export const MODE_HOOK_NAMES = Object.freeze(Object.keys(NOTHING));
+/** hook name -> how several modes' answers are put together; part of the stable surface (README). */
+export const MODE_HOOK_COMBINE = COMBINE;
 
 /**
  * Installs a mode's answers under its name; returns a function that takes

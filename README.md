@@ -143,6 +143,10 @@ friend, the lobby, countdown, rival ghost, banners and results use the game's
 own floors, buffs and effects, and the prize arrives as an in-game gift.
 Ranked runs pay no experience or chests. Enable it with `ODS_RANKED=1`.
 
+The second is **one life**: say `/onelife` in town and your next dungeon has no
+revives, and a fall ends it. It is the smallest mode there is, and the worked
+example for writing one. Enable it with `ODS_ONELIFE=1`.
+
 See [Writing a game mode](src/modes/README.md) for the hooks, run rules and
 content policy a new mode builds on.
 

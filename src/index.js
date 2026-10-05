@@ -19,7 +19,7 @@ import {
 } from "./preflight.js";
 import { error, info, warn } from "./log.js";
 import { createGracefulShutdown, installProcessHandlers } from "./shutdown.js";
-import { startRanked } from "./ranked/setup.js";
+import { startModes } from "./modes/index.js";
 import {
   ProcessLockHeldError,
   acquireProcessLock,
@@ -82,7 +82,7 @@ const refuseToStart = async (problem) => {
 };
 
 let listeners = [];
-let stopRanked = async () => {};
+let stopModes = async () => {};
 try {
   /**
    * What the settings alone can be refused for, before anything is claimed or
@@ -142,8 +142,8 @@ try {
   if (config.storage === "postgres") await keepServerStateInDatabase();
   else keepDeclarationsIn(path.join(config.dataDir, "content-declarations.json"));
   await startMatchWorkers();
-  // Off unless ODS_RANKED=1; see docs/ranked.md.
-  stopRanked = await startRanked();
+  // Each off unless asked for (ODS_RANKED, ODS_ONELIFE); see src/modes/README.md.
+  stopModes = await startModes();
 
   listeners = [startWebServices(), startInternalApi(), startGameSocket()];
 } catch (problem) {
@@ -245,7 +245,7 @@ const shutdown = createGracefulShutdown({
   servers: () => [...listeners, statusListener],
   // Races still under way end void, and are written down, while their racers
   // are connected: a racer whose connection closed first would have dropped.
-  beforeSessions: () => stopRanked(),
+  beforeSessions: () => stopModes(),
   sessions: activeSocketSessions,
   waitForWrites: waitForPersistentWrites,
   // The watch stops first: "shutting down" is not a health event worth a line.

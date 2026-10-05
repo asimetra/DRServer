@@ -177,13 +177,16 @@ const bannerFor = (banner, params, session, strings, toParty = false) => {
   return partyWide ? PARTY_WIDE : undeclared ? UNDECLARED : null;
 };
 
+/** What an event in the book may say; part of the stable surface (src/modes/README.md). */
+export const EFFECT_SPEC_KEYS = Object.freeze(["banner", "sound", "shake", "zoom", "countdown", "floater", "to", "replacesChat"]);
+
 /**
  * Plays one effect spec on one member. Returns what was sent and, for anything
  * that was not, why — so a misconfigured event can be diagnosed from its result
  * rather than guessed at.
  *
- * `spec` is `{ banner, sound, shake, zoom, countdown, floater, to, replacesChat }`,
- * every part optional. `replacesChat` comes back true when the spec asked for
+ * `spec` holds the `EFFECT_SPEC_KEYS` — `{ banner, sound, shake, zoom,
+ * countdown, floater, to, replacesChat }`, every part optional. `replacesChat` comes back true when the spec asked for
  * it and a banner went out: the screen has said it, so a chat line need not.
  */
 export const playEffects = (
@@ -287,8 +290,10 @@ export const playEffects = (
  */
 export const eventForNotice = (notice) => {
   if (!notice?.type) return null;
-  if (notice.type === "finished") return `ranked.finished.${notice.result ?? "unknown"}`;
-  return `ranked.${notice.type}`;
+  // A notice names its mode (`mode`); the ranked core's carry none and are ranked's.
+  const mode = notice.mode ?? "ranked";
+  if (mode === "ranked" && notice.type === "finished") return `ranked.finished.${notice.result ?? "unknown"}`;
+  return `${mode}.${notice.type}`;
 };
 
 const EMPTY_BOOK = Object.freeze({

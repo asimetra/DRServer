@@ -461,6 +461,14 @@ export const loadServerConfig = (environment = process.env) => {
      */
     entryHandshakeMs: asInt(setting(environment, "ENTRY_HANDSHAKE_MS"), defaults.entryHandshakeMs ?? 120_000),
 
+    /** One-life runs (src/modes/one-life). Off unless asked for: ODS_ONELIFE=1. */
+    oneLife: {
+      enabled:
+        setting(environment, "ONELIFE") === undefined
+          ? Boolean(defaults.oneLife?.enabled)
+          : setting(environment, "ONELIFE") === "1",
+    },
+
     /**
      * Ranked races (docs/ranked.md). Off unless asked for: ODS_RANKED=1. The
      * rest has the defaults the design settled on; the lobby node must be one

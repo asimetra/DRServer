@@ -7,6 +7,36 @@ example; `docs/ranked.md` is its design. This page is what a second mode
 needs. [A recorded 1v1 race](https://youtu.be/0fzvQxgv8YI) shows what the
 first one looks like on the unmodified client.
 
+## What a mode may rely on
+
+The surface below is the contract: it changes only with a note in the commit
+and a change to `test/mode-surface.test.js`, which pins it. Everything else in
+`src/` is the core's own and may change without notice — a mode that reaches
+into `src/socket/*` directly is reaching past the seam, and the core will not
+keep still for it.
+
+| Surface | Where | What is pinned |
+|---|---|---|
+| The hooks | `src/modes/hooks.js` — `installModeHooks`, `modeHooks`, `MODE_HOOK_NAMES`, `MODE_HOOK_COMBINE` | the 17 names, their arguments, and how several modes' answers combine |
+| Run rules | `src/socket/run-rules.js` — `runRules`, `STOCK_RUN_RULES` | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable` |
+| The mark | `request.mode`, `match.mode`, `session.modeEntry` | a mode's name travels on these, set by `routeEntry`, never read off the wire |
+| The floor plan | the shape `planFor` answers (below) | `floors[]` of `{ node, quiet, retile, numbered, harmless }`, `preloadArtFloors`, `preloadTileLibraries` |
+| The effect book | `config/ui-effects.json` — `playEvent`, `EFFECT_SPEC_KEYS` | an event is `{ banner, sound, shake, zoom, countdown, floater, to, replacesChat }`; lines and parts; `strings` for installed clients |
+| The notice board | `config/notices.json` — `src/notices.js` | a notice's fields (`ACTIONS` for the button) |
+| Chat commands | `src/socket/commands.js` — `define({ name, role, summary, usage, run, mode })`, `undefineMode` | a mode's commands come and go with it |
+| Content | `/content`, `Demographics` declarations, the policy below | the core never requires content; a mode offers it with a stock fallback |
+| The test harness | `test/one-life.test.js`, `test/ranked-stock-client.test.js` — hooks driven with plain objects | a mode is testable without a socket |
+| The registry | `src/modes/index.js` — `startModes` | where a shipped mode is started, on every thread |
+
+Internal, and used by ranked today, but not promised: the stock-client adapter's
+copies and ghost (`src/ranked/stock-client/`), the system-friend row, the match
+worker seat (`RANKED_WORKER`). The second mode, one life, needed none of them;
+what a third needs of them becomes surface when it does.
+
+A mode that needs something the seam lacks adds a *knob the core reads*, never a
+branch on the mode's name: `revives` came with one life, and the bomb, the
+rescue and the defeat countdown read the rule without knowing who set it.
+
 ## The seam
 
 `src/modes/hooks.js` is the whole of it. The runtime calls `modeHooks.<name>`
@@ -57,6 +87,7 @@ export const MY_RUN_RULES = runRules({
   mode: "mymode",
   unlockCheck: false,            // entry does not ask whether the hero opened the node
   pays: { experience: false },   // the rest stay as the game pays them
+  revives: false,                // no bomb, no rescue; nobody standing is lost at once
   mapCredit: false,              // the node is not marked done
   rankable: false,               // off the run boards
   joinable: false,               // friends cannot follow a player in
@@ -65,8 +96,8 @@ export const MY_RUN_RULES = runRules({
 
 Answer it from `modeRules(mode)` (by name) and `runRules(session)` (for a run
 of yours); everything unsaid is the game's own. These are the only knobs:
-experience, gold, chests, keys, trophies, gems, the unlock check, map credit,
-the boards, joining.
+experience, gold, chests, keys, trophies, gems, the unlock check, revives, map
+credit, the boards, joining.
 
 ## The floor plan
 
@@ -139,13 +170,32 @@ the banner strings, is gated exactly this way.
 
 ## Where it runs
 
-With match workers on, a mode's runs go to one worker (`RANKED_WORKER` in
-`src/ranked/remote.js`) and the mode is started there (`match-worker-thread.js`);
-the main thread installs only the hooks that answer on a connection. A second
-mode shares that worker.
+`src/modes/index.js` starts every shipped mode, on every thread, and each is
+off unless its setting asks for it (`ODS_RANKED`, `ODS_ONELIFE`). With match
+workers on a mode is started twice: on the main thread, where it installs the
+hooks that answer on a connection (entry, the friend list, chat in town), and
+inside the workers, where its runs are. A mode whose runs are anybody's — one
+life — starts on every worker. A mode that must hold both players of one run
+in one thread has a seat, as ranked does (`RANKED_WORKER` in
+`src/ranked/remote.js`), and starts there only; the pool sends its runs there.
+A run routed to a worker without its mode is refused rather than played as an
+ordinary one.
+
+## The smallest mode: one life
+
+`src/modes/one-life/index.js` is a whole mode in one file, and the shape to copy
+first. A player says `/onelife` in town; their next entry is marked
+`mode: "onelife"` by `routeEntry`; `modeRules` and `runRules` answer that mark
+with the stock rules under `revives: false` and `joinable: false`; the first
+floor's `heroRequested` plays `onelife.entered` from the book and `runFailed`
+plays `onelife.lost`. It reaches into no socket code: what it needed of the core
+— a hero who stays down — became a run rule the core reads. Its test,
+`test/one-life.test.js`, drives the hooks with plain objects and checks the
+core's side of the rule the same way.
 
 ## Testing
 
-A mode is testable without a socket: the hooks take plain objects, and
-`test/ranked-stock-client.test.js` shows a harness that stands in for the
-runtime (`sessionOf`, `completeFloor`, `raceFloors`) and turns time by hand.
+A mode is testable without a socket: the hooks take plain objects.
+`test/one-life.test.js` is the short form; `test/ranked-stock-client.test.js`
+shows a harness that stands in for the runtime (`sessionOf`, `completeFloor`,
+`raceFloors`) and turns time by hand.

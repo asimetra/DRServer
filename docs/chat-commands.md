@@ -29,6 +29,12 @@ is off (`src/modes/README.md`, "Commands"). With ranked on (`ODS_RANKED=1`):
 | `/rank` | Say your ranked rating and place, and who leads |
 | `/draw` | Offer to call your ranked race off; both offering ends it with no rating moved |
 
+With one life on (`ODS_ONELIFE=1`):
+
+| Mode command | What it does |
+|---|---|
+| `/onelife` | Make your next dungeon a one-life run: no revives, and a fall ends it. Said again, call it off |
+
 Accounts listed in `ODS_ADMIN_ACCOUNTS` (comma-separated account ids) also have:
 
 | Command | What it does |

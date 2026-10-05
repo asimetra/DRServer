@@ -312,6 +312,9 @@ const REAL_NOTICES = [
   { type: "rival_seen" },
   // The rival asking to call the race off.
   { type: "draw_offered" },
+  // One life's own (src/modes/one-life): the first floor's hero, and the run lost.
+  { mode: "onelife", type: "entered" },
+  { mode: "onelife", type: "lost" },
   { type: "queued", waiting: 1, ready: 0 },
   { type: "paired", race: "r", opponent: 2, opponentRating: 1500, countdownSeconds: 5 },
   { type: "started", race: "r" },
@@ -384,7 +387,8 @@ test("a client without the strings is never sent one of them, so never sees mia:
     for (const frame of [...own, ...party]) {
       assert.ok(!ours.some((key) => same(frame, key)), `${notice.type} sent a key this client lacks`);
     }
-    for (const reason of result.skipped) assert.match(reason, /^banner: the client has not declared/);
+    // A notice the book has no event for says nothing on screen, which is a choice (its line still says it).
+    for (const reason of result.skipped) assert.match(reason, /^(banner: the client has not declared|no event)/);
   }
 });
 

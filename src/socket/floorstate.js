@@ -9,6 +9,7 @@ import { matchHost } from "./match-host.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { holdsFloor } from "./actor-roles.js";
 import { modeHooks } from "../modes/hooks.js";
+import { runRulesOf } from "./run-rules.js";
 
 /**
  * Floor outcome.
@@ -141,6 +142,14 @@ const cancelFloorTimeout = (session, timer) =>
 export const beginFloorFailing = (session) => {
   if (session.floorFailingTimer || session.floorCleared || !session.areaDoid) return;
   if (!everyPlayerDown(session)) return;
+
+  // The countdown is time to be revived in. A run whose rules allow no revive
+  // (run-rules.js, `revives`) has nothing to wait for: lost now.
+  if (!runRulesOf(session).revives) {
+    info(`[${session.id}] every player down — no revives in this run, lost`);
+    (session.reportFloorFailed ?? reportFloorFailed)(session);
+    return;
+  }
 
   const seconds = defeatCountdownSeconds(session);
   session.send(buildFloorFailing(session.areaDoid, seconds));

@@ -11,6 +11,7 @@
     "floater: { amount, color } floats a number over the player's own hero; a negative amount is drawn as damage, a positive one as healing. color 0 is the client default; 11 poison, 12 fire, 13 cold, 14 blood, 15 bacon, 16 ethereal.",
     "replacesChat: true sends no chat line for the event when its banner was shown.",
     "to: self (the default) shows it to this player only; party shows it to everyone on the floor.",
+    "An event is named <mode>.<type>: a notice says its mode, and the ranked core's say none and are ranked's. One life has onelife.entered (the first floor's hero) and onelife.lost (the run lost), carrying nothing.",
     "{name} in any value is filled from the event. Ranked notices carry: queued {waiting, ready}; paired {opponentRating, countdownSeconds}; progress {floor, of}; finished {rating, ratingChange}; cancelled {reason, requeued}. ranked.stands is walking out of the lobby's ring, and carries nothing. ranked.rival_seen is the first time a race shows the rival's ghost in the room, and carries nothing. ranked.draw_offered is the rival asking to call the race off (/draw), and carries nothing.",
     "Only a dungeon floor can show banner, sound, shake, zoom and countdown; in town they are skipped. The ranked lobby is a floor, so all of them work there.",
     "lines: the chat line each event says, as text the server sends — nothing to install, reworded here. Said unless a banner with replacesChat showed. {name} fills from the event, formatted for reading: a rating is a number from 0, a change reads +16, and {league} is the league the rating is in (server.defaults.json ranked.leagues). A finish also has {versus}, {why}, {times} and {moved} (a league crossed), a cancel {requeued}, the lobby's welcome {standing} and {how}: each is one of the parts. A line naming a param its event lacks is not said. Not every line is a core notice: ranked.welcome, ranked.cooldown and ranked.idle come from the stock-client adapter, and rank.* make up /rank."
@@ -27,7 +28,8 @@
     "RANKED_LOSE": "YOUR RIVAL WON",
     "RANKED_DRAW": "DRAW!",
     "RANKED_CANCELLED": "RACE CANCELLED",
-    "RANKED_RIVAL_SEEN": "RIVAL ON YOUR HEELS"
+    "RANKED_RIVAL_SEEN": "RIVAL ON YOUR HEELS",
+    "ONE_LIFE": "ONE LIFE - NO REVIVES"
   },
   "shakes": {},
   "events": {
@@ -105,6 +107,11 @@
       "sound": "GenericHitSound",
       "replacesChat": true
     },
+    "onelife.entered": {
+      "banner": "ONE_LIFE",
+      "sound": "TEMP_SwitchHit1b",
+      "replacesChat": true
+    },
     "ranked.draw_offered": {
       "sound": "TEMP_SwitchHit1b"
     }
@@ -124,7 +131,9 @@
     "ranked.cooldown": "Ranked: you can queue again in {seconds}s.",
     "ranked.idle": "Ranked: you were idle, so you left the queue. Move to join it again.",
     "ranked.rival_seen": "Ranked: your rival is in the room with you — a shade on your heels.",
-    "ranked.draw_offered": "Ranked: your rival offers to call the race off. /draw to agree: nobody's rating moves."
+    "ranked.draw_offered": "Ranked: your rival offers to call the race off. /draw to agree: nobody's rating moves.",
+    "onelife.entered": "One life: no revives in this dungeon. A fall ends the run.",
+    "onelife.lost": "One life: your hero fell, and the run with it."
   },
   "parts": {
     "_about": "Pieces of the lines above, and of /rank. A part this book lacks is left out of its line.",
