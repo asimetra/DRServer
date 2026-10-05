@@ -293,6 +293,15 @@ refused with `403`, and with `400` if the header is missing. This way a website
 page that forgets to check whether its user is an admin still cannot give
 ordinary players these powers.
 
+The game client has an admin console of its own, opened with the backtick key:
+it asks `webMagicWord/AskIfAdmin`, and an admin by the same rule is shown a
+command line whose words (`GiveGems`, `GiveCoins`, `GiveXp`, `UnlockMapNodes`,
+`UnlockAllMapNodes`, `LockAllMapNodes`) reach `webMagicWord/doMagicWord`
+(`src/magic-words.js`). They change the admin's own account only — the
+client sends its own id, and a call made in another's name is refused — and
+are recorded below as `console.<word>`. Reaching into a player's account is
+this API's job.
+
 Every administrative call that takes effect is recorded with who made it, what
 it did, which account it affected, when, and its details. The record is a table
 on PostgreSQL, or `admin-actions.jsonl` in the data directory on file storage.

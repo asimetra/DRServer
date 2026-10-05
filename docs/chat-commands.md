@@ -42,6 +42,15 @@ Accounts listed in `ODS_ADMIN_ACCOUNTS` (comma-separated account ids) also have:
 | `/hp [amount]` | Set your health, or read it |
 | `/complete` | End this floor as though it had been cleared |
 
+The same accounts can open the game's own admin console with the backtick key
+(`` ` ``). It asks the server whether the player is an admin and, told yes,
+shows a command line whose words are posted to the server: `/GiveGems n`,
+`/GiveCoins n`, `/GiveXp hero xp`, `/UnlockMapNodes hero start [end]`,
+`/UnlockAllMapNodes hero`, `/LockAllMapNodes hero`, `/Test`. They act on the
+admin's own account only, for setting up a test account; every one that takes
+effect is recorded with the other administrative actions
+(`docs/operations.md`). `/helpCommands` in the console lists them.
+
 `/complete` moves the whole party to the next floor, or wins the run on the
 last one. A run that used it is kept off the leaderboards, and an Infinite
 dungeon pays no floor rewards and records no depth for the rest of it.

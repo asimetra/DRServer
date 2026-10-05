@@ -36,6 +36,10 @@ const DECLARING = new Map([
   ["store/AskAboutDailyReward", 2],
   ["leaderboard/getFriendData", 1],
   ["store/PurchaseOffer", 4],
+  // The admin console's calls carry them too (magic-words.js).
+  ["webMagicWord/AskIfAdmin", 2],
+  ["webMagicWord/AskForAccountDetails", 2],
+  ["webMagicWord/doMagicWord", 3],
 ]);
 
 /**

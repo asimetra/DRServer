@@ -45,6 +45,8 @@ import { excludeIdsFor, giftsFor, sendGift, takeGift } from "./gifts.js";
 import { defineAccountOperation } from "./account-operations.js";
 import { info, warn } from "./log.js";
 import { modeHooks } from "./modes/hooks.js";
+// The client's admin console (webMagicWord/*), registered as it is imported.
+import "./magic-words.js";
 
 /**
  * Game-specific JSON-RPC handlers. `rpc.js` stays pure infrastructure
