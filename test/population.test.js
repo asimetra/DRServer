@@ -82,6 +82,9 @@ test("Infinite population shrinks to its authored role floors without crossing m
   assert.ok(count(deep, "bruiser") <= count(first, "bruiser"));
   assert.ok(count(deep, "fodder") >= Math.round(count(first, "fodder") * 0.35));
   assert.ok(count(deep, "bruiser") >= Math.round(count(first, "bruiser") * 0.75));
+  // Minibosses author a drop of 0 to a floor of 0: none, from the first floor (97 captured floors, 1 miniboss).
+  assert.equal(count(first, "miniboss"), 0);
+  assert.equal(count(deep, "miniboss"), 0);
 });
 
 test("fodder is dealt across the pool rather than piled on one constant", async () => {

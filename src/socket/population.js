@@ -144,11 +144,21 @@ export const populationFor = (
   };
   if (infiniteDefinition) {
     const floorsPastFirst = Math.max(0, Number(floorNumber) - 1);
+    /**
+     * A role falls by its drop per floor to its authored floor. Fodder and
+     * bruisers do exactly that on the captured Infinite runs (fodder 39, 35,
+     * 31, 27, 23, 19, 15, 13, 13 at -0.1 to 0.35; bruisers 25, 23, 22, 21, 20,
+     * 18, 18 at -0.05 to 0.75). Minibosses author a drop of 0 and a floor of
+     * 0, and the official reads that as none at all: 97 Infinite floors
+     * across seven themes carry one miniboss between them, from the first
+     * floor on. A drop of nothing leaves the role at its floor, not at the
+     * tier's full count — which is what this server put on every Infinite
+     * floor, five to ten Juggernauts the official never sent.
+     */
     const scale = (role, dropField, minimumField) => {
-      const multiplier = Math.max(
-        Number(infiniteDefinition[minimumField] ?? 0),
-        1 + Number(infiniteDefinition[dropField] ?? 0) * floorsPastFirst
-      );
+      const drop = Number(infiniteDefinition[dropField] ?? 0);
+      const floor = Number(infiniteDefinition[minimumField] ?? 0);
+      const multiplier = drop === 0 ? floor : Math.max(floor, 1 + drop * floorsPastFirst);
       wanted[role] = Math.max(0, Math.round(wanted[role] * multiplier));
     };
     scale("fodder", "FodderCountDropPerFloor", "FodderMultiplierMin");
