@@ -754,6 +754,24 @@ const withinReach = (a, b, radius) => {
   return dx * dx + dy * dy <= radius * radius;
 };
 
+/** Whether the straight step from `from` to `to` passes through the circle at `centre`. */
+const stepCrosses = (from, to, centre, radius) => {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length2 = dx * dx + dy * dy;
+  if (!(length2 > 0)) return withinReach(to, centre, radius);
+  const t = Math.max(0, Math.min(1, ((centre.x - from.x) * dx + (centre.y - from.y) * dy) / length2));
+  return withinReach({ x: from.x + t * dx, y: from.y + t * dy }, centre, radius);
+};
+
+/**
+ * The longest step that is still a walk. Position samples come about 208ms
+ * apart and a hero walks 250 units a second, so a step is some fifty units;
+ * one of several hundred is a respawn, a door or a teleport, and sweeping it
+ * across the floor would press every button on the line.
+ */
+const SWEPT_STEP_MAX = 400;
+
 /**
  * An NPC died. Drops any NPC_LIFE_TRIGGER that named it.
  *
@@ -919,6 +937,26 @@ export const updateProximityTriggers = (session, position) => {
    */
   const down = Boolean(hero?.dead);
 
+  /**
+   * The step since the last sample, so a zone walked *through* counts too.
+   *
+   * Samples arrive about every 208ms and a hero covers some fifty units in
+   * that time; a catacomb button is thirty units across. Walked over at a
+   * run, the body is often inside only between two samples, and a check of
+   * the samples alone saw nothing — which is "I have to stand exactly on it".
+   * The official's switch-on edges put the body up to ten units *outside* the
+   * rim at the sample that switched them (375 edges off 109 floors, see
+   * above), which a sample-only rule cannot produce and a swept step does. A
+   * zone the step passes through without ending inside is pressed and let go
+   * in one move: entered, then left, as the body did.
+   */
+  const previous = session.proximityStep;
+  const from =
+    previous && previous.floorDoid === session.floorDoid && previous.heroDoid === session.heroDoid ? previous.at : null;
+  session.proximityStep = { at, floorDoid: session.floorDoid, heroDoid: session.heroDoid };
+  const stepLength = from ? Math.hypot(at.x - from.x, at.y - from.y) : Infinity;
+  const swept = from && stepLength <= SWEPT_STEP_MAX;
+
   for (const trigger of session.triggers ?? []) {
     if (!trigger.constant.startsWith("PROXIMITY")) continue;
 
@@ -937,7 +975,10 @@ export const updateProximityTriggers = (session, position) => {
     }
 
     const memberInside = !down && withinReach(at, trigger, trigger.radius);
-    const memberEntered = memberInside && !trigger.occupants.has(session.heroDoid);
+    const passedThrough =
+      !down && !memberInside && swept && !trigger.occupants.has(session.heroDoid) &&
+      stepCrosses(from, at, trigger, trigger.radius);
+    const memberEntered = (memberInside && !trigger.occupants.has(session.heroDoid)) || passedThrough;
     const alreadyFired = trigger.triggerOnce && trigger.fired;
     if (memberInside) trigger.occupants.add(session.heroDoid);
     else trigger.occupants.delete(session.heroDoid);
@@ -951,6 +992,12 @@ export const updateProximityTriggers = (session, position) => {
           warn(`[${session.id}] door failed: ${problem.message}`)
         );
       }
+    }
+    if (passedThrough && !alreadyFired) {
+      // Pressed in passing: on with the body in it, off again as it went out.
+      trigger.occupants.add(session.heroDoid);
+      applyProximityState(session, trigger, true);
+      trigger.occupants.delete(session.heroDoid);
     }
     applyProximityState(session, trigger, trigger.occupants.size > 0);
   }

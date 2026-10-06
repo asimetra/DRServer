@@ -1680,6 +1680,52 @@ test("a multiplayer turret aims at the nearest live hero, not the timer owner", 
  * would otherwise stay entered for as long as the body lies there, and whatever
  * hangs off it stays switched on.
  */
+/**
+ * A button walked over at a run. Samples come ~208ms apart and a hero covers
+ * some fifty units in that time, so the body is often inside a thirty-unit
+ * button only *between* two samples; the step between them has to count.
+ */
+test("a step that passes through a button between two samples presses it, and lets it go", async () => {
+  const { updateProximityTriggers } = await import("../src/socket/triggers.js");
+  const { collisionPointOf } = await import("../src/socket/navigation.js");
+  const hero = { doid: 7002, constant: "HERO_WARRIOR", position: { x: 400, y: 500 }, collisionRadius: 25 };
+  const body = collisionPointOf(hero, hero.position);
+  const highs = [];
+  // A once-only button proves the press (it stays fired); a plate proves the release (it is off again).
+  const button = { id: "button", constant: "PROXIMITY_TRIGGER", x: 500, y: body.y, radius: 30, triggerOnce: true };
+  const plate = { id: "plate", constant: "PROXIMITY_TRIGGER", x: 500, y: body.y, radius: 30 };
+  const beside = { id: "beside", constant: "PROXIMITY_TRIGGER", x: 500, y: body.y + 80, radius: 30, triggerOnce: true };
+  const session = {
+    id: 82,
+    heroDoid: 7002,
+    floorDoid: 9,
+    actors: new Map([[7002, hero]]),
+    signalValues: new Map(),
+    signalTargets: new Map(),
+    triggers: [button, plate, beside],
+    send: () => {},
+  };
+  const step = (x) => {
+    hero.position = { x, y: 500 };
+    updateProximityTriggers(session, hero.position);
+    highs.push(session.signalValues.get("button"));
+  };
+
+  step(400);
+  assert.equal(button.fired, undefined, "outside, and no step yet to sweep");
+  step(600); // seventy units past the far rim, in one sample
+  assert.equal(button.fired, true, "the step went through it: the once-only button is pressed");
+  assert.equal(plate.on, false, "and out the other side: the plate was pressed and let go");
+  assert.equal(session.signalValues.get("plate"), false);
+  assert.equal(beside.fired, undefined, "a button the step passed beside is not touched");
+
+  // A respawn across the floor is not a walk over every button on the line.
+  const far = { id: "far", constant: "PROXIMITY_TRIGGER", x: 3000, y: body.y, radius: 30, triggerOnce: true };
+  session.triggers.push(far);
+  step(5000);
+  assert.equal(far.fired, undefined, "a step of thousands of units sweeps nothing");
+});
+
 test("a dead hero leaves every proximity trigger", async () => {
   const { updateProximityTriggers } = await import("../src/socket/triggers.js");
 
