@@ -7,6 +7,7 @@ import {
   enemyPoolFor,
   isStockedRoleMarker,
   markersFor,
+  minibossesForFloor,
   populationFor,
   stockFloor,
 } from "../src/socket/population.js";
@@ -182,4 +183,26 @@ test("which markers a short quota fills is drawn, not the tiles' order", async (
     }
   }
   assert.ok(filled.size >= 5, `over 24 floors the quota landed on ${filled.size} different markers, not always the first two`);
+});
+
+/**
+ * Minibosses are the dungeon's, not each floor's: the captured two-floor
+ * runs carry the tier's count across both floors (ARENA_D 4-6: 2+2, 1+4,
+ * 2+3, 2+4), dealt one by one onto markers drawn from the whole dungeon's.
+ */
+test("the miniboss quota is the dungeon's, dealt over its floors by their markers", () => {
+  const tier = { MinMiniboss: 6, MaxMiniboss: 6 };
+  let sumOfBoth = 0, first = 0, second = 0;
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const a = minibossesForFloor(tier, { seed, byFloor: [2, 1], index: 0 });
+    const b = minibossesForFloor(tier, { seed, byFloor: [2, 1], index: 1 });
+    assert.equal(a + b, 6, "the two floors together carry the quota, every run");
+    first += a; second += b; sumOfBoth += a + b;
+  }
+  assert.equal(sumOfBoth, 1200);
+  assert.ok(first / second > 1.6 && first / second < 2.5, `two markers against one: ${first} vs ${second}`);
+
+  assert.equal(minibossesForFloor(tier, { seed: 7, byFloor: [0, 3], index: 0 }), 0, "a floor with no marker gets none");
+  assert.equal(minibossesForFloor(tier, { seed: 7, byFloor: [0, 3], index: 1 }), 6, "and the other carries the whole count");
+  assert.equal(minibossesForFloor(tier, { seed: 7, byFloor: [4], index: 0 }), 6, "a run of one floor is the quota as before");
 });

@@ -74,6 +74,52 @@ const between = (random, low, high) => {
   return min + Math.floor(random() * (max - min + 1));
 };
 
+/** A small deterministic generator (mulberry32), for a draw two floors must agree on. */
+export const seededRandom = (seed) => {
+  let state = (Number(seed) >>> 0) || 1;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+/**
+ * This floor's minibosses, out of the dungeon's.
+ *
+ * Fodder and bruisers are a floor's quota: every captured floor of a two-floor
+ * dungeon carries the tier's full count of each. Minibosses are the
+ * dungeon's: ARENA_D asks 4-6 and its floors carry 2+2, 1+4, 2+3, 2+4;
+ * CATACOMBS_D asks 5-10 and carries 6+4, 6+4, 3+6, 2+6, 5+4, 2+8, 2+7 — the
+ * two floors together inside the quota every time, and a single-floor tier
+ * (ICE_CAVES_C, TEMPLE_A, CATACOMBS_B) inside it on its one floor. Where
+ * they fall follows the markers: a floor with none gets none while the other
+ * carries the whole count (ICE_CAVES_D: 0 and 10), and 10 over markers of 2
+ * and 1 came as 6 and 4, 10 over 1 and 4 as 2 and 8. So each miniboss is
+ * dealt to one marker drawn from the whole dungeon's, and a floor takes the
+ * ones that fell on its own (37 two-floor runs across five tiers).
+ *
+ * `share` is `{ seed, byFloor, index }`: the run's seed, every floor's
+ * miniboss marker count in order, and which floor this is. The draw runs on
+ * the seed alone, so each floor arrives at the same dealing on its own.
+ */
+export const minibossesForFloor = (tier, { seed, byFloor, index }) => {
+  const total = byFloor.reduce((sum, count) => sum + Math.max(0, Number(count) || 0), 0);
+  const here = Math.max(0, Number(byFloor[index]) || 0);
+  if (!total || !here) return 0;
+  const random = seededRandom(seed);
+  const quota = between(random, Number(tier.MinMiniboss), Number(tier.MaxMiniboss));
+  const from = byFloor.slice(0, index).reduce((sum, count) => sum + Math.max(0, Number(count) || 0), 0);
+  let mine = 0;
+  for (let i = 0; i < quota; i += 1) {
+    const marker = Math.floor(random() * total);
+    if (marker >= from && marker < from + here) mine += 1;
+  }
+  return mine;
+};
+
 /**
  * How many of each role this floor wants, and which constants fill them.
  *
@@ -85,14 +131,16 @@ export const populationFor = (
   gm,
   tier,
   random = Math.random,
-  { infiniteDefinition = null, floorNumber = 1, allMinibosses = false } = {}
+  { infiniteDefinition = null, floorNumber = 1, allMinibosses = false, minibossShare = null } = {}
 ) => {
   if (!tier) return [];
   const pool = enemyPoolFor(gm, tier.Constant);
   const wanted = {
     fodder: between(random, Number(tier.MinFodder), Number(tier.MaxFodder)),
     bruiser: between(random, Number(tier.MinBruiser), Number(tier.MaxBruiser)),
-    miniboss: between(random, Number(tier.MinMiniboss), Number(tier.MaxMiniboss)),
+    miniboss: minibossShare
+      ? minibossesForFloor(tier, minibossShare)
+      : between(random, Number(tier.MinMiniboss), Number(tier.MaxMiniboss)),
   };
   if (infiniteDefinition) {
     const floorsPastFirst = Math.max(0, Number(floorNumber) - 1);
@@ -219,12 +267,14 @@ export const stockFloor = (
     infiniteDefinition = null,
     floorNumber = 1,
     allMinibosses = false,
+    minibossShare = null,
   }
 ) => {
   const wanted = populationFor(gm, tier, random, {
     infiniteDefinition,
     floorNumber,
     allMinibosses,
+    minibossShare,
   });
   if (!wanted.length) return [];
 

@@ -9,6 +9,7 @@ import {
   sealedXpWeight,
   stockFloor,
   tierHasEnemyPopulation,
+  markersFor,
 } from "./population.js";
 import { infiniteFloorGold, infiniteRewards } from "../infinite.js";
 import { trackTriggers, startTimerTriggers } from "./triggers.js";
@@ -63,6 +64,34 @@ const plannedXpElsewhere = async (session, gm, tier, here) => {
     });
   }
   return weight;
+};
+
+/**
+ * The run's miniboss markers, floor by floor, for the dungeon's share of
+ * minibosses (population.js, minibossesForFloor). Read once per run and kept
+ * on the plan; a layout is its seed's, so another floor's can be laid out
+ * here without being built. Not for an Infinite run — its floors are many
+ * and its minibosses scale by depth — and not needed for a run of one floor.
+ */
+const minibossShareFor = async (session) => {
+  const plan = session.floorPlan;
+  const floors = plan?.floors ?? [];
+  if (!plan || floors.length < 2 || session.infiniteDefinition) return null;
+  if (!plan.minibossMarkers) {
+    const byFloor = [];
+    for (const [at] of floors.entries()) {
+      try {
+        byFloor.push(markersFor(await loadFloorAt(plan, at)).miniboss.length);
+      } catch (problem) {
+        warn(`[${session.id}] could not read floor ${at + 1}'s markers for the miniboss share: ${problem.message}`);
+        byFloor.push(0);
+      }
+    }
+    plan.minibossMarkers = byFloor;
+  }
+  const seed = Number(floors.find((descriptor) => descriptor.generated)?.generated.seed);
+  if (!Number.isFinite(seed)) return null;
+  return { seed, byFloor: plan.minibossMarkers, index: session.floorIndex ?? 0 };
 };
 
 /**
@@ -308,6 +337,7 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
       allMinibosses: (session.infiniteActiveModifiers ?? []).some(
         (modifier) => modifier.AllEnemiesAreMinibosses
       ),
+      minibossShare: await minibossShareFor(session),
     });
     let stocked = 0;
     for (const entry of stock) {
