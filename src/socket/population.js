@@ -159,6 +159,16 @@ export const markersFor = (floor) => {
   return byRole;
 };
 
+/** A copy in a random order, Fisher-Yates over `random`. */
+const shuffled = (items, random) => {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+};
+
 /**
  * Deals `count` monsters over a role's markers, each marker taking its turn.
  * The first on a marker stands exactly on it, as an eighth of the corpus does;
@@ -225,9 +235,20 @@ export const stockFloor = (
     byRole.get(entry.role).push(entry);
   }
 
+  /**
+   * Which markers take a quota smaller than their number is drawn, not read
+   * off the tiles' order. The quota is usually short of the markers for
+   * minibosses (two to five against three to six on a Catacombs floor) and
+   * for fodder (25-30 against 43-58), and the official's choice of which
+   * stand empty shows no order: on 109 captured floors the empty ones are
+   * anywhere. Dealt in tile order, the markers of the tile laid last — the
+   * exit tile, often — were empty on every floor of this server, and a room
+   * the tiles meant to be guarded never was. A floor's tiles are its seed's,
+   * and so is this draw.
+   */
   const stock = [];
   for (const [role, entries] of byRole) {
-    const points = placeAround(markers[role], entries.length, navigation, random, 35);
+    const points = placeAround(shuffled(markers[role], random), entries.length, navigation, random, 35);
     entries.slice(0, points.length).forEach((entry, index) => {
       stock.push({ ...entry, ...points[index] });
     });

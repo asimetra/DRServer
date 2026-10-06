@@ -155,3 +155,31 @@ test("stocking a floor names a constant and a place for each", async () => {
     assert.ok(Number.isFinite(entry.x) && Number.isFinite(entry.y));
   }
 });
+
+/**
+ * A quota short of the markers leaves some empty, and which ones is a draw.
+ * Dealt in tile order, the last tile's markers — the exit tile, often — were
+ * the empty ones on every floor; the official's empty markers are anywhere.
+ */
+test("which markers a short quota fills is drawn, not the tiles' order", async () => {
+  const gm = await loadGameMaster();
+  const tier = { Constant: "CATACOMBS_A", MinMiniboss: 2, MaxMiniboss: 2, MinFodder: 0, MaxFodder: 0, MinBruiser: 0, MaxBruiser: 0 };
+  const floor = {
+    placements: { npc: Array.from({ length: 6 }, (_, i) => ({ kind: "npc", constant: "MINIBOSS", x: 1000 * i, y: 0 })) },
+  };
+  const seeded = (seed) => () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const filled = new Set();
+  for (let run = 1; run <= 24; run += 1) {
+    const stock = stockFloor(gm, { floor, navigation: null, tier, random: seeded(run) });
+    assert.equal(stock.length, 2, "the quota, each on a marker of its own");
+    for (const entry of stock) {
+      const index = floor.placements.npc.findIndex((marker) => marker.x === entry.x && marker.y === entry.y);
+      assert.ok(index >= 0, "exactly on a marker: the first of each marker's share stands on it");
+      filled.add(index);
+    }
+  }
+  assert.ok(filled.size >= 5, `over 24 floors the quota landed on ${filled.size} different markers, not always the first two`);
+});
