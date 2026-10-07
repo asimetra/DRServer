@@ -18,10 +18,12 @@ Rampage**, covering its HTTP services and multiplayer game socket.
 - **Reconstructed dungeon behaviour:** generated and authored multi-floor maps,
   trigger graphs, scripted bosses, NPC AI, traps, rewards, trophy completion,
   and infinite runs.
-- **Game modes on the stock client:** a mode changes what a run is without the
-  core knowing it exists. [Ranked 1v1 races](#game-modes-optional) are the
-  first, with no client modification; [Writing a game mode](src/modes/README.md)
-  is the page for the next one.
+- **Game modes on the stock client:** ranked 1v1 races, an endless boss rush
+  and one-life runs, entered from the friend list or a chat command, with no
+  client modification.
+  A mode changes what a run is without the core knowing it exists — a test
+  holds that line — so [the next one](src/modes/README.md) is a folder, not a
+  fork. See [Game modes](#game-modes-optional).
 - **Web-ready platform API:** an authenticated server-owned API covers account
   registration, token lifecycle, player profiles, leaderboards, atomic trades,
   and a searchable market with listing, buying, cancellation, sales history,
@@ -134,26 +136,22 @@ declaration, compatibility, and validation requirements.
 
 [Watch a 1v1 ranked speedrun on the unmodified client](https://youtu.be/0fzvQxgv8YI)
 
-Game modes change what a dungeon run is without the core knowing they exist.
-The first is **ranked races**: two players are matched by rating, sent into the
-same randomly drawn dungeon, and the faster clear wins. Everything is driven by
-the server on the stock client — players queue by joining a `MATCHMAKER`
-friend, the lobby, countdown, rival ghost, banners and results use the game's
-own floors, buffs and effects, and the prize arrives as an in-game gift.
-Ranked runs pay no experience or chests. Enable it with `ODS_RANKED=1`.
+A game mode changes what a dungeon run is — who gets in, what the floors are,
+what it pays, when it ends — and the rest of the game stays as shipped. Three
+come with the server, each off until its setting turns it on, all of them on
+the stock client: players enter from the **friend list**, where a mode's row
+(`MATCHMAKER`, `DELVE`) carries the client's own JOIN button, or arm their next
+run with a chat command.
 
-The second is **one life**: say `/onelife` in town and your next dungeon has no
-revives, and a fall ends it. It is the smallest mode there is, and the worked
-example for writing one. Enable it with `ODS_ONELIFE=1`.
+| Mode | What it is | Entered by | Turned on by |
+|---|---|---|---|
+| **Ranked races** | Two players, one randomly drawn dungeon, the faster clear wins. Rated, with leagues; the prize is an in-game gift | JOIN on `MATCHMAKER` | `ODS_RANKED=1` |
+| **Delve** | A boss rush anybody may join: every floor a trophy boss, each harder, until the party falls. Item boxes, gifts in town, weapons at the deep milestones | JOIN on `DELVE`, or `/delve` | `ODS_DELVE=1` |
+| **One life** | An ordinary dungeon with no revives: a fall is final | `/onelife`, then the next dungeon | `ODS_ONELIFE=1` |
 
-The third is **delve**: DELVE on the friend list starts a boss rush anybody may
-join — every floor a trophy boss, each harder than the last, until the party
-falls. Bosses pay item boxes, every few bosses leave a gift in town, and the
-deep milestones may leave a weapon at the depth's level. Enable it with
-`ODS_DELVE=1`.
-
-See [Writing a game mode](src/modes/README.md) for the hooks, run rules and
-content policy a new mode builds on.
+- [Game modes](docs/modes.md) — how each plays, what it pays, and its settings
+- [Writing a game mode](src/modes/README.md) — the seam a new mode is written
+  against; one kept outside the repository is loaded with `ODS_MODES`
 
 ## Development
 
@@ -184,6 +182,7 @@ and remaining client-side boundary. Load-test scenarios and SLO gating are in
 - [Environment reference](.env.example)
 - [Configuration data contracts](config/README.md)
 - [Chat commands](docs/chat-commands.md)
+- [Game modes](docs/modes.md)
 - [Known limitations](docs/known-limitations.md)
 - [Content packs](docs/content-packs.md)
 - [Writing a game mode](src/modes/README.md)

@@ -2,10 +2,12 @@
 
 A mode is code that changes what a dungeon run is — who gets in, what the
 floors are, what the run pays, when it ends — without the core knowing the
-mode exists. Ranked races (`src/modes/ranked/`) are the first one and the worked
-example; `docs/ranked.md` is its design. This page is what a second mode
-needs. [A recorded 1v1 race](https://youtu.be/0fzvQxgv8YI) shows what the
-first one looks like on the unmodified client.
+mode exists. Three ship, each a folder here: ranked races (`ranked/`, the
+large one), delve (`delve/`, a boss rush that draws its own floors) and one
+life (`one-life/`, the smallest); [Game modes](../../docs/modes.md) is how
+they play. This page is what the next one needs.
+[A recorded 1v1 race](https://youtu.be/0fzvQxgv8YI) shows a mode on the
+unmodified client.
 
 ## What a mode may rely on
 
