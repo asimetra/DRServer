@@ -7,6 +7,9 @@ import { awardTreasureChest } from "../src/socket/rewards.js";
 import { noteFloorEnemy, stealLife } from "../src/socket/life-steal.js";
 import { beginFloorFailing, clearFloorFailing } from "../src/socket/floorstate.js";
 import { CLID } from "../src/socket/opcodes.js";
+import { plannedTreasure } from "../src/socket/floors.js";
+import { spawnBossReward } from "../src/socket/drops.js";
+import { runControls } from "../src/modes/runtime.js";
 
 /** A run under `rules`, its floor plan saying `floor`. */
 const runUnder = (t, rules, floor = {}) => {
@@ -39,6 +42,34 @@ test("chestsKept pickup: the chest is on the account as it is picked up, owing n
   assert.equal(await awardTreasureChest(run, 30101), 60002);
   assert.deepEqual(run.dungeonAccount.account_chests.map((c) => c.chest_id), [60002]);
   assert.deepEqual(run.dungeonTreasures, [], "nothing left for the report to offer again");
+});
+
+test("a floor plan's treasure stands in for the node's, a boss's chest included; only the treasure doobers", (t) => {
+  assert.equal(plannedTreasure(runUnder(t, {}, { treasure: 30104 })), 30104);
+  assert.equal(plannedTreasure(runUnder(t, {}, { treasure: 30099 })), null, "not a treasure: the node's as ever");
+  assert.equal(plannedTreasure(runUnder(t, {}, {})), null);
+  const run = { ...runUnder(t, {}, { treasure: 30105 }), dungeonZone: 1, allocateDoid: () => 900, send: () => {} };
+  const doid = spawnBossReward(run, { floorDoid: 8, origin: { x: 0, y: 0 }, node: { Id: 50002, BossRewardTreasureId: 30103, TotalEnemyCoin: 10 }, random: () => 0 });
+  assert.equal(run.doobers.get(doid).treasure, 30105, "a royal item box where the legendary chest was");
+});
+
+test("runControls.weapon: a weapon of the rarity at the mode's level, never past the hero's last; none with storage full", async (t) => {
+  const run = runUnder(t, {});
+  run.dungeonAccount = { id: 7, buckets_weapon: 2, account_items: [] };
+  run.dungeonAvatar = { id: 70, avatar_id: 101 };
+  run.member = run;
+  run.random = () => 0.5;
+  const saved = [];
+  run.persistDungeonAccount = async (account) => saved.push(account.id);
+  const weapon = await runControls.weapon(run, { rarity: "RARE", level: 40 });
+  assert.equal(weapon.rarity, 3);
+  assert.equal(weapon.requiredlevel, 40);
+  assert.deepEqual(run.dungeonAccount.account_items, [weapon]);
+  await run.rewardSavePromise;
+  assert.deepEqual(saved, [7], "written at once, not at a far-off report");
+  assert.ok((await runControls.weapon(run, { rarity: "LEGENDARY", level: 500 })).requiredlevel <= 100, "no higher than a hero reaches");
+  assert.equal(await runControls.weapon(run, { rarity: "RARE", level: 40 }), null, "two held, room for two");
+  assert.equal(await runControls.weapon({ ...run, dungeonAccount: { id: 7, buckets_weapon: 9 } }, { rarity: "CONSUMABLE_SMALL", level: 5 }), null, "not a weapon rarity");
 });
 
 test("the floor's toughest heal a share of what they deal to a hero; the rest do not", (t) => {

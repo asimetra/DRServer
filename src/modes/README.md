@@ -18,13 +18,13 @@ keep still for it.
 | Surface | Where | What is pinned |
 |---|---|---|
 | The hooks | `src/modes/hooks.js` — `installModeHooks`, `modeHooks`, `MODE_HOOK_NAMES`, `MODE_HOOK_COMBINE` | the 18 names, their arguments, and how several modes' answers combine |
-| Run controls | `src/modes/runtime.js` — `runControls`, `installSessionLookup` | what a mode may ask the core to do: `party`, `sessionOf`, `win`, `lose`, `sendHome`, `planAhead`, `endFloor`, `reward`, `heal`, `gift`, `say`, `grantBuff` |
+| Run controls | `src/modes/runtime.js` — `runControls`, `installSessionLookup` | what a mode may ask the core to do: `party`, `sessionOf`, `win`, `lose`, `sendHome`, `planAhead`, `endFloor`, `reward`, `heal`, `gift`, `weapon`, `say`, `grantBuff` |
 | The friend door | `src/modes/friend-door.js` — `friendDoorHooks`, `friendDoorRow` | how a player enters a mode: a row on every friend list with JOIN beside it |
 | Game data | `src/modes/game-data.js` — `mapNodes`, `mapNode`, `nodePlan`, `planTileLibraries`, `gameTable` | what a mode may read of the deployment's game data, to draw floors of its own |
 | Records | `src/modes/records.js` — `createModeRecords` | what a mode keeps across restarts: `append`, `all`, `forAccount`, `version`; a record is `{ id, at, accounts, ... }` |
 | Run rules | `src/socket/run-rules.js` — `runRules`, `STOCK_RUN_RULES` | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable`, `together`, `chestsKept`, `defeatCountdownSeconds` |
 | The mark | `request.mode`, `match.mode`, `session.modeEntry` | a mode's name travels on these, set by `routeEntry`, never read off the wire |
-| The floor plan | the shape `planFor` answers (below) | `floors[]` of `{ node, quiet, retile, numbered, harmless, npcLevel, tier, modifiers, healthBonus, damageBonus, attackSpeedBonus, lifeSteal, chestMost }`, `preloadArtFloors`, `preloadTileLibraries` |
+| The floor plan | the shape `planFor` answers (below) | `floors[]` of `{ node, quiet, retile, numbered, harmless, npcLevel, tier, modifiers, healthBonus, damageBonus, attackSpeedBonus, lifeSteal, chestMost, treasure }`, `preloadArtFloors`, `preloadTileLibraries` |
 | The effect book | `config/ui-effects.json` — `playEvent`, `EFFECT_SPEC_KEYS` | an event is `{ banner, sound, shake, zoom, countdown, floater, to, replacesChat }`; lines and parts; `strings` for installed clients |
 | The notice board | `config/notices.json` — `src/notices.js` | a notice's fields (`ACTIONS` for the button) |
 | Chat commands | `src/socket/commands.js` — `define({ name, role, summary, usage, run, mode })`, `undefineMode` | a mode's commands come and go with it |
@@ -100,6 +100,7 @@ round, and a mode reaches for nothing else in `src/socket` to do these:
 | `runControls.heal(session, { health, mana })` | Gives back a share (0 to 1) of the hero's most health and mana, as food does. A hero that is down is not healed | `{ health, mana }` gained |
 | `runControls.gift(session, offerId, { from })` | Leaves any offer from the game data waiting in town as a gift, said to be from account `from` (required) | A promise of the gift, or null (no `from`, no such offer, no account, too many waiting) |
 | `runControls.say(session, text)` | A line from the server in the player's chat log, to them alone | `false` with nobody to tell |
+| `runControls.weapon(session, { rarity, level })` | Puts a weapon the hero can use in the player's storage, of a Rarity Type (COMMON to LEGENDARY) at about `level`, never past the hero's last | A promise of the weapon, or null (no account, no such rarity, storage full) |
 | `runControls.grantBuff(session, constant)` | Puts a buff from the game data on the hero | A promise of the buff's doid, or null |
 
 Each takes the session however the mode holds it, a hook's context or what
@@ -231,6 +232,10 @@ What `planFor` returns is read by the core for any run:
   floor has had, which on a boss's map is the boss (`IsBoss` is no guide).
 - `chestMost`: the best chest a treasure on this floor may be, 1 common to 4
   legendary; a better one is held down to it. Item boxes are not a rarity.
+- `treasure`: what every treasure on this floor is instead of the node's own —
+  the tiles' reward spots and a boss's chest alike — as a treasure doober id,
+  30100..30105: the four chests, then the small and the royal item box. How
+  many the floor pays is still the node's.
 - `modifiers`: the `DungeonModifier` ids active on this floor, in place of the
   Infinite schedule's. They do what they do on an Infinite floor, server and
   client alike, and one the floor before did not have shows as new. An id the
@@ -326,7 +331,9 @@ in (a friend door, with how many are inside); every
 floor is a boss's own map, drawn from the game data (`game-data.js`), never the
 same twice running, each harder (`npcLevel`, the three bonuses, a modifier every
 few bosses) and added from `floorCompleting` with `planAhead`; every few bosses
-leave a gift for the party (`party`, `gift`); how deep each player went is kept
+leave a gift for the party (`party`, `gift`), its bosses pay item boxes rather
+than chests (`treasure`), and its deep milestones may drop a weapon at the
+depth's level (`weapon`); how deep each player went is kept
 (`createModeRecords`). It is the one to read for a mode that draws its own floors.
 
 ## The smallest mode: one life

@@ -4,6 +4,7 @@ import { dooberGenerate } from "./objects.js";
 import { PacketWriter } from "./packet.js";
 import { trackDoober } from "./pickups.js";
 import { xpWeightOf } from "./run-xp.js";
+import { plannedTreasure } from "./floors.js";
 
 export const FLID_DOOBER_SPAWN_FROM = 290;
 
@@ -191,7 +192,8 @@ export const spawnNpcRewards = (
 export const spawnBossReward = (session, { floorDoid, origin, node, random = Math.random }) => {
   if (!node || !floorDoid || !origin) return null;
 
-  const dooberType = Number(node.BossRewardTreasureId ?? 0);
+  // The floor plan's treasure, where it names one, stands in for the node's.
+  const dooberType = plannedTreasure(session) ?? Number(node.BossRewardTreasureId ?? 0);
   if (!dooberType) return null;
 
   const doid = session.allocateDoid(CLID.DistributedDooberGameObject);

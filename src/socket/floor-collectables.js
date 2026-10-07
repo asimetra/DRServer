@@ -3,6 +3,7 @@ import { treasureForTier, dooberForConstant, mapNode, dooberById } from "../game
 import { CLID } from "./opcodes.js";
 import { trackDoober } from "./pickups.js";
 import { warn } from "../log.js";
+import { plannedTreasure } from "./floors.js";
 
 /**
  * The treasures and doobers a floor places: which placements are rewards,
@@ -89,7 +90,8 @@ const rewardForPlacement = async (session, placement, node) => {
   session.treasuresOwed ??= treasuresOwedFor(node);
 
   if (session.treasuresOwed > 0) {
-    const rewardId = Number(node?.BossRewardTreasureId ?? 0);
+    // A floor plan that names its treasure pays that, whatever the node would.
+    const rewardId = plannedTreasure(session) ?? Number(node?.BossRewardTreasureId ?? 0);
     const treasure =
       (rewardId && (await dooberById(rewardId))) ||
       (await treasureForTier(node?.TierRank, random));

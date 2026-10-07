@@ -49,7 +49,7 @@ test("the run rules: these knobs and no others, and the game as shipped pays eve
 });
 
 test("the run controls: what a mode may ask the core, these and no others", async () => {
-  assert.deepEqual(Object.keys(runControls), ["party", "sessionOf", "win", "lose", "sendHome", "planAhead", "endFloor", "reward", "heal", "gift", "say", "grantBuff"]);
+  assert.deepEqual(Object.keys(runControls), ["party", "sessionOf", "win", "lose", "sendHome", "planAhead", "endFloor", "reward", "heal", "gift", "weapon", "say", "grantBuff"]);
   const held = { accountId: 7 };
   const undo = installSessionLookup((id) => (id === 7 ? held : null));
   assert.equal(runControls.sessionOf(7), held, "a thread's own lookup finds its runs");
@@ -60,6 +60,7 @@ test("the run controls: what a mode may ask the core, these and no others", asyn
   assert.equal(runControls.lose(null), false);
   assert.equal(await runControls.sendHome(null), false);
   assert.equal(await runControls.grantBuff(null, "ANY"), null);
+  assert.equal(await runControls.weapon(null, { rarity: "RARE", level: 10 }), null);
   assert.equal(runControls.endFloor(null), false);
   assert.equal(runControls.planAhead(null, []), null);
   assert.deepEqual(runControls.reward(null, { gold: 5 }), { gold: 0, experience: 0 });

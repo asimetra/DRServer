@@ -315,11 +315,12 @@ const REAL_NOTICES = [
   // One life's own (src/modes/one-life): the first floor's hero, and the run lost.
   { mode: "onelife", type: "entered" },
   { mode: "onelife", type: "lost" },
-  // Delve's (examples/modes/delve): the first boss, each next one, a curse, a gift, the fall.
+  // Delve's (examples/modes/delve): the first boss, each next one, a curse, a gift, a weapon, the fall.
   { mode: "delve", type: "entered" },
   { mode: "delve", type: "boss", depth: 2, name: "Frostgaard Boss", level: 16, mods: "" },
   { mode: "delve", type: "cursed", curse: "BEEFY BROS" },
-  { mode: "delve", type: "gift", beaten: 3, what: "1 Common Key" },
+  { mode: "delve", type: "gift", beaten: 3, what: "5 Health Bombs" },
+  { mode: "delve", type: "item", beaten: 10, rarity: "rare", level: 64 },
   { mode: "delve", type: "lost", depth: 4, beaten: 3 },
   { type: "queued", waiting: 1, ready: 0 },
   { type: "paired", race: "r", opponent: 2, opponentRating: 1500, countdownSeconds: 5 },

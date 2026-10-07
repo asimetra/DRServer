@@ -8,8 +8,9 @@
  * the same twice in a row — and each is harder than the last: the monsters'
  * level, then their health, damage and attack speed, and every few bosses one
  * more of the game's own modifiers. The run goes on until the party falls, or
- * walks out. Every few bosses beaten leaves a gift waiting in town, better the
- * deeper it was earned, and how deep each player went is kept.
+ * walks out. No chests: a boss pays item boxes, small and then royal; every
+ * few bosses beaten leaves a gift waiting in town, and the deep milestones may
+ * drop a weapon at the depth's level. How deep each player went is kept.
  *
  * A reference mode as much as a game: it is written against the mode surface
  * alone (src/modes/README.md) — hooks, run rules, run controls, records, game
@@ -34,9 +35,10 @@ import { bookWords, playNotice } from "../../../src/socket/ui-effects.js";
 export const DELVE_MODE = "delve";
 
 /**
- * What a delve pays and counts for. Gold, experience and the bosses' own chests
- * as any run pays them; not a boss's trophy, keys or gems, which a run that
- * draws the same boss again and again would farm; and the map is not marked:
+ * What a delve pays and counts for. Gold and experience as any run pays them,
+ * and the bosses' treasure as item boxes (DELVE_DEFAULTS, `boxes`); not a
+ * boss's trophy, keys or gems, which a run that draws the same boss again and
+ * again would farm; and the map is not marked:
  * a drawn boss was not a boss reached. Anybody may join — a delve is a party's.
  */
 export const DELVE_RUN_RULES = runRules({
@@ -47,7 +49,7 @@ export const DELVE_RUN_RULES = runRules({
   mapCredit: false,
   rankable: false,
   joinable: true,
-  // The report comes only when the party falls: a chest is the player's as it is picked up.
+  // The report comes only when the party falls: a box is the player's as it is picked up.
   chestsKept: "pickup",
   // Ten seconds to be got back up, as Infinite gives, not the minute a dungeon does.
   defeatCountdownSeconds: 10,
@@ -72,15 +74,14 @@ export const DELVE_DEFAULTS = Object.freeze({
   lifeStealPerBoss: 0.05,
   lifeStealMost: 0.4,
   /**
-   * The best chest a boss may drop, by how deep (1 common, 2 uncommon, 3 rare,
-   * 4 legendary): a boss rush draws the same chests again and again, and a
-   * legendary should not come easy.
+   * What a boss's treasure is, by how deep (a treasure doober, the floor plan's
+   * `treasure`): never a chest — a boss rush draws the same bosses again and
+   * again, and their chests would come by the dozen — but a small item box,
+   * then a royal one. Potions and buffs, the game's own consumables.
    */
-  chests: [
-    { from: 1, most: 1 },
-    { from: 4, most: 2 },
-    { from: 8, most: 3 },
-    { from: 12, most: 4 },
+  boxes: [
+    { from: 1, treasure: 30104 },
+    { from: 6, treasure: 30105 },
   ],
   /** One more modifier every this many bosses, from the list below (the game's DungeonModifier rows). */
   modifierEvery: 3,
@@ -92,17 +93,31 @@ export const DELVE_DEFAULTS = Object.freeze({
   ],
   /**
    * A gift every this many bosses beaten, by how deep: the offer of the
-   * deepest step reached. Not chests or keys — a boss already drops a chest —
-   * but what a delve itself runs on early (bombs to get the party back up),
-   * and gems deeper down. `name` is what the line calls it.
+   * deepest step reached. What a delve itself runs on early (bombs to get the
+   * party back up), and a few gems deeper down — a few, as a delve can be run
+   * again and again. `name` is what the line calls it.
    */
   giftEvery: 3,
   gifts: [
     { from: 3, offerId: 51306, name: "5 Health Bombs" },
     { from: 6, offerId: 51369, name: "a Party Bomb" },
-    { from: 9, offerId: 51253, name: "100 Gems" },
-    { from: 12, offerId: 51254, name: "250 Gems" },
+    { from: 9, offerId: 51250, name: "5 Gems" },
   ],
+  /**
+   * A weapon may drop on the milestones — from the `from`th boss, every
+   * `every`th — for each player there, at `chance`; of the deepest `rarities`
+   * step reached, and at that boss's monster level (the hero's last at most).
+   */
+  items: {
+    from: 10,
+    every: 5,
+    chance: 0.5,
+    rarities: [
+      { from: 10, rarity: "UNCOMMON" },
+      { from: 15, rarity: "RARE" },
+      { from: 25, rarity: "LEGENDARY" },
+    ],
+  },
   /**
    * Who the gift says it is from: an id that is nobody's account, which the
    * client draws as "SOMEBODY". The run, not a player.
@@ -119,18 +134,29 @@ export const giftFor = (beaten, settings = DELVE_DEFAULTS) => {
   return earned.length ? earned[earned.length - 1] : null;
 };
 
+/**
+ * The weapon the `beaten`th boss may drop, `{ rarity, level }`, or null when it
+ * is not a milestone. Whether it drops is the roll's, not this.
+ */
+export const itemFor = (beaten, settings = DELVE_DEFAULTS) => {
+  const items = settings.items;
+  if (!items || !(beaten >= items.from) || (beaten - items.from) % items.every !== 0) return null;
+  const step = items.rarities.filter((entry) => beaten >= entry.from).at(-1);
+  return step ? { rarity: step.rarity, level: difficultyAt(beaten, settings).npcLevel } : null;
+};
+
 /** How hard the `depth`th boss is (1 for the first): what each of its floors carries. */
 export const difficultyAt = (depth, settings = DELVE_DEFAULTS) => {
   const after = Math.max(0, depth - 1);
   const stealing = depth - settings.lifeStealFrom;
-  const chestStep = settings.chests.filter((step) => depth >= step.from).at(-1);
+  const box = settings.boxes.filter((step) => depth >= step.from).at(-1);
   return {
     npcLevel: settings.startLevel + settings.levelPerBoss * after,
     healthBonus: settings.healthPerBoss * after,
     damageBonus: settings.damagePerBoss * after,
     attackSpeedBonus: settings.attackSpeedPerBoss * after,
     lifeSteal: stealing >= 0 ? Math.min(settings.lifeStealMost, settings.lifeStealPerBoss * (stealing + 1)) : 0,
-    chestMost: chestStep?.most ?? 1,
+    ...(box ? { treasure: box.treasure } : {}),
   };
 };
 
@@ -326,16 +352,34 @@ export const createDelve = ({
       const beaten = state.depth;
       state.depth += 1;
       controls.planAhead(session, step(state));
+      // Only to those standing in the run now who fought at least a gift's worth of its bosses:
+      // a friend joining just before a milestone does not walk off with its prize.
+      const earners = controls.party(session).filter(
+        (member) => beaten - (state.since.get(idOf(member)) ?? state.depth) + 1 >= settings.giftEvery
+      );
       const gift = giftFor(beaten, settings);
       if (gift) {
-        // To everybody standing in the run now who fought at least a gift's worth of its bosses:
-        // a friend joining just before the twelfth does not walk off with its legendary key.
-        for (const member of controls.party(session)) {
-          const since = state.since.get(idOf(member)) ?? state.depth;
-          if (beaten - since + 1 < settings.giftEvery) continue;
+        for (const member of earners) {
           Promise.resolve(controls.gift(member, gift.offerId, { from: settings.giftFrom })).catch(() => null);
           const what = gift.name ?? "a gift";
           tell(member, "gift", { beaten, what }, `Delve: ${beaten} bosses beaten - ${what} waits in town.`);
+        }
+      }
+      const item = itemFor(beaten, settings);
+      if (item) {
+        for (const member of earners) {
+          if (random() >= settings.items.chance) continue;
+          const rarity = item.rarity.toLowerCase();
+          Promise.resolve(controls.weapon(member, item))
+            .then((weapon) => {
+              if (weapon) {
+                const level = weapon.requiredlevel ?? item.level;
+                tell(member, "item", { beaten, rarity, level }, `Delve: boss ${beaten} dropped a ${rarity} weapon, level ${level}.`);
+              } else {
+                controls.say(member, `Delve: boss ${beaten} dropped a ${rarity} weapon, but your storage is full.`);
+              }
+            })
+            .catch(() => null);
         }
       }
       return true;

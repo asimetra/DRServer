@@ -13,10 +13,12 @@ import { completeFloor, reportRunLost, reportRunWon } from "../socket/floorstate
 import { matchHost } from "../socket/match-host.js";
 import { grantBuff as grantBuffOn } from "../socket/buffs.js";
 import { sessionHolding } from "../socket/presence.js";
-import { creditGoldAndExperience, healHero, restoreMana } from "../socket/rewards.js";
+import { creditGoldAndExperience, healHero, queueAccountSave, restoreMana } from "../socket/rewards.js";
 import { giveGift } from "../gifts.js";
+import { generateWeapon } from "../chests.js";
+import { storageLimit, unequippedWeapons } from "../inventory-space.js";
 import { loadGameMaster } from "../gamemaster.js";
-import { warn } from "../log.js";
+import { info, warn } from "../log.js";
 import { tellAsServer } from "../socket/chat.js";
 import { membersOf } from "../socket/match-world.js";
 
@@ -175,6 +177,44 @@ export const runControls = Object.freeze({
     const given = giveGift(account, { offerId, fromAccountId: from });
     if (given) context.accountChanged = true;
     return given;
+  },
+
+  /**
+   * Puts a weapon in the player's storage, as an opened chest would: one the
+   * hero they are playing can use, of `rarity` (a Rarity Type, COMMON to
+   * LEGENDARY) and at about `level` — the mode's level, not the hero's, never
+   * above the hero's last. Kept with the account and seen in town. Answers the
+   * weapon, or null: no account here, no such rarity, or storage full.
+   */
+  weapon: async (session, { rarity, level } = {}) => {
+    const context = contextOf(session);
+    const account = context?.dungeonAccount;
+    const avatar = context?.dungeonAvatar;
+    if (!account || !avatar) return null;
+    const gm = await loadGameMaster();
+    const row = gm.raw?.Rarity?.find((entry) => entry.Type === rarity && entry.Id <= 4);
+    const hero = gm.heroById?.get(avatar.avatar_id);
+    const wanted = Math.trunc(Number(level));
+    if (!row || !hero || !(wanted >= 1)) {
+      warn(`modes: no weapon of ${JSON.stringify(rarity)} at level ${JSON.stringify(level)} for ${account.id}`);
+      return null;
+    }
+    if (unequippedWeapons(account) >= storageLimit(account)) return null;
+    const item = generateWeapon({
+      gm,
+      hero,
+      rarity: row,
+      level: wanted,
+      accountId: account.id,
+      id: await matchHost().nextObjectId(account),
+      random: context.random ?? Math.random,
+    });
+    if (!item) return null;
+    account.account_items = [...(account.account_items ?? []), item];
+    // Written now, not at a report that may be a long way off (a delve's comes when the party falls).
+    queueAccountSave(context);
+    info(`[${context.id}] mode weapon ${item.item_id} (${rarity}, level ${item.requiredlevel}) for ${account.id}`);
+    return item;
   },
 
   /**

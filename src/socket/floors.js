@@ -1110,5 +1110,15 @@ export const plannedNpcLevel = (session) => {
 /** The tier: the floor's, else the run's. */
 export const plannedTier = (session) => plannedFloorEntry(session)?.tier ?? session?.floorPlan?.tier ?? null;
 
+/**
+ * What every reward of this floor pays instead of the node's own (a mode's
+ * floor plan, `treasure`): one of the treasure doobers, 30100..30105 — the
+ * four chests and the two item boxes — or null, the node's as ever.
+ */
+export const plannedTreasure = (session) => {
+  const id = Number(plannedFloorEntry(session)?.treasure);
+  return Number.isInteger(id) && id >= 30100 && id <= 30105 ? id : null;
+};
+
 /** How many floors a run has. */
 export const floorCountOf = (plan) => Math.max(1, plan?.floors?.length ?? 1);

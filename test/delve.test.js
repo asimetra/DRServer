@@ -9,6 +9,7 @@ import {
   createDelve,
   difficultyAt,
   giftFor,
+  itemFor,
 } from "../examples/modes/delve/index.js";
 import { createModeRecords } from "../src/modes/records.js";
 
@@ -22,9 +23,15 @@ const boss = (id, maps = 1) => ({
 const fakeControls = () => {
   const said = [];
   const gifts = [];
+  const weapons = [];
   return {
     said,
     gifts,
+    weapons,
+    weapon: async (session, item) => {
+      weapons.push([session.accountId, item]);
+      return session.storageFull ? null : { requiredlevel: item.level };
+    },
     say: (session, text) => said.push([session.accountId, text]),
     gift: async (session, offerId, { from }) => gifts.push([session.accountId, offerId, from]),
     party: (session) => session.party ?? [session],
@@ -137,6 +144,24 @@ test("a modifier joins every few bosses and stays; a gift waits every few bosses
   ], "after the 3rd and the 6th boss, to everybody there, from nobody's account");
 });
 
+test("the tenth boss may drop a weapon for whoever fought for it, and a full storage is said", async () => {
+  const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
+  const { session } = await enter();
+  const full = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: 0, floorPlan: session.floorPlan, floorCount: session.floorCount, storageFull: true };
+  delve.hooks.heroRequested(full);
+  session.party = [session, full];
+  for (let i = 0; i < 9; i++) clear(session);
+  // A friend arriving for the tenth boss alone gets nothing of it.
+  const late = { ...full, accountId: 9, storageFull: false, floorIndex: session.floorIndex };
+  delve.hooks.heroRequested(late);
+  session.party = [session, full, late];
+  clear(session);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(controls.weapons, [[7, { rarity: "UNCOMMON", level: 64 }], [8, { rarity: "UNCOMMON", level: 64 }]]);
+  assert.ok(controls.said.some(([id, text]) => id === 7 && /dropped a uncommon weapon, level 64/.test(text)));
+  assert.ok(controls.said.some(([id, text]) => id === 8 && /storage is full/.test(text)));
+});
+
 test("how deep each player went is kept once a run, on falling or on walking out", async () => {
   const records = createModeRecords({ mode: DELVE_MODE, storage: "memory" });
   // One-map bosses: each floor cleared is a boss beaten.
@@ -171,16 +196,20 @@ test("its rules: anybody may join, no trophy, keys or gems, nothing marked", () 
 });
 
 test("difficulty and gifts by the numbers", () => {
-  assert.deepEqual(difficultyAt(1), { npcLevel: 10, healthBonus: 0, damageBonus: 0, attackSpeedBonus: 0, lifeSteal: 0, chestMost: 1 });
+  assert.deepEqual(difficultyAt(1), { npcLevel: 10, healthBonus: 0, damageBonus: 0, attackSpeedBonus: 0, lifeSteal: 0, treasure: 30104 });
   assert.equal(difficultyAt(2).lifeSteal, 0, "no stealing before the third boss");
   assert.equal(difficultyAt(3).lifeSteal, 0.05);
   assert.equal(difficultyAt(30).lifeSteal, 0.4, "and never more than the most");
-  assert.deepEqual([1, 4, 8, 11, 12].map((d) => difficultyAt(d).chestMost), [1, 2, 3, 3, 4], "legendary only from the twelfth boss");
+  assert.deepEqual([1, 5, 6, 20].map((d) => difficultyAt(d).treasure), [30104, 30104, 30105, 30105], "item boxes, never chests: small, then royal from the sixth");
   assert.equal(difficultyAt(3).npcLevel, 22);
   assert.equal(giftFor(2), null);
   assert.equal(giftFor(3).offerId, 51306, "bombs early: what a delve runs on");
-  assert.equal(giftFor(12).offerId, 51254, "gems deep down");
-  assert.equal(giftFor(15).offerId, 51254, "past the last step, the best");
+  assert.equal(giftFor(9).offerId, 51250, "a few gems deep down");
+  assert.equal(giftFor(30).offerId, 51250, "and never more: a delve can be run again and again");
+  assert.deepEqual([9, 11, 12, 14].map((d) => itemFor(d)), [null, null, null, null], "a weapon only on the milestones");
+  assert.deepEqual(itemFor(10), { rarity: "UNCOMMON", level: 64 }, "at the boss's monster level");
+  assert.deepEqual(itemFor(15), { rarity: "RARE", level: 94 });
+  assert.equal(itemFor(25).rarity, "LEGENDARY");
 });
 
 test("from the game data: every boss but the tutorial's and the village defence, boss maps only", async () => {
