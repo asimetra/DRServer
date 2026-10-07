@@ -55,6 +55,9 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "npcDamageDepthBonus",
   // How much faster than authored this floor's monsters attack (a mode's floor plan, floor-world.js).
   "npcAttackSpeedBonus",
+  // The share of what they deal this floor's toughest monsters heal, and how tough that is (life-steal.js).
+  "npcLifeSteal",
+  "floorToughestHitPoints",
   "tierConstant",
   "mapPage",
   "areaDoid",

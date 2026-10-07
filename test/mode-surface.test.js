@@ -35,12 +35,13 @@ test("the hooks: eighteen names, in the order a run meets them, each combined on
 });
 
 test("the run rules: these knobs and no others, and the game as shipped pays everything", () => {
-  assert.deepEqual(Object.keys(STOCK_RUN_RULES), ["mode", "unlockCheck", "pays", "revives", "mapCredit", "rankable", "joinable", "together"]);
+  assert.deepEqual(Object.keys(STOCK_RUN_RULES), ["mode", "unlockCheck", "pays", "revives", "mapCredit", "rankable", "joinable", "together", "chestsKept", "defeatCountdownSeconds"]);
   assert.deepEqual(Object.keys(STOCK_RUN_RULES.pays), ["experience", "gold", "chests", "keys", "trophies", "gems"]);
   assert.deepEqual(STOCK_RUN_RULES, {
     mode: null, unlockCheck: true,
     pays: { experience: true, gold: true, chests: true, keys: true, trophies: true, gems: true },
     revives: true, mapCredit: true, rankable: true, joinable: true, together: false,
+    chestsKept: "report", defeatCountdownSeconds: null,
   });
   const mine = runRules({ mode: "m", pays: { chests: false } });
   assert.equal(mine.pays.chests, false);

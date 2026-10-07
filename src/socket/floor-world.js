@@ -224,6 +224,9 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
     share(entry?.damageBonus) ??
     infiniteDamageBonus(await loadGameMaster(), floorTier, (session.floorIndex ?? 0) + 1);
   session.npcAttackSpeedBonus = share(entry?.attackSpeedBonus) ?? 0;
+  // And what its toughest heal of what they deal (life-steal.js); the bar for "toughest" starts again.
+  session.npcLifeSteal = share(entry?.lifeSteal) ?? 0;
+  session.floorToughestHitPoints = 0;
 
   const party = await buildPartyHeroes(session, floor, floorDoid);
   for (const member of party) {

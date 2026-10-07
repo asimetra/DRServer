@@ -22,9 +22,9 @@ keep still for it.
 | The friend door | `src/modes/friend-door.js` — `friendDoorHooks`, `friendDoorRow` | how a player enters a mode: a row on every friend list with JOIN beside it |
 | Game data | `src/modes/game-data.js` — `mapNodes`, `mapNode`, `nodePlan`, `planTileLibraries`, `gameTable` | what a mode may read of the deployment's game data, to draw floors of its own |
 | Records | `src/modes/records.js` — `createModeRecords` | what a mode keeps across restarts: `append`, `all`, `forAccount`, `version`; a record is `{ id, at, accounts, ... }` |
-| Run rules | `src/socket/run-rules.js` — `runRules`, `STOCK_RUN_RULES` | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable`, `together` |
+| Run rules | `src/socket/run-rules.js` — `runRules`, `STOCK_RUN_RULES` | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable`, `together`, `chestsKept`, `defeatCountdownSeconds` |
 | The mark | `request.mode`, `match.mode`, `session.modeEntry` | a mode's name travels on these, set by `routeEntry`, never read off the wire |
-| The floor plan | the shape `planFor` answers (below) | `floors[]` of `{ node, quiet, retile, numbered, harmless, npcLevel, tier, modifiers, healthBonus, damageBonus, attackSpeedBonus }`, `preloadArtFloors`, `preloadTileLibraries` |
+| The floor plan | the shape `planFor` answers (below) | `floors[]` of `{ node, quiet, retile, numbered, harmless, npcLevel, tier, modifiers, healthBonus, damageBonus, attackSpeedBonus, lifeSteal, chestMost }`, `preloadArtFloors`, `preloadTileLibraries` |
 | The effect book | `config/ui-effects.json` — `playEvent`, `EFFECT_SPEC_KEYS` | an event is `{ banner, sound, shake, zoom, countdown, floater, to, replacesChat }`; lines and parts; `strings` for installed clients |
 | The notice board | `config/notices.json` — `src/notices.js` | a notice's fields (`ACTIONS` for the button) |
 | Chat commands | `src/socket/commands.js` — `define({ name, role, summary, usage, run, mode })`, `undefineMode` | a mode's commands come and go with it |
@@ -174,13 +174,15 @@ export const MY_RUN_RULES = runRules({
   rankable: false,               // off the run boards
   joinable: false,               // friends cannot follow a player in
   together: false,               // true: every run of the mode on one worker (the seat)
+  chestsKept: "report",          // "pickup": a chest is on the account as it is picked up
+  defeatCountdownSeconds: null,  // seconds to be revived in once all are down; null: the node's own
 });
 ```
 
 Answer it from `modeRules(mode)` (by name) and `runRules(session)` (for a run
 of yours); everything unsaid is the game's own. These are the only knobs:
 experience, gold, chests, keys, trophies, gems, the unlock check, revives, map
-credit, the boards, joining, the seat.
+credit, the boards, joining, the seat, when a chest is kept, the defeat countdown.
 
 Answer `modeRules` on **every thread**, the main one included: with match
 workers on, the main thread admits the entry (the unlock check), answers who
@@ -224,6 +226,11 @@ What `planFor` returns is read by the core for any run:
   floor's monsters — 0.25 is a quarter more health, damage or attack speed —
   in place of Infinite's growth with depth. Attack speed is capped at three
   times authored, on the server's timing and the client's animation alike.
+- `lifeSteal`: the share of what they deal a hero that this floor's toughest
+  monsters heal — those with at least half the most health any enemy on the
+  floor has had, which on a boss's map is the boss (`IsBoss` is no guide).
+- `chestMost`: the best chest a treasure on this floor may be, 1 common to 4
+  legendary; a better one is held down to it. Item boxes are not a rarity.
 - `modifiers`: the `DungeonModifier` ids active on this floor, in place of the
   Infinite schedule's. They do what they do on an Infinite floor, server and
   client alike, and one the floor before did not have shows as new. An id the

@@ -576,17 +576,37 @@ export const awardTreasureChest = async (session, dooberType) => {
   /* Six, not four: the two item boxes sit at the top of the same run, which is
      the client's own numbering rather than this server's arithmetic. */
   if (!account || chestId < FIRST_CHEST || chestId > FIRST_CHEST + 5) return null;
+  const rules = runRulesOf(session);
   // A run that pays no chests (run-rules.js): the treasure is picked up and owes nothing.
-  if (!runRulesOf(session).pays.chests) {
+  if (!rules.pays.chests) {
     info(`[${session.id}] treasure ${dooberType} collected — no chest, as this run pays none`);
     return null;
   }
 
+  // No better than this floor allows (a mode's floor plan, `chestMost`: 1 common
+  // to 4 legendary). The two item boxes above the four are not rarities, and stay.
+  const most = Number(session.floorPlan?.floors?.[session.floorIndex ?? 0]?.chestMost);
+  const capped =
+    Number.isInteger(most) && most >= 1 && chestId < FIRST_CHEST + 4
+      ? Math.min(chestId, FIRST_CHEST + Math.min(4, most) - 1)
+      : chestId;
+  if (capped !== chestId) info(`[${session.id}] treasure ${dooberType}: chest ${chestId} held to ${capped} on this floor`);
+
+  // Kept the moment it is picked up, where the run says so: a report that may
+  // be a long way off is not what the chest waits on (run-rules.js, chestsKept).
+  if (rules.chestsKept === "pickup") {
+    const { grantChest } = await import("./summary-chests.js");
+    const chest = await grantChest(account, { chestId: capped });
+    queueAccountSave(session);
+    info(`[${session.id}] treasure ${dooberType} collected — chest ${capped} kept now, instance ${chest.id}`);
+    return capped;
+  }
+
   session.dungeonTreasures ??= [];
-  session.dungeonTreasures.push({ dooberType: Number(dooberType), chestId });
+  session.dungeonTreasures.push({ dooberType: Number(dooberType), chestId: capped });
 
   // Nothing to save: the account has not changed, and will not until the
   // player keeps this on the report.
-  info(`[${session.id}] treasure ${dooberType} collected — chest ${chestId} owed`);
-  return chestId;
+  info(`[${session.id}] treasure ${dooberType} collected — chest ${capped} owed`);
+  return capped;
 };

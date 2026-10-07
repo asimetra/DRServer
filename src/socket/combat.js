@@ -20,6 +20,7 @@ import { applyModifierBuffs, applyTargetBuff } from "./combat-effects.js";
 import { priceHit, withDamage, withSuffer, holdStaggered, withKnockback, withCrit, withEffectiveness, withPowerMultiplier } from "./hit-pricing.js";
 import { CASTLESS_ATTACKS, auditCombatResultWhen, consumeAcceptedCast, reachExcess } from "./cast-audit.js";
 import { tellDowned, tellHit } from "./combat-events.js";
+import { stealLife } from "./life-steal.js";
 export { FLID_PROPOSE_COMBAT_RESULTS, npcAttackChoreography, withBaseAttack, stateUpdate, hitPointsUpdate, triggerStateUpdate, heroStateAndChoreography, isPartyHero } from "./combat-wire.js";
 export { pushVictim, staggerFor, heroStaggerFor } from "./impact.js";
 export { hazardCandidateDoids, trapProjectileReach, launchCarrierProjectile, tickTrapProjectiles, startTrapProjectiles, hazardVictims, dealTrapHit, performTrapAttack } from "./trap-attacks.js";
@@ -699,6 +700,10 @@ const applyProposals = async (session, proposals) => {
     const hitPointsBefore = actor?.hitPoints ?? 0;
     const origin = actor?.position ? { ...actor.position } : null;
     if (actor && applyDamage(session, proposal.attackee, damage, () => session.send(echo))) {
+      // A monster's hit on a hero: the floor's toughest heal a share of it (life-steal.js).
+      if (session.objects?.get(proposal.attackee) === CLID.HeroGameObject) {
+        stealLife(session, proposal.attacker, Math.min(damage, hitPointsBefore));
+      }
       /**
        * And what a Saucier or a Cook's weapon leaves on the floor for it.
        *

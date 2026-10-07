@@ -21,6 +21,7 @@ import { npcAttackChoreography } from "./combat.js";
 import { membersOf } from "./match-world.js";
 import { spawnInfiniteModifierActors } from "./floor-population.js";
 import { passesFilter, headingFor } from "./dungeon.js";
+import { noteFloorEnemy } from "./life-steal.js";
 
 /**
  * One NPC onto the floor. `spawnNpc` builds its actor — team, awareness, AI
@@ -329,6 +330,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
   // Zero-HP rows are indestructible scenery (gates, traps); tracking them as
   // damageable would let a stray hit mark them dead.
   if (hitPoints > 0) {
+    if (npc.CharType === "ENEMY") noteFloorEnemy(session, hitPoints);
     session.actors.set(npcDoid, {
       hitPoints,
       maxHitPoints: hitPoints,

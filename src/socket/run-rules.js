@@ -52,6 +52,18 @@ export const STOCK_RUN_RULES = Object.freeze({
    * run, so a party mode does not need it.
    */
   together: false,
+  /**
+   * When a chest picked up is the player's: "report", as the game does — kept
+   * from the end-of-run report, and lost by walking out before it — or
+   * "pickup", on the account the moment it is picked up, for a run whose
+   * report may be a long way off (a run with no last floor).
+   */
+  chestsKept: "report",
+  /**
+   * Seconds to be revived in once every hero is down, or null for the node's
+   * own (sixty; ten on Infinite). The client counts down from what it is sent.
+   */
+  defeatCountdownSeconds: null,
 });
 
 /** The match worker every run of a `together` mode goes to. */

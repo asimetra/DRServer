@@ -24,6 +24,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
 import { checkPlayPass, playPassCookie, playPassFrom, renewedPlayPass } from "./play-pass.js";
+import { warn } from "./log.js";
 
 const gzip = promisify(zlib.gzip);
 
@@ -94,6 +95,19 @@ export const isWebClientPath = (pathname) =>
 const notFound = (res) => {
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("not found");
+};
+
+/**
+ * A file the client asked for and the build does not have, said once a path:
+ * the browser shows only "IO error" for it, and this is where to find which.
+ * Bounded, so a crawler walking made-up paths cannot fill the log.
+ */
+const missingSaid = new Set();
+const MISSING_SAID_MOST = 500;
+const sayMissing = (rest) => {
+  if (missingSaid.has(rest) || missingSaid.size >= MISSING_SAID_MOST) return;
+  missingSaid.add(rest);
+  warn(`web client: no ${rest} in the build; the browser reports it as an IO error`);
 };
 
 /** Answers a GET or HEAD under /play/ from `root`. */
@@ -176,8 +190,9 @@ export const serveWebClient = async (req, res, pathname, root, { gated = false }
     }
     stat = await handle.stat();
     if (!stat.isFile()) throw new Error("not a regular file");
-  } catch {
+  } catch (problem) {
     await handle?.close().catch(() => undefined);
+    if (problem?.code === "ENOENT") sayMissing(rest);
     notFound(res);
     return;
   }

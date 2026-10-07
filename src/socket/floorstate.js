@@ -66,10 +66,12 @@ export const buildFloorFailing = (areaDoid, seconds) =>
 const DEFEAT_COUNTDOWN_SECONDS = 60;
 const INFINITE_DEFEAT_COUNTDOWN_SECONDS = 10;
 
-const defeatCountdownSeconds = (session) =>
-  session.mapPage?.NodeType === "INFINITE"
-    ? INFINITE_DEFEAT_COUNTDOWN_SECONDS
-    : DEFEAT_COUNTDOWN_SECONDS;
+const defeatCountdownSeconds = (session) => {
+  // A mode may say its own (run-rules.js): a boss rush need not wait a minute.
+  const ruled = Number(runRulesOf(session).defeatCountdownSeconds);
+  if (Number.isFinite(ruled) && ruled >= 1) return Math.min(600, Math.trunc(ruled));
+  return session.mapPage?.NodeType === "INFINITE" ? INFINITE_DEFEAT_COUNTDOWN_SECONDS : DEFEAT_COUNTDOWN_SECONDS;
+};
 
 /**
  * Whether there is anybody left standing.

@@ -163,10 +163,16 @@ test("its rules: anybody may join, no trophy, keys or gems, nothing marked", () 
   assert.deepEqual([DELVE_RUN_RULES.pays.keys, DELVE_RUN_RULES.pays.trophies, DELVE_RUN_RULES.pays.gems], [false, false, false]);
   assert.equal(DELVE_RUN_RULES.pays.gold, true);
   assert.equal(DELVE_RUN_RULES.mapCredit, false);
+  assert.equal(DELVE_RUN_RULES.chestsKept, "pickup", "no report until the party falls: chests are kept as picked up");
+  assert.equal(DELVE_RUN_RULES.defeatCountdownSeconds, 10);
 });
 
 test("difficulty and gifts by the numbers", () => {
-  assert.deepEqual(difficultyAt(1), { npcLevel: 10, healthBonus: 0, damageBonus: 0, attackSpeedBonus: 0 });
+  assert.deepEqual(difficultyAt(1), { npcLevel: 10, healthBonus: 0, damageBonus: 0, attackSpeedBonus: 0, lifeSteal: 0, chestMost: 1 });
+  assert.equal(difficultyAt(2).lifeSteal, 0, "no stealing before the third boss");
+  assert.equal(difficultyAt(3).lifeSteal, 0.05);
+  assert.equal(difficultyAt(30).lifeSteal, 0.4, "and never more than the most");
+  assert.deepEqual([1, 4, 8, 11, 12].map((d) => difficultyAt(d).chestMost), [1, 2, 3, 3, 4], "legendary only from the twelfth boss");
   assert.equal(difficultyAt(3).npcLevel, 22);
   assert.equal(giftFor(2), null);
   assert.equal(giftFor(3).offerId, 51201);

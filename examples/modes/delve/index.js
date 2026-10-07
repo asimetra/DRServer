@@ -46,6 +46,10 @@ export const DELVE_RUN_RULES = runRules({
   mapCredit: false,
   rankable: false,
   joinable: true,
+  // The report comes only when the party falls: a chest is the player's as it is picked up.
+  chestsKept: "pickup",
+  // Ten seconds to be got back up, as Infinite gives, not the minute a dungeon does.
+  defeatCountdownSeconds: 10,
 });
 
 /** The settings a deployment may change (createDelve's `settings`); these are the defaults. */
@@ -59,6 +63,24 @@ export const DELVE_DEFAULTS = Object.freeze({
   healthPerBoss: 0.12,
   damagePerBoss: 0.08,
   attackSpeedPerBoss: 0.05,
+  /**
+   * The boss heals this share of what it deals: from the `lifeStealFrom`th boss,
+   * rising with each after, up to `lifeStealMost`.
+   */
+  lifeStealFrom: 3,
+  lifeStealPerBoss: 0.05,
+  lifeStealMost: 0.4,
+  /**
+   * The best chest a boss may drop, by how deep (1 common, 2 uncommon, 3 rare,
+   * 4 legendary): a boss rush draws the same chests again and again, and a
+   * legendary should not come easy.
+   */
+  chests: [
+    { from: 1, most: 1 },
+    { from: 4, most: 2 },
+    { from: 8, most: 3 },
+    { from: 12, most: 4 },
+  ],
   /** One more modifier every this many bosses, from the list below (the game's DungeonModifier rows). */
   modifierEvery: 3,
   modifiers: [
@@ -97,11 +119,15 @@ export const giftFor = (beaten, settings = DELVE_DEFAULTS) => {
 /** How hard the `depth`th boss is (1 for the first): what each of its floors carries. */
 export const difficultyAt = (depth, settings = DELVE_DEFAULTS) => {
   const after = Math.max(0, depth - 1);
+  const stealing = depth - settings.lifeStealFrom;
+  const chestStep = settings.chests.filter((step) => depth >= step.from).at(-1);
   return {
     npcLevel: settings.startLevel + settings.levelPerBoss * after,
     healthBonus: settings.healthPerBoss * after,
     damageBonus: settings.damagePerBoss * after,
     attackSpeedBonus: settings.attackSpeedPerBoss * after,
+    lifeSteal: stealing >= 0 ? Math.min(settings.lifeStealMost, settings.lifeStealPerBoss * (stealing + 1)) : 0,
+    chestMost: chestStep?.most ?? 1,
   };
 };
 

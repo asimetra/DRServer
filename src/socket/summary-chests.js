@@ -129,7 +129,7 @@ const treasureAt = (session, slot) => {
  * schema once, on the reasoning that the client diffs against the list it last
  * held; the captures say otherwise.
  */
-const grantChest = async (account, treasure) => {
+export const grantChest = async (account, treasure) => {
   const chest = {
     id: await matchHost().nextObjectId(account),
     account_id: account.id,
