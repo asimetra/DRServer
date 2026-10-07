@@ -29,6 +29,7 @@ import { friendDoorHooks } from "../../../src/modes/friend-door.js";
 import { define, undefineMode } from "../../../src/socket/commands.js";
 import { ROLE } from "../../../src/socket/roles.js";
 import { info } from "../../../src/log.js";
+import { bookWords, playNotice } from "../../../src/socket/ui-effects.js";
 
 export const DELVE_MODE = "delve";
 
@@ -91,14 +92,16 @@ export const DELVE_DEFAULTS = Object.freeze({
   ],
   /**
    * A gift every this many bosses beaten, by how deep: the offer of the
-   * deepest step reached (Common, Uncommon, Rare, Legendary Key).
+   * deepest step reached. Not chests or keys — a boss already drops a chest —
+   * but what a delve itself runs on early (bombs to get the party back up),
+   * and gems deeper down. `name` is what the line calls it.
    */
   giftEvery: 3,
   gifts: [
-    { from: 3, offerId: 51201 },
-    { from: 6, offerId: 51205 },
-    { from: 9, offerId: 51209 },
-    { from: 12, offerId: 51213 },
+    { from: 3, offerId: 51306, name: "5 Health Bombs" },
+    { from: 6, offerId: 51369, name: "a Party Bomb" },
+    { from: 9, offerId: 51253, name: "100 Gems" },
+    { from: 12, offerId: 51254, name: "250 Gems" },
   ],
   /**
    * Who the gift says it is from: an id that is nobody's account, which the
@@ -139,9 +142,14 @@ export const difficultyAt = (depth, settings = DELVE_DEFAULTS) => {
 export const createDelve = ({
   bosses,
   modifierIds = [],
+  // DungeonModifier id -> its name, for the curse's line.
+  modifierNames = {},
   tileLibraries = [],
   settings = DELVE_DEFAULTS,
   controls = runControls,
+  // The effect book (ui-effects.js): `show(session, notice)` its banner, sound and shake; `line(notice, params)` its words.
+  show = () => null,
+  line = () => null,
   records = null,
   // How this thread's count of delvers reaches whoever answers friend lists (tellMain).
   tellInside = () => {},
@@ -167,7 +175,10 @@ export const createDelve = ({
     state.last = boss.node.Id;
     if (state.depth > 1 && (state.depth - 1) % settings.modifierEvery === 0 && modifierIds.length) {
       const unused = modifierIds.filter((id) => !state.modifiers.includes(id));
-      if (unused.length) state.modifiers = [...state.modifiers, unused[Math.floor(random() * unused.length)]];
+      if (unused.length) {
+        state.modifiers = [...state.modifiers, unused[Math.floor(random() * unused.length)]];
+        state.cursedAt = state.depth;
+      }
     }
     const hard = difficultyAt(state.depth, settings);
     return boss.floors.map((floor) => ({
@@ -177,6 +188,23 @@ export const createDelve = ({
       ...hard,
       modifiers: [...state.modifiers],
     }));
+  };
+
+  /**
+   * A notice to one player, as the book says it: its event (banner, sound,
+   * shake), then its line in chat unless the banner said the same. `fallback`
+   * is the words when the book has none.
+   */
+  const tell = (session, type, params = {}, fallback = null) => {
+    const notice = { mode: DELVE_MODE, type, ...params };
+    let shown = null;
+    try {
+      shown = show(session, notice);
+    } catch {
+      shown = null;
+    }
+    const text = line(notice, params) ?? fallback;
+    if (text && !shown?.replacesChat) controls.say(session, text);
   };
 
   /** The delve's own state, kept on its plan: one per run, shared by the party. */
@@ -269,8 +297,21 @@ export const createDelve = ({
       if (state.told.get(accountId) === state.depth) return;
       state.told.set(accountId, state.depth);
       const floor = session.floorPlan.floors[session.floorIndex ?? 0];
-      const mods = floor?.modifiers?.length ? `, ${floor.modifiers.length} modifier(s)` : "";
-      controls.say(session, `Delve: boss ${state.depth} — ${floor?.node?.Name ?? "?"} (level ${floor?.npcLevel ?? "?"}${mods})`);
+      const count = floor?.modifiers?.length ?? 0;
+      const mods = count ? `, ${count} curse${count === 1 ? "" : "s"}` : "";
+      if (state.depth === 1) tell(session, "entered", {}, "Delve: boss after boss, each harder, until your party falls.");
+      tell(
+        session,
+        "boss",
+        { depth: state.depth, name: floor?.node?.Name ?? "?", level: floor?.npcLevel ?? "?", mods },
+        `Delve: boss ${state.depth} - ${floor?.node?.Name ?? "?"}, level ${floor?.npcLevel ?? "?"}${mods}.`
+      );
+      // A curse new on this boss: said to whoever is here for it.
+      const added = state.cursedAt === state.depth ? state.modifiers.at(-1) : null;
+      if (added != null) {
+        const curse = modifierNames[added] ?? `modifier ${added}`;
+        tell(session, "cursed", { curse }, `Delve: a new curse - ${curse}.`);
+      }
     },
 
     /**
@@ -293,13 +334,20 @@ export const createDelve = ({
           const since = state.since.get(idOf(member)) ?? state.depth;
           if (beaten - since + 1 < settings.giftEvery) continue;
           Promise.resolve(controls.gift(member, gift.offerId, { from: settings.giftFrom })).catch(() => null);
-          controls.say(member, `Delve: ${beaten} bosses beaten — a gift waits in town.`);
+          const what = gift.name ?? "a gift";
+          tell(member, "gift", { beaten, what }, `Delve: ${beaten} bosses beaten - ${what} waits in town.`);
         }
       }
       return true;
     },
 
-    runFailed: keep,
+    runFailed(session) {
+      const state = stateOf(session) ?? runOf.get(idOf(session));
+      if (state) {
+        tell(session, "lost", { depth: state.depth, beaten: state.depth - 1 }, `Delve: your party fell at boss ${state.depth}, ${state.depth - 1} beaten.`);
+      }
+      keep(session);
+    },
     runLeft: keep,
   };
 
@@ -344,8 +392,10 @@ export const bossesFromGameData = async (settings = DELVE_DEFAULTS) => {
     for (const library of await planTileLibraries({ floors })) libraries.add(library);
   }
   const wanted = new Set(settings.modifiers);
-  const modifierIds = (await gameTable("DungeonModifier")).filter((row) => wanted.has(row.Constant)).map((row) => row.Id);
-  return { bosses, tileLibraries: [...libraries], modifierIds };
+  const rows = (await gameTable("DungeonModifier")).filter((row) => wanted.has(row.Constant));
+  const modifierIds = rows.map((row) => row.Id);
+  const modifierNames = Object.fromEntries(rows.map((row) => [row.Id, row.Name || row.Constant]));
+  return { bosses, tileLibraries: [...libraries], modifierIds, modifierNames };
 };
 
 /** The mode as the registry starts it (src/modes/index.js): on every thread, no seat. */
@@ -356,6 +406,8 @@ export default {
     const data = await bossesFromGameData();
     const delve = createDelve({
       ...data,
+      show: playNotice,
+      line: bookWords.line,
       records: createModeRecords({ mode: DELVE_MODE }),
       tellInside: (inside) => tellMain(DELVE_MODE, { inside }),
     });

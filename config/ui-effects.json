@@ -29,7 +29,12 @@
     "RANKED_DRAW": "DRAW!",
     "RANKED_CANCELLED": "RACE CANCELLED",
     "RANKED_RIVAL_SEEN": "RIVAL ON YOUR HEELS",
-    "ONE_LIFE": "ONE LIFE - NO REVIVES"
+    "ONE_LIFE": "ONE LIFE - NO REVIVES",
+    "DELVE": "DELVE",
+    "DELVE_NEXT": "NEXT BOSS!",
+    "DELVE_CURSED": "A NEW CURSE!",
+    "DELVE_GIFT": "A GIFT WAITS IN TOWN",
+    "DELVE_OVER": "THE DELVE IS OVER"
   },
   "shakes": {},
   "events": {
@@ -114,6 +119,43 @@
     },
     "ranked.draw_offered": {
       "sound": "TEMP_SwitchHit1b"
+    },
+    "delve.entered": {
+      "banner": [
+        "DELVE",
+        "BOSS"
+      ],
+      "shake": "light",
+      "sound": "Lightning2"
+    },
+    "delve.boss": {
+      "banner": [
+        "DELVE_NEXT",
+        "BOSS"
+      ],
+      "shake": "light",
+      "sound": "LevelUp1"
+    },
+    "delve.cursed": {
+      "banner": [
+        "DELVE_CURSED"
+      ],
+      "shake": "medium",
+      "sound": "TEMP_StoneDeath3"
+    },
+    "delve.gift": {
+      "banner": [
+        "DELVE_GIFT",
+        "TREASURE_FOUND"
+      ],
+      "sound": "LevelUp1"
+    },
+    "delve.lost": {
+      "banner": [
+        "DELVE_OVER",
+        "DUNGEON_FAILED"
+      ],
+      "sound": "TEMP_StoneDeath3"
     }
   },
   "lines": {
@@ -133,7 +175,12 @@
     "ranked.rival_seen": "Ranked: your rival is in the room with you — a shade on your heels.",
     "ranked.draw_offered": "Ranked: your rival offers to call the race off. /draw to agree: nobody's rating moves.",
     "onelife.entered": "One life: no revives in this dungeon. A fall ends the run.",
-    "onelife.lost": "One life: your hero fell, and the run with it."
+    "onelife.lost": "One life: your hero fell, and the run with it.",
+    "delve.entered": "Delve: boss after boss, each harder, until your party falls.",
+    "delve.boss": "Delve: boss {depth} - {name}, level {level}{mods}.",
+    "delve.cursed": "Delve: a new curse - {curse}.",
+    "delve.gift": "Delve: {beaten} bosses beaten - {what} waits in town.",
+    "delve.lost": "Delve: your party fell at boss {depth}, {beaten} beaten."
   },
   "parts": {
     "_about": "Pieces of the lines above, and of /rank. A part this book lacks is left out of its line.",

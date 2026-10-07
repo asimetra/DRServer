@@ -132,8 +132,8 @@ test("a modifier joins every few bosses and stays; a gift waits every few bosses
   assert.ok(atDepth(7).modifiers.includes(atDepth(4).modifiers[0]), "and the earlier one stays");
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(controls.gifts, [
-    [7, 51201, 0], [8, 51201, 0],
-    [7, 51205, 0], [8, 51205, 0],
+    [7, 51306, 0], [8, 51306, 0],
+    [7, 51369, 0], [8, 51369, 0],
   ], "after the 3rd and the 6th boss, to everybody there, from nobody's account");
 });
 
@@ -178,9 +178,9 @@ test("difficulty and gifts by the numbers", () => {
   assert.deepEqual([1, 4, 8, 11, 12].map((d) => difficultyAt(d).chestMost), [1, 2, 3, 3, 4], "legendary only from the twelfth boss");
   assert.equal(difficultyAt(3).npcLevel, 22);
   assert.equal(giftFor(2), null);
-  assert.equal(giftFor(3).offerId, 51201);
-  assert.equal(giftFor(12).offerId, 51213);
-  assert.equal(giftFor(15).offerId, 51213, "past the last step, the best");
+  assert.equal(giftFor(3).offerId, 51306, "bombs early: what a delve runs on");
+  assert.equal(giftFor(12).offerId, 51254, "gems deep down");
+  assert.equal(giftFor(15).offerId, 51254, "past the last step, the best");
 });
 
 test("from the game data: every boss but the tutorial's and the village defence, boss maps only", async () => {
@@ -240,4 +240,44 @@ test("a gift is for bosses fought: somebody arriving just before a gift step get
   clear(session); clear(session); clear(session); // up to boss 6
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(controls.gifts.map(([who]) => who), [7, 7, 8], "by the next step the friend has fought enough");
+});
+
+test("what happens is told through the effect book: its event, then its line, the words falling back when it has none", async () => {
+  const shown = [];
+  const said = [];
+  const bosses = [boss(1), boss(2)];
+  let delve = null;
+  delve = createDelve({
+    bosses,
+    modifierIds: [101],
+    modifierNames: { 101: "BEEFY BROS" },
+    controls: { ...fakeControls(), say: (session, text) => said.push(text), party: (s) => [s], gift: async () => null },
+    show: (session, notice) => (shown.push(`${notice.mode}.${notice.type}`), null),
+    line: (notice) => (notice.type === "boss" ? `BOOK boss ${notice.depth}` : null),
+    random: () => 0,
+  });
+  delve.toggle(7);
+  const request = delve.hooks.routeEntry({ accountId: 7 }, { mapNodeId: 1 });
+  const session = { accountId: 7, modeEntry: request.mode, floorIndex: 0 };
+  session.floorPlan = await delve.hooks.planFor(session, 1);
+  session.floorCount = session.floorPlan.floors.length;
+  const planAhead = (floors) => {
+    session.floorPlan.floors = [...session.floorPlan.floors, ...floors];
+    session.floorCount = session.floorPlan.floors.length;
+  };
+  delve.hooks.heroRequested(session);
+  assert.deepEqual(shown, ["delve.entered", "delve.boss"]);
+  assert.equal(said[0], "Delve: boss after boss, each harder, until your party falls.", "no line in the book: the words");
+  assert.equal(said[1], "BOOK boss 1", "the book's line where it has one");
+  // Through to the fourth boss, where the first curse comes.
+  for (let i = 0; i < 3; i++) {
+    delve.hooks.floorCompleting({ ...session, floorPlan: session.floorPlan });
+    planAhead([]);
+    session.floorIndex += 1;
+    delve.hooks.heroRequested(session);
+  }
+  assert.ok(shown.includes("delve.cursed"), "a new curse is told");
+  assert.ok(said.some((line) => /BEEFY BROS/.test(line)));
+  delve.hooks.runFailed(session);
+  assert.equal(shown.at(-1), "delve.lost");
 });
