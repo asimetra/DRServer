@@ -38,7 +38,14 @@ const fakeControls = () => {
 
 const setup = ({ bosses = [boss(1), boss(2, 2), boss(3)], random = () => 0, records = null } = {}) => {
   const controls = fakeControls();
-  const delve = createDelve({ bosses, modifierIds: [101, 102, 103], tileLibraries: ["t.json"], controls, random, records, clock: () => 5 });
+  const presence = [];
+  // As the seat channel would carry it, without workers: every count heard at once, from the seat.
+  let delve = null;
+  delve = createDelve({
+    bosses, modifierIds: [101, 102, 103], tileLibraries: ["t.json"], controls, random, records, clock: () => 5,
+    tellInside: (inside) => delve.heardInside(0, inside),
+    tellPresence: (session, id, where) => presence.push([session.accountId, id, where]),
+  });
   /** /delve, then an entry, through to standing on the first boss. */
   const enter = async (accountId = 7) => {
     delve.toggle(accountId);
@@ -55,7 +62,7 @@ const setup = ({ bosses = [boss(1), boss(2, 2), boss(3)], random = () => 0, reco
     session.floorIndex += 1;
     delve.hooks.heroRequested(session);
   };
-  return { delve, controls, enter, clear };
+  return { delve, controls, enter, clear, presence };
 };
 
 test("/delve makes the player's own next entry a delve, at the one node strangers are matched by", async () => {
@@ -175,4 +182,36 @@ test("from the game data: every boss but the tutorial's and the village defence,
   assert.ok(bosses.every((b) => b.floors.length >= 1 && b.floors.every((floor) => floor.authored)), "authored maps only");
   assert.ok(tileLibraries.length > 0);
   assert.equal(modifierIds.length, DELVE_DEFAULTS.modifiers.length, "every default modifier is in the game data");
+});
+
+test("the way in is DELVE on the friend list: first, online in a dungeon, and JOIN on it is a delve", async () => {
+  const { delve, presence, enter } = setup();
+  const [row, ...rest] = delve.hooks.friendList([{ account_id: 5, name: "a friend" }, { account_id: 998, name: "stale copy" }]);
+  assert.equal(row.account_id, 998);
+  assert.equal(row.name, "DELVE");
+  assert.equal(row.is_online, true);
+  assert.equal(row.current_dungeon, delve.entryNode, "in a dungeon: the client draws JOIN");
+  assert.deepEqual(rest.map((friend) => friend.account_id), [5], "any stored copy dropped");
+  delve.hooks.loggedIn({ accountId: 7 });
+  assert.deepEqual(presence, [[7, 998, delve.entryNode]]);
+  assert.equal(delve.hooks.isSystemAccount(998), true, "the id is never an account's");
+
+  const join = delve.hooks.routeEntry({ accountId: 7 }, { mapNodeId: 0, friendId: 998, mapId: 0, friendOnly: 0 });
+  assert.equal(join.mode, DELVE_MODE);
+  assert.equal(join.mapNodeId, delve.entryNode);
+  assert.equal(join.friendId, 0, "not a join of anybody: a delve of its own, public");
+
+  // Somebody delving: the door says so.
+  await enter(7);
+  assert.equal(delve.hooks.friendList([])[0].name, "DELVE (1)");
+  delve.hooks.runLeft({ accountId: 7 });
+  assert.equal(delve.hooks.friendList([])[0].name, "DELVE");
+});
+
+test("what each worker counts is added up where friend lists are answered", () => {
+  const { delve } = setup();
+  delve.heardInside(0, 2);
+  delve.heardInside(1, 3);
+  delve.heardInside(1, 1);
+  assert.equal(delve.inside(), 3, "worker 1's latest replaces its earlier count");
 });

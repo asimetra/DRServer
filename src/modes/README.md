@@ -19,6 +19,7 @@ keep still for it.
 |---|---|---|
 | The hooks | `src/modes/hooks.js` — `installModeHooks`, `modeHooks`, `MODE_HOOK_NAMES`, `MODE_HOOK_COMBINE` | the 18 names, their arguments, and how several modes' answers combine |
 | Run controls | `src/modes/runtime.js` — `runControls`, `installSessionLookup` | what a mode may ask the core to do: `party`, `sessionOf`, `win`, `lose`, `sendHome`, `planAhead`, `endFloor`, `reward`, `heal`, `gift`, `say`, `grantBuff` |
+| The friend door | `src/modes/friend-door.js` — `friendDoorHooks`, `friendDoorRow` | how a player enters a mode: a row on every friend list with JOIN beside it |
 | Game data | `src/modes/game-data.js` — `mapNodes`, `mapNode`, `nodePlan`, `planTileLibraries`, `gameTable` | what a mode may read of the deployment's game data, to draw floors of its own |
 | Records | `src/modes/records.js` — `createModeRecords` | what a mode keeps across restarts: `append`, `all`, `forAccount`, `version`; a record is `{ id, at, accounts, ... }` |
 | Run rules | `src/socket/run-rules.js` — `runRules`, `STOCK_RUN_RULES` | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable`, `together` |
@@ -33,8 +34,8 @@ keep still for it.
 | The seat | `src/modes/seat.js` — `seatRuns`, `seatSaid`, `tellMain`, `onTold` | whether a together mode runs on its worker now; and what a mode says to its main half from any thread — a command said in a dungeon, the seat's count of players waiting |
 
 Internal, and used by ranked today, but not promised: the stock-client adapter's
-copies and ghost (`src/ranked/stock-client/`), the system-friend row. The second
-mode, one life, needed none of them;
+copies and ghost (`src/ranked/stock-client/`). The second mode, one life,
+needed none of them;
 what a third needs of them becomes surface when it does.
 
 A mode that needs something the seam lacks adds a *knob the core reads*, never a
@@ -107,6 +108,33 @@ connection is closing has none left; the answer is then false or null, never a
 throw. A match worker installs its own members as the lookup at start-up
 (`installSessionLookup`), so `sessionOf` finds the runs on whichever thread
 asks.
+
+## The friend door
+
+The stock client has no menu a server can add to and no chat in town, but every
+player has a friend list, and a friend who is online and in a dungeon gets a
+JOIN button. So the default way into a mode is a friend everybody has:
+
+```js
+import { friendDoorHooks } from "../modes/friend-door.js";
+
+const door = friendDoorHooks({
+  id: 998,                                   // reserved: 1 to 999, never an account's
+  name: () => `DELVE (${inside()})`,         // read each time a list is answered
+  where: 50005,                              // the node it is "in"; JOIN does not check it
+  entry: (connection, request) => ({ ...request, mapNodeId: 50005, friendId: 0, mode: "delve" }),
+});
+installModeHooks("delve", { ...door, /* the mode's own hooks */ });
+```
+
+It answers four hooks: `friendList` puts the row first on every list (the
+client sorts online friends by trophies, and a door's are pinned above any),
+`loggedIn` says it is online and in a dungeon so JOIN is drawn, `routeEntry`
+turns JOIN on it into the mode's entry, and `isSystemAccount` keeps the id from
+ever being an account. A mode with a `routeEntry` of its own calls the door's
+from it. Install the door on every thread: lists are answered on the main
+thread in town and on a match worker in a dungeon. Ranked's MATCHMAKER (999) and
+delve's DELVE (998) are doors.
 
 ## What a mode keeps
 
@@ -286,7 +314,8 @@ rather than played as an ordinary one.
 
 `examples/modes/delve/index.js` is a whole mode written against this surface
 alone and loaded from outside `src/` (`ODS_MODES=examples/modes/delve/index.js`):
-a boss rush for a party anybody may join. `/delve` arms the next entry; every
+a boss rush for a party anybody may join. DELVE on the friend list is the way
+in (a friend door, with how many are inside); every
 floor is a boss's own map, drawn from the game data (`game-data.js`), never the
 same twice running, each harder (`npcLevel`, the three bonuses, a modifier every
 few bosses) and added from `floorCompleting` with `planAhead`; every few bosses

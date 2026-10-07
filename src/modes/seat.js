@@ -67,7 +67,11 @@ export const tellMain = (mode, data) => {
   else noteModeTold(mode, data, SEAT_WORKER);
 };
 
-/** The main thread hears what `mode` says from any thread: `listen(data)`. Returns a function that stops it. */
+/**
+ * The main thread hears what `mode` says from any thread: `listen(data, from)`,
+ * `from` the worker's index (SEAT_WORKER without workers), so what each worker
+ * counts can be added up. Returns a function that stops it.
+ */
 export const onTold = (mode, listen) => {
   let set = listeners.get(mode);
   if (!set) listeners.set(mode, (set = new Set()));
@@ -94,7 +98,7 @@ export const noteModeTold = (mode, data, from) => {
   if (from === SEAT_WORKER) said.set(mode, data);
   for (const listen of listeners.get(mode) ?? []) {
     try {
-      listen(data);
+      listen(data, from);
     } catch (problem) {
       warn(`mode ${mode}: what it said was not heard: ${problem?.stack ?? problem}`);
     }

@@ -162,3 +162,18 @@ test("the game data a mode may read: nodes, a node's floors, their tile files, a
   const data = await import("../src/modes/game-data.js");
   assert.deepEqual(Object.keys(data).sort(), ["gameTable", "mapNode", "mapNodes", "nodePlan", "planTileLibraries"]);
 });
+
+test("the friend door: the hooks it answers, its row, and its ids", async () => {
+  const { friendDoorHooks, friendDoorRow, FRIEND_DOOR_ID_MOST } = await import("../src/modes/friend-door.js");
+  const told = [];
+  const door = friendDoorHooks({ id: 990, name: "DOOR", where: 50002, entry: (c, r) => ({ ...r, mode: "m" }), tellPresence: (...a) => told.push(a) });
+  assert.deepEqual(Object.keys(door).sort(), ["friendList", "isSystemAccount", "loggedIn", "routeEntry"]);
+  assert.deepEqual(Object.keys(friendDoorRow({ id: 990, name: "x" })).sort(), [
+    "account_id", "active_skin", "avatar_url", "current_dungeon", "friend_code", "identifier", "is_ingame_friend", "is_online", "name", "trophies",
+  ]);
+  assert.equal(door.routeEntry({}, { friendId: 990 }).mode, "m");
+  const other = { friendId: 5 };
+  assert.equal(door.routeEntry({}, other), other, "anybody else's JOIN is left alone");
+  assert.equal(FRIEND_DOOR_ID_MOST, 999);
+  assert.throws(() => friendDoorHooks({ id: 1000, entry: () => null }), /1 to 999/);
+});

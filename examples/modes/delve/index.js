@@ -1,8 +1,9 @@
 /**
  * Delve: a boss rush with no end, for a party anybody may join.
  *
- * `/delve` makes the player's next dungeon a delve — said in a dungeon, since
- * the stock client has no chat in town; `/delve off` calls it off. Every floor is a
+ * The way in is DELVE on the friend list — a friend door, with how many are
+ * inside — and JOIN beside it. `/delve`, said in a dungeon, still arms the
+ * player's next entry instead; `/delve off` calls it off. Every floor is a
  * boss's own map — one of the game's trophy dungeons, drawn at random and never
  * the same twice in a row — and each is harder than the last: the monsters'
  * level, then their health, damage and attack speed, and every few bosses one
@@ -24,6 +25,7 @@ import { runControls } from "../../../src/modes/runtime.js";
 import { createModeRecords } from "../../../src/modes/records.js";
 import { gameTable, mapNodes, nodePlan, planTileLibraries } from "../../../src/modes/game-data.js";
 import { onTold, tellMain } from "../../../src/modes/seat.js";
+import { friendDoorHooks } from "../../../src/modes/friend-door.js";
 import { define, undefineMode } from "../../../src/socket/commands.js";
 import { ROLE } from "../../../src/socket/roles.js";
 import { info } from "../../../src/log.js";
@@ -81,6 +83,8 @@ export const DELVE_DEFAULTS = Object.freeze({
    * client draws as "SOMEBODY". The run, not a player.
    */
   giftFrom: 0,
+  /** The friend door's id (modes/friend-door.js): reserved, under 1000; MATCHMAKER is 999. */
+  doorId: 998,
 });
 
 /** The gift for having beaten `beaten` bosses, or null when it is not a gift step. */
@@ -113,6 +117,10 @@ export const createDelve = ({
   settings = DELVE_DEFAULTS,
   controls = runControls,
   records = null,
+  // How this thread's count of delvers reaches whoever answers friend lists (tellMain).
+  tellInside = () => {},
+  // The core's presence, standing in for it in a test.
+  tellPresence = undefined,
   random = Math.random,
   clock = Date.now,
 }) => {
@@ -159,7 +167,7 @@ export const createDelve = ({
   const keep = (session) => {
     const accountId = idOf(session);
     const state = stateOf(session) ?? runOf.get(accountId);
-    runOf.delete(accountId);
+    if (runOf.delete(accountId)) countChanged();
     if (!state || !records || !accountId || state.kept.has(accountId)) return;
     state.kept.add(accountId);
     records
@@ -167,14 +175,43 @@ export const createDelve = ({
       .catch(() => {});
   };
 
+  /** A delve entry: public, at the one node strangers are matched by. */
+  const delveEntry = (request) => ({ ...request, mapNodeId: entryNode, friendId: 0, mapId: 0, friendOnly: 0, mode: DELVE_MODE });
+
+  /**
+   * How many are delving, as the main thread hears each worker say it (`inside`,
+   * below): worker -> its count. A list answered on a worker knows only its own.
+   */
+  const insideBy = new Map();
+  const insideNow = () => [...insideBy.values()].reduce((sum, count) => sum + count, 0);
+  /** This thread's own count changed: told to the main thread (or heard here, without workers). */
+  const countChanged = () => tellInside(runOf.size);
+
+  /**
+   * The way in: DELVE on every friend list (modes/friend-door.js), with how
+   * many are inside, and JOIN on it a delve. Nothing to type, nothing armed —
+   * the friend list is how the stock client enters a mode.
+   */
+  const door = friendDoorHooks({
+    id: settings.doorId,
+    name: () => (insideNow() > 0 ? `DELVE (${insideNow()})` : "DELVE"),
+    where: entryNode,
+    tellPresence,
+    entry: (connection, request) => delveEntry(request),
+  });
+
   const hooks = {
+    friendList: door.friendList,
+    loggedIn: door.loggedIn,
+    isSystemAccount: door.isSystemAccount,
     routeEntry(connection, request) {
+      if (Number(request?.friendId) === settings.doorId) return door.routeEntry(connection, request);
       const accountId = Number(connection?.accountId);
       if (!armed.has(accountId)) return request;
       // Joining somebody keeps the arming for the player's own next run, as one life does.
       if (Number(request?.friendId) || Number(request?.mapId)) return request;
       armed.delete(accountId);
-      return { ...request, mapNodeId: entryNode, friendId: 0, mapId: 0, friendOnly: 0, mode: DELVE_MODE };
+      return delveEntry(request);
     },
     modeRules: (mode) => (mode === DELVE_MODE ? DELVE_RUN_RULES : null),
     runRules: (session) => (session?.modeEntry === DELVE_MODE ? DELVE_RUN_RULES : null),
@@ -196,7 +233,10 @@ export const createDelve = ({
       if (!isDelve(session)) return;
       const state = stateOf(session);
       const accountId = idOf(session);
-      runOf.set(accountId, state);
+      if (!runOf.has(accountId)) {
+        runOf.set(accountId, state);
+        countChanged();
+      }
       // Each player told once a boss: a two-map boss is one boss, and a late joiner hears the one they arrived at.
       if (state.told.get(accountId) === state.depth) return;
       state.told.set(accountId, state.depth);
@@ -244,7 +284,20 @@ export const createDelve = ({
   /** Arms or disarms by turns. */
   const toggle = (accountId) => arm(accountId, !armed.has(Number(accountId)));
 
-  return { hooks, arm, toggle, armed: (accountId) => armed.has(Number(accountId)), entryNode };
+  /** The main thread: worker `from` says `inside` are delving there. */
+  const heardInside = (from, inside) => {
+    if (Number.isFinite(inside) && inside >= 0) insideBy.set(from, inside);
+  };
+
+  return {
+    hooks,
+    arm,
+    toggle,
+    armed: (accountId) => armed.has(Number(accountId)),
+    entryNode,
+    heardInside,
+    inside: insideNow,
+  };
 };
 
 /** The bosses the game data has: each boss node's authored maps, its tier, and their tile files. */
@@ -270,16 +323,23 @@ export default {
   together: false,
   async start({ where }) {
     const data = await bossesFromGameData();
-    const delve = createDelve({ ...data, records: createModeRecords({ mode: DELVE_MODE }) });
+    const delve = createDelve({
+      ...data,
+      records: createModeRecords({ mode: DELVE_MODE }),
+      tellInside: (inside) => tellMain(DELVE_MODE, { inside }),
+    });
     const uninstall = installModeHooks(DELVE_MODE, delve.hooks);
     info(`delve: on (${where}) — ${data.bosses.length} bosses, entered by node ${delve.entryNode}`);
+    // A worker starting — a replacement included — has nobody delving yet: its count starts from nothing.
+    if (where === "worker") tellMain(DELVE_MODE, { inside: 0 });
     // The arming is kept where entries are routed, told there from wherever /delve was said.
     const unlisten =
       where === "worker"
         ? () => {}
-        : onTold(DELVE_MODE, ({ accountId, on } = {}) => {
-          const armedNow = delve.arm(accountId, on);
-          info(`delve: ${accountId}'s next entry ${armedNow ? "is a delve" : "is ordinary"}`);
+        : onTold(DELVE_MODE, (data = {}, from) => {
+          if ("inside" in data) return delve.heardInside(from, data.inside);
+          const armedNow = delve.arm(data.accountId, data.on);
+          info(`delve: ${data.accountId}'s next entry ${armedNow ? "is a delve" : "is ordinary"}`);
         });
     define({
       name: "delve",

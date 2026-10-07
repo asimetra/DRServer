@@ -15,7 +15,8 @@
  * hooks in ../hooks.js; what it needs of the runtime is handed in, so it can be
  * tested without a socket.
  */
-import { SYSTEM_FRIEND_ID, isSystemAccount, systemFriendRow, withSystemFriend } from "./system-friend.js";
+import { SYSTEM_FRIEND_ID, matchmakerName } from "./system-friend.js";
+import { friendDoorHooks } from "../../modes/friend-door.js";
 import { giveGift } from "../../gifts.js";
 import { insideRing, ringMarkers, ringSpot } from "./ring.js";
 import { createLobbyCopies } from "./copies.js";
@@ -81,7 +82,22 @@ export const stockClientEntryHooks = ({
   heroLevelOf = async () => Infinity,
   tutorialDoneFor = () => true,
 }) => ({
-  isSystemAccount,
+  /**
+   * MATCHMAKER, ranked's friend door (modes/friend-door.js): first on every
+   * list with how many are waiting in its name, online and in a dungeon so
+   * the client draws JOIN beside it, and JOIN on it a private run of the lobby
+   * node, marked ranked wherever it is run.
+   */
+  ...friendDoorHooks({
+    id: SYSTEM_FRIEND_ID,
+    name: () => matchmakerName(waiting()),
+    where: settings.lobbyNode,
+    tellPresence,
+    entry: (connection, request) => {
+      joining(Number(connection?.accountId));
+      return { ...request, mapNodeId: settings.lobbyNode, friendId: 0, mapId: 0, friendOnly: 1, mode: "ranked" };
+    },
+  }),
 
   /**
    * Who may enter ranked (settings.entry): a least hero level, the tutorial
@@ -98,26 +114,12 @@ export const stockClientEntryHooks = ({
     return { ok: true };
   },
 
-  /** MATCHMAKER first on every list, with how many are waiting in its name. */
-  friendList: (rows) =>
-    withSystemFriend(rows, systemFriendRow({ waiting: waiting(), where: settings.lobbyNode })),
-
-  /** Online and in a dungeon, so the client draws JOIN beside it. Never in the presence roll. */
-  loggedIn: (session) => tellPresence(session, SYSTEM_FRIEND_ID, settings.lobbyNode),
-
   /**
    * The rules a ranked run plays by, known on every thread: the main thread
    * admits the entry (the unlock check), answers who may follow a player in,
    * and picks the worker (together) before any run exists.
    */
   modeRules: (mode) => (mode === "ranked" ? RANKED_RUN_RULES : null),
-
-  /** JOIN on MATCHMAKER: a private run of the lobby node, marked ranked wherever it is run. */
-  routeEntry(connection, request) {
-    if (Number(request?.friendId) !== SYSTEM_FRIEND_ID) return request;
-    joining(Number(connection?.accountId));
-    return { ...request, mapNodeId: settings.lobbyNode, friendId: 0, mapId: 0, friendOnly: 1, mode: "ranked" };
-  },
 });
 
 export const createStockClientAdapter = ({
