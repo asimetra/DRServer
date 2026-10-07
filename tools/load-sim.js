@@ -7,6 +7,8 @@
  *   node tools/load-sim.js --players 300 --rpc --slow-readers 0.05
  *   node tools/load-sim.js --players 500 --slo "heartbeat.p99<200,npc.p95<400"
  *   node tools/load-sim.js --players 2 --friend 999 --hold 30   # JOIN on MATCHMAKER: a ranked race
+ *   node tools/load-sim.js --players 2 --say /delve --nodes 50004 # a chat line in town first: a mode's command
+ *   node tools/load-sim.js --players 1 --scenario churn --run-say "/delve|/complete"  # arm in a run, then an admin walking the next
  *
  * One process drives every player, so a few hundred of them cost this tool
  * very little. What it measures is the server, from where a player stands:
@@ -134,6 +136,11 @@ export const parseArgs = (argv) => {
     firstAccount: number("first-account", 1000100000),
     // Enter by joining this friend's run instead of a node: 999 is MATCHMAKER.
     friend: number("friend", 0),
+    // A chat line said in town before the first entry: a mode's command (/delve, /onelife).
+    say: value("say", null),
+    // A chat line said in the run every --run-say-every seconds: an admin's /complete walks a run floor by floor.
+    runSay: value("run-say", null),
+    runSayEvery: number("run-say-every", 8),
     nodes: value("nodes", null)?.split(",").map(Number) ?? DEFAULT_NODES,
     tokenSecret: readSecret(value("token-secret-file", null)),
     slo: value("slo", ""),
@@ -205,6 +212,8 @@ export const pickRpc = (random = Math.random) => {
   return RPC_MIX.at(-1);
 };
 
+/** PlayerGameObject's chat field (socket/chat.js). */
+const FLID_PLAYER_CHAT = 182;
 const field = (doid, id) => new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD).u32(doid).u16(id);
 
 class Metrics {
@@ -278,6 +287,15 @@ class Player {
     this.every(2000, () => this.heartbeat());
     if (this.options.scenario !== "lobby") this.every(250, () => this.tick());
     if (this.options.rpc) this.scheduleRpc();
+    if (this.options.runSay) {
+      this.every(Math.max(1, this.options.runSayEvery) * 1000, () => {
+        // Several lines, |-separated, each said in turn: "/delve|/complete".
+        if (!this.hero || !this.player) return;
+        for (const line of this.options.runSay.split("|").filter(Boolean)) {
+          this.send(field(this.player, FLID_PLAYER_CHAT).utf(line).frame());
+        }
+      });
+    }
   }
 
   every(ms, work) {
@@ -306,6 +324,15 @@ class Player {
   }
 
   enter() {
+    // Said once, on the player object, before an entry: a command arms the entry that follows.
+    // The server makes that object with the first run, so a player who has none yet enters
+    // plainly first, and says it before the next (--scenario churn).
+    if (this.options.say && !this.said && this.player) {
+      this.said = true;
+      this.send(field(this.player, FLID_PLAYER_CHAT).utf(this.options.say).frame());
+      setTimeout(() => this.enter(), 300);
+      return;
+    }
     this.metrics.counts.entries += 1;
     this.hero = null;
     this.npcs.clear();
