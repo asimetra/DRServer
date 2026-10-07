@@ -1,23 +1,25 @@
 /**
- * Lobby copies (docs/ranked.md, "Waiting: a lobby floor").
+ * Copies: other players' heroes drawn in a viewer's world, standing and moving
+ * where those players really are. Ranked's lobbies are the first use — every
+ * lobby is a private world, so nobody waiting would see anybody else — and its
+ * race ghost the second (docs/ranked.md, "Waiting: a lobby floor").
  *
- * Every ranked lobby is a private world, so nobody waiting sees anybody else.
- * Each lobby is sent the others' heroes instead, as copies standing and moving
- * where those players really are: no name (an empty screen name draws no
- * text), no balloon (their lines reach the log through the lobby relay), never
- * hit (the lobby is harmless, and a hero does not collide with its own team),
- * and gone when that player's race starts or they leave.
+ * A copy carries no name unless asked for (an empty screen name draws no
+ * text), no balloon (a mode relays lines itself, runControls.relay), is never
+ * hit (a hero does not collide with its own team), and is gone when its
+ * player leaves the view or the mode says so.
  *
  * A copy is a player object and a hero of the viewer's own world, sent to the
  * viewer alone. The hero points at the player object, which is how the client
  * looks a hero's player up; speech.js gives a speaker a body the same way.
  * Both are kept among the world's objects so that the floor's end disables them
- * with everything else of it — the lobby ending into the race, or into a fresh
- * lobby — and they are only made while the viewer's lobby floor stands, since a
- * child generated under a floor that has gone is an orphan on the client.
+ * with everything else of it, and they are only made while the viewer's floor
+ * stands, since a child generated under a floor that has gone is an orphan on
+ * the client.
  *
- * `frames` are the runtime's builders (setup.js): hero and player generates,
- * position, heading, AFK, a remote attack and its stop, and a disable.
+ * `frames` are the core's builders by default: hero and player generates,
+ * position, heading, AFK, a remote attack and its stop, a buff and a disable.
+ * A test hands in its own.
  *
  * The stock client draws an HP bar over every hero but the player's own, and
  * nothing on the wire turns it off. Generating a copy large and resizing it at
@@ -27,7 +29,23 @@
  * of units up, and the edge arrow points there for good. Tried on 2026-10-05
  * and taken out; only a client change hides the bar.
  */
-import { CLID } from "../../socket/opcodes.js";
+import { CLID } from "../socket/opcodes.js";
+import { buffGenerate, heroGenerate, heroHeadingUpdate, heroPositionUpdate, objectDisable, playerGenerate } from "../socket/objects.js";
+import { heroAfkUpdate } from "../socket/afk.js";
+import { remoteAttackChoreography, remoteStopChoreography } from "../socket/buster.js";
+
+/** How a copy is drawn and moved: what a party member is. */
+export const COPY_FRAMES = Object.freeze({
+  player: playerGenerate,
+  hero: heroGenerate,
+  position: heroPositionUpdate,
+  heading: heroHeadingUpdate,
+  afk: heroAfkUpdate,
+  attack: remoteAttackChoreography,
+  stopAttack: remoteStopChoreography,
+  buff: buffGenerate,
+  disable: (doid) => objectDisable(doid),
+});
 
 /**
  * Where an attack choreography names other objects (generatedCode/
@@ -67,7 +85,7 @@ export const createLobbyCopies = ({
   most,
   sessionOf,
   contextOf,
-  frames,
+  frames = COPY_FRAMES,
   random = Math.random,
   visibleTo = () => true,
   name = "",

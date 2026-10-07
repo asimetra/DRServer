@@ -8,8 +8,11 @@
  * The game data is the deployment's own (local-data, never in the repository),
  * read once and cached by the core; these are reads, never writes.
  */
-import { loadGameMaster, mapNode as nodeById } from "../gamemaster.js";
-import { floorPlanForMapNode, tileLibrariesFor } from "../socket/floors.js";
+import { heroById as heroRow, loadGameMaster, mapNode as nodeById } from "../gamemaster.js";
+import { floorPlanForMapNode, loadFloor, tileLibrariesFor } from "../socket/floors.js";
+
+/** A floor tile's side, in floor units: what a floor position is counted in. */
+export { TILE_SIZE } from "../socket/tilegen.js";
 
 /** Every map node (MapPage rows): `{ Id, Constant, Name, NodeType, TierRank, ... }`. */
 export const mapNodes = async () => [...((await loadGameMaster()).raw?.MapPage ?? [])];
@@ -30,3 +33,20 @@ export const planTileLibraries = (plan) => tileLibrariesFor(plan);
 
 /** Any table of the game data by name (DungeonModifier, Offers, Npc, ...), as rows; empty for none. */
 export const gameTable = async (name) => [...((await loadGameMaster()).raw?.[name] ?? [])];
+
+/** One hero (Hero rows) by id, or null. */
+export const heroById = async (id) => (await heroRow(Number(id))) ?? null;
+
+/**
+ * Why a floor file cannot be built as given — its tiles retiled by `retile`
+ * (`[{ x, y, tileId }]`) — or null when it can: a mode's own floor, checked
+ * once at start rather than by every player sent to it.
+ */
+export const floorProblem = async (name, { retile = [] } = {}) => {
+  try {
+    await loadFloor(name, { retile });
+    return null;
+  } catch (problem) {
+    return problem?.message ?? String(problem);
+  }
+};

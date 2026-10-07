@@ -142,7 +142,7 @@ try {
   if (config.storage === "postgres") await keepServerStateInDatabase();
   else keepDeclarationsIn(path.join(config.dataDir, "content-declarations.json"));
   await startMatchWorkers();
-  // Each off unless asked for (ODS_RANKED, ODS_ONELIFE); see src/modes/README.md.
+  // Each off unless asked for (ODS_RANKED, ODS_ONELIFE, ODS_DELVE); see src/modes/README.md.
   stopModes = await startModes();
 
   listeners = [startWebServices(), startInternalApi(), startGameSocket()];

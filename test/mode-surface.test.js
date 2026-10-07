@@ -49,7 +49,10 @@ test("the run rules: these knobs and no others, and the game as shipped pays eve
 });
 
 test("the run controls: what a mode may ask the core, these and no others", async () => {
-  assert.deepEqual(Object.keys(runControls), ["party", "sessionOf", "win", "lose", "sendHome", "planAhead", "endFloor", "reward", "heal", "gift", "weapon", "say", "grantBuff"]);
+  assert.deepEqual(Object.keys(runControls), [
+    "contextOf", "party", "sessionOf", "win", "lose", "sendHome", "planAhead", "endFloor", "reward", "heal", "gift", "weapon", "say",
+    "grantBuff", "relay", "reportOf", "declares",
+  ]);
   const held = { accountId: 7 };
   const undo = installSessionLookup((id) => (id === 7 ? held : null));
   assert.equal(runControls.sessionOf(7), held, "a thread's own lookup finds its runs");
@@ -162,7 +165,25 @@ test("the registry and the seat: how a mode is added, and what the main thread k
 
 test("the game data a mode may read: nodes, a node's floors, their tile files, any table", async () => {
   const data = await import("../src/modes/game-data.js");
-  assert.deepEqual(Object.keys(data).sort(), ["gameTable", "mapNode", "mapNodes", "nodePlan", "planTileLibraries"]);
+  assert.deepEqual(Object.keys(data).sort(), ["TILE_SIZE", "floorProblem", "gameTable", "heroById", "mapNode", "mapNodes", "nodePlan", "planTileLibraries"]);
+  assert.equal(typeof (await data.floorProblem("no/such/floor.json")), "string", "a floor that cannot be built says why");
+});
+
+test("the rest of the seam a mode imports: settings, players, effects, commands, run rules, copies, the web", async () => {
+  const exportsOf = async (file) => Object.keys(await import(`../src/modes/${file}`)).sort();
+  assert.deepEqual(await exportsOf("settings.js"), ["modeSettings"]);
+  assert.deepEqual(await exportsOf("players.js"), ["activeHeroLevel", "nodeDone", "playerName"]);
+  assert.deepEqual(await exportsOf("effects.js"), ["bookWords", "playNotice"]);
+  assert.deepEqual(await exportsOf("commands.js"), ["ROLE", "define", "undefineMode"]);
+  assert.deepEqual(await exportsOf("run-rules.js"), ["SEAT_WORKER", "STOCK_RUN_RULES", "runRules"]);
+  assert.deepEqual(await exportsOf("copies.js"), ["COPY_FRAMES", "createLobbyCopies", "swingWithoutTargets"]);
+  assert.deepEqual(await exportsOf("web.js"), ["addModeRoute", "addProfileField", "modeRoutes", "profileFieldsFor"]);
+  const { modeSettings } = await import("../src/modes/settings.js");
+  const read = modeSettings("ranked", { ODS_RANKED: "1", ODS_RANKED_LOBBY_NODE: "50004" });
+  assert.equal(read.flag("RANKED"), true);
+  assert.equal(read.int("RANKED_LOBBY_NODE", 1), 50004);
+  assert.equal(read.flag("NOT_SET", true), true, "unset keeps the fallback");
+  assert.equal(typeof read.file, "object");
 });
 
 test("the friend door: the hooks it answers, its row, and its ids", async () => {

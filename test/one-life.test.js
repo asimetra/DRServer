@@ -88,7 +88,7 @@ test("the shipped book has both events' wording, under the mode's own name", () 
   assert.ok(book.events()["onelife.entered"].banner, "a banner for the first floor");
   assert.match(book.line({ mode: ONE_LIFE_MODE, type: "entered" }), /no revives/i);
   assert.match(book.line({ mode: ONE_LIFE_MODE, type: "lost" }), /fell/);
-  assert.equal(eventForNotice({ type: "queued" }), "ranked.queued", "a notice naming no mode is ranked's, as before");
+  assert.equal(eventForNotice({ type: "queued" }), null, "a notice naming no mode is nobody's");
 });
 
 test("the command: said in a dungeon — the stock client's only chat — it arms the next entry, told to where entries are routed", async () => {

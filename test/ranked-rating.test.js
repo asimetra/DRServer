@@ -12,7 +12,7 @@ import {
   rateMatch,
   ratingRules,
   replayRatings,
-} from "../src/ranked/rating.js";
+} from "../src/modes/ranked/rating.js";
 
 const at = (rating) => ({ rating });
 

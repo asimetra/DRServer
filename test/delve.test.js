@@ -10,7 +10,7 @@ import {
   difficultyAt,
   giftFor,
   itemFor,
-} from "../examples/modes/delve/index.js";
+} from "../src/modes/delve/index.js";
 import { createModeRecords } from "../src/modes/records.js";
 
 const boss = (id, maps = 1) => ({

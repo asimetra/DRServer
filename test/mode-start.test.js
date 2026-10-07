@@ -1,19 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { config } from "../src/config.js";
 import { startModes } from "../src/modes/index.js";
 
-test("a mode that fails to start is that mode off; the rest start, and nothing throws", async (t) => {
-  const was = config.ranked;
-  // A ranked whose settings cannot even be read: its start throws.
-  config.ranked = {
-    get enabled() {
+test("a mode that fails to start is that mode off; the rest start, and nothing throws", async () => {
+  const { registerMode } = await import("../src/modes/index.js");
+  registerMode({
+    name: "test-unreadable",
+    start: async () => {
       throw new Error("unreadable settings");
     },
-  };
-  t.after(() => {
-    config.ranked = was;
   });
   const stop = await startModes({ where: "local" });
   assert.equal(typeof stop, "function");

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { config } from "../src/config.js";
-import { RING_PILE, insideRing, ringMarkers, ringPiles, ringSpot } from "../src/ranked/stock-client/ring.js";
+import { rankedSettings } from "../src/modes/ranked/settings.js";
+import { RING_PILE, insideRing, ringMarkers, ringPiles, ringSpot } from "../src/modes/ranked/stock-client/ring.js";
 import { applyDamage } from "../src/socket/combat.js";
 import { loadFloorAt, quietFloor } from "../src/socket/floors.js";
 import { addNavigationObstacle, createNavigationState, isPositionBlocked } from "../src/socket/navigation.js";
@@ -72,7 +72,7 @@ const gapsAlong = (boxes, from, to) =>
   boxes.slice(1).map((next, i) => next[from] - boxes[i][to]);
 
 test("the ring's sides are shut, and its way in is the middle of the top and of the bottom", () => {
-  const ring = config.ranked.ring;
+  const ring = rankedSettings.ring;
   const piles = ringPiles(ring);
   const centre = (ring.x0 + ring.x1) / 2;
   for (const y of [ring.y0, ring.y1]) {
@@ -100,7 +100,7 @@ test("the ring's sides are shut, and its way in is the middle of the top and of 
  * and can walk straight in through the bottom way.
  */
 test("on the lobby floor the hero arrives outside the ring, clear, and can walk in", async () => {
-  const { ring, lobbySpawn, lobbyFloor, lobbyTiles } = config.ranked;
+  const { ring, lobbySpawn, lobbyFloor, lobbyTiles } = rankedSettings;
   const plan = {
     floors: [{ authored: lobbyFloor, retile: lobbyTiles, quiet: { npc: ringMarkers(ring), spawn: lobbySpawn } }],
   };
@@ -134,7 +134,7 @@ test("on the lobby floor the hero arrives outside the ring, clear, and can walk 
 });
 
 test("a floor is retiled only with tiles its library has, where it has a tile", async () => {
-  const { lobbyFloor } = config.ranked;
+  const { lobbyFloor } = rankedSettings;
   await assert.rejects(
     loadFloorAt({ floors: [{ authored: lobbyFloor, retile: [{ x: 2700, y: 2700, tileId: "no.such.tile" }] }] }, 0),
     /has no tile no\.such\.tile/

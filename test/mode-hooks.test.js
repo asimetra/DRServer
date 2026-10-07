@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { MODE_HOOK_NAMES, installModeHooks, modeHooks, modeInstalled, modesInstalled } from "../src/modes/hooks.js";
-import { installRankedHooks, rankedHooks, rankedHooksInstalled } from "../src/ranked/hooks.js";
+import { installRankedHooks, rankedHooks, rankedHooksInstalled } from "../src/modes/ranked/hooks.js";
 
 /**
  * The mode seam (src/modes/hooks.js): more than one mode at once, each

@@ -108,10 +108,24 @@ const defaultContentDir = () => {
  * from that file; relative paths in environment variables use the working
  * directory, matching normal command-line behaviour.
  */
+const configFileOf = (environment) =>
+  setting(environment, "CONFIG_FILE") ? path.resolve(setting(environment, "CONFIG_FILE")) : defaultConfigFile;
+
+/**
+ * A game mode's own settings (src/modes/settings.js): its section of the
+ * config file, as written, and the environment its ODS_* overrides come from.
+ * The core reads none of it — what a mode's settings mean is the mode's.
+ */
+export const settingsSection = (section, environment = process.env) => {
+  const value = readJsonFile(configFileOf(environment))?.[section];
+  return {
+    file: value && typeof value === "object" && !Array.isArray(value) ? value : {},
+    env: (name) => setting(environment, name),
+  };
+};
+
 export const loadServerConfig = (environment = process.env) => {
-  const configFile = setting(environment, "CONFIG_FILE")
-    ? path.resolve(setting(environment, "CONFIG_FILE"))
-    : defaultConfigFile;
+  const configFile = configFileOf(environment);
   const defaults = readJsonFile(configFile);
   const configDir = path.dirname(configFile);
   // Read once, here, because four settings below follow it. One that cannot be
@@ -473,121 +487,6 @@ export const loadServerConfig = (environment = process.env) => {
       .split(",")
       .map((entry) => entry.trim())
       .filter(Boolean),
-
-    /** One-life runs (src/modes/one-life). Off unless asked for: ODS_ONELIFE=1. */
-    oneLife: {
-      enabled:
-        setting(environment, "ONELIFE") === undefined
-          ? Boolean(defaults.oneLife?.enabled)
-          : setting(environment, "ONELIFE") === "1",
-    },
-
-    /**
-     * Ranked races (docs/ranked.md). Off unless asked for: ODS_RANKED=1. The
-     * rest has the defaults the design settled on; the lobby node must be one
-     * the stock client's own game data has, and the lobby floor one of its own
-     * tile files, or the client cannot build them.
-     */
-    ranked: {
-      enabled:
-        setting(environment, "RANKED") === undefined
-          ? Boolean(defaults.ranked?.enabled)
-          : setting(environment, "RANKED") === "1",
-      lobbyNode: asInt(setting(environment, "RANKED_LOBBY_NODE"), defaults.ranked?.lobbyNode ?? 50003),
-      lobbyFloor: setting(environment, "RANKED_LOBBY_FLOOR") ??
-        defaults.ranked?.lobbyFloor ?? "castle/arena/db_floor_TUTORIAL_LEVEL_final.json",
-      nodeTypes: defaults.ranked?.nodeTypes ?? ["DUNGEON"],
-      exclude: defaults.ranked?.exclude ?? [],
-      countdownMs: asInt(setting(environment, "RANKED_COUNTDOWN_MS"), defaults.ranked?.countdownMs ?? 5_000),
-      lobbyIdleMs: asInt(setting(environment, "RANKED_LOBBY_IDLE_MS"), defaults.ranked?.lobbyIdleMs ?? 300_000),
-      maxDurationMs: asInt(setting(environment, "RANKED_MAX_DURATION_MS"), defaults.ranked?.maxDurationMs ?? 1_800_000),
-      forfeitWindowMs: asInt(setting(environment, "RANKED_FORFEIT_WINDOW_MS"), defaults.ranked?.forfeitWindowMs ?? 120_000),
-      drawWindowMs: asInt(setting(environment, "RANKED_DRAW_WINDOW_MS"), defaults.ranked?.drawWindowMs ?? 5_000),
-      loadTimeoutMs: asInt(setting(environment, "RANKED_LOAD_TIMEOUT_MS"), defaults.ranked?.loadTimeoutMs ?? 120_000),
-      /**
-       * Where in the lobby standing means waiting for a race, in floor
-       * coordinates; outside it are the stands, for talking. Its edge is drawn
-       * in skull piles (ranked/stock-client/ring.js). Belongs to the lobby
-       * floor: the default is a square around the tutorial arena's pillar,
-       * so another lobby floor needs its own, or null for "anywhere is the
-       * ring" and no piles.
-       */
-      ring: defaults.ranked?.ring === undefined ? { x0: 3830, y0: 3653, x1: 4270, y1: 4093 } : defaults.ranked.ring,
-      /**
-       * Where heroes arrive in the lobby: outside the ring, or arriving would
-       * be queueing. The default is between the ring's way in and the arena's
-       * south gate. Null keeps the floor's own spawn.
-       */
-      lobbySpawn: defaults.ranked?.lobbySpawn === undefined ? { x: 4050, y: 4200 } : defaults.ranked.lobbySpawn,
-      /**
-       * Tiles of the lobby floor's own library to stand in place of the file's,
-       * `[{ x, y, tileId }]` (floors.js, loadFloor). The default puts the
-       * arena's two forest fillers on every neighbour but the north one, whose
-       * lower half is the arena's own gate yard; empty keeps the file's.
-       */
-      lobbyTiles: defaults.ranked?.lobbyTiles ?? [],
-      /**
-       * The leagues, `[{ name, from, color }]` in rising order (ranked/leagues.js):
-       * labels over bands of the rating, the first where everybody starts.
-       * Unset, the defaults there — MCSR Ranked's bands, named for the game's
-       * chest tiers.
-       */
-      leagues: defaults.ranked?.leagues ?? null,
-      /**
-       * How many of the others waiting each lobby shows, as nameless copies of
-       * their heroes (ranked/stock-client/copies.js); the first to arrive
-       * first. 0 shows nobody: every lobby is its own world again.
-       */
-      lobbyCopies: Math.max(0, asInt(setting(environment, "RANKED_LOBBY_COPIES"), defaults.ranked?.lobbyCopies ?? 8)),
-      /**
-       * The rival's ghost in a race (ranked/stock-client/adapter.js): drawn
-       * with one of the game's buffs as a shade (`buff`, a Buff constant;
-       * SHADOW_SLOW is a dark, pulsing one), under `name`, and shown to whoever
-       * entered the room first, for `showMs` after the other came in; two
-       * entering within `graceMs` see nothing of each other. Null draws no
-       * ghost.
-       */
-      raceGhost:
-        defaults.ranked?.raceGhost === undefined
-          ? { buff: "SHADOW_SLOW", name: "RIVAL", graceMs: 2000, showMs: 3000 }
-          : defaults.ranked.raceGhost,
-      /** Whether the two racers hear each other's chat. */
-      raceChat: defaults.ranked?.raceChat !== false,
-      /**
-       * Who may enter ranked: a least level for the active hero, and the
-       * tutorial done. Both off by default — the bar an operator raises when
-       * throwaway accounts start trading wins.
-       */
-      entry: {
-        minHeroLevel: Math.max(0, asInt(setting(environment, "RANKED_MIN_HERO_LEVEL"), defaults.ranked?.entry?.minHeroLevel ?? 0)),
-        requireTutorial:
-          setting(environment, "RANKED_REQUIRE_TUTORIAL") === undefined
-            ? defaults.ranked?.entry?.requireTutorial === true
-            : setting(environment, "RANKED_REQUIRE_TUTORIAL") === "1",
-      },
-      /**
-       * What a race pays, as a gift from MATCHMAKER waiting in town: an offer
-       * id (`Offers` in the game data — 51101 is 1000 coins, 51102 3500, 51103
-       * 8000) per league name, `"*"` for the rest, under `win` and `loss`.
-       * Null pays nothing. The run itself pays no experience or chest
-       * (`src/socket/run-rules.js`); this is the prize, and the only reward a
-       * loser gets, so it is small.
-       */
-      rewards:
-        defaults.ranked?.rewards === undefined
-          ? { win: { "*": 51101, Gold: 51102, Dragon: 51103 }, loss: { "*": 51101 } }
-          : defaults.ranked.rewards,
-      /**
-       * The rating scale (ranked/rating.js): where everybody starts, the most
-       * one race moves a rating, and the least anybody falls to. The leagues'
-       * edges go with it.
-       */
-      rating: {
-        start: asInt(setting(environment, "RANKED_RATING_START"), defaults.ranked?.rating?.start ?? 1000),
-        k: asInt(setting(environment, "RANKED_RATING_K"), defaults.ranked?.rating?.k ?? 40),
-        floor: asInt(setting(environment, "RANKED_RATING_FLOOR"), defaults.ranked?.rating?.floor ?? 100),
-      },
-    },
 
     /**
      * Which NPCs to place: "all", "props" (barrels and crates only), "enemies"

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createQueue, ratingWindow } from "../src/ranked/queue.js";
+import { createQueue, ratingWindow } from "../src/modes/ranked/queue.js";
 
 const s = (seconds) => seconds * 1000;
 

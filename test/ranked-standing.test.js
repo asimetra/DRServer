@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { config } from "../src/config.js";
-import { createRankedService } from "../src/ranked/index.js";
-import { createRecords } from "../src/ranked/records.js";
-import { createSpec, fixedPicker } from "../src/ranked/race-spec.js";
-import { placeLine, publicStanding, rankReply, standingsFrom } from "../src/ranked/standing.js";
-import { parseLeagues } from "../src/ranked/leagues.js";
+import { createRankedService } from "../src/modes/ranked/index.js";
+import { createRecords } from "../src/modes/ranked/records.js";
+import { createSpec, fixedPicker } from "../src/modes/ranked/race-spec.js";
+import { placeLine, publicStanding, rankReply, standingsFrom } from "../src/modes/ranked/standing.js";
+import { parseLeagues } from "../src/modes/ranked/leagues.js";
 import { COMMAND_PREFIX, resetCommands, runCommand } from "../src/socket/commands.js";
 import { bookWords } from "../src/socket/ui-effects.js";
 import { registerBuiltinCommands } from "../src/socket/command-set.js";
@@ -72,7 +72,7 @@ test("/rank is a player's command of the ranked mode: unknown with the mode off"
   assert.match(lines[0], /unknown|no such|not a command/i, lines[0]);
 
   // On, with the test run's empty log: no place yet.
-  const { installRankedCommands } = await import("../src/ranked/commands.js");
+  const { installRankedCommands } = await import("../src/modes/ranked/commands.js");
   const { bookWords } = await import("../src/socket/ui-effects.js");
   const uninstall = installRankedCommands({ bookWords, loadExistingAccount: async () => null });
   try {

@@ -29,6 +29,12 @@ is off (`src/modes/README.md`, "Commands"). With ranked on (`ODS_RANKED=1`):
 | `/rank` | Say your ranked rating and place, and who leads |
 | `/draw` | Offer to call your ranked race off; both offering ends it with no rating moved |
 
+With delve on (`ODS_DELVE=1`):
+
+| Mode command | What it does |
+|---|---|
+| `/delve [off]` | Make your next dungeon a delve, as DELVE on the friend list does; `/delve off` calls it off |
+
 With one life on (`ODS_ONELIFE=1`):
 
 | Mode command | What it does |

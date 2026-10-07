@@ -654,7 +654,7 @@ test("a defeat's report pays no completion", () => {
 });
 
 test("a ranked racer's own row carries the race, and nothing else of it goes on the report", async (t) => {
-  const { installRankedHooks } = await import("../src/ranked/hooks.js");
+  const { installRankedHooks } = await import("../src/modes/ranked/hooks.js");
   // Two racers, each alone in a world of their own, as a ranked race is run.
   const racer = (index) => ({
     id: index + 1,
@@ -698,7 +698,7 @@ test("a ranked racer's own row carries the race, and nothing else of it goes on 
 });
 
 test("a ranked rival's row is tied to a player object that leaves once the report is up, so it greys", async (t) => {
-  const { installRankedHooks } = await import("../src/ranked/hooks.js");
+  const { installRankedHooks } = await import("../src/modes/ranked/hooks.js");
   const { world, host } = reportingWorld();
   host.transientRowLeavesAfterMs = 5;
   let next = 940;

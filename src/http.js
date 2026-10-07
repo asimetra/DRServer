@@ -2,7 +2,7 @@ import http from "node:http";
 import { config, publicBaseUrl } from "./config.js";
 import { count } from "./metrics.js";
 import { clientAddress, trustedFrom } from "./forwarded.js";
-import { routes } from "./routes.js";
+import { routeTable } from "./routes.js";
 import { error, info, truncate, unimplemented, warn } from "./log.js";
 import { isWebClientPath, serveWebClient } from "./web-client.js";
 
@@ -299,7 +299,7 @@ export const listen = ({
 
 export const start = () =>
   listen({
-    routeTable: routes,
+    routeTable,
     host: config.host,
     port: config.port,
     webClientDir: config.webClientDir,

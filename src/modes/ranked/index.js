@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { createQueue } from "./queue.js";
 import { createRace } from "./race.js";
 import { byStanding, displayRating, newPlayer, rateMatch, ratingRules, replayRatings } from "./rating.js";
-import { info, warn } from "../log.js";
+import { info, warn } from "../../log.js";
 
 const RUN_LOSSES = new Set(["left", "dropped", "failed"]);
 

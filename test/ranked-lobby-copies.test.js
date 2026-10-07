@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createRankedService } from "../src/ranked/index.js";
-import { createRecords } from "../src/ranked/records.js";
-import { createSpec, fixedPicker } from "../src/ranked/race-spec.js";
-import { createStockClientAdapter } from "../src/ranked/stock-client/adapter.js";
-import { createLobbyCopies, swingWithoutTargets } from "../src/ranked/stock-client/copies.js";
-import { SYSTEM_FRIEND_ID } from "../src/ranked/stock-client/system-friend.js";
+import { createRankedService } from "../src/modes/ranked/index.js";
+import { createRecords } from "../src/modes/ranked/records.js";
+import { createSpec, fixedPicker } from "../src/modes/ranked/race-spec.js";
+import { createStockClientAdapter } from "../src/modes/ranked/stock-client/adapter.js";
+import { createLobbyCopies, swingWithoutTargets } from "../src/modes/copies.js";
+import { SYSTEM_FRIEND_ID } from "../src/modes/ranked/stock-client/system-friend.js";
 import { CLID } from "../src/socket/opcodes.js";
 
 const A = 1000000101;

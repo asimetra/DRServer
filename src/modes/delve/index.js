@@ -14,23 +14,21 @@
  *
  * A reference mode as much as a game: it is written against the mode surface
  * alone (src/modes/README.md) — hooks, run rules, run controls, records, game
- * data, chat commands — and loaded from outside src/ (ODS_MODES), which is
- * what it proves: a mode the core does not know about, on every thread.
- *
- *   ODS_MODES=examples/modes/delve/index.js npm start
+ * data, chat commands — and the core knows nothing of it. Off unless asked
+ * for: ODS_DELVE=1, or `"delve": { "enabled": true }` in the config file.
  */
 import { randomUUID } from "node:crypto";
-import { installModeHooks } from "../../../src/modes/hooks.js";
-import { runRules } from "../../../src/socket/run-rules.js";
-import { runControls } from "../../../src/modes/runtime.js";
-import { createModeRecords } from "../../../src/modes/records.js";
-import { gameTable, mapNodes, nodePlan, planTileLibraries } from "../../../src/modes/game-data.js";
-import { onTold, tellMain } from "../../../src/modes/seat.js";
-import { friendDoorHooks } from "../../../src/modes/friend-door.js";
-import { define, undefineMode } from "../../../src/socket/commands.js";
-import { ROLE } from "../../../src/socket/roles.js";
-import { info } from "../../../src/log.js";
-import { bookWords, playNotice } from "../../../src/socket/ui-effects.js";
+import { installModeHooks } from "../hooks.js";
+import { runRules } from "../run-rules.js";
+import { runControls } from "../runtime.js";
+import { createModeRecords } from "../records.js";
+import { gameTable, mapNodes, nodePlan, planTileLibraries } from "../game-data.js";
+import { onTold, tellMain } from "../seat.js";
+import { friendDoorHooks } from "../friend-door.js";
+import { ROLE, define, undefineMode } from "../commands.js";
+import { modeSettings } from "../settings.js";
+import { info } from "../../log.js";
+import { bookWords, playNotice } from "../effects.js";
 
 export const DELVE_MODE = "delve";
 
@@ -440,11 +438,40 @@ export const bossesFromGameData = async (settings = DELVE_DEFAULTS) => {
   return { bosses, tileLibraries: [...libraries], modifierIds, modifierNames };
 };
 
+/** Whether the operator asked for it: ODS_DELVE=1, or `"delve": { "enabled": true }` in the config file. */
+export const delveEnabled = (environment = process.env) => {
+  const { file, flag } = modeSettings("delve", environment);
+  return flag("DELVE", file.enabled);
+};
+
+/**
+ * `/delve [off]`: arms (or calls off) the player's next entry, told to the
+ * thread that routes entries from wherever it was said. Returns its undoing.
+ */
+export const installDelveCommands = () => {
+  define({
+    name: "delve",
+    mode: DELVE_MODE,
+    role: ROLE.PLAYER,
+    summary: "make your next dungeon a delve: boss after boss, each harder, until the party falls. /delve off calls it off",
+    usage: "[off]",
+    run: ({ session, args = [], reply }) => {
+      const accountId = Number(session?.accountId);
+      if (!accountId) return reply.warn("no account to arm");
+      const on = String(args[0] ?? "").toLowerCase() !== "off";
+      tellMain(DELVE_MODE, { accountId, on });
+      reply(on ? "delve: your next dungeon is a boss rush. /delve off to call it off" : "delve: off");
+    },
+  });
+  return () => undefineMode(DELVE_MODE);
+};
+
 /** The mode as the registry starts it (src/modes/index.js): on every thread, no seat. */
 export default {
   name: DELVE_MODE,
   together: false,
   async start({ where }) {
+    if (!delveEnabled()) return async () => {};
     const data = await bossesFromGameData();
     const delve = createDelve({
       ...data,
@@ -466,23 +493,10 @@ export default {
           const armedNow = delve.arm(data.accountId, data.on);
           info(`delve: ${data.accountId}'s next entry ${armedNow ? "is a delve" : "is ordinary"}`);
         });
-    define({
-      name: "delve",
-      mode: DELVE_MODE,
-      role: ROLE.PLAYER,
-      summary: "make your next dungeon a delve: boss after boss, each harder, until the party falls. /delve off calls it off",
-      usage: "[off]",
-      run: ({ session, args = [], reply }) => {
-        const accountId = Number(session?.accountId);
-        if (!accountId) return reply.warn("no account to arm");
-        const on = String(args[0] ?? "").toLowerCase() !== "off";
-        tellMain(DELVE_MODE, { accountId, on });
-        reply(on ? "delve: your next dungeon is a boss rush. /delve off to call it off" : "delve: off");
-      },
-    });
+    const uninstallCommands = installDelveCommands();
     return async () => {
       unlisten();
-      undefineMode(DELVE_MODE);
+      uninstallCommands();
       uninstall();
     };
   },

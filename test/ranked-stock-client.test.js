@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createRankedService } from "../src/ranked/index.js";
-import { createRecords } from "../src/ranked/records.js";
-import { createSpec, fixedPicker } from "../src/ranked/race-spec.js";
-import { createStockClientAdapter } from "../src/ranked/stock-client/adapter.js";
-import { insideRing, ringMarkers } from "../src/ranked/stock-client/ring.js";
+import { createRankedService } from "../src/modes/ranked/index.js";
+import { createRecords } from "../src/modes/ranked/records.js";
+import { createSpec, fixedPicker } from "../src/modes/ranked/race-spec.js";
+import { createStockClientAdapter } from "../src/modes/ranked/stock-client/adapter.js";
+import { insideRing, ringMarkers } from "../src/modes/ranked/stock-client/ring.js";
 import { bookWords } from "../src/socket/ui-effects.js";
 import {
   SYSTEM_FRIEND_ID,
   isSystemAccount,
   systemFriendRow,
   withSystemFriend,
-} from "../src/ranked/stock-client/system-friend.js";
+} from "../src/modes/ranked/stock-client/system-friend.js";
 
 /**
  * The stock-client adapter against the real core, with the dungeon runtime
@@ -906,6 +906,8 @@ test("a racer's own report row carries what the race did to their rating; the ch
 });
 
 test("a finish leaves a gift from MATCHMAKER on each racer's account, by result, and the line says so", async () => {
+  // The prize is a gift through the mode surface (runtime.js), which checks its offer in the game data.
+  await (await import("../src/gamemaster.js")).loadGameMaster();
   const coins = { offerId: 51101, name: "1000 Coins" };
   const context = setup({ extraSettings: { rewards: { win: { "*": { offerId: 51102, name: "3500 Coins" } }, loss: { "*": coins } } } });
   const { sessions, said, flush } = context;

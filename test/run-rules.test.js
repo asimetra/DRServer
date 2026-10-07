@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { installRankedHooks } from "../src/ranked/hooks.js";
+import { installRankedHooks } from "../src/modes/ranked/hooks.js";
 import { installModeHooks } from "../src/modes/hooks.js";
-import { RANKED_RUN_RULES } from "../src/ranked/stock-client/adapter.js";
+import { RANKED_RUN_RULES } from "../src/modes/ranked/stock-client/adapter.js";
 import { STOCK_RUN_RULES, rulesOfMode, runRules, runRulesOf } from "../src/socket/run-rules.js";
 import { applyProgressReward, awardDungeonCompletion, awardTreasureChest } from "../src/socket/rewards.js";
 

@@ -16,17 +16,16 @@
  * tested without a socket.
  */
 import { SYSTEM_FRIEND_ID, matchmakerName } from "./system-friend.js";
-import { friendDoorHooks } from "../../modes/friend-door.js";
-import { giveGift } from "../../gifts.js";
+import { friendDoorHooks } from "../../friend-door.js";
 import { insideRing, ringMarkers, ringSpot } from "./ring.js";
-import { createLobbyCopies } from "./copies.js";
-import { TILE_SIZE } from "../../socket/tilegen.js";
+import { createLobbyCopies } from "../../copies.js";
+import { TILE_SIZE } from "../../game-data.js";
 import { placeLine, shownRating } from "../standing.js";
 import { leagueAt, leagueRank, leaguesOf } from "../leagues.js";
-import { declares } from "../../socket/capabilities.js";
-import { runRules } from "../../socket/run-rules.js";
-import { runControls } from "../../modes/runtime.js";
-import { warn } from "../../log.js";
+import { runRules } from "../../run-rules.js";
+import { runControls } from "../../runtime.js";
+import { RANKED_MODE } from "../hooks.js";
+import { warn } from "../../../log.js";
 
 /**
  * What a ranked run pays and counts for (socket/run-rules.js). Gold and the
@@ -56,6 +55,17 @@ export const RANKED_RUN_RULES = runRules({
  */
 export const SHOWS_NOTICES = "ranked.notices@1";
 const NOTICES_KEPT = 32;
+
+/**
+ * A notice as the effect book names it (modes/effects.js): ranked's, and a
+ * finish in the kind of its result — "VICTORY" and "DEFEAT" are not the same
+ * moment.
+ */
+const booked = (notice) => ({
+  mode: RANKED_MODE,
+  ...notice,
+  ...(notice.type === "finished" ? { variant: notice.result ?? "unknown" } : {}),
+});
 
 /** Wording when nobody hands any in: no lines, no parts. */
 const NO_WORDS = Object.freeze({ line: () => null, part: () => "" });
@@ -126,18 +136,10 @@ export const createStockClientAdapter = ({
   service,
   settings,
   sessionOf,
-  // A context already (it has its member) is used as it is: the runtime hands
-  // the hooks contexts, and binding one again throws on the proxy. A player
-  // whose connection is closing as this runs has none, and is null: the sweep
-  // walks every player each second, and one closing must not cost the rest it.
-  contextOf = (session) => {
-    if (session?.member) return session;
-    try {
-      return session?.world?.contextFor?.(session, { activate: false }) ?? session ?? null;
-    } catch {
-      return null;
-    }
-  },
+  // The run's context (modes/runtime.js): a player whose connection is closing
+  // as this runs has none, and is null — the sweep walks every player each
+  // second, and one closing must not cost the rest it.
+  contextOf = runControls.contextOf,
   say,
   show = () => {},
   victory = () => {},
@@ -151,8 +153,12 @@ export const createStockClientAdapter = ({
   nameOf = async (accountId) => String(accountId),
   // The chat wording, `{ line(notice, params), part(name, params) }` — the effect book's.
   words = NO_WORDS,
-  // The runtime's frame builders for lobby copies (copies.js); none, no copies.
+  // How lobby copies are drawn (modes/copies.js, COPY_FRAMES); none, no copies.
   copyFrames = null,
+  // A prize left waiting in town (modes/runtime.js, gift).
+  gift = runControls.gift,
+  // Whether a player's client declared a capability (modes/runtime.js, declares).
+  declares = runControls.declares,
   clock = Date.now,
   heroLevelOf,
   tutorialDoneFor,
@@ -711,7 +717,7 @@ export const createStockClientAdapter = ({
     const session = sessionOf(accountId);
     if (!session) return null;
     try {
-      return show(contextOf(session), notice);
+      return show(contextOf(session), booked(notice));
     } catch (problem) {
       warn(`ranked: could not show ${accountId} ${notice.type}: ${problem.message}`);
       return null;
@@ -817,13 +823,14 @@ export const createStockClientAdapter = ({
     if (!table || !notice.rating) return null;
     const league = leagueAt({ rating: notice.rating.rating, place: notice.place, of: notice.of }, leagues);
     const offer = table[league.name] ?? table["*"];
-    const account = sessionOf(accountId)?.dungeonAccount;
-    if (!offer || !account) return null;
-    const gift = giveGift(account, { offerId: offer.offerId, fromAccountId: SYSTEM_FRIEND_ID, now: clock() });
-    if (!gift) {
-      warn(`ranked: ${accountId} is holding too many gifts; the race's prize was not given`);
-      return null;
-    }
+    const session = sessionOf(accountId);
+    if (!offer || !session) return null;
+    // Said with the result at once; only a pile already full (runtime.js, gift) keeps it back.
+    Promise.resolve(gift(session, offer.offerId, { from: SYSTEM_FRIEND_ID }))
+      .then((given) => {
+        if (!given) warn(`ranked: ${accountId}'s race prize was not given (no account here, or too many gifts waiting)`);
+      })
+      .catch((problem) => warn(`ranked: ${accountId}'s race prize was not given: ${problem.message}`));
     return offer.name;
   };
 
@@ -872,7 +879,7 @@ export const createStockClientAdapter = ({
       params.standing = placeLine(notice, words.part);
       params.how = words.part(notice.ring ? "how.ring" : "how.anywhere");
     }
-    return words.line(notice, params);
+    return words.line(booked(notice), params);
   };
 
   /** accountId -> the latest notices, for a client that shows them itself. */

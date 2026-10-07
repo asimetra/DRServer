@@ -58,7 +58,7 @@ that is not that game is: **the core takes seams, not features.**
   a different pay, a run that ends on its own terms, a lobby — is a mode
   (`src/modes/README.md`). It lives in its own directory, is off unless its
   setting asks for it, and takes its commands and hooks away with it when it
-  stops. `src/modes/one-life/` is the whole shape in one file; `src/ranked/`
+  stops. `src/modes/one-life/` is the whole shape in one file; `src/modes/ranked/`
   is the large one.
 - A mode reaches the core only through the surface that page names: the
   hooks, the run rules, the effect book, the notice board, `define({ mode })`.

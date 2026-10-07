@@ -10,8 +10,8 @@
  * waiting count the worker reports.
  */
 
-import { SEAT_WORKER } from "../socket/run-rules.js";
-import { seatRuns, seatSaid, tellMain } from "../modes/seat.js";
+import { SEAT_WORKER } from "../run-rules.js";
+import { seatRuns, seatSaid, tellMain } from "../seat.js";
 import { RANKED_MODE } from "./hooks.js";
 
 /** The worker that runs ranked: the seat of the modes whose runs are together (run-rules.js). */

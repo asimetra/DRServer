@@ -28,9 +28,11 @@ import { config } from "../../config.js";
 import { info } from "../../log.js";
 import { installModeHooks, modeInstalled } from "../hooks.js";
 import { onTold, tellMain } from "../seat.js";
-import { runRules } from "../../socket/run-rules.js";
-import { define, undefineMode } from "../../socket/commands.js";
-import { ROLE } from "../../socket/roles.js";
+import { runRules } from "../run-rules.js";
+import { ROLE, define, undefineMode } from "../commands.js";
+import { modeSettings } from "../settings.js";
+import { runControls } from "../runtime.js";
+import { bookWords, playNotice } from "../effects.js";
 
 export const ONE_LIFE_MODE = "onelife";
 
@@ -127,11 +129,15 @@ export const installOneLifeCommands = ({ tell = (accountId, on) => tellMain(ONE_
  * with none. The hooks go on every thread, since a run may be anywhere; the
  * command is answered for real only where entries are routed.
  */
+/** Whether the operator asked for it: ODS_ONELIFE=1, or `"oneLife": { "enabled": true }` in the config file. */
+export const oneLifeEnabled = (environment = process.env) => {
+  const { file, flag } = modeSettings("oneLife", environment);
+  return flag("ONELIFE", file.enabled);
+};
+
 export const startOneLife = async ({ where = config.matchWorkerCount > 0 ? "main" : "local" } = {}) => {
-  if (!config.oneLife?.enabled) return async () => {};
-  const { playNotice, bookWords } = await import("../../socket/ui-effects.js");
-  const { tellAsServer } = await import("../../socket/chat.js");
-  const mode = createOneLife({ show: playNotice, say: tellAsServer, line: bookWords.line });
+  if (!oneLifeEnabled()) return async () => {};
+  const mode = createOneLife({ show: playNotice, say: runControls.say, line: bookWords.line });
   const uninstallHooks = installModeHooks(ONE_LIFE_MODE, mode.hooks);
   const uninstallCommands = installOneLifeCommands();
   // Where entries are routed, the arming is kept: told from wherever the command was said.

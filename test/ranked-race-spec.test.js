@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createSpec, fixedPicker, nodePool, randomPicker } from "../src/ranked/race-spec.js";
+import { createSpec, fixedPicker, nodePool, randomPicker } from "../src/modes/ranked/race-spec.js";
 
 const pages = [
   { Id: 50001, Constant: "TUTORIAL", NodeType: "DUNGEON" },

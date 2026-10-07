@@ -208,7 +208,7 @@ test("the server answers under the configured name", async () => {
 });
 
 test("a line said in a dungeon is offered to the modes after the room has heard it, its words alone", async (t) => {
-  const { installRankedHooks } = await import("../src/ranked/hooks.js");
+  const { installRankedHooks } = await import("../src/modes/ranked/hooks.js");
   const offered = [];
   t.after(installRankedHooks({ heroEvent: (session, event) => event.type === "said" && offered.push(event.line) }));
   const session = withRelay();

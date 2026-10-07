@@ -18,6 +18,9 @@ import { tellSystemPresence } from "../socket/presence.js";
 /** A door's id: under 1000, which no account, doid or client friend cast ever is. */
 export const FRIEND_DOOR_ID_MOST = 999;
 
+/** The core's presence for a door: says `id` is online at `where` to `session` (friendDoorHooks' default). */
+export const tellPresence = (session, id, where) => tellSystemPresence(session, id, where);
+
 /** One of the default hero skins: an unknown one crashes the client's portrait. */
 const PORTRAIT_SKIN = 151;
 

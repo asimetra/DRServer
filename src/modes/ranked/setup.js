@@ -13,8 +13,17 @@
  *   worker  inside that worker: the queue, the races and every ranked run,
  *           finding that worker's own players through modes/runtime.js.
  */
-import { config } from "../config.js";
-import { info, warn } from "../log.js";
+import { config } from "../../config.js";
+import { info, warn } from "../../log.js";
+import { floorProblem, gameTable, mapNode, nodePlan, planTileLibraries } from "../game-data.js";
+import { activeHeroLevel, nodeDone, playerName } from "../players.js";
+import { runControls } from "../runtime.js";
+import { bookWords, playNotice } from "../effects.js";
+import { tellPresence } from "../friend-door.js";
+import { COPY_FRAMES } from "../copies.js";
+import { rankedSettings } from "./settings.js";
+import { installRankedWeb } from "./web.js";
+import { installRankedCommands } from "./commands.js";
 import { createRankedService } from "./index.js";
 import { createRecords } from "./records.js";
 import { installRankedHooks } from "./hooks.js";
@@ -25,36 +34,25 @@ import { createStockClientAdapter, stockClientEntryHooks } from "./stock-client/
 const TICK_MS = 1000;
 
 /**
- * What the entry gate asks of an account, answered from the game data: the
- * active hero's level, and whether the tutorial — the first boss map — is done.
+ * What the entry gate asks of an account (modes/players.js): the active hero's
+ * level, and whether the tutorial — the first boss map — is done; a game data
+ * without one has nothing to require.
  */
-const gateQuestions = async () => {
-  const { heroById, loadGameMaster } = await import("../gamemaster.js");
-  const { heroLevel } = await import("../progression.js");
-  const { getMapNodeBit } = await import("../map-progress.js");
-  const gm = await loadGameMaster();
-  const activeAvatar = (account) =>
-    (account?.account_avatars ?? []).find((row) => row.id === account?.active_avatar) ?? account?.account_avatars?.[0];
-  const tutorialBit = (gm.raw.MapPage ?? []).find((node) => node.Constant === "TUTORIAL")?.BitIndex ?? null;
-  return {
-    heroLevelOf: async (account) => {
-      const avatar = activeAvatar(account);
-      const hero = avatar ? await heroById(avatar.avatar_id) : null;
-      return hero ? heroLevel(gm, hero, avatar.experience ?? 0) : 1;
-    },
-    tutorialDoneFor: (account) =>
-      tutorialBit === null || getMapNodeBit(activeAvatar(account)?.completed_mapnode_mask, tutorialBit),
-  };
+const gateQuestions = {
+  heroLevelOf: activeHeroLevel,
+  tutorialDoneFor: async (account) => (await nodeDone(account, "TUTORIAL")) !== false,
 };
+
+/** An account's name for a line, or its number for one that has none. */
+const nameOf = async (accountId) => (await playerName(accountId)) ?? `#${accountId}`;
 
 /**
  * `{ win: { league|"*": offerId }, loss: {...} }` → the same with each offer
  * checked against the game data and carrying its name (`BundleName`, else
  * `Name`), which the chat line says. Null or nothing pays nothing.
  */
-export const rewardOffersOf = (rewards, gm) => {
+export const rewardOffersOf = (rewards, offers = []) => {
   if (!rewards || typeof rewards !== "object") return null;
-  const offers = gm?.raw?.Offers ?? [];
   const out = {};
   for (const result of ["win", "loss"]) {
     const table = rewards[result];
@@ -74,13 +72,12 @@ export const rewardOffersOf = (rewards, gm) => {
 
 /** The main thread's half with match workers on: the connection's hooks, and a way to stop the rest. */
 const startOnMain = async (settings) => {
-  const { tellSystemPresence } = await import("../socket/presence.js");
-  const uninstallCommands = await rankedCommands();
+  const uninstallCommands = rankedCommands();
   const hooks = stockClientEntryHooks({
     settings,
     waiting: rankedWaiting,
-    tellPresence: tellSystemPresence,
-    ...(await gateQuestions()),
+    tellPresence,
+    ...gateQuestions,
   });
   // Only while the worker says ranked is up there (remote.js): otherwise no
   // MATCHMAKER on the list, and a JOIN is left as the client sent it.
@@ -104,67 +101,66 @@ const startOnMain = async (settings) => {
 };
 
 /** The mode's chat commands, on whichever thread this is (ranked/commands.js). */
-const rankedCommands = async () => {
-  const { installRankedCommands } = await import("./commands.js");
-  const { bookWords } = await import("../socket/ui-effects.js");
-  const { loadExistingAccount } = await import("../accounts.js");
-  return installRankedCommands({ bookWords, loadExistingAccount });
+const rankedCommands = () => installRankedCommands({ bookWords, nameOf });
+
+/** Whatever `start` answers, with the web's routes taken down after it. */
+const alongWith = (stop, undoWeb) => async () => {
+  try {
+    await stop();
+  } finally {
+    undoWeb();
+  }
 };
 
 export const startRanked = async ({
   where = config.matchWorkerCount > 0 ? "main" : "local",
 } = {}) => {
-  const settings = config.ranked;
+  // The board, the standing and the profile field, where HTTP is served: up
+  // even with ranked off, so the website is told "off" rather than "not found".
+  const undoWeb = where === "worker" ? () => {} : installRankedWeb();
+  try {
+    return alongWith(await startHere(where), undoWeb);
+  } catch (problem) {
+    // A start that throws leaves nothing up: the next start puts them up again.
+    undoWeb();
+    throw problem;
+  }
+};
+
+const startHere = async (where) => {
+  const settings = rankedSettings;
   if (!settings?.enabled) return async () => {};
   if (where === "main") return startOnMain(settings);
 
-  // Loaded here so a server with ranked off never reads any of it.
-  const { loadGameMaster, mapNode } = await import("../gamemaster.js");
-  const { floorPlanForMapNode, loadFloor, tileLibrariesFor } = await import("../socket/floors.js");
-  const { runControls } = await import("../modes/runtime.js");
-  const { tellAsServer } = await import("../socket/chat.js");
-  const { sayToListeners } = await import("../socket/global-chat.js");
-  const { bookWords, playNotice } = await import("../socket/ui-effects.js");
-  const { buildDungeonReport } = await import("../socket/summary.js");
-  const { tellSystemPresence } = await import("../socket/presence.js");
-  const { loadExistingAccount } = await import("../accounts.js");
-  const { buffGenerate, heroGenerate, heroHeadingUpdate, heroPositionUpdate, objectDisable, playerGenerate } = await import(
-    "../socket/objects.js"
-  );
-  const { heroAfkUpdate } = await import("../socket/afk.js");
-  const { remoteAttackChoreography, remoteStopChoreography } = await import("../socket/buster.js");
-
-  const gm = await loadGameMaster();
   if (!(await mapNode(settings.lobbyNode))) {
     warn(`ranked: off — the lobby node ${settings.lobbyNode} is not in the game data`);
     return async () => {};
   }
   // And the lobby floor itself, retiled as configured: a tile the library
   // lacks is found here, in one line, and not by every JOIN at entry.
-  try {
-    await loadFloor(settings.lobbyFloor, { retile: settings.lobbyTiles ?? [] });
-  } catch (problem) {
-    warn(`ranked: off — the lobby floor cannot be built: ${problem.message}`);
+  const lobbyProblem = await floorProblem(settings.lobbyFloor, { retile: settings.lobbyTiles ?? [] });
+  if (lobbyProblem) {
+    warn(`ranked: off — the lobby floor cannot be built: ${lobbyProblem}`);
     return async () => {};
   }
-  const pool = nodePool(gm.raw.MapPage, { nodeTypes: settings.nodeTypes, exclude: settings.exclude });
+  const pool = nodePool(await gameTable("MapPage"), { nodeTypes: settings.nodeTypes, exclude: settings.exclude });
   // Every tile library the draw can reach, for the lobby's area to preload (see
   // the adapter's planFor). The seed does not change which library a node uses.
   const raceTileLibraries = new Set();
   for (const node of pool) {
-    for (const library of await tileLibrariesFor(await floorPlanForMapNode(node.Id, { seed: 1 }))) {
+    for (const library of await planTileLibraries(await nodePlan(node.Id, { seed: 1 }))) {
       raceTileLibraries.add(library);
     }
   }
   // The race ghost's shade is one of the game's own buffs, named in the settings.
   let raceGhost = settings.raceGhost ?? null;
   if (raceGhost?.buff) {
-    const row = (gm.raw.Buff ?? []).find((buff) => buff.Constant === raceGhost.buff);
+    const row = (await gameTable("Buff")).find((buff) => buff.Constant === raceGhost.buff);
     if (!row) warn(`ranked: no buff named "${raceGhost.buff}" for the race ghost; it is drawn plain`);
     raceGhost = { ...raceGhost, buff: row?.Id ?? null };
   }
   // The prizes are offers in the game data; one that is not is dropped, with a warning.
-  const rewards = rewardOffersOf(settings.rewards, gm);
+  const rewards = rewardOffersOf(settings.rewards, await gameTable("Offers"));
   const rules = {
     countdownMs: settings.countdownMs,
     maxDurationMs: settings.maxDurationMs,
@@ -175,7 +171,7 @@ export const startRanked = async ({
 
   let adapter = null;
   const service = createRankedService({
-    records: createRecords({ storage: config.storage, dataDir: config.dataDir }),
+    records: createRecords(),
     picker: randomPicker({ pool }),
     rules,
     rating: settings.rating,
@@ -189,7 +185,7 @@ export const startRanked = async ({
     // Ending a run and finding a player are the mode surface's (modes/runtime.js);
     // on a match worker the lookup is the worker's own members.
     sessionOf: runControls.sessionOf,
-    say: (session, text) => tellAsServer(session, text),
+    say: runControls.say,
     show: playNotice,
     words: bookWords,
     victory: runControls.win,
@@ -200,24 +196,17 @@ export const startRanked = async ({
     // The lobbies' shared channel, on the global one's rules: restricted and
     // blocked speakers stay unheard, a flood is held to its pace, and it is logged.
     relay: (speaker, line, listeners) => {
-      sayToListeners(speaker, line, listeners, "ranked lobby");
+      runControls.relay(speaker, line, listeners, "ranked lobby");
     },
     // Each racer's report row as the race begins: a rival who leaves keeps their build on it.
-    snapshot: (context) => {
-      try {
-        return buildDungeonReport(context, false);
-      } catch (problem) {
-        warn(`ranked: no report snapshot of ${context.accountId}: ${problem.message}`);
-        return null;
-      }
-    },
-    tellPresence: tellSystemPresence,
+    snapshot: runControls.reportOf,
+    tellPresence,
     // Each floor carries the drawn node's level and tier: they follow the race
     // onto the lobby's plan, which has neither, so its monsters are the node's
     // own and not level 1 (floors.js, plannedNpcLevel).
     raceFloors: async (spec) => {
       const node = await mapNode(spec.mapNodeId);
-      const plan = await floorPlanForMapNode(spec.mapNodeId, { seed: spec.seed });
+      const plan = await nodePlan(spec.mapNodeId, { seed: spec.seed });
       return plan.floors.map((floor) => ({
         ...floor,
         node,
@@ -227,24 +216,14 @@ export const startRanked = async ({
     },
     // Ending the lobby floor into the race: the mode surface's (modes/runtime.js).
     completeFloor: runControls.endFloor,
-    nameOf: async (accountId) => (await loadExistingAccount(accountId))?.name ?? `#${accountId}`,
-    ...(await gateQuestions()),
-    // A copy is drawn and moved with what a party member is (stock-client/copies.js).
-    copyFrames: {
-      player: playerGenerate,
-      hero: heroGenerate,
-      position: heroPositionUpdate,
-      heading: heroHeadingUpdate,
-      afk: heroAfkUpdate,
-      attack: remoteAttackChoreography,
-      stopAttack: remoteStopChoreography,
-      buff: buffGenerate,
-      disable: (doid) => objectDisable(doid),
-    },
+    nameOf,
+    ...gateQuestions,
+    // A copy is drawn and moved with what a party member is (modes/copies.js).
+    copyFrames: COPY_FRAMES,
   });
   service.onNotice(adapter.onNotice);
   const uninstall = installRankedHooks(adapter.hooks);
-  const uninstallCommands = await rankedCommands();
+  const uninstallCommands = rankedCommands();
 
   let reported = null;
   const timer = setInterval(() => {

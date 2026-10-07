@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { config } from "../src/config.js";
+import { rankedSettings } from "../src/modes/ranked/settings.js";
 import {
   DEFAULT_LEAGUES,
   leagueAt,
@@ -10,8 +10,8 @@ import {
   nextLeague,
   parseLeagues,
   placesIn,
-} from "../src/ranked/leagues.js";
-import { NEW_PLAYER } from "../src/ranked/rating.js";
+} from "../src/modes/ranked/leagues.js";
+import { NEW_PLAYER } from "../src/modes/ranked/rating.js";
 
 const names = (list) => list.map((league) => league.name);
 
@@ -43,7 +43,7 @@ test("the next league is the next band's start, or the top league's share", () =
 });
 
 test("the shipped leagues: bands from 0, 1050 and 1200 under the game's chest tiers, and a top 3%", () => {
-  assert.deepEqual(leaguesOf(config.ranked.leagues), DEFAULT_LEAGUES);
+  assert.deepEqual(leaguesOf(rankedSettings.leagues), DEFAULT_LEAGUES);
   assert.equal(leaguesOf(null), DEFAULT_LEAGUES, "unset is the defaults");
 });
 

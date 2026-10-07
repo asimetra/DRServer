@@ -3,7 +3,7 @@
  * the runtime calls, is the modes' — these are the same functions under the
  * name the ranked code and its tests have used.
  */
-import { installModeHooks, modeHooks, modeInstalled } from "../modes/hooks.js";
+import { installModeHooks, modeHooks, modeInstalled } from "../hooks.js";
 
 export const RANKED_MODE = "ranked";
 

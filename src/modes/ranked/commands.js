@@ -7,14 +7,13 @@
  * Installed on every thread that answers chat — the main thread for town and
  * the match worker for a dungeon — which is why `startRanked` calls it on each.
  */
-import { ROLE } from "../socket/roles.js";
-import { define, undefineMode } from "../socket/commands.js";
-import { modeHooks } from "../modes/hooks.js";
-import { warn } from "../log.js";
+import { ROLE, define, undefineMode } from "../commands.js";
+import { modeHooks } from "../hooks.js";
+import { warn } from "../../log.js";
 import { RANKED_MODE } from "./hooks.js";
 import { rankReply, readStandings } from "./standing.js";
 
-export const installRankedCommands = ({ bookWords, loadExistingAccount }) => {
+export const installRankedCommands = ({ bookWords, nameOf = async (id) => `#${id}` }) => {
   /**
    * The caller's ranked rating and place, and the top of the board.
    *
@@ -36,7 +35,6 @@ export const installRankedCommands = ({ bookWords, loadExistingAccount }) => {
         warn(`/rank: could not read the ranked log: ${problem.message}`);
         return reply.warn(part("rank.unreadable"));
       }
-      const nameOf = async (id) => (await loadExistingAccount(id).catch(() => null))?.name ?? `#${id}`;
       reply(await rankReply({ standings, accountId: session.accountId, nameOf, part }));
     },
   });

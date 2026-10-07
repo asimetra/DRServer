@@ -5,7 +5,7 @@ import { admitEntry } from "../src/socket/match-entry.js";
 import { DungeonMatchRegistry } from "../src/socket/matches.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { setMapNodeBit } from "../src/map-progress.js";
-import { installRankedHooks } from "../src/ranked/hooks.js";
+import { installRankedHooks } from "../src/modes/ranked/hooks.js";
 import { installModeHooks } from "../src/modes/hooks.js";
 import { noteSeatModes } from "../src/modes/seat.js";
 import { config } from "../src/config.js";

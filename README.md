@@ -146,6 +146,12 @@ The second is **one life**: say `/onelife` in town and your next dungeon has no
 revives, and a fall ends it. It is the smallest mode there is, and the worked
 example for writing one. Enable it with `ODS_ONELIFE=1`.
 
+The third is **delve**: DELVE on the friend list starts a boss rush anybody may
+join — every floor a trophy boss, each harder than the last, until the party
+falls. Bosses pay item boxes, every few bosses leave a gift in town, and the
+deep milestones may leave a weapon at the depth's level. Enable it with
+`ODS_DELVE=1`.
+
 See [Writing a game mode](src/modes/README.md) for the hooks, run rules and
 content policy a new mode builds on.
 

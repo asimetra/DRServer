@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createRace } from "../src/ranked/race.js";
+import { createRace } from "../src/modes/ranked/race.js";
 
 /**
  * docs/ranked.md, "Outcomes": every row of that table is a test here. Times

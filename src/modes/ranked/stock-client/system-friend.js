@@ -7,7 +7,7 @@
  * first doid, so no object shares it; and under the 0x7fffffff the client casts
  * friend ids to. It is never stored in any account — only added to answers.
  */
-import { friendDoorRow } from "../../modes/friend-door.js";
+import { friendDoorRow } from "../../friend-door.js";
 
 export const SYSTEM_FRIEND_ID = 999;
 

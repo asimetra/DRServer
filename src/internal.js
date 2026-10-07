@@ -58,8 +58,7 @@ import {
   stockOn,
 } from "./store-rotation.js";
 import { info, warn } from "./log.js";
-import { leaguesOf } from "./ranked/leagues.js";
-import { publicStanding, readStandings } from "./ranked/standing.js";
+import { modeRoutes, profileFieldsFor } from "./modes/web.js";
 
 /**
  * What a web front end is allowed to ask this server to do.
@@ -458,8 +457,8 @@ const readProfile = async (req, [capture]) => {
     trophies: account.trophies ?? 0,
     title: titleFor(account.trophies),
     clears: standings.clears ?? 0,
-    // Their ranked league and place (ranked/standing.js); null where ranked is off.
-    ranked: await rankedStandingOf(id),
+    // What the modes running add (modes/web.js): ranked's league and place, null where it is off.
+    ...(await profileFieldsFor(id)),
     /**
      * Every point the heroes hold, which is every point they were ever paid:
      * experience is only ever added, and the ladder cap is where each hero's
@@ -476,54 +475,6 @@ const readProfile = async (req, [capture]) => {
      * record is private is one where moving gold to an alt is invisible.
      */
     sales: describeListings(sales, gm),
-  });
-};
-
-/**
- * One player's ranked standing for their profile, or null: where ranked is off,
- * and where its log cannot be read — a ranked fault is not a profile fault.
- */
-const rankedStandingOf = async (accountId) => {
-  if (!config.ranked?.enabled) return null;
-  try {
-    return publicStanding((await readStandings()).of(accountId));
-  } catch (problem) {
-    warn(`internal: no ranked standing for ${accountId}: ${problem.message}`);
-    return null;
-  }
-};
-
-/**
- * GET /internal/v1/ranked/board?limit=100 — the ranked board, best first: each
- * player's name, league, rating, place and record, and the leagues themselves
- * for a page to draw a key with. Names and not account ids, as on a profile.
- */
-const RANKED_BOARD_MOST = 500;
-const readRankedBoard = async (req) => {
-  const refusal = authorise(req);
-  if (refusal) return refusal;
-
-  // A band has `from`; the top league may instead be a share of the board, `top`.
-  const leagues = leaguesOf(config.ranked?.leagues).map(({ name, from, top, color, mark }) => ({ name, from, top, color, mark }));
-  if (!config.ranked?.enabled) return json({ enabled: false, leagues, players: [] });
-
-  const asked = Number(req.query?.get("limit") ?? 100);
-  const limit = Math.min(RANKED_BOARD_MOST, Math.max(1, Number.isInteger(asked) ? asked : 100));
-  let standings;
-  try {
-    standings = await readStandings();
-  } catch (problem) {
-    warn(`internal: the ranked board cannot be read: ${problem.message}`);
-    return json({ error: "the ranked board cannot be read right now" }, 503);
-  }
-  const rows = standings.board.slice(0, limit);
-  const names = await Promise.all(
-    rows.map((row) => loadExistingAccount(row.accountId).then((account) => account?.name ?? null, () => null))
-  );
-  return json({
-    enabled: true,
-    leagues,
-    players: rows.map((row, i) => ({ name: names[i], ...publicStanding(standings.of(row.accountId)) })),
   });
 };
 
@@ -619,8 +570,8 @@ const readSummary = async (req, [capture]) => {
         }
       : null,
     clears: standings.clears ?? 0,
-    /* The profile's standing: the website's character panel draws its frame in the league's colour. */
-    ranked: await rankedStandingOf(id),
+    /* The modes' fields: ranked's standing, whose league colour frames the website's character panel. */
+    ...(await profileFieldsFor(id)),
     /* For the website to tell the player why and until when: the client cannot. */
     restriction: restrictionOf(account),
     /* Whether to offer the admin pages. Only an offer: every admin call is
@@ -1615,6 +1566,29 @@ const readAdminActions = async (req) => {
   return json({ actions: await adminActions({ limit: req.query?.get("limit") ?? 50, account }) });
 };
 
+/**
+ * A mode's internal route (src/modes/web.js), behind the internal token like
+ * every other: refused before the mode's handler is asked anything.
+ */
+const servedModeRoute = (route) => ({
+  method: route.method,
+  pattern: route.pattern,
+  handler: async (req, captures) => {
+    const refusal = authorise(req);
+    if (refusal) return refusal;
+    const { status = 200, body } = await route.handler({ req, query: req.query, captures, accountId: null });
+    return json(body, status);
+  },
+});
+
+/** What the internal API serves: its own routes, then whatever the modes running added. */
+const internalRouteTable = {
+  *[Symbol.iterator]() {
+    yield* internalRoutes;
+    for (const route of modeRoutes("internal")) yield servedModeRoute(route);
+  },
+};
+
 export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/status", handler: readStatus },
   { method: "GET", pattern: "/internal/v1/maintenance", handler: readMaintenance },
@@ -1628,7 +1602,6 @@ export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/match-workers", handler: readMatchWorkers },
   { method: "POST", pattern: "/internal/v1/match-workers/:index/restart", handler: restartMatchWorker },
   { method: "GET", pattern: "/internal/v1/leaderboards/:metric", handler: readBoard },
-  { method: "GET", pattern: "/internal/v1/ranked/board", handler: readRankedBoard },
   { method: "POST", pattern: "/internal/v1/accounts", handler: registerAccount },
   { method: "GET", pattern: "/internal/v1/accounts/:id", handler: readAccount },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id", handler: removeAccount },
@@ -1706,7 +1679,7 @@ export const start = () => {
   }
 
   return listen({
-    routeTable: internalRoutes,
+    routeTable: internalRouteTable,
     host: config.internalHost,
     port: config.internalPort,
     // Callers without the token are limited per address, so guessing at it

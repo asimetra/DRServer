@@ -284,16 +284,15 @@ export const playEffects = (
 };
 
 /**
- * The ranked core's notices, as event names in the book
- * (docs/ranked.md, "Notices"). A finish is named for its result, because
- * "VICTORY" and "DEFEAT" are not the same moment.
+ * A mode's notice as an event name in the book: `<mode>.<type>`, and
+ * `.<variant>` after it where one moment comes in kinds — ranked's finish is
+ * named for its result, because "VICTORY" and "DEFEAT" are not the same
+ * moment. A notice naming no mode is nobody's, and plays nothing.
  */
 export const eventForNotice = (notice) => {
-  if (!notice?.type) return null;
-  // A notice names its mode (`mode`); the ranked core's carry none and are ranked's.
-  const mode = notice.mode ?? "ranked";
-  if (mode === "ranked" && notice.type === "finished") return `ranked.finished.${notice.result ?? "unknown"}`;
-  return `${mode}.${notice.type}`;
+  if (!notice?.type || typeof notice.mode !== "string" || !notice.mode) return null;
+  const variant = notice.variant == null || notice.variant === "" ? "" : `.${notice.variant}`;
+  return `${notice.mode}.${notice.type}${variant}`;
 };
 
 const EMPTY_BOOK = Object.freeze({

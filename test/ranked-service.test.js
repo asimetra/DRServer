@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createRankedService } from "../src/ranked/index.js";
-import { NEW_PLAYER } from "../src/ranked/rating.js";
-import { createRecords } from "../src/ranked/records.js";
-import { createSpec, fixedPicker } from "../src/ranked/race-spec.js";
+import { createRankedService } from "../src/modes/ranked/index.js";
+import { NEW_PLAYER } from "../src/modes/ranked/rating.js";
+import { createRecords } from "../src/modes/ranked/records.js";
+import { createSpec, fixedPicker } from "../src/modes/ranked/race-spec.js";
 
 /**
  * The service end to end, with a hand-turned clock, an in-memory log and a

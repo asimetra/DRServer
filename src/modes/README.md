@@ -2,7 +2,7 @@
 
 A mode is code that changes what a dungeon run is — who gets in, what the
 floors are, what the run pays, when it ends — without the core knowing the
-mode exists. Ranked races (`src/ranked/`) are the first one and the worked
+mode exists. Ranked races (`src/modes/ranked/`) are the first one and the worked
 example; `docs/ranked.md` is its design. This page is what a second mode
 needs. [A recorded 1v1 race](https://youtu.be/0fzvQxgv8YI) shows what the
 first one looks like on the unmodified client.
@@ -18,25 +18,33 @@ keep still for it.
 | Surface | Where | What is pinned |
 |---|---|---|
 | The hooks | `src/modes/hooks.js` — `installModeHooks`, `modeHooks`, `MODE_HOOK_NAMES`, `MODE_HOOK_COMBINE` | the 18 names, their arguments, and how several modes' answers combine |
-| Run controls | `src/modes/runtime.js` — `runControls`, `installSessionLookup` | what a mode may ask the core to do: `party`, `sessionOf`, `win`, `lose`, `sendHome`, `planAhead`, `endFloor`, `reward`, `heal`, `gift`, `weapon`, `say`, `grantBuff` |
+| Run controls | `src/modes/runtime.js` — `runControls`, `installSessionLookup` | what a mode may ask the core to do: `contextOf`, `party`, `sessionOf`, `win`, `lose`, `sendHome`, `planAhead`, `endFloor`, `reward`, `heal`, `gift`, `weapon`, `say`, `grantBuff`, `relay`, `reportOf`, `declares` |
 | The friend door | `src/modes/friend-door.js` — `friendDoorHooks`, `friendDoorRow` | how a player enters a mode: a row on every friend list with JOIN beside it |
-| Game data | `src/modes/game-data.js` — `mapNodes`, `mapNode`, `nodePlan`, `planTileLibraries`, `gameTable` | what a mode may read of the deployment's game data, to draw floors of its own |
+| Game data | `src/modes/game-data.js` — `mapNodes`, `mapNode`, `nodePlan`, `planTileLibraries`, `gameTable`, `heroById`, `floorProblem`, `TILE_SIZE` | what a mode may read of the deployment's game data, to draw floors of its own |
+| Players | `src/modes/players.js` — `playerName`, `activeHeroLevel`, `nodeDone` | what a mode may read of an account: a name for a line, what an entry gate asks |
+| Settings | `src/modes/settings.js` — `modeSettings(section)` | a mode's own section of the config file and its `ODS_*` overrides: `file`, `env`, `int`, `flag`. The core keeps no setting of any mode's |
+| Copies | `src/modes/copies.js` — `createLobbyCopies`, `COPY_FRAMES` | other players' heroes drawn in a viewer's world, moving where they really are: ranked's lobby and its race ghost |
+| The web | `src/modes/web.js` — `addModeRoute({ side, method, pattern, handler })`, `addProfileField(name, read)` | a mode's own HTTP routes (the game's API, signed; or the internal API, behind its token) and fields on a player's profile |
+| The session | what a hook is handed (below, "What a mode may read off a session") | `accountId`, `modeEntry`, `floorPlan`, `floorIndex`, `floorCount`, `floorDoid`, `heroPosition`, `dungeonAccount.name` |
 | Records | `src/modes/records.js` — `createModeRecords` | what a mode keeps across restarts: `append`, `all`, `forAccount`, `version`; a record is `{ id, at, accounts, ... }` |
-| Run rules | `src/socket/run-rules.js` — `runRules`, `STOCK_RUN_RULES` | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable`, `together`, `chestsKept`, `defeatCountdownSeconds` |
+| Run rules | `src/modes/run-rules.js` — `runRules`, `STOCK_RUN_RULES`, `SEAT_WORKER` (the core reads them in `src/socket/run-rules.js`) | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable`, `together`, `chestsKept`, `defeatCountdownSeconds` |
 | The mark | `request.mode`, `match.mode`, `session.modeEntry` | a mode's name travels on these, set by `routeEntry`, never read off the wire |
 | The floor plan | the shape `planFor` answers (below) | `floors[]` of `{ node, quiet, retile, numbered, harmless, npcLevel, tier, modifiers, healthBonus, damageBonus, attackSpeedBonus, lifeSteal, chestMost, treasure }`, `preloadArtFloors`, `preloadTileLibraries` |
-| The effect book | `config/ui-effects.json` — `playEvent`, `EFFECT_SPEC_KEYS` | an event is `{ banner, sound, shake, zoom, countdown, floater, to, replacesChat }`; lines and parts; `strings` for installed clients |
+| The effect book | `config/ui-effects.json`, `src/modes/effects.js` — `playNotice`, `bookWords` | a notice `{ mode, type, variant? }` plays the event `<mode>.<type>[.<variant>]`; an event is `{ banner, sound, shake, zoom, countdown, floater, to, replacesChat }`; lines and parts; `strings` for installed clients |
 | The notice board | `config/notices.json` — `src/notices.js` | a notice's fields (`ACTIONS` for the button) |
-| Chat commands | `src/socket/commands.js` — `define({ name, role, summary, usage, run, mode })`, `undefineMode` | a mode's commands come and go with it |
+| Chat commands | `src/modes/commands.js` — `define({ name, role, summary, usage, run, mode })`, `undefineMode`, `ROLE` | a mode's commands come and go with it |
 | Content | `/content`, `Demographics` declarations, the policy below | the core never requires content; a mode offers it with a stock fallback |
 | The test harness | `test/one-life.test.js`, `test/ranked-stock-client.test.js` — hooks driven with plain objects | a mode is testable without a socket |
 | The registry | `src/modes/index.js` — `registerMode`, `registeredModes`, `startModes` | every mode as `{ name, together, start }`, started the same way on every thread |
 | The seat | `src/modes/seat.js` — `seatRuns`, `seatSaid`, `tellMain`, `onTold` | whether a together mode runs on its worker now; and what a mode says to its main half from any thread — a command said in a dungeon, the seat's count of players waiting |
 
-Internal, and used by ranked today, but not promised: the stock-client adapter's
-copies and ghost (`src/ranked/stock-client/`). The second mode, one life,
-needed none of them;
-what a third needs of them becomes surface when it does.
+**The boundary is held by a test.** A mode is a folder under `src/modes/`, and
+it imports only the seam — the files at the top of `src/modes/` — its own
+files, `src/log.js` and `src/config.js`. The core imports no mode and names
+none in its code: what a mode adds (routes, a profile field, settings,
+records) it adds through the seam, and only the registry (`modes/index.js`)
+knows which modes ship. `test/mode-boundary.test.js` fails on either. Ranked,
+delve and one life all live inside it.
 
 A mode that needs something the seam lacks adds a *knob the core reads*, never a
 branch on the mode's name: `revives` came with one life, and the bomb, the
@@ -156,8 +164,8 @@ await records.version();                     // changes when one is added: cache
 `id` is unique within the mode (the same one twice is kept once), `at` is a time
 in ms, `accounts` are who it is about; everything else is the mode's. A record
 missing one of those is not kept, and `append` answers false rather than
-throwing. Ranked's match log (`src/ranked/records.js`) is the same idea and
-predates it.
+throwing. Ranked's match log (`src/modes/ranked/records.js`) is kept this way,
+as `{ ...match, at: decidedAt, accounts: players }`.
 
 ## What a run pays
 
@@ -260,11 +268,11 @@ what it does itself in `Demographics.capabilities` (`src/socket/capabilities.js`
 ## Commands
 
 A mode's chat commands are the mode's: define them with `define({ ..., mode })`
-(`src/socket/commands.js`) when the mode starts, on every thread that answers
+(`src/modes/commands.js`) when the mode starts, on every thread that answers
 chat (the main thread for town, the match worker for a dungeon), and take them
 away with the uninstall when it stops. The core's command set keeps none of a
 mode's; with the mode off, `/draw` is an unknown command, which is the truth.
-`src/ranked/commands.js` is the shape.
+`src/modes/ranked/commands.js` is the shape.
 
 ## Content and visuals
 
@@ -296,13 +304,16 @@ the banner strings, is gated exactly this way.
 shipped ones, and any a deployment adds with `registerMode` before the server
 starts — and starts each the same way, on every thread. `start({ where })`
 installs the mode and answers its stop; each is off unless its setting asks for
-it (`ODS_RANKED`, `ODS_ONELIFE`), and one that throws as it starts is that mode
-off, in the log, never the server.
+it (`ODS_RANKED`, `ODS_ONELIFE`, `ODS_DELVE` — read by each mode through
+`modeSettings`), and one that throws as it starts is that mode off, in the log,
+never the server. A mode kept outside the repository is named in `ODS_MODES`
+(module paths), imported on every thread, and default-exports
+`{ name, together, start }`.
 
 ```js
 import { registerMode } from "./index.js";
 
-registerMode({ name: "delve", together: false, start: async ({ where }) => { /* install */ return async () => {}; } });
+registerMode({ name: "mymode", together: false, start: async ({ where }) => { /* install */ return async () => {}; } });
 ```
 
 With match workers on a mode is started twice: on the main thread, where it
@@ -322,11 +333,27 @@ waiting, for MATCHMAKER's name. Without workers this thread is the seat, and
 both read the same way. A run routed to a worker without its mode is refused
 rather than played as an ordinary one.
 
-## A mode from outside: delve
+## What a mode may read off a session
 
-`examples/modes/delve/index.js` is a whole mode written against this surface
-alone and loaded from outside `src/` (`ODS_MODES=examples/modes/delve/index.js`):
-a boss rush for a party anybody may join. DELVE on the friend list is the way
+A hook is handed the player's session as the run holds it (`runControls.contextOf`
+finds the same from any session). A mode may read these off it, and nothing
+else — the rest is the core's and moves without notice:
+
+| Field | What it is |
+|---|---|
+| `accountId` | the player's account |
+| `modeEntry` | the mark: the mode this run was entered as |
+| `floorPlan` | the plan (above) — a mode's own, as `planFor` answered it |
+| `floorIndex`, `floorCount` | the floor the run is on (from 0), and how many it has |
+| `floorDoid` | the floor's object, which changes when a new floor is built |
+| `heroPosition` | `{ x, y }`, where the hero stands, in floor units (`TILE_SIZE` a tile) |
+| `dungeonAccount.name` | the player's name, while they are in the run |
+
+## The boss rush: delve
+
+`src/modes/delve/index.js` is a whole mode written against this surface
+alone, and off unless asked for (`ODS_DELVE=1`): a boss rush for a party
+anybody may join. DELVE on the friend list is the way
 in (a friend door, with how many are inside); every
 floor is a boss's own map, drawn from the game data (`game-data.js`), never the
 same twice running, each harder (`npcLevel`, the three bonuses, a modifier every

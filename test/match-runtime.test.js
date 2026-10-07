@@ -21,7 +21,7 @@ import { readNpc } from "./helpers/floor.js";
 import { EntryRefusedError } from "../src/socket/match-entry.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { setMapNodeBit } from "../src/map-progress.js";
-import { installRankedHooks } from "../src/ranked/hooks.js";
+import { installRankedHooks } from "../src/modes/ranked/hooks.js";
 
 let nextDoid = 9000;
 

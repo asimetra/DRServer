@@ -20,6 +20,9 @@ import { loadGameMaster } from "../gamemaster.js";
 import { info, warn } from "../log.js";
 import { tellAsServer } from "../socket/chat.js";
 import { membersOf } from "../socket/match-world.js";
+import { sayToListeners } from "../socket/global-chat.js";
+import { buildDungeonReport } from "../socket/summary.js";
+import { declares as declaresOn } from "../socket/capabilities.js";
 
 /**
  * Who `sessionOf` asks. The main thread's connections by default; a match
@@ -48,6 +51,13 @@ const contextOf = (session) => {
 };
 
 export const runControls = Object.freeze({
+  /**
+   * The run's context for a session: the session as a hook is handed it, with
+   * the run's own fields (README, "What a mode may read off a session"). A
+   * context is answered as it is; null for one whose connection is closing.
+   */
+  contextOf,
+
   /**
    * Everybody in the player's run, the player included, each as the others'
    * controls take them: who a party-wide gift or line goes to. Empty with no run.
@@ -248,6 +258,32 @@ export const runControls = Object.freeze({
     const context = contextOf(session);
     return context ? grantBuffOn(context, constant) : null;
   },
+
+  /**
+   * A player's line to others of the mode's choosing (`listeners`, sessions),
+   * on the global chat's rules: a restricted or blocked speaker is not heard, a
+   * flood is held to its pace, and the line is logged under `channel`.
+   */
+  relay: (speaker, line, listeners, channel = "mode") => sayToListeners(speaker, line, listeners, channel),
+
+  /**
+   * The player's row of the run's report as it stands now — hero, build,
+   * what the run has paid — for a mode to keep: a rival who leaves keeps
+   * their build on a race's report. Null with no run, or when it cannot be read.
+   */
+  reportOf: (session) => {
+    const context = contextOf(session);
+    if (!context) return null;
+    try {
+      return buildDungeonReport(context, false);
+    } catch (problem) {
+      warn(`modes: no report row of ${context.accountId}: ${problem.message}`);
+      return null;
+    }
+  },
+
+  /** Whether the player's client declared a capability (a modded client's, docs/client-capabilities). */
+  declares: (session, capability) => declaresOn(contextOf(session), capability),
 });
 
 /** A thread whose runs are not its connections says how to find them; returns a function that undoes it. */

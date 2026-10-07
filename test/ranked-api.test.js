@@ -14,12 +14,15 @@ process.env.ODS_INTERNAL_PORT = "0";
 process.env.ODS_RANKED = "1";
 
 const { start } = await import("../src/internal.js");
-const { routes } = await import("../src/routes.js");
+const { routeTable } = await import("../src/routes.js");
 const { issueToken } = await import("../src/auth.js");
-const { config } = await import("../src/config.js");
-const { DEFAULT_LEAGUES } = await import("../src/ranked/leagues.js");
-const { NEW_PLAYER } = await import("../src/ranked/rating.js");
+const { rankedSettings } = await import("../src/modes/ranked/settings.js");
+const { installRankedWeb } = await import("../src/modes/ranked/web.js");
+const { DEFAULT_LEAGUES } = await import("../src/modes/ranked/leagues.js");
+const { NEW_PLAYER } = await import("../src/modes/ranked/rating.js");
 
+// Ranked's routes and profile field, as its start puts them up where HTTP is served.
+installRankedWeb();
 const server = start();
 await once(server, "listening");
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -52,17 +55,18 @@ const birch = await register("Birch");
 const cedar = await register("Cedar");
 await register("Dune");
 const race = (n, players, winner) => ({ id: `race-${n}`, state: "finished", players, winner, reason: "finished", decidedAt: n * 1000 });
+await mkdir(path.join(dataDir, "modes"), { recursive: true });
 await writeFile(
-  path.join(dataDir, "ranked-matches.jsonl"),
+  path.join(dataDir, "modes", "ranked.jsonl"),
   [race(1, [ash, birch], ash), race(2, [ash, cedar], ash), race(3, [birch, cedar], null)]
-    .map((record) => JSON.stringify(record))
+    .map((record) => JSON.stringify({ ...record, at: record.decidedAt, accounts: record.players }))
     .join("\n") + "\n"
 );
 
 const withRankedOff = (t) => {
-  config.ranked.enabled = false;
+  rankedSettings.enabled = false;
   t.after(() => {
-    config.ranked.enabled = true;
+    rankedSettings.enabled = true;
   });
 };
 
@@ -135,7 +139,7 @@ test("a character summary carries the standing its profile has", async (t) => {
 
 /** The client's own call, for a mod that shows it: signed like the rest of its calls. */
 const ownStanding = async (headers) => {
-  const route = routes.find((entry) => entry.method === "GET" && entry.pattern === "/api/ranked/standing");
+  const route = [...routeTable].find((entry) => entry.method === "GET" && entry.pattern === "/api/ranked/standing");
   const response = await route.handler({ headers });
   return { status: response.status, body: JSON.parse(response.body) };
 };
@@ -160,7 +164,7 @@ test("a client's standing needs its token, and ranked to be on", async (t) => {
  * profile still answers, without a standing, and the board says so itself.
  */
 test("an unreadable ranked log leaves a profile standing null and the board unavailable, not a 500", async (t) => {
-  const log = path.join(dataDir, "ranked-matches.jsonl");
+  const log = path.join(dataDir, "modes", "ranked.jsonl");
   const kept = await readFile(log, "utf8");
   await rm(log);
   await mkdir(log); // a directory where the file was: every read of it fails

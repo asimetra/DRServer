@@ -4,7 +4,7 @@
  * every thread — the ranked service lives on one, a player asking may be in a
  * dungeon on another — and keeps one store, the log, with nothing to drift.
  */
-import { config } from "../config.js";
+import { rankedSettings } from "./settings.js";
 import { leagueAt, leaguesOf, nextLeague } from "./leagues.js";
 import { byStanding, displayRating, newPlayer, ratingRules, replayRatings } from "./rating.js";
 import { createRecords } from "./records.js";
@@ -22,7 +22,7 @@ const shown = (rating, { place, of }, leagues) => {
  */
 export const standingsFrom = (
   matches,
-  { leagues = leaguesOf(config.ranked?.leagues), rating = ratingRules(config.ranked?.rating) } = {}
+  { leagues = leaguesOf(rankedSettings.leagues), rating = ratingRules(rankedSettings.rating) } = {}
 ) => {
   const rated = [...replayRatings(matches, rating).entries()]
     .filter(([, rating]) => rating.games > 0)
@@ -112,7 +112,7 @@ export const rankReply = async ({ standings, accountId, nameOf, part, top = 3 })
  * colour, the number, the place and the record, and the next league up — what
  * the website's profile and board draw, and a mod's title (docs/ranked.md).
  */
-export const publicStanding = (standing, leagues = leaguesOf(config.ranked?.leagues)) => {
+export const publicStanding = (standing, leagues = leaguesOf(rankedSettings.leagues)) => {
   const next = nextLeague(standing, leagues);
   return {
     league: standing.league,
@@ -131,7 +131,7 @@ export const publicStanding = (standing, leagues = leaguesOf(config.ranked?.leag
 
 /** The server's own log, opened once per thread. */
 let serverRecords = null;
-const logRecords = () => (serverRecords ??= createRecords({ storage: config.storage, dataDir: config.dataDir }));
+const logRecords = () => (serverRecords ??= createRecords());
 
 /**
  * records -> { version, standings }. Every profile, board read and /rank asks,

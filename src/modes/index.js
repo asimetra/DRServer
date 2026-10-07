@@ -11,7 +11,8 @@
  *           `RANKED_WORKER` — and starts there only; a mode whose runs are
  *           anybody's starts on every worker.
  *
- * Each is off unless its setting asks for it (ODS_RANKED, ODS_ONELIFE), and
+ * Each is off unless its setting asks for it (ODS_RANKED, ODS_ONELIFE,
+ * ODS_DELVE), read by the mode itself (modes/settings.js), and
  * answers a no-op stop when off. The stop ends them in reverse, and must run
  * before connections close: ranked's voids the races still under way.
  *
@@ -20,9 +21,10 @@
  * used to be the whole server refusing to start, for one mode's records it
  * could not read.
  */
-import { startRanked } from "../ranked/setup.js";
-import { RANKED_MODE } from "../ranked/hooks.js";
+import { startRanked } from "./ranked/setup.js";
+import { RANKED_MODE } from "./ranked/hooks.js";
 import { ONE_LIFE_MODE, startOneLife } from "./one-life/index.js";
+import delve from "./delve/index.js";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SEAT_WORKER } from "../socket/run-rules.js";
@@ -40,6 +42,7 @@ import { error, warn } from "../log.js";
 const MODES = [
   { name: ONE_LIFE_MODE, together: false, start: startOneLife },
   { name: RANKED_MODE, together: true, start: startRanked },
+  { name: delve.name, together: delve.together, start: delve.start },
 ];
 for (const mode of MODES) if (mode.together) declareTogether(mode.name);
 

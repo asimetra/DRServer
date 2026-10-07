@@ -233,11 +233,11 @@ test("a value that is not a number after filling does not reach the wire", () =>
   assert.match(result.skipped[0], /floater/);
 });
 
-test("ranked notices name their events, and a finish names its result", () => {
-  assert.equal(eventForNotice({ type: "queued", waiting: 3 }), "ranked.queued");
-  assert.equal(eventForNotice({ type: "paired" }), "ranked.paired");
-  assert.equal(eventForNotice({ type: "finished", result: "win" }), "ranked.finished.win");
-  assert.equal(eventForNotice({ type: "finished", result: "loss" }), "ranked.finished.loss");
+test("a notice names its event by its mode and type, and a variant after them where it has one", () => {
+  assert.equal(eventForNotice({ mode: "ranked", type: "queued", waiting: 3 }), "ranked.queued");
+  assert.equal(eventForNotice({ mode: "ranked", type: "finished", variant: "win" }), "ranked.finished.win");
+  assert.equal(eventForNotice({ mode: "delve", type: "boss" }), "delve.boss");
+  assert.equal(eventForNotice({ type: "queued" }), null, "a notice naming no mode is nobody's");
   assert.equal(eventForNotice({}), null);
 });
 
@@ -300,40 +300,42 @@ test("editing the book applies without a restart, and a broken edit keeps the la
 /**
  * The book this server ships, against the notices the ranked core really sends.
  *
- * The shapes below are copied from src/ranked/index.js, not from docs/ranked.md,
+ * The shapes below are copied from src/modes/ranked/index.js, not from docs/ranked.md,
  * because the two disagree: the document lists a `countdown {seconds}` notice the
  * core never emits, and a `progress {opponentFloor}` whose field is really
  * `floor`. A book written to the document would have played nothing for either,
  * silently. This catches that kind of drift the day it happens.
  */
 const SHIPPED = fileURLToPath(new URL("../config/ui-effects.json", import.meta.url));
+/** A ranked notice as the stock adapter shows it: ranked's, a finish in the kind of its result. */
+const ranked = (notice) => ({ mode: "ranked", ...notice, ...(notice.type === "finished" ? { variant: notice.result } : {}) });
 const REAL_NOTICES = [
   // The stock adapter's own: the first time a race shows the rival's ghost.
-  { type: "rival_seen" },
+  ranked({ type: "rival_seen" }),
   // The rival asking to call the race off.
-  { type: "draw_offered" },
+  ranked({ type: "draw_offered" }),
   // One life's own (src/modes/one-life): the first floor's hero, and the run lost.
   { mode: "onelife", type: "entered" },
   { mode: "onelife", type: "lost" },
-  // Delve's (examples/modes/delve): the first boss, each next one, a curse, a gift, a weapon, the fall.
+  // Delve's (src/modes/delve): the first boss, each next one, a curse, a gift, a weapon, the fall.
   { mode: "delve", type: "entered" },
   { mode: "delve", type: "boss", depth: 2, name: "Frostgaard Boss", level: 16, mods: "" },
   { mode: "delve", type: "cursed", curse: "BEEFY BROS" },
   { mode: "delve", type: "gift", beaten: 3, what: "5 Health Bombs" },
   { mode: "delve", type: "item", beaten: 10, rarity: "rare", level: 64 },
   { mode: "delve", type: "lost", depth: 4, beaten: 3 },
-  { type: "queued", waiting: 1, ready: 0 },
-  { type: "paired", race: "r", opponent: 2, opponentRating: 1500, countdownSeconds: 5 },
-  { type: "started", race: "r" },
+  ranked({ type: "queued", waiting: 1, ready: 0 }),
+  ranked({ type: "paired", race: "r", opponent: 2, opponentRating: 1500, countdownSeconds: 5 }),
+  ranked({ type: "started", race: "r" }),
   // The stock adapter's own: the start's zoom brought home a moment later.
-  { type: "started_settle" },
-  { type: "progress", race: "r", floor: 2, of: 3 },
-  { type: "finished", race: "r", result: "win", rating: 1520, ratingChange: 20 },
-  { type: "finished", race: "r", result: "loss", rating: 1480, ratingChange: -20 },
-  { type: "finished", race: "r", result: "draw", rating: 1500, ratingChange: 0 },
-  { type: "cancelled", race: "r", reason: "left", requeued: true },
+  ranked({ type: "started_settle" }),
+  ranked({ type: "progress", race: "r", floor: 2, of: 3 }),
+  ranked({ type: "finished", race: "r", result: "win", rating: 1520, ratingChange: 20 }),
+  ranked({ type: "finished", race: "r", result: "loss", rating: 1480, ratingChange: -20 }),
+  ranked({ type: "finished", race: "r", result: "draw", rating: 1500, ratingChange: 0 }),
+  ranked({ type: "cancelled", race: "r", reason: "left", requeued: true }),
   // The adapter's own, not the core's: walking out of the lobby's ring.
-  { type: "stands" },
+  ranked({ type: "stands" }),
 ];
 
 test("every event the shipped book defines plays cleanly from a real notice", () => {
@@ -410,9 +412,9 @@ test("a line fills from its event; one naming a param the event lacks says nothi
     lines: { "ranked.queued": "Ranked: {waiting} waiting{tail}." },
     parts: { tail: ", {who} first" },
   }));
-  assert.equal(book.line({ type: "queued" }, { waiting: 2, tail: "" }), "Ranked: 2 waiting.");
-  assert.equal(book.line({ type: "queued" }, { waiting: 2 }), null, "no {tail}: not said with a hole in it");
-  assert.equal(book.line({ type: "paired" }, {}), null, "no line for the event");
+  assert.equal(book.line({ mode: "ranked", type: "queued" }, { waiting: 2, tail: "" }), "Ranked: 2 waiting.");
+  assert.equal(book.line({ mode: "ranked", type: "queued" }, { waiting: 2 }), null, "no {tail}: not said with a hole in it");
+  assert.equal(book.line({ mode: "ranked", type: "paired" }, {}), null, "no line for the event");
   assert.equal(book.part("tail", { who: "Alice" }), ", Alice first");
   assert.equal(book.part("nowhere"), "");
   assert.equal(book.part("tail", {}), "", "a part missing a param is left out");
@@ -421,14 +423,14 @@ test("a line fills from its event; one naming a param the event lacks says nothi
 test("a line that is not text, or longer than a line can be, keeps the book from being used", (t) => {
   for (const lines of [{ "ranked.queued": 7 }, { "ranked.queued": "x".repeat(401) }]) {
     const book = createEffectBook(tempBook(t, { lines }));
-    assert.equal(book.line({ type: "queued" }, {}), null);
+    assert.equal(book.line({ mode: "ranked", type: "queued" }, {}), null);
   }
 });
 
 test("every line in the shipped book is one the server says, and every one it says has a line", () => {
   const shipped = JSON.parse(fs.readFileSync(SHIPPED, "utf8"));
   // The core's notices, and the stock adapter's own: its welcome, a cooldown, an idle player.
-  const said = new Set([...REAL_NOTICES, { type: "welcome" }, { type: "cooldown" }, { type: "idle" }].map(eventForNotice));
+  const said = new Set([...REAL_NOTICES, ranked({ type: "welcome" }), ranked({ type: "cooldown" }), ranked({ type: "idle" })].map(eventForNotice));
   const lines = Object.keys(shipped.lines).filter((name) => !name.startsWith("_"));
   // Said with `line: false` by the adapter: a camera brought home has nothing to say.
   const silent = new Set(["ranked.started_settle"]);

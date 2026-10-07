@@ -87,11 +87,13 @@ test("the commands page lists exactly the commands the server has, the modes' ap
 
   // A mode's commands are on the page under the mode, and in the registry
   // only while the mode is on.
-  const { installRankedCommands } = await import("../src/ranked/commands.js");
+  const { installRankedCommands } = await import("../src/modes/ranked/commands.js");
   const { installOneLifeCommands } = await import("../src/modes/one-life/index.js");
+  const { installDelveCommands } = await import("../src/modes/delve/index.js");
   const uninstalls = [
-    installRankedCommands({ bookWords: { part: (k) => k }, loadExistingAccount: async () => null }),
+    installRankedCommands({ bookWords: { part: (k) => k } }),
     installOneLifeCommands({ toggle: () => true }),
+    installDelveCommands(),
   ];
   try {
     const expected = commands().map(
