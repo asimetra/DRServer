@@ -9,6 +9,8 @@
 *
 
 !src/
+# Modes a deployment may load with ODS_MODES: code only, written against the mode surface.
+!examples/
 !config/
 !db/
 !tools/
