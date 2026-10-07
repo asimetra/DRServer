@@ -10,28 +10,22 @@
  * waiting count the worker reports.
  */
 
-/** The worker that runs ranked. */
-export const RANKED_WORKER = 0;
+import { SEAT_WORKER } from "../socket/run-rules.js";
+import { seatRuns, seatSaid, tellMain } from "../modes/seat.js";
+import { RANKED_MODE } from "./hooks.js";
 
-let waiting = 0;
-let started = false;
+/** The worker that runs ranked: the seat of the modes whose runs are together (run-rules.js). */
+export const RANKED_WORKER = SEAT_WORKER;
 
 /**
- * Whether ranked came up on its worker, as that worker said when it was ready;
- * false again when it exits, until its replacement says. While it is false the
- * main thread lists no MATCHMAKER and routes no JOIN (setup.js, startOnMain):
- * an entry routed ranked to a worker without ranked would be built as an
- * ordinary run of the lobby node, past the map's unlock check.
+ * Whether ranked runs on the seat now (modes/seat.js): while it does not, the
+ * main thread lists no MATCHMAKER and routes no JOIN (setup.js, startOnMain),
+ * and admission refuses a ranked entry in any case.
  */
-export const noteRankedStarted = (up) => {
-  started = up === true;
-};
+export const rankedStarted = () => seatRuns(RANKED_MODE);
 
-export const rankedStarted = () => started;
+/** The seat's count of players waiting, for MATCHMAKER's name on the friend list. */
+export const rankedWaiting = () => Math.max(0, Math.trunc(Number(seatSaid(RANKED_MODE)?.waiting)) || 0);
 
-/** The worker's count of players waiting, for MATCHMAKER's name on the friend list. */
-export const noteRankedWaiting = (count) => {
-  waiting = Math.max(0, Math.trunc(Number(count)) || 0);
-};
-
-export const rankedWaiting = () => waiting;
+/** On the seat: the count, told to the main thread as it changes. */
+export const tellRankedWaiting = (waiting) => tellMain(RANKED_MODE, { waiting });

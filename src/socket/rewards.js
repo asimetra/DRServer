@@ -235,11 +235,42 @@ export const applyProgressReward = (
   );
   if (!gold && !xp && !crowd) return false;
 
-  if (gold || xp) {
-    session.dungeonRewards ??= { gold: 0, gems: 0, xp: 0 };
-    session.dungeonRewards.gold += gold;
-    session.dungeonRewards.xp += xp;
+  creditGoldAndExperience(session, gold, xp);
+
+  if (crowd) {
+    const maximum = rewardAmount(session.maxDungeonBusterPoints) || 0xffffffff;
+    session.dungeonBusterPoints = Math.min(
+      maximum,
+      rewardAmount(session.dungeonBusterPoints) + crowd
+    );
+    if (session.heroDoid) {
+      session.send(
+        heroDungeonBusterPointsUpdate(
+          session.heroDoid,
+          session.dungeonBusterPoints
+        )
+      );
+    }
   }
+
+  return true;
+};
+
+/**
+ * Gold to the account and experience to the hero, shown on the report and told
+ * to the client, as whole amounts and nothing added: no run rule, no legendary.
+ * The pickups above come through here after those; a mode's own reward
+ * (modes/runtime.js, `reward`) comes straight here, since what a mode pays
+ * itself is its own choice. Written with the account, not now (saveChangedAccounts).
+ */
+export const creditGoldAndExperience = (session, offeredGold = 0, offeredXp = 0) => {
+  const gold = rewardAmount(offeredGold);
+  const xp = rewardAmount(offeredXp);
+  if (!gold && !xp) return { gold: 0, experience: 0 };
+
+  session.dungeonRewards ??= { gold: 0, gems: 0, xp: 0 };
+  session.dungeonRewards.gold += gold;
+  session.dungeonRewards.xp += xp;
 
   if (gold && session.dungeonAccount) {
     session.dungeonAccount.basic_currency =
@@ -258,26 +289,10 @@ export const applyProgressReward = (
     }
   }
 
-  if (crowd) {
-    const maximum = rewardAmount(session.maxDungeonBusterPoints) || 0xffffffff;
-    session.dungeonBusterPoints = Math.min(
-      maximum,
-      rewardAmount(session.dungeonBusterPoints) + crowd
-    );
-    if (session.heroDoid) {
-      session.send(
-        heroDungeonBusterPointsUpdate(
-          session.heroDoid,
-          session.dungeonBusterPoints
-        )
-      );
-    }
-  }
-
   // Crowd is run-local; only account-backed Gold/XP have anything to write,
   // and not now — see saveChangedAccounts.
-  if ((gold || xp) && session.dungeonAccount) session.accountChanged = true;
-  return true;
+  if (session.dungeonAccount) session.accountChanged = true;
+  return { gold, experience: xp };
 };
 
 /** Applies the authoritative GameMaster values attached to a collected doober. */

@@ -1,5 +1,5 @@
 import { floorTilesUpdate, interestClosure, infiniteRewardDataUpdate } from "./objects.js";
-import { loadFloorAt, exitsOf, rewardGeneratorIds } from "./floors.js";
+import { loadFloorAt, exitsOf, plannedFloorEntry, plannedNpcLevel, plannedTier, rewardGeneratorIds } from "./floors.js";
 import { loadGameMaster } from "../gamemaster.js";
 import { infiniteDamageBonus, infiniteDepthBonus } from "../npc-stats.js";
 import {
@@ -203,16 +203,27 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
    * the fortieth are far past what the level alone would price them at — the
    * level column stops at 100 and every infinite tier starts there.
    */
-  session.npcDepthBonus = infiniteDepthBonus(
-    await loadGameMaster(),
-    session.floorPlan?.tier,
-    (session.floorIndex ?? 0) + 1
-  );
-  session.npcDamageDepthBonus = infiniteDamageBonus(
-    await loadGameMaster(),
-    session.floorPlan?.tier,
-    (session.floorIndex ?? 0) + 1
-  );
+  /**
+   * The level and tier this floor's NPCs are generated at: the plan's floor
+   * may say (`npcLevel`, `tier`, modes/README.md), else the run's.
+   */
+  session.npcLevel = plannedNpcLevel(session);
+  const floorTier = plannedTier(session);
+  /**
+   * How much more health, damage and attack speed than their level gives: a
+   * mode's floor may say (`healthBonus`, `damageBonus`, `attackSpeedBonus`,
+   * shares over 1, modes/README.md), else Infinite's growth with depth, and no
+   * faster than authored.
+   */
+  const entry = plannedFloorEntry(session);
+  const share = (value) => (Number.isFinite(value) ? Math.max(0, value) : null);
+  session.npcDepthBonus =
+    share(entry?.healthBonus) ??
+    infiniteDepthBonus(await loadGameMaster(), floorTier, (session.floorIndex ?? 0) + 1);
+  session.npcDamageDepthBonus =
+    share(entry?.damageBonus) ??
+    infiniteDamageBonus(await loadGameMaster(), floorTier, (session.floorIndex ?? 0) + 1);
+  session.npcAttackSpeedBonus = share(entry?.attackSpeedBonus) ?? 0;
 
   const party = await buildPartyHeroes(session, floor, floorDoid);
   for (const member of party) {
@@ -242,7 +253,7 @@ export const buildFloorWorld = async (session, { floor, floorDoid, isActive }) =
   trackTriggers(session, floor);
 
   const gm = await loadGameMaster();
-  const tier = session.floorPlan?.tier;
+  const tier = plannedTier(session);
   const context = {
     session,
     floorDoid,

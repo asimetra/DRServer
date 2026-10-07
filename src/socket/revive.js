@@ -16,6 +16,7 @@ import { matchHost } from "./match-host.js";
 import { heroMembersOf, memberForHero } from "./match-world.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { runRulesOf } from "./run-rules.js";
+import { tellRevived } from "./combat-events.js";
 
 export const FLID_PROPOSE_REVIVE = 173;
 export const FLID_PROPOSE_SELF_REVIVE = 174;
@@ -174,6 +175,7 @@ export const handleProposeRevive = (session, reader, now = Date.now()) => {
   session.send(hitPointsUpdate(targetDoid, CLID.HeroGameObject, target.hitPoints));
   session.send(stateUpdate(targetDoid, CLID.HeroGameObject, ""));
   (session.cancelFloorFailing ?? cancelFloorFailing)(session);
+  tellRevived(session, targetDoid, "ally");
   info(
     `[${session.id}] hero ${session.heroDoid} rescued ${targetDoid} ` +
       `(${target.hitPoints}/${target.maxHitPoints}hp)`
@@ -324,7 +326,10 @@ export const handleProposeSelfRevive = async (session, reader) => {
     const actor = session.actors?.get(doid);
     if (!actor?.maxHitPoints) continue;
     const wasDead = Boolean(actor.dead);
-    if (wasDead) revived++;
+    if (wasDead) {
+      revived++;
+      tellRevived(session, doid, reviveAll ? "partyBomb" : "healthBomb");
+    }
     const healthBombRevive = !reviveAll && doid === session.heroDoid && wasDead;
     actor.hitPoints = healthBombRevive
       ? Math.max(1, Math.round(actor.maxHitPoints * healthBombReviveShare()))

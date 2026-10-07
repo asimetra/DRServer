@@ -23,6 +23,10 @@ export const ratingWindow = (waitedMs) => {
 /** Cancelling a pairing or forfeiting: a minute, doubling each time in a row, up to half an hour. */
 const COOLDOWN_BASE_MS = s(60);
 const COOLDOWN_CEILING_MS = s(30 * 60);
+/** A cooldown over for this long is forgotten, streak and all: the tables live as long as the server. */
+const COOLDOWN_FORGOTTEN_MS = s(24 * 60 * 60);
+/** The most last opponents remembered; the oldest go first. Far more than a small server's players. */
+const OPPONENTS_KEPT = 4096;
 
 class RankedQueue {
   constructor({ window = ratingWindow } = {}) {
@@ -71,12 +75,19 @@ class RankedQueue {
   }
 
   rememberOpponents(first, second) {
-    this.lastOpponents.set(first, second);
-    this.lastOpponents.set(second, first);
+    for (const id of [first, second]) {
+      // Set again, it moves to the newest end, so the oldest are the ones dropped.
+      this.lastOpponents.delete(id);
+      this.lastOpponents.set(id, id === first ? second : first);
+    }
+    while (this.lastOpponents.size > OPPONENTS_KEPT) this.lastOpponents.delete(this.lastOpponents.keys().next().value);
   }
 
   /** Cancelled a pairing, or forfeited: the next join waits, longer each time in a row. */
   penalise(accountId, at) {
+    for (const [id, cooldown] of this.cooldowns) {
+      if (at - cooldown.until >= COOLDOWN_FORGOTTEN_MS) this.cooldowns.delete(id);
+    }
     const streak = (this.cooldowns.get(accountId)?.streak ?? 0) + 1;
     const length = Math.min(COOLDOWN_CEILING_MS, COOLDOWN_BASE_MS * 2 ** (streak - 1));
     this.cooldowns.set(accountId, { streak, until: at + length });

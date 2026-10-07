@@ -1362,3 +1362,27 @@ test("/draw reaches the race only from a racer", async () => {
   assert.equal(adapter.hooks.drawOffered(sessions.get(B)), true);
   assert.equal(service.statusOf(A).state, "idle", "called off together");
 });
+
+test("an entry left behind never makes an ordinary run of the same account ranked", async () => {
+  const { adapter, join } = setup();
+  await join(A);
+  // The runtime marks every run: this account's next one is an ordinary dungeon.
+  const ordinary = { accountId: A, modeEntry: null, floorIndex: 0, floorCount: 3 };
+  assert.equal(adapter.hooks.runRules(ordinary), null, "the game's own rules");
+  assert.equal(adapter.hooks.floorCompleting(ordinary), true, "its floors end as a dungeon's do, not held as a lobby's");
+  assert.equal(adapter.hooks.idlingAllowed(ordinary), false);
+  assert.notEqual(adapter.hooks.runRules({ accountId: A, modeEntry: "ranked" }), null, "the ranked run is still ranked");
+});
+
+test("a race whose node gives no floors is not started: the lobby is never ended into a win", async () => {
+  const { service, join, at, won, sessions } = setup({ raceFloors: async () => [] });
+  await join(A);
+  await join(B);
+  at(1);
+  await service.tick();
+  at(11);
+  await service.tick();
+  assert.deepEqual(won, [], "nobody won anything");
+  assert.equal(sessions.get(A).floorIndex, 0, "the lobby floor stands");
+  assert.notEqual(service.statusOf(A).state, "in_race", "the race was called off");
+});

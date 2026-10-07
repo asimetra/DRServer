@@ -51,8 +51,8 @@ test("/onelife arms the next entry only: routed once, then the player is ordinar
   assert.equal(modeHooks.routeEntry({ accountId: 7 }, request), request, "one entry, not every entry after");
   assert.equal(modeHooks.routeEntry({ accountId: 8 }, request), request, "somebody else's entry is their own");
 
-  assert.equal(mode.toggle(7), true);
-  assert.equal(mode.toggle(7), false, "said again, called off");
+  assert.equal(mode.arm(7, true), true);
+  assert.equal(mode.arm(7, false), false, "called off");
   assert.equal(modeHooks.routeEntry({ accountId: 7 }, request), request);
 });
 
@@ -91,40 +91,39 @@ test("the shipped book has both events' wording, under the mode's own name", () 
   assert.equal(eventForNotice({ type: "queued" }), "ranked.queued", "a notice naming no mode is ranked's, as before");
 });
 
-test("the command: in town it arms and disarms; in a dungeon, or on a match worker, it points home", async () => {
+test("the command: said in a dungeon — the stock client's only chat — it arms the next entry, told to where entries are routed", async () => {
   resetCommands();
   const mode = createOneLife();
+  const told = [];
   const replies = [];
   const reply = (line) => replies.push(line);
   reply.warn = (line) => replies.push(`warn: ${line}`);
-  const uninstall = installOneLifeCommands({ toggle: mode.toggle });
+  // `tell` stands in for tellMain: in production it crosses to the main thread.
+  const uninstall = installOneLifeCommands({ tell: (accountId, on) => (told.push([accountId, on]), mode.arm(accountId, on)) });
   try {
     assert.deepEqual(commands().map((c) => [c.name, c.mode]), [["onelife", ONE_LIFE_MODE]]);
-    const town = { accountId: 7, dungeonAccount: { rank: 0 } };
-    await runCommand(town, "/onelife", reply);
+    const inDungeon = { accountId: 7, dungeonAccount: { rank: 0 }, dungeonActive: true, areaDoid: 1 };
+    await runCommand(inDungeon, "/onelife", reply);
     assert.match(replies.at(-1), /^one life: your next dungeon/);
-    assert.equal(mode.armed(7), true);
-    await runCommand(town, "/onelife", reply);
+    assert.equal(mode.armed(7), true, "armed from inside a dungeon");
+    await runCommand(inDungeon, "/onelife off", reply);
     assert.match(replies.at(-1), /^one life: off/);
     assert.equal(mode.armed(7), false);
-
-    await runCommand({ ...town, dungeonActive: true, areaDoid: 1 }, "/onelife", reply);
-    assert.match(replies.at(-1), /^warn: say \/onelife in town/);
-    assert.equal(mode.armed(7), false);
+    assert.deepEqual(told, [[7, true], [7, false]]);
   } finally {
     uninstall();
   }
   assert.deepEqual(commands(), [], "gone with the mode");
+  resetCommands();
+});
 
-  const worker = installOneLifeCommands({ toggle: mode.toggle, where: "worker" });
-  try {
-    await runCommand({ accountId: 7, dungeonAccount: { rank: 0 } }, "/onelife", reply);
-    assert.match(replies.at(-1), /^warn: say \/onelife in town/);
-    assert.equal(mode.armed(7), false);
-  } finally {
-    worker();
-    resetCommands();
-  }
+test("said on a match worker, the arming reaches the main thread through the seat's channel", async (t) => {
+  const { noteModeTold, onTold } = await import("../src/modes/seat.js");
+  const mode = createOneLife();
+  t.after(onTold(ONE_LIFE_MODE, ({ accountId, on }) => mode.arm(accountId, on)));
+  // What the pool hands on when worker 3's /onelife posts to the main thread.
+  noteModeTold(ONE_LIFE_MODE, { accountId: 7, on: true }, 3);
+  assert.equal(mode.armed(7), true);
 });
 
 // --- The core's side of the rule: where a hero gets back up, and where a floor waits for it.
@@ -180,4 +179,16 @@ test("under no revives a floor with nobody standing is lost at once, with no cou
   assert.ok(session.floorFailingTimer, "an ordinary run gets its countdown");
   clearFloorFailing(session);
   assert.deepEqual(failed, [1], "and is not lost yet");
+});
+
+test("joining somebody keeps the arming for the player's own next run", () => {
+  const mode = createOneLife();
+  mode.toggle(7);
+  const friendJoin = { mapNodeId: 0, friendId: 8 };
+  assert.equal(mode.hooks.routeEntry({ accountId: 7 }, friendJoin), friendJoin, "a friend's run is theirs");
+  const matchmaker = { mapNodeId: 0, friendId: 999 };
+  assert.equal(mode.hooks.routeEntry({ accountId: 7 }, matchmaker), matchmaker, "nor does a JOIN on MATCHMAKER spend it");
+  assert.equal(mode.armed(7), true);
+  assert.equal(mode.hooks.routeEntry({ accountId: 7 }, { mapNodeId: 50004 }).mode, "onelife", "the player's own run is one life");
+  assert.equal(mode.armed(7), false);
 });

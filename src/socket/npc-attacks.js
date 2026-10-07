@@ -93,3 +93,14 @@ export const npcAttackChoices = async (
   }
   return attackSet;
 };
+
+/** The most a floor may speed its monsters up: three times authored, past which timelines stop reading. */
+const ATTACK_SPEED_BONUS_MOST = 2;
+
+/**
+ * How much faster this floor's monsters attack than authored: 1 + the floor's
+ * `npcAttackSpeedBonus` (set from a mode's floor plan, floor-world.js), the
+ * same factor on the server's timing and on the play speed the client is sent.
+ */
+export const floorAttackSpeedScale = (session) =>
+  1 + Math.min(ATTACK_SPEED_BONUS_MOST, Math.max(0, Number(session?.npcAttackSpeedBonus) || 0));

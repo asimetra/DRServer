@@ -8,8 +8,9 @@
  * the core's. This one answers five hooks, defines one command, and names two
  * events in the effect book. It touches no socket, no actor and no floor.
  *
- *   /onelife           in town, arms the player's next entry: that run is one
- *                      life. Said again, disarms it.
+ *   /onelife           arms the player's next entry, said wherever they can
+ *                      chat (a dungeon, on the stock client): that run is one
+ *                      life. /onelife off disarms it.
  *   routeEntry         marks an armed player's next entry `mode: "onelife"`;
  *                      the mark rides the request to whichever thread runs it.
  *   modeRules/runRules the rules by name and by mark: `revives: false`, and
@@ -26,6 +27,7 @@
 import { config } from "../../config.js";
 import { info } from "../../log.js";
 import { installModeHooks, modeInstalled } from "../hooks.js";
+import { onTold, tellMain } from "../seat.js";
 import { runRules } from "../../socket/run-rules.js";
 import { define, undefineMode } from "../../socket/commands.js";
 import { ROLE } from "../../socket/roles.js";
@@ -55,6 +57,9 @@ export const createOneLife = ({ show = () => null, say = () => {}, line = () => 
     routeEntry(connection, request) {
       const accountId = Number(connection?.accountId);
       if (!armed.has(accountId)) return request;
+      // Joining somebody — a friend's run, or a mode's own row (MATCHMAKER) —
+      // is their run, played by its rules: the arming waits for the player's own.
+      if (Number(request?.friendId) || Number(request?.mapId)) return request;
       // One entry: refused or not, the player says so again for the next.
       armed.delete(accountId);
       return { ...request, mode: ONE_LIFE_MODE };
@@ -71,41 +76,44 @@ export const createOneLife = ({ show = () => null, say = () => {}, line = () => 
     },
   };
 
-  /** Arms or disarms; answers what the next entry will be. */
-  const toggle = (accountId) => {
+  /** Arms (`on`) or disarms the account's next entry; answers whether it is armed now, or null for no account. */
+  const arm = (accountId, on = true) => {
     const id = Number(accountId);
     if (!id) return null;
-    if (armed.has(id)) {
-      armed.delete(id);
-      return false;
-    }
-    armed.add(id);
-    return true;
+    if (on) armed.add(id);
+    else armed.delete(id);
+    return armed.has(id);
   };
 
-  return { hooks, toggle, armed: (accountId) => armed.has(Number(accountId)) };
+  /** Arms or disarms by turns. */
+  const toggle = (accountId) => arm(accountId, !armed.has(Number(accountId)));
+
+  return { hooks, arm, toggle, armed: (accountId) => armed.has(Number(accountId)) };
 };
 
 /**
- * The one command. Arming is kept where entries are routed — the main thread,
- * or the only thread — so a dungeon on a match worker can only point the
- * player home: said there, it would arm a set nobody routes from.
+ * The one command, said wherever the player can say it — which on the stock
+ * client is in a dungeon: it hides chat in town. `/onelife` arms the next
+ * entry and `/onelife off` calls it off; the run the player is in now is as it
+ * is. The arming is kept where entries are routed — the main thread, or the
+ * only one — so it is told there (`tell`, modes/seat.js tellMain), from a
+ * dungeon on a match worker as from anywhere else.
  */
-export const installOneLifeCommands = ({ toggle, where = "local" }) => {
+export const installOneLifeCommands = ({ tell = (accountId, on) => tellMain(ONE_LIFE_MODE, { accountId, on }) } = {}) => {
   define({
     name: "onelife",
     mode: ONE_LIFE_MODE,
     role: ROLE.PLAYER,
-    summary: "make your next dungeon a one-life run: no revives, and a fall ends it",
-    run: ({ session, reply }) => {
-      if (where === "worker" || session?.dungeonActive || session?.areaDoid) {
-        return reply.warn("say /onelife in town: it is your next dungeon that becomes one life");
-      }
-      const armedNow = toggle(session?.accountId);
-      if (armedNow === null) return reply.warn("no account to arm");
+    summary: "make your next dungeon a one-life run: no revives, and a fall ends it. /onelife off calls it off",
+    usage: "[off]",
+    run: ({ session, args = [], reply }) => {
+      const accountId = Number(session?.accountId);
+      if (!accountId) return reply.warn("no account to arm");
+      const on = String(args[0] ?? "").toLowerCase() !== "off";
+      tell(accountId, on);
       reply(
-        armedNow
-          ? "one life: your next dungeon has no revives, and a fall ends it. /onelife again to call it off"
+        on
+          ? "one life: your next dungeon has no revives, and a fall ends it. /onelife off to call it off"
           : "one life: off. Your next dungeon is an ordinary one"
       );
     },
@@ -125,9 +133,12 @@ export const startOneLife = async ({ where = config.matchWorkerCount > 0 ? "main
   const { tellAsServer } = await import("../../socket/chat.js");
   const mode = createOneLife({ show: playNotice, say: tellAsServer, line: bookWords.line });
   const uninstallHooks = installModeHooks(ONE_LIFE_MODE, mode.hooks);
-  const uninstallCommands = installOneLifeCommands({ toggle: mode.toggle, where });
+  const uninstallCommands = installOneLifeCommands();
+  // Where entries are routed, the arming is kept: told from wherever the command was said.
+  const unlisten = where === "worker" ? () => {} : onTold(ONE_LIFE_MODE, ({ accountId, on } = {}) => mode.arm(accountId, on));
   info(`one life: on (${where})`);
   return async () => {
+    unlisten();
     uninstallCommands();
     uninstallHooks();
   };

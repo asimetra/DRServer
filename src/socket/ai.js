@@ -8,7 +8,7 @@ import { performNpcAttack } from "./combat.js";
 import { buffMultiplierFor, hasAbility } from "./buffs.js";
 import { heroMembersOf, matchStateOf, worldOf } from "./match-world.js";
 import { collectNearbyForPet } from "./pickups.js";
-import { npcAttackSpeed } from "./npc-attacks.js";
+import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
 import {
   findPath,
   hasLineOfSight,
@@ -1480,7 +1480,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      */
     const buffSpeed = buffMultiplierFor(session, doid, chosen.speedStat ?? "MELEE_SPD");
     const authoredSpeed = npcAttackSpeed(chosen.attackSpeed);
-    const castSpeed = authoredSpeed * (buffSpeed > 0 ? buffSpeed : 1);
+    const castSpeed = authoredSpeed * (buffSpeed > 0 ? buffSpeed : 1) * floorAttackSpeedScale(session);
     const buffSlowness = buffSpeed > 0 ? 1 / buffSpeed : 1;
     const frameMs = (frame) => Math.max(0, Number(frame ?? 0)) * (1000 / FRAMES_PER_SECOND) / castSpeed;
 

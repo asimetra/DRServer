@@ -101,6 +101,27 @@ export const activeInfiniteModifiers = (gm, definition, modifierIds, floorNumber
   });
 };
 
+/**
+ * The modifiers a floor plan names for one floor (modes/README.md, "The floor
+ * plan"), as the rows the rest reads: the same shape the Infinite schedule
+ * gives, so every place that acts on an active modifier acts on these too.
+ * New on this floor is new since the one before it. An id the game data does
+ * not have is dropped and said, since the client would have no row for it.
+ */
+export const plannedModifiers = (gm, ids, previous = [], warnOf = () => {}) => {
+  const rowsById = new Map((gm?.raw?.DungeonModifier ?? []).map((row) => [Number(row.Id), row]));
+  const before = new Set(previous.map((row) => Number(row.Id)));
+  // Named twice is active once: a row in the list twice would act twice.
+  return [...new Set(ids.map(Number))].flatMap((id) => {
+    const row = rowsById.get(Number(id));
+    if (!row) {
+      warnOf(`no DungeonModifier ${id} in the game data; the floor plan's modifier is dropped`);
+      return [];
+    }
+    return [{ ...row, newThisFloor: before.has(Number(id)) ? 0 : 1 }];
+  });
+};
+
 export const infiniteFloorGold = (definition, floorNumber) => {
   if (!definition) return 0;
   return Math.max(0, Math.min(

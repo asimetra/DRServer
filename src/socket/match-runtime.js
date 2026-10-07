@@ -197,7 +197,7 @@ const joinDungeonMatchLocked = async (
   if (!match) throw new Error("joinDungeonMatch needs an admitted match");
   requireOpenMember(session);
   const verifyAccount = (account) =>
-    rulesOfMode(request?.mode).unlockCheck ? requireMayEnter(account, match.mapNodeId) : undefined;
+    rulesOfMode(session.modeEntry).unlockCheck ? requireMayEnter(account, match.mapNodeId) : undefined;
 
   if (buildHost) {
     const context = world.contextFor(session);
@@ -342,10 +342,19 @@ export const joinDungeonMatch = async (session, result, request, options = {}) =
   const match = result?.match;
   if (!match) throw new Error("joinDungeonMatch needs an admitted match");
   requireOpenMember(session);
-  // Which mode this run is, if any, is the request's to say, read on whichever
-  // thread runs the match: a mode's planFor looks here (ranked/stock-client).
-  session.modeEntry = request?.mode ?? null;
   const buildHost = !match.world;
+  /**
+   * Which mode this run is, read on whichever thread runs the match: a mode's
+   * planFor and runRules look here. The match's — a run has one mode, and
+   * whoever joins takes it as it is, whatever their own entry said. The
+   * request's only for a run being made by a match that does not carry one.
+   */
+  session.modeEntry =
+    typeof match.mode === "string" && match.mode
+      ? match.mode
+      : buildHost && typeof request?.mode === "string"
+        ? request.mode
+        : null;
   const world = match.world ?? createMatchWorld(match, session);
   try {
     return await world.runExclusive(() =>

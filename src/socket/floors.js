@@ -889,9 +889,11 @@ export const floorPlanForMapNode = async (mapNodeId, { seed } = {}) => {
     /**
      * The row names its floors and we do not have them.
      *
-     * Only four of the twelve authored floor files came out of the client;
-     * the other eight lived on the real server. Loading the default in their
-     * place put the Knight Fortress arena under every boss on the map —
+     * Every authored floor the boss nodes name ships in the Haxe client's own
+     * Resources, and game-data/manifest.json lists all fifteen for
+     * tools/sync-game-data.js to import; so this is a snapshot without them —
+     * an incomplete import, or a client that does not carry them. Loading the
+     * default in their place put the Knight Fortress arena under every boss —
      * Icewater, the Catacombs, Cretaceous Park — quietly and with its own
      * wiring, which is not a boss battle in the wrong scenery so much as a
      * different dungeon wearing the node's name.
@@ -1088,6 +1090,25 @@ export const loadFloorAt = async (plan, index) => {
   const { tileLibrary, tier, tileCount, seed } = descriptor.generated;
   return buildFloor(tileLibrary, { tier, tileCount, seed });
 };
+
+/**
+ * What the plan says of the floor a run is on, over what it says of the run
+ * (modes/README.md, "The floor plan"): the level its NPCs are generated at,
+ * and the tier that prices and stocks them. Read in one place so the host's
+ * build, a member joining late and the next floor all agree — a joiner setting
+ * the run's level back over the floor's would price what spawns after them at
+ * the wrong one.
+ */
+export const plannedFloorEntry = (session) => session?.floorPlan?.floors?.[session.floorIndex ?? 0] ?? null;
+
+/** The NPC level: the floor's, else the run's, else 1; never less than 1, and 1 for what is not a number. */
+export const plannedNpcLevel = (session) => {
+  const level = Number(plannedFloorEntry(session)?.npcLevel ?? session?.floorPlan?.npcLevel ?? 1);
+  return Number.isFinite(level) ? Math.max(1, Math.trunc(level)) : 1;
+};
+
+/** The tier: the floor's, else the run's. */
+export const plannedTier = (session) => plannedFloorEntry(session)?.tier ?? session?.floorPlan?.tier ?? null;
 
 /** How many floors a run has. */
 export const floorCountOf = (plan) => Math.max(1, plan?.floors?.length ?? 1);

@@ -156,9 +156,10 @@ export class SessionTransitions {
         this.answer(code);
         return false;
       }
-      // The match carries its mode: whether anybody may join it is the mode's
-      // rules' to say (DungeonMatchRegistry.explicitTarget).
-      if (request.mode) result.match.mode = request.mode;
+      // The match carries its mode, set as it was made (matches.js, create): a
+      // run has one, and joining somebody's keeps theirs. Only a new match made
+      // without one — a registry standing in for the real one — takes it here.
+      if (request.mode && result.created && !result.match.mode) result.match.mode = request.mode;
       return this.load(transition, result, request, executor);
     });
   }

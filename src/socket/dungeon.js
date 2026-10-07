@@ -1,12 +1,13 @@
 import { dungeonFloorNumber, dungeonAreaGenerate, dungeonFloorGenerate, heroGenerate, heroOwnerGenerate, playerOwnerGenerate } from "./objects.js";
-import { loadFloorAt, floorCountOf, floorPlanForMapNode, tileLibrariesFor } from "./floors.js";
+import { loadFloorAt, floorCountOf, floorPlanForMapNode, plannedNpcLevel, tileLibrariesFor } from "./floors.js";
 import { modeHooks } from "../modes/hooks.js";
+import { tellRevived } from "./combat-events.js";
 import { heroById, attackForConstant, loadGameMaster, mapNode } from "../gamemaster.js";
 import { maxHitPoints, maxManaPoints, effectiveMaxHitPoints, effectiveMaxManaPoints, wireSlotPoints, statTotals } from "../hero-stats.js";
 import { equippedPetSpawn } from "../pets.js";
 import { preloadFor } from "./precache.js";
 import { matchHost } from "./match-host.js";
-import { activeInfiniteModifiers, infiniteDefinitionForNode, infiniteEpoch, infiniteModifierIdsForNode, infiniteProgressFor } from "../infinite.js";
+import { activeInfiniteModifiers, infiniteDefinitionForNode, infiniteEpoch, infiniteModifierIdsForNode, infiniteProgressFor, plannedModifiers } from "../infinite.js";
 import {
   CLIENT_PERSISTENT_OBJECT_ID_MAX,
   isClientLocalObjectId,
@@ -275,6 +276,10 @@ export const buildPartyHeroes = async (session, floor, floorDoid) => {
     const context = contextForMember(member);
     const spawn = member.heroSpawn;
     const at = { x: floor.spawn.x, y: floor.spawn.y };
+    // Down on the floor that ended, up on this one: a revive as far as a mode is
+    // concerned. The floor's end noted it, since it cleared the actors first (floor-exit.js).
+    const wasDown =
+      session.actors.get(member.heroDoid)?.dead === true || session.downAtFloorEnd?.has(member.heroDoid) === true;
     session.actors.set(member.heroDoid, {
       // The generate sends this same current value. Stamina raises the ceiling
       // on the client; it does not silently heal the current bar on the wire.
@@ -293,6 +298,7 @@ export const buildPartyHeroes = async (session, floor, floorDoid) => {
     session.objects.set(member.heroDoid, CLID.HeroGameObject);
     member.objects?.set(member.heroDoid, CLID.HeroGameObject);
     session.playerActors.add(member.heroDoid);
+    if (wasDown) tellRevived(context, member.heroDoid, "floor");
     context.heroPosition = { ...at };
     // The generate says heading 0, and the client reports one only once it
     // turns, so the last floor's facing is not this hero's.
@@ -308,6 +314,8 @@ export const buildPartyHeroes = async (session, floor, floorDoid) => {
     context.heroManaPoints = spawn.manaPoints;
     context.maxHeroManaPoints = spawn.manaPoints;
   }
+  // Said once each; the next floor's end notes its own.
+  session.downAtFloorEnd = null;
 
   for (const recipient of members) {
     const ordered = [recipient, ...members.filter((member) => member !== recipient)];
@@ -484,7 +492,7 @@ export const prepareDungeonMember = async (
     scale: Number(hero?.Scale ?? 1),
     constant: hero?.Constant ?? "HERO",
   };
-  session.npcLevel = Math.max(1, Number(session.floorPlan?.npcLevel ?? 1));
+  session.npcLevel = plannedNpcLevel(session);
   session.heroStats = hero ? statTotals(gm, hero, avatar) : undefined;
   const infiniteDefinition = session.infiniteDefinition ?? session.world?.infiniteDefinition;
   if (infiniteDefinition) {
@@ -586,7 +594,19 @@ export const enterDungeon = async (
   if (!isActive()) return false;
 
   const gm = await loadGameMaster();
-  const node = await mapNode(mapNodeId);
+  /**
+   * A plan whose first floor belongs to another node (`node`, modes/README.md)
+   * starts the run as that node's, the way a later floor of another node makes
+   * the run its at the transition (floor-exit.js): the client reads the node off
+   * the floor, and its name, tier and HUD are that floor's. The match keeps the
+   * node it was entered by — that is what strangers are matched into it by.
+   */
+  const firstNode = session.floorPlan?.floors?.[session.floorIndex]?.node;
+  const node = firstNode?.Id ? firstNode : await mapNode(mapNodeId);
+  if (node?.Id && node.Id !== session.mapNodeId) {
+    session.mapNodeId = node.Id;
+    matchHost().setPresenceLocation(session, node.Id);
+  }
   session.tierConstant = node?.TierRank ?? "";
   session.mapPage = node;
   session.infiniteEpoch ??= infiniteEpoch();
@@ -594,12 +614,11 @@ export const enterDungeon = async (
   session.infiniteModifierIds = session.infiniteDefinition
     ? infiniteModifierIdsForNode(gm, node, session.infiniteEpoch)
     : [];
-  session.infiniteActiveModifiers = activeInfiniteModifiers(
-    gm,
-    session.infiniteDefinition,
-    session.infiniteModifierIds,
-    session.floorIndex + 1
-  );
+  // A floor plan may name this floor's modifiers itself; otherwise Infinite's schedule says.
+  const plannedHere = session.floorPlan?.floors?.[session.floorIndex]?.modifiers;
+  session.infiniteActiveModifiers = Array.isArray(plannedHere)
+    ? plannedModifiers(gm, plannedHere, [], (line) => warn(`[${session.id}] ${line}`))
+    : activeInfiniteModifiers(gm, session.infiniteDefinition, session.infiniteModifierIds, session.floorIndex + 1);
   if (session.infiniteDefinition) {
     const progress = infiniteProgressFor(account, {
       nodeId: node.Id,
@@ -684,7 +703,8 @@ export const enterDungeon = async (
     dungeonFloorGenerate({
       doid: floorDoid,
       parent: areaDoid,
-      mapNodeId,
+      // The run's node, which a plan's first floor may have made another's (above).
+      mapNodeId: session.mapNodeId,
       floor,
       // Carries both the run length and the floor actually entered. The client
       // splits 55003 into "room 4" and "55 rooms".
@@ -798,7 +818,7 @@ export const enterDungeon = async (
    * send made every enemy a fraction of its intended strength.
    * See src/npc-stats.js.
    */
-  session.npcLevel = Math.max(1, Number(session.floorPlan?.npcLevel ?? 1));
+  session.npcLevel = plannedNpcLevel(session);
   /**
    * A `session.weaponPower` stood here — the strongest of the four equipped —
    * and combat priced every hero hit with it, so carrying one strong weapon

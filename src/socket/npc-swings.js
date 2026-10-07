@@ -1,7 +1,7 @@
 import { attackById, FRAMES_PER_SECOND, invulnerableForMs, suicideDelayMs } from "../gamemaster.js";
 import { buffMultiplierFor, grantBuff, hasAbility } from "./buffs.js";
 import { collisionPointOf } from "./navigation.js";
-import { npcAttackSpeed, npcAttackSpeedStat } from "./npc-attacks.js";
+import { floorAttackSpeedScale, npcAttackSpeed, npcAttackSpeedStat } from "./npc-attacks.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
@@ -291,7 +291,8 @@ export const performNpcAttack = async (
     ai.speedStat ?? npcAttackSpeedStat(attack?.AttackType)
   );
   const attackSpeed = npcAttackSpeed(ai.attackSpeed ?? attack?.AttackSpd) *
-    (buffSpeed > 0 ? buffSpeed : 1);
+    (buffSpeed > 0 ? buffSpeed : 1) *
+    floorAttackSpeedScale(session);
 
   /**
    * A self buff precedes the animation. In the official stream the two captured

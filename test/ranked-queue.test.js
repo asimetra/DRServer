@@ -104,3 +104,14 @@ test("a waiting count is there for adapters to show, without names", () => {
   queue.setReady(3, false);
   assert.deepEqual(queue.counts(), { waiting: 3, ready: 2 });
 });
+
+test("the queue's tables do not grow for ever: old cooldowns are forgotten, and last opponents are bounded", () => {
+  const queue = createQueue();
+  queue.penalise(1, 0);
+  queue.penalise(2, 25 * 60 * 60 * 1000);
+  assert.equal(queue.cooldowns.has(1), false, "a cooldown over a day ago is forgotten, streak and all");
+  assert.equal(queue.cooldowns.has(2), true);
+  for (let id = 0; id < 5000; id += 2) queue.rememberOpponents(id, id + 1);
+  assert.ok(queue.lastOpponents.size <= 4096);
+  assert.equal(queue.lastOpponents.get(4998), 4999, "the newest are kept");
+});

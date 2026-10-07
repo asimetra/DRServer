@@ -6,6 +6,9 @@ import { DungeonMatchRegistry } from "../src/socket/matches.js";
 import { loadGameMaster } from "../src/gamemaster.js";
 import { setMapNodeBit } from "../src/map-progress.js";
 import { installRankedHooks } from "../src/ranked/hooks.js";
+import { installModeHooks } from "../src/modes/hooks.js";
+import { noteSeatModes } from "../src/modes/seat.js";
+import { config } from "../src/config.js";
 
 const player = (accountId) => ({ accountId });
 const request = (overrides = {}) => ({
@@ -129,9 +132,8 @@ test("a ranked entry is let into a node the hero has not opened, and nobody can 
   const admitted = await admitEntry(racer, { ...request({ mapNodeId: 50055, friendOnly: true }), mode: "ranked" }, dependencies);
   assert.equal(admitted.match.mapNodeId, 50055);
   admitted.reservation.commit();
-  assert.equal(registry.explicitTarget({ friendId: racer.accountId }), admitted.match, "findable until it is ranked");
-  admitted.match.mode = "ranked";
-  assert.equal(registry.explicitTarget({ friendId: racer.accountId }), null);
+  assert.equal(admitted.match.mode, "ranked", "made in its mode, not marked afterwards");
+  assert.equal(registry.explicitTarget({ friendId: racer.accountId }), null, "never findable, not even for a moment");
 
   const follower = await admitEntry(player(3), request({ mapNodeId: 0, friendId: racer.accountId }), dependencies);
   assert.equal(follower.match, null);
@@ -499,4 +501,52 @@ test("a ranked entry is admitted by ranked's own gate, and refused as content no
   assert.equal(refused.match, null);
   assert.equal(refused.error, "content_not_completed");
   assert.equal(registry.matches.size, 0);
+});
+
+test("a together mode not running on its seat is turned away at admission, not built anywhere else", async (t) => {
+  const registry = new DungeonMatchRegistry();
+  const { gameMaster } = gatedCatalogue();
+  const account = { active_avatar: 20, account_avatars: [{ id: 20, completed_mapnode_mask: "" }] };
+  // Match workers on, and the seat says it runs nothing: the mode's rules are
+  // known on this thread (its main half), but its runs have nowhere to go.
+  const was = config.matchWorkerCount;
+  config.matchWorkerCount = 2;
+  noteSeatModes([]);
+  const uninstall = installModeHooks("seated-elsewhere", {
+    modeRules: (mode) => (mode === "seated-elsewhere" ? { unlockCheck: false, joinable: false, together: true } : null),
+  });
+  t.after(() => {
+    uninstall();
+    config.matchWorkerCount = was;
+  });
+  const refused = await admitEntry(
+    player(2),
+    { ...request({ mapNodeId: 50055, friendOnly: true }), mode: "seated-elsewhere" },
+    { registry, loadAccountById: async () => account, loadGameMasterData: async () => gameMaster }
+  );
+  assert.equal(refused.match, null);
+  assert.equal(refused.error, "game_not_enterable");
+  assert.equal(registry.matches.size, 0, "no match made for it");
+});
+
+test("following a friend into their mode's run is admitted by that mode's rules, not the stock ones", async (t) => {
+  const registry = new DungeonMatchRegistry();
+  const { gameMaster } = gatedCatalogue();
+  // Neither has opened the node the run was entered by; they are each other's friends.
+  const accounts = new Map([
+    [2, { id: 2, ingame_friends: "[3]", active_avatar: 20, account_avatars: [{ id: 20, completed_mapnode_mask: "" }] }],
+    [3, { id: 3, ingame_friends: "[2]", active_avatar: 30, account_avatars: [{ id: 30, completed_mapnode_mask: "" }] }],
+  ]);
+  const uninstall = installModeHooks("open-mode", {
+    modeRules: (mode) => (mode === "open-mode" ? { unlockCheck: false, joinable: true } : null),
+  });
+  t.after(uninstall);
+  const dependencies = { registry, loadAccountById: async (id) => accounts.get(Number(id)), loadGameMasterData: async () => gameMaster };
+  const host = await admitEntry(player(2), { ...request({ mapNodeId: 50055 }), mode: "open-mode" }, dependencies);
+  host.reservation.commit();
+  assert.equal(host.match.mode, "open-mode");
+  // The friend's JOIN carries no mode: the run's own is what admits them.
+  const follower = await admitEntry(player(3), request({ mapNodeId: 0, friendId: 2 }), dependencies);
+  assert.equal(follower.error, undefined, String(follower.error));
+  assert.equal(follower.match, host.match);
 });

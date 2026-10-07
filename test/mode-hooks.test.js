@@ -99,3 +99,20 @@ test("ranked's name on the seam is the same seam", (t) => {
   assert.equal(rankedHooksInstalled(), true);
   assert.equal(modeInstalled("ranked"), true);
 });
+
+test("a chain hands each mode the last one's answer in its own place, and every other argument as it came", (t) => {
+  const seen = [];
+  const uninstallA = installModeHooks("chain-a", {
+    routeEntry: (connection, request) => (seen.push(["a", connection.accountId]), { ...request, a: true }),
+    reportRows: (recipient, rows) => (seen.push(["a rows", recipient.accountId]), [...rows, "a"]),
+  });
+  const uninstallB = installModeHooks("chain-b", {
+    routeEntry: (connection, request) => (seen.push(["b", connection.accountId]), { ...request, b: request.a === true }),
+    reportRows: (recipient, rows) => (seen.push(["b rows", recipient.accountId]), [...rows, "b"]),
+  });
+  t.after(() => (uninstallA(), uninstallB()));
+  const connection = { accountId: 7 };
+  assert.deepEqual(modeHooks.routeEntry(connection, { mapNodeId: 1 }), { mapNodeId: 1, a: true, b: true });
+  assert.deepEqual(modeHooks.reportRows({ accountId: 9 }, ["own"], {}), ["own", "a", "b"]);
+  assert.deepEqual(seen, [["a", 7], ["b", 7], ["a rows", 9], ["b rows", 9]], "the second mode still sees the connection, and the recipient");
+});

@@ -44,7 +44,18 @@ export const STOCK_RUN_RULES = Object.freeze({
   rankable: true,
   /** Friends may follow a player into the run. */
   joinable: true,
+  /**
+   * Every run of the mode on one match worker, the seat (SEAT_WORKER), however
+   * busy it is: for a mode whose runs reach each other — ranked starts a race
+   * by moving two runs on together, so both have to be in the thread that does
+   * it. Off, a run goes to the least busy worker like any other. A party is one
+   * run, so a party mode does not need it.
+   */
+  together: false,
 });
+
+/** The match worker every run of a `together` mode goes to. */
+export const SEAT_WORKER = 0;
 
 /** The stock rules with `overrides` on top, `pays` merged a level down. */
 export const runRules = (overrides = {}) =>

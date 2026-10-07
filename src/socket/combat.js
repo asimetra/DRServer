@@ -19,6 +19,7 @@ import { NO_KNOCKBACK, pushVictim, NO_STAGGER, staggerFor } from "./impact.js";
 import { applyModifierBuffs, applyTargetBuff } from "./combat-effects.js";
 import { priceHit, withDamage, withSuffer, holdStaggered, withKnockback, withCrit, withEffectiveness, withPowerMultiplier } from "./hit-pricing.js";
 import { CASTLESS_ATTACKS, auditCombatResultWhen, consumeAcceptedCast, reachExcess } from "./cast-audit.js";
+import { tellDowned, tellHit } from "./combat-events.js";
 export { FLID_PROPOSE_COMBAT_RESULTS, npcAttackChoreography, withBaseAttack, stateUpdate, hitPointsUpdate, triggerStateUpdate, heroStateAndChoreography, isPartyHero } from "./combat-wire.js";
 export { pushVictim, staggerFor, heroStaggerFor } from "./impact.js";
 export { hazardCandidateDoids, trapProjectileReach, launchCarrierProjectile, tickTrapProjectiles, startTrapProjectiles, hazardVictims, dealTrapHit, performTrapAttack } from "./trap-attacks.js";
@@ -237,8 +238,10 @@ export const applyDamage = (session, doid, damage, announce) => {
     } else callItDead();
 
     actor.onDeath?.(doid);
-    if (recoverableHero) (session.beginFloorFailing ?? beginFloorFailing)(session);
-    else {
+    if (recoverableHero) {
+      (session.beginFloorFailing ?? beginFloorFailing)(session);
+      tellDowned(session, doid);
+    } else {
       if (blastMs <= 0) retire();
       checkFloorCleared(session);
     }
@@ -754,6 +757,7 @@ const applyProposals = async (session, proposals) => {
           session.dungeonContribution.kills += 1;
           payBusterForKill(session);
         }
+        tellHit(session, proposal.attackee, actor, Math.min(damage, hitPointsBefore), !wasDead && actor.dead);
       }
       summary.push(
         `${actor.constant ?? proposal.attackee} -${damage} -> ` +

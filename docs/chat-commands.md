@@ -33,7 +33,7 @@ With one life on (`ODS_ONELIFE=1`):
 
 | Mode command | What it does |
 |---|---|
-| `/onelife` | Make your next dungeon a one-life run: no revives, and a fall ends it. Said again, call it off |
+| `/onelife [off]` | Make your next dungeon a one-life run: no revives, and a fall ends it. Said in a dungeon — the game has no chat in town — it is the next run that becomes one life; `/onelife off` calls it off |
 
 Accounts listed in `ODS_ADMIN_ACCOUNTS` (comma-separated account ids) also have:
 

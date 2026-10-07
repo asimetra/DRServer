@@ -57,9 +57,9 @@ import { RULE, flushViolations, noteViolation } from "./security-events.js";
 import { createWorkerChannel, deferred } from "./worker-channel.js";
 import { frameFor, readyContentPacks, viewFromKey } from "../content-packs.js";
 import { startModes } from "../modes/index.js";
-import { RANKED_WORKER } from "../ranked/remote.js";
-import { modeInstalled } from "../modes/hooks.js";
-import { RANKED_MODE } from "../ranked/hooks.js";
+import { modeInstalled, modesInstalled } from "../modes/hooks.js";
+import { installSeatPost } from "../modes/seat.js";
+import { installSessionLookup } from "../modes/runtime.js";
 
 if (!parentPort) throw new Error("the match worker needs a parent port");
 
@@ -217,7 +217,7 @@ const memberHolding = (accountId) => {
   return null;
 };
 
-/** Ranked, on the worker that runs it (ranked/remote.js); nothing on the others. */
+/** The modes started on this worker (modes/index.js): a together mode's on the seat only. */
 let stopModes = async () => {};
 
 const channel = createWorkerChannel({
@@ -241,7 +241,7 @@ const channel = createWorkerChannel({
         return deliverGlobalLine(args, [...members.values()].filter((member) => !member.closed));
       case "announce":
         return announceTo([...members.values()], args.text);
-      case "rankedStop":
+      case "modesStop":
         return stopModes().then(() => true);
       case "drain":
         return drain();
@@ -700,8 +700,9 @@ const join = (message) => {
     try {
       // Without the mode running here this would be an ordinary run of the
       // node, which a mode's entry was admitted to without the map's unlock check.
-      if (message.request?.mode && !modeInstalled(message.request.mode)) {
-        throw new EntryRefusedError("game_not_enterable", `${label}: ${message.request.mode} is not running here`);
+      const mode = match.mode || message.request?.mode;
+      if (mode && !modeInstalled(mode)) {
+        throw new EntryRefusedError("game_not_enterable", `${label}: ${mode} is not running here`);
       }
       const result = await joinDungeonMatch(member, { match }, message.request, {
         onPlayerReady: () => enqueueControl(member, { c: "ready" }),
@@ -897,16 +898,18 @@ if (config.storage === "postgres") {
 // whose runs are anybody's starts on every worker (modes/index.js).
 // A mode failing to start is the mode's fault, not every dungeon's: logged, and
 // the worker runs the rest as before.
+// A mode finds a player here among this worker's members (modes/runtime.js),
+// and says what the main thread should know through this channel (modes/seat.js).
+installSessionLookup(memberHolding);
+installSeatPost((message) => channel.post(message));
 try {
   stopModes = await startModes({
     where: "worker",
     workerIndex,
-    sessionOf: memberHolding,
-    onWaiting: (waiting) => channel.post({ t: "ranked", waiting }),
   });
 } catch (problem) {
   error(`${label}: a mode did not start: ${problem?.stack ?? problem}`);
 }
 info(`${label} ready`);
-// Whether ranked is running here, for the main thread to list MATCHMAKER by.
-channel.post({ t: "ready", ...(workerIndex === RANKED_WORKER ? { ranked: modeInstalled(RANKED_MODE) } : {}) });
+// Which modes run here: on the seat, what the main thread admits a together mode's entry by (modes/seat.js).
+channel.post({ t: "ready", modes: modesInstalled() });

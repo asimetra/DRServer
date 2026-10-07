@@ -24,6 +24,7 @@ import { placeLine, shownRating } from "../standing.js";
 import { leagueAt, leagueRank, leaguesOf } from "../leagues.js";
 import { declares } from "../../socket/capabilities.js";
 import { runRules } from "../../socket/run-rules.js";
+import { runControls } from "../../modes/runtime.js";
 import { warn } from "../../log.js";
 
 /**
@@ -43,6 +44,8 @@ export const RANKED_RUN_RULES = runRules({
   mapCredit: false,
   rankable: false,
   joinable: false,
+  // A race moves two runs on together: they have to share a thread.
+  together: true,
 });
 
 /**
@@ -102,6 +105,13 @@ export const stockClientEntryHooks = ({
   /** Online and in a dungeon, so the client draws JOIN beside it. Never in the presence roll. */
   loggedIn: (session) => tellPresence(session, SYSTEM_FRIEND_ID, settings.lobbyNode),
 
+  /**
+   * The rules a ranked run plays by, known on every thread: the main thread
+   * admits the entry (the unlock check), answers who may follow a player in,
+   * and picks the worker (together) before any run exists.
+   */
+  modeRules: (mode) => (mode === "ranked" ? RANKED_RUN_RULES : null),
+
   /** JOIN on MATCHMAKER: a private run of the lobby node, marked ranked wherever it is run. */
   routeEntry(connection, request) {
     if (Number(request?.friendId) !== SYSTEM_FRIEND_ID) return request;
@@ -115,9 +125,17 @@ export const createStockClientAdapter = ({
   settings,
   sessionOf,
   // A context already (it has its member) is used as it is: the runtime hands
-  // the hooks contexts, and binding one again throws on the proxy.
-  contextOf = (session) =>
-    session?.member ? session : session.world?.contextFor?.(session, { activate: false }) ?? session,
+  // the hooks contexts, and binding one again throws on the proxy. A player
+  // whose connection is closing as this runs has none, and is null: the sweep
+  // walks every player each second, and one closing must not cost the rest it.
+  contextOf = (session) => {
+    if (session?.member) return session;
+    try {
+      return session?.world?.contextFor?.(session, { activate: false }) ?? session ?? null;
+    } catch {
+      return null;
+    }
+  },
   say,
   show = () => {},
   victory = () => {},
@@ -165,6 +183,18 @@ export const createStockClientAdapter = ({
   const JOINING_FOR_MS = 60_000;
 
   const idOf = (session) => Number(session?.accountId);
+  /**
+   * The ranked player a hook's session is, if its run is ranked. By the run's
+   * own mark where the runtime set one (session.modeEntry): an entry left in
+   * `players` by a run that ended unseen must never make an ordinary run of the
+   * same account ranked — its rules, its floors held as a lobby's. A session
+   * with no mark at all (a test's plain object) is looked up by account.
+   */
+  const rankedPlayer = (session) => {
+    const mode = session?.modeEntry;
+    if (mode !== undefined && mode !== "ranked") return null;
+    return players.get(idOf(session)) ?? null;
+  };
   /** The leagues a rating is named by (leagues.js); checked once, here. */
   const leagues = leaguesOf(settings.leagues);
   /** Where somebody stands on the board now, which the top league is a share of. */
@@ -267,7 +297,7 @@ export const createStockClientAdapter = ({
   /** A player's hero did something its copies — in the lobbies, or the rival's ghost — do too. */
   const mirrored = (what) => (session, value) => {
     const accountId = idOf(session);
-    const phase = players.get(accountId)?.phase;
+    const phase = rankedPlayer(session)?.phase;
     if (phase === "lobby") copies?.[what](accountId, value);
     else if (phase === "race") {
       if (what === "moved") noteRoom(accountId, session, value);
@@ -326,7 +356,7 @@ export const createStockClientAdapter = ({
    */
   const said = (session, line) => {
     const accountId = idOf(session);
-    const player = players.get(accountId);
+    const player = rankedPlayer(session);
     const listeners = [];
     if (player?.phase === "lobby") {
       for (const [id, other] of players) {
@@ -340,7 +370,8 @@ export const createStockClientAdapter = ({
       const listener = them?.phase === "race" && them.raceId === player.raceId ? sessionOf(player.rival) : null;
       if (listener) listeners.push(listener);
     }
-    if (listeners.length) relay(contextOf(session), line, listeners);
+    const speaker = listeners.length ? contextOf(session) : null;
+    if (speaker) relay(speaker, line, listeners);
   };
 
   const hooks = {
@@ -356,7 +387,7 @@ export const createStockClientAdapter = ({
     /** `/draw`: a racer asks to call the race off (race.js, offerDraw). */
     drawOffered(session) {
       const accountId = idOf(session);
-      if (players.get(accountId)?.phase !== "race") return false;
+      if (rankedPlayer(session)?.phase !== "race") return false;
       service.runEvent(accountId, "draw");
       return true;
     },
@@ -392,13 +423,13 @@ export const createStockClientAdapter = ({
       };
     },
 
-    runRules: (session) => (players.has(idOf(session)) ? RANKED_RUN_RULES : null),
+    runRules: (session) => (rankedPlayer(session) ? RANKED_RUN_RULES : null),
     modeRules: (mode) => (mode === "ranked" ? RANKED_RUN_RULES : null),
-    idlingAllowed: (session) => players.get(idOf(session))?.phase === "lobby",
+    idlingAllowed: (session) => rankedPlayer(session)?.phase === "lobby",
 
     heroRequested(session) {
       const accountId = idOf(session);
-      const player = players.get(accountId);
+      const player = rankedPlayer(session);
       if (!player) return;
       const floorIndex = session.floorIndex ?? 0;
       // A lobby floor built and its hero asked for: the others can stand on it now.
@@ -431,7 +462,7 @@ export const createStockClientAdapter = ({
 
     floorCompleting(session) {
       const accountId = idOf(session);
-      const player = players.get(accountId);
+      const player = rankedPlayer(session);
       if (!player) return true;
       if (player.releasing) {
         player.releasing = false;
@@ -448,7 +479,7 @@ export const createStockClientAdapter = ({
 
     runFailed(session) {
       const accountId = idOf(session);
-      const player = players.get(accountId);
+      const player = rankedPlayer(session);
       if (player?.phase !== "race") return;
       // The run's own failure is its defeat, already on screen; the ghost goes with it.
       ghosts?.clear(accountId);
@@ -474,7 +505,7 @@ export const createStockClientAdapter = ({
 
     idle(session, marked) {
       const accountId = idOf(session);
-      const player = players.get(accountId);
+      const player = rankedPlayer(session);
       if (player?.phase === "race") ghosts?.afk(accountId, marked);
       if (!player || player.phase !== "lobby") return;
       player.idle = marked;
@@ -517,7 +548,7 @@ export const createStockClientAdapter = ({
      */
     reportRows(recipient, rows, { success, reportOf } = {}) {
       const accountId = idOf(recipient);
-      const player = players.get(accountId);
+      const player = rankedPlayer(recipient);
       if (player?.phase !== "race") return rows;
       const out = [...rows];
       const mine = results.get(`${player.raceId}:${accountId}`);
@@ -585,11 +616,14 @@ export const createStockClientAdapter = ({
       race.ids.map((accountId) => {
         const session = sessionOf(accountId);
         const player = players.get(accountId);
-        if (!session || player?.phase !== "lobby") throw new Error(`${accountId} is not in a ranked lobby`);
-        return { accountId, player, context: contextOf(session) };
+        const context = session && player?.phase === "lobby" ? contextOf(session) : null;
+        if (!context) throw new Error(`${accountId} is not in a ranked lobby`);
+        return { accountId, player, context };
       });
     inLobby();
     const floors = await raceFloors(race.spec);
+    // No floors would leave the lobby the run's last, and ending it would win it.
+    if (!floors?.length) throw new Error(`node ${race.spec.mapNodeId} gave the race no floors`);
     // Read from disk, which took a moment: called off meanwhile — a drop, the
     // server stopping — there is nothing to start, and whoever is left has
     // already been told and is back in line in their lobby.
@@ -602,25 +636,24 @@ export const createStockClientAdapter = ({
     }
     for (const entry of sessions) {
       const { player, context } = entry;
-      const plan = context.floorPlan;
-      entry.was = { floors: plan.floors, floorCount: context.floorCount };
       // Everything in the plan so far is lobby; the race's floors follow, each
       // numbered as the race's own (floor 1 of N on the client).
-      player.lobbyFloors = plan.floors.length;
+      player.lobbyFloors = context.floorPlan.floors.length;
       player.raceFloors = floors.length;
-      plan.floors = [...plan.floors, ...floors.map((floor, index) => ({ ...floor, numbered: { index, of: floors.length } }))];
-      context.floorCount = plan.floors.length;
+      entry.undo = runControls.planAhead(
+        context,
+        floors.map((floor, index) => ({ ...floor, numbered: { index, of: floors.length } }))
+      );
       player.phase = "race";
       player.countingDown = false;
       player.releasing = true;
     }
-    for (const { accountId, player, context, was } of sessions) {
+    for (const { accountId, player, context, undo } of sessions) {
       if (endFloor(context)) continue;
       // A lobby floor that cannot end now (one already ending): this player
       // stays a lobby player as they were, and the race is the core's to void —
       // whoever was released before them is sent home by that.
-      context.floorPlan.floors = was.floors;
-      context.floorCount = was.floorCount;
+      undo?.();
       player.phase = "lobby";
       player.releasing = false;
       throw new Error(`${accountId}'s lobby floor could not end into the race`);
@@ -650,11 +683,10 @@ export const createStockClientAdapter = ({
     const session = sessionOf(accountId);
     if (!session) return;
     const context = contextOf(session);
-    const plan = context.floorPlan;
-    const was = { floors: plan.floors, floorCount: context.floorCount };
-    const here = context.floorIndex ?? 0;
-    plan.floors = [...plan.floors.slice(0, here + 1), lobbyFloor(ringSpot(settings.ring) ?? settings.lobbySpawn)];
-    context.floorCount = plan.floors.length;
+    // Whatever was to follow this floor, a fresh lobby instead.
+    const undo = runControls.planAhead(context, [lobbyFloor(ringSpot(settings.ring) ?? settings.lobbySpawn)], {
+      replace: true,
+    });
     player.inRing = null;
     // In line, but between floors nobody can start a race: ready again once the
     // new floor stands and asks for its hero (heroRequested).
@@ -663,8 +695,7 @@ export const createStockClientAdapter = ({
     if (endFloor(context)) return;
     // Already ending — a transition under way, whose floor will arrive and ask
     // for its hero all the same. The plan goes back as it was.
-    plan.floors = was.floors;
-    context.floorCount = was.floorCount;
+    undo?.();
     player.releasing = false;
     warn(`ranked: ${accountId}'s lobby could not be renewed; the floor under way stands in for it`);
   };

@@ -47,16 +47,19 @@ const fileBackend = (dataDir) => {
         if (problem.code === "ENOENT") return [];
         throw problem;
       }
-      const rows = [];
+      // By id: a match written twice — a write that failed after it landed, then
+      // written again — is one match, or its ratings would be replayed twice.
+      const rows = new Map();
       for (const [index, line] of text.split("\n").entries()) {
         if (!line.trim()) continue;
         try {
-          rows.push(JSON.parse(line));
+          const record = JSON.parse(line);
+          if (!rows.has(record.id)) rows.set(record.id, record);
         } catch {
           warn(`ranked: ${FILE} line ${index + 1} is not a record and was skipped`);
         }
       }
-      return rows.sort(byDecided);
+      return [...rows.values()].sort(byDecided);
     },
     version: async () => {
       try {

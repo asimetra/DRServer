@@ -36,6 +36,13 @@ class RankedService {
     this.races = new Map();
     /** accountId -> race id */
     this.raceOf = new Map();
+    /**
+     * Decided matches the log refused (storage down, disk full), oldest first.
+     * Their ratings have already moved here; written later, in order, so the log
+     * — which the board on the website and the next start replay — catches up.
+     */
+    this.unwritten = [];
+    this.writing = false;
   }
 
   /** Ratings from the log. Called once, before the service takes anybody. */
@@ -112,6 +119,7 @@ class RankedService {
       else race.tick(now);
       await this.settle(entry);
     }
+    await this.writeHeld();
   }
 
   pair(first, second, at) {
@@ -225,7 +233,35 @@ class RankedService {
 
     this.penalties(race);
     this.announce(race, entry, before, after, { before: placesBefore, after: this.placesOf(race.ids) });
-    return this.records.append(this.recordOf(race, before, after));
+    return this.keep(this.recordOf(race, before, after));
+  }
+
+  /** Writes a decided match, or holds it for the next try; true once it is in the log. */
+  async keep(record) {
+    // Behind others still waiting: in order, or the log would replay them out of it.
+    if (this.unwritten.length) {
+      this.unwritten.push(record);
+      return false;
+    }
+    if (await this.records.append(record)) return true;
+    this.unwritten.push(record);
+    warn(`ranked: match ${record.id} is held until the log takes it (${this.unwritten.length} waiting)`);
+    return false;
+  }
+
+  /** The held matches, oldest first, for as long as the log takes them. */
+  async writeHeld() {
+    if (this.writing || !this.unwritten.length) return;
+    this.writing = true;
+    try {
+      while (this.unwritten.length) {
+        if (!(await this.records.append(this.unwritten[0]))) return;
+        const written = this.unwritten.shift();
+        info(`ranked: match ${written.id} written late (${this.unwritten.length} still waiting)`);
+      }
+    } finally {
+      this.writing = false;
+    }
   }
 
   /** `{ [accountId]: { place, of } }` on the board as it stands; no place for somebody not on it. */
@@ -306,6 +342,11 @@ class RankedService {
     for (const entry of [...this.races.values()]) {
       entry.race.voided(this.clock(), "server_stopped");
       await this.settle(entry);
+    }
+    // A last try for what the log refused: what is still held now is lost with the process.
+    await this.writeHeld();
+    if (this.unwritten.length) {
+      warn(`ranked: ${this.unwritten.length} decided match(es) never reached the log: ${this.unwritten.map((r) => r.id).join(", ")}`);
     }
   }
 }

@@ -53,6 +53,8 @@ export const MATCH_WORLD_SHARED_FIELDS = new Set([
   "floorGenerated",
   "npcDepthBonus",
   "npcDamageDepthBonus",
+  // How much faster than authored this floor's monsters attack (a mode's floor plan, floor-world.js).
+  "npcAttackSpeedBonus",
   "tierConstant",
   "mapPage",
   "areaDoid",

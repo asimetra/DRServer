@@ -16,6 +16,7 @@ import { loadAccount } from "../accounts.js";
 import { loadGameMaster } from "../gamemaster.js";
 import { modeHooks } from "../modes/hooks.js";
 import { rulesOfMode } from "./run-rules.js";
+import { isTogether, seatRuns } from "../modes/seat.js";
 import { warn } from "../log.js";
 import { areFriends, friendIdsOf } from "../social.js";
 import {
@@ -46,6 +47,8 @@ const registryRequest = (session, request) => ({
   mapId: request.mapId,
   friendOnly: Boolean(request.friendOnly),
   group: request.matchMakerGroup ?? "",
+  // A new run is made in the entry's mode; a public one is filled only from the same mode's.
+  mode: typeof request.mode === "string" ? request.mode : null,
 });
 
 const nodeOf = (gameMaster, mapNodeId) =>
@@ -189,12 +192,23 @@ export const admitEntry = async (
   // tutorial done — docs/ranked.md, "Who may enter"), and asks the map's unlock
   // check only if the mode's rules say so (socket/run-rules.js). `mode` is set
   // by the server's own routing, never read off the wire.
-  const rules = rulesOfMode(request.mode);
-  const allowed = request.mode ? await modeHooks.entryAllowed(account, request.mode) : null;
-  if (allowed && allowed.ok === false) {
-    warn(`[${session.id}] ${request.mode} entry refused: ${allowed.reason ?? "not allowed"}`);
+  // Joining somebody's run is entering their mode, whatever the request says: a
+  // friend following a player into a delve is admitted by the delve's rules (no
+  // unlock check), as the run they join will hold them to (match-runtime.js).
+  const mode = (target && typeof target.mode === "string" && target.mode) || request.mode || null;
+  const rules = rulesOfMode(mode);
+  // A together mode's runs are all on the seat (modes/seat.js). Not running
+  // there — not started, or the seat worker gone — its entry has nowhere to go,
+  // and is turned away here rather than built as an ordinary run anywhere else.
+  if (mode && isTogether(mode) && !seatRuns(mode)) {
+    warn(`[${session.id}] ${mode} entry refused: the mode is not running on its seat`);
+    return { match: null, created: false, source, error: "game_not_enterable" };
   }
-  const mayEnter = request.mode
+  const allowed = mode ? await modeHooks.entryAllowed(account, mode) : null;
+  if (allowed && allowed.ok === false) {
+    warn(`[${session.id}] ${mode} entry refused: ${allowed.reason ?? "not allowed"}`);
+  }
+  const mayEnter = mode
     ? allowed?.ok !== false && (!rules.unlockCheck || mayEnterNode(account, node, gameMaster))
     : mayEnterNode(account, node, gameMaster);
 

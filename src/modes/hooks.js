@@ -60,6 +60,16 @@ const NOTHING = Object.freeze({
    */
   heroEvent: () => {},
   /**
+   * What happened in a fight (socket/combat-events.js), on the same counts the
+   * report keeps: `{ type: "hit", target: { doid, constant }, amount }` and
+   * `{ type: "killed", target }` to whoever was credited, `{ type: "downed",
+   * hero }` and `{ type: "revived", hero, by }` to the hero's own player — `by`
+   * "ally", "healthBomb", "partyBomb", or "floor" for a hero down when the floor
+   * ended and standing on the next.
+   * Called on every credited hit, so cheap.
+   */
+  combatEvent: () => {},
+  /**
    * The end-of-run report's rows as this recipient will see them (summary.js):
    * the recipient's own first, then their party, each `{ id, name, skinType,
    * ... }`. Returned as they are, renamed, or with a row added for somebody
@@ -95,7 +105,16 @@ const COMBINE = Object.freeze({
   idle: "each",
   loggedIn: "each",
   heroEvent: "each",
+  combatEvent: "each",
 });
+
+/**
+ * Where in its arguments a `chain` hook carries what each mode rewrites: the
+ * request in routeEntry(connection, request), the rows in friendList(rows) and
+ * in reportRows(recipient, rows, ...). Every other argument reaches every mode
+ * as it came — the second mode in a chain still sees the connection.
+ */
+const CHAINED_ARGUMENT = Object.freeze({ routeEntry: 1, friendList: 0, reportRows: 1 });
 
 /** mode name -> its guarded answers */
 const modes = new Map();
@@ -147,9 +166,14 @@ const dispatch = (name) => {
     if (!modes.size) return NOTHING[name](...args);
     switch (how) {
       case "chain": {
-        let value = args[0];
-        for (const answers of modes.values()) value = answers[name]?.(value, ...args.slice(1)) ?? value;
-        return value;
+        const at = CHAINED_ARGUMENT[name] ?? 0;
+        const call = [...args];
+        for (const answers of modes.values()) {
+          if (!answers[name]) continue;
+          const next = answers[name](...call);
+          if (next != null) call[at] = next;
+        }
+        return call[at];
       }
       case "named": {
         const answers = modes.get(args[args.length - 1]);

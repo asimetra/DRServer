@@ -286,6 +286,21 @@ CREATE INDEX IF NOT EXISTS ranked_matches_decided ON ranked_matches(decided_at, 
 CREATE INDEX IF NOT EXISTS ranked_matches_first ON ranked_matches(first_id, decided_at DESC);
 CREATE INDEX IF NOT EXISTS ranked_matches_second ON ranked_matches(second_id, decided_at DESC);
 
+-- What a game mode keeps (src/modes/records.js): one row per record, written
+-- once and never changed, under the mode's own name. `accounts` is who the
+-- record is about, for a player's own history; the rest is the mode's, as JSON.
+CREATE TABLE IF NOT EXISTS mode_records (
+    mode        TEXT        NOT NULL,
+    id          TEXT        NOT NULL,
+    at          TIMESTAMPTZ NOT NULL,
+    accounts    BIGINT[]    NOT NULL DEFAULT '{}',
+    record      JSONB       NOT NULL,
+    PRIMARY KEY (mode, id)
+);
+
+CREATE INDEX IF NOT EXISTS mode_records_at ON mode_records(mode, at, id);
+CREATE INDEX IF NOT EXISTS mode_records_accounts ON mode_records USING GIN (accounts);
+
 -- Chests a player holds unopened. The shape is not inferred from captures: this
 -- server writes these rows itself, in awardTreasureChest and tools/grant.js, and
 -- account/OpenChest and DropChest read them back.

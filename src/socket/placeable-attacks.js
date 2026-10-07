@@ -11,6 +11,7 @@ import { areaTrapHits, trapVictims } from "./trap-attacks.js";
 import { applyModifierBuffs, applyTargetBuff } from "./combat-effects.js";
 import { priceHit } from "./hit-pricing.js";
 import { applyDamage, payBusterForKill } from "./combat.js";
+import { tellHit } from "./combat-events.js";
 
 /**
  * A placeable's attack — a bomb, a fire, a cloud — as it goes off: whom it
@@ -221,6 +222,7 @@ export const performPlaceableAttack = async (
           session.dungeonContribution.kills += 1;
           if (heroPresent) payBusterForKill(session);
         }
+        tellHit(session, victim.doid, victim.actor, Math.min(damage, before), !wasDead && victim.actor.dead);
       }
       /**
        * And the food, on the same two events as everywhere else — see

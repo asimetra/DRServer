@@ -74,7 +74,8 @@ import {
 } from "./presence.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { createWorkerChannel, deferred } from "./worker-channel.js";
-import { RANKED_WORKER, noteRankedStarted, noteRankedWaiting } from "../ranked/remote.js";
+import { SEAT_WORKER, rulesOfMode } from "./run-rules.js";
+import { isTogether, noteModeTold, noteSeatModes } from "../modes/seat.js";
 
 /** How long a new lease waits for the previous run of the same account to hand it back. */
 const LEASE_HANDOVER_TIMEOUT_MS = 15_000;
@@ -288,7 +289,8 @@ export class MatchWorkerPool {
     thread.on("error", (problem) => error(`match worker ${index} failed: ${problem.stack ?? problem}`));
     thread.on("exit", (code) => {
       worker.alive = false;
-      if (index === RANKED_WORKER) noteRankedStarted(false);
+      // The seat's modes went with it, until its replacement says it runs them.
+      if (index === SEAT_WORKER) noteSeatModes([]);
       clearTimeout(worker.startupTimer);
       worker.channel.failAll(new Error(`match worker ${index} exited`));
       if (!worker.started) {
@@ -401,17 +403,20 @@ export class MatchWorkerPool {
     const assigned = this.workers.find((worker) => worker.matches.has(match.id));
     if (assigned) return assigned;
     /**
-     * Every mode's run on the one worker that runs the modes, whatever its
-     * load: a race starts by moving two runs on together, so both racers must
-     * be in the thread that starts it (ranked/remote.js).
+     * A run of a mode whose runs are together (run-rules.js) goes to the seat,
+     * whatever its load: a race starts by moving two runs on together, so both
+     * racers must be in the thread that starts it. Any other mode's run goes by
+     * load like the game's own.
      */
-    if (match.mode) {
-      const home = this.workers.find((worker) => worker.index === RANKED_WORKER && worker.alive);
-      if (!home) throw new Error(`the ranked match worker (${RANKED_WORKER}) is not running`);
+    if (match.mode && isTogether(match.mode)) {
+      const home = this.workers.find((worker) => worker.index === SEAT_WORKER && worker.alive);
+      if (!home) throw new Error(`the match worker seating ${match.mode} (${SEAT_WORKER}) is not running`);
       // Refused rather than posted to a thread that is still loading or has
       // stopped answering: a lobby built there would wait on its loading screen
       // for an answer that is not coming, where a refusal is a popup and town.
-      if (!home.started || home.stalled) throw new Error(`the ranked match worker (${RANKED_WORKER}) is not answering`);
+      if (!home.started || home.stalled) {
+        throw new Error(`the match worker seating ${match.mode} (${SEAT_WORKER}) is not answering`);
+      }
       return home;
     }
     const live = this.workers.filter((worker) => worker.alive);
@@ -497,7 +502,7 @@ export class MatchWorkerPool {
       case "ready":
         worker.started = true;
         clearTimeout(worker.startupTimer);
-        if (worker.index === RANKED_WORKER) noteRankedStarted(message.ranked);
+        if (worker.index === SEAT_WORKER) noteSeatModes(message.modes);
         return worker.ready.resolve(worker);
       case "release":
         return this.releaseLease(worker, message.accountId);
@@ -512,9 +517,10 @@ export class MatchWorkerPool {
         return this.updateMatch(message);
       case "friendship":
         return friendshipChanged(message.first, message.second, message.made === true);
-      case "ranked":
-        // How many wait in the ranked queue, which runs there.
-        return worker.index === RANKED_WORKER ? noteRankedWaiting(message.waiting) : undefined;
+      case "mode":
+        // A mode said something for its main half (modes/seat.js): ranked's count of
+        // players waiting, from the seat; a command said in a dungeon, from any worker.
+        return noteModeTold(message.mode, message.data, worker.index);
       case "count":
         // What that worker's dungeons counted, added to the server's totals.
         return absorb(message.counts);
@@ -868,12 +874,13 @@ export class MatchWorkerPool {
   }
 
   /**
-   * Ranked's races end void on the worker that runs them. Called before any
-   * connection closes in a shutdown: a racer whose connection went first would
-   * be a racer who dropped, and the race would be decided against them.
+   * The seat's modes stopped where they run: ranked's races end void there.
+   * Called before any connection closes in a shutdown — a racer whose
+   * connection went first would be a racer who dropped, and the race would be
+   * decided against them.
    */
-  async stopRanked() {
-    const home = this.workers.find((worker) => worker.index === RANKED_WORKER && worker.alive);
+  async stopSeatModes() {
+    const home = this.workers.find((worker) => worker.index === SEAT_WORKER && worker.alive);
     if (!home) return false;
     // Bounded as a drain is: a worker still answering pings but stuck writing
     // the last race down would otherwise hold the whole shutdown.
@@ -881,13 +888,13 @@ export class MatchWorkerPool {
     let timer;
     try {
       return await Promise.race([
-        home.channel.call("rankedStop"),
+        home.channel.call("modesStop"),
         new Promise((_, reject) => {
           timer = setTimeout(() => reject(new Error(`no answer in ${limit} ms`)), limit);
         }),
       ]);
     } catch (problem) {
-      warn(`match worker ${RANKED_WORKER}: ranked did not stop: ${problem.message}`);
+      warn(`match worker ${SEAT_WORKER}: the seat's modes did not stop: ${problem.message}`);
       return false;
     } finally {
       clearTimeout(timer);

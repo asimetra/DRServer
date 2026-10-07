@@ -3,14 +3,14 @@ import { loadFloorAt } from "./floors.js";
 import { modeHooks } from "../modes/hooks.js";
 import { loadGameMaster } from "../gamemaster.js";
 import { matchHost } from "./match-host.js";
-import { activeInfiniteModifiers, infiniteEpoch } from "../infinite.js";
+import { activeInfiniteModifiers, infiniteEpoch, plannedModifiers } from "../infinite.js";
 import { CLID } from "./opcodes.js";
 import { clearHazardBeats } from "./triggers.js";
 import { forgetVoices } from "./speech.js";
 import { cancelVictory, clearFloorFailing, completeFloor } from "./floorstate.js";
 import { collisionPointOf } from "./navigation.js";
 import { config } from "../config.js";
-import { info } from "../log.js";
+import { info, warn } from "../log.js";
 import { cancelDungeonSummary, removeHeroFromFloor } from "./summary.js";
 import { settleDungeonAccount } from "./settle-account.js";
 import { hasRunSaves, whenRunSaved } from "./run-saves.js";
@@ -166,6 +166,11 @@ const advanceFloorUnlocked = async (session) => {
     session.send(objectDisable(doid));
     session.objects.delete(doid);
   }
+  // Who is down as this floor ends, before the actors that say so go: standing
+  // on the next floor is a revive, as a mode hears it (dungeon.js, buildPartyHeroes).
+  session.downAtFloorEnd = new Set(
+    party.filter((member) => session.actors?.get(member.heroDoid)?.dead === true).map((member) => member.heroDoid)
+  );
   session.actors?.clear();
   session.doobers?.clear();
   session.playerActors?.clear();
@@ -184,12 +189,13 @@ const advanceFloorUnlocked = async (session) => {
   session.currentFloor = floor;
   session.floorCleared = false;
   session.enemiesSeen = 0;
-  session.infiniteActiveModifiers = activeInfiniteModifiers(
-    await loadGameMaster(),
-    session.infiniteDefinition,
-    session.infiniteModifierIds ?? [],
-    next + 1
-  );
+  // A floor plan may name this floor's modifiers itself; otherwise Infinite's schedule says.
+  const plannedHere = session.floorPlan.floors?.[next]?.modifiers;
+  session.infiniteActiveModifiers = Array.isArray(plannedHere)
+    ? plannedModifiers(await loadGameMaster(), plannedHere, session.infiniteActiveModifiers ?? [], (line) =>
+      warn(`[${session.id}] ${line}`)
+    )
+    : activeInfiniteModifiers(await loadGameMaster(), session.infiniteDefinition, session.infiniteModifierIds ?? [], next + 1);
 
   const floorDoid = session.allocateDoid(CLID.DistributedDungeonFloor);
   session.floorDoid = floorDoid;

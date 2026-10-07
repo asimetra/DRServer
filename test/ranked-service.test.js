@@ -209,3 +209,36 @@ test("/draw asks the rival; both asking ends the race with no rating moved", asy
   assert.equal((await records.all())[0].state, "void");
   assert.equal(service.join(A).ok, true, "no cooldown for a race called off together");
 });
+
+test("a match the log refuses is held, written later in order, and the board moved meanwhile", async () => {
+  const written = [];
+  let refusing = true;
+  const records = {
+    all: async () => [...written],
+    append: async (record) => (refusing ? false : (written.push(record), true)),
+  };
+  const { service } = setup({ records });
+  assert.equal(await service.keep({ id: "m1" }), false);
+  assert.equal(await service.keep({ id: "m2" }), false, "behind the first, not before it");
+  assert.deepEqual(service.unwritten.map((r) => r.id), ["m1", "m2"]);
+
+  await service.writeHeld();
+  assert.deepEqual(written, [], "still refusing: still held");
+
+  refusing = false;
+  await service.tick();
+  assert.deepEqual(written.map((r) => r.id), ["m1", "m2"], "the next tick writes them, oldest first");
+  assert.deepEqual(service.unwritten, []);
+  assert.equal(await service.keep({ id: "m3" }), true, "and a new one goes straight in");
+});
+
+test("stopping makes a last try for held matches", async () => {
+  const written = [];
+  let refusing = true;
+  const records = { all: async () => [], append: async (record) => (refusing ? false : (written.push(record), true)) };
+  const { service } = setup({ records });
+  await service.keep({ id: "late" });
+  refusing = false;
+  await service.stop();
+  assert.deepEqual(written.map((r) => r.id), ["late"]);
+});

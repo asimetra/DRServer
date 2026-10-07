@@ -6,6 +6,7 @@ import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { onHitBuffEffectsFor } from "./modifiers.js";
 import { isPartyHero } from "./combat-wire.js";
 import { isInvulnerable, applyDamage, payBusterForKill } from "./combat.js";
+import { tellHit } from "./combat-events.js";
 
 /**
  * What a hit leaves behind: a health drain, damage over time, and the buffs a
@@ -162,6 +163,7 @@ const startDamageOverTime = (session, { buffDoid, victimDoid, buff, damage, colo
         // an update on the hero, which has to still be there to take it.
         if (heroOnFloor(session)) payBusterForKill(session);
       }
+      tellHit(session, victimDoid, actor, Math.min(perTick, hitPointsBefore), actor.dead);
     }
     // The floater is drawn by the hero owner; a hero that has walked out has
     // nobody to draw it, though what it set alight goes on burning.

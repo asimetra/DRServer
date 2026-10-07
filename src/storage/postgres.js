@@ -682,6 +682,43 @@ export const salesFor = async (accountId, limit) => {
   }));
 };
 
+/** One record a game mode keeps. Written once; see src/modes/records.js. */
+export const recordModeEntry = async (mode, record) => {
+  await connect().query(
+    `INSERT INTO mode_records (mode, id, at, accounts, record)
+     VALUES ($1, $2, to_timestamp($3 / 1000.0), $4, $5)
+     ON CONFLICT (mode, id) DO NOTHING`,
+    [mode, record.id, record.at, record.accounts, record]
+  );
+};
+
+/** Every record a mode keeps, oldest first. */
+export const modeEntries = async (mode) => {
+  const { rows } = await connect().query("SELECT record FROM mode_records WHERE mode = $1 ORDER BY at, id", [mode]);
+  return rows.map((row) => row.record);
+};
+
+/** The records a mode keeps about one account, newest first. */
+export const modeEntriesFor = async (mode, accountId, limit) => {
+  const { rows } = await connect().query(
+    `SELECT record FROM mode_records
+      WHERE mode = $1 AND accounts @> ARRAY[$2]::BIGINT[]
+      ORDER BY at DESC, id DESC LIMIT $3`,
+    [mode, accountId, limit]
+  );
+  return rows.map((row) => row.record);
+};
+
+/** Something that changes whenever a mode's records do: they are only ever added to. */
+export const modeEntriesVersion = async (mode) => {
+  const { rows } = await connect().query(
+    `SELECT count(*)::text AS n, coalesce(extract(epoch FROM max(at)), 0)::text AS latest
+       FROM mode_records WHERE mode = $1`,
+    [mode]
+  );
+  return `${rows[0].n}:${rows[0].latest}`;
+};
+
 /** One decided ranked pairing. Written once; see src/ranked/records.js. */
 export const recordRankedMatch = async (record) => {
   const [first, second] = record.players;

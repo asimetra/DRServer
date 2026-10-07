@@ -1,4 +1,5 @@
 import test from "node:test";
+import { installModeHooks } from "../src/modes/hooks.js";
 import assert from "node:assert/strict";
 
 import { loadGameMaster } from "../src/gamemaster.js";
@@ -649,7 +650,7 @@ test("inspecting an entry decides and changes nothing", () => {
 
   assert.deepEqual(registry.inspect({ mapNodeId: 50002 }), { match, source: "public" });
   assert.deepEqual(registry.inspect({ mapNodeId: 50003 }).create, {
-    mapNodeId: 50003, group: "", privateMatch: false,
+    mapNodeId: 50003, group: "", privateMatch: false, mode: null,
   });
   assert.equal(registry.inspect({ friendId: 1 }).error, "content_not_completed");
   assert.equal(registry.inspect({ friendId: 1, eligibleForExplicitJoin: true }).match, match);
@@ -726,4 +727,22 @@ test("one who never leaves after being sent home is closed out after the grace",
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(opened.match.state, "closed");
   assert.equal(host.dungeonActive, false);
+});
+
+test("a run has one mode: public filling keeps modes apart, and a run nobody may follow into is filled by nobody", (t) => {
+  const uninstall = installModeHooks("onelife", {
+    modeRules: (mode) => (mode === "onelife" ? { joinable: false } : mode === "open" ? { joinable: true } : null),
+  });
+  t.after(uninstall);
+  const registry = new DungeonMatchRegistry();
+  const ordinary = registry.reserve({ session: player(1), mapNodeId: 50002 }).match;
+  const oneLife = registry.reserve({ session: player(2), mapNodeId: 50002, mode: "onelife" });
+  assert.equal(oneLife.created, true, "a one-life entry is not put into the ordinary run");
+  assert.equal(oneLife.match.mode, "onelife", "made in its mode");
+  assert.equal(registry.reserve({ session: player(3), mapNodeId: 50002 }).match, ordinary, "an ordinary entry fills the ordinary run");
+  const second = registry.reserve({ session: player(4), mapNodeId: 50002, mode: "onelife" });
+  assert.notEqual(second.match, oneLife.match, "nor is anybody matched into a one-life run");
+
+  const open = registry.reserve({ session: player(5), mapNodeId: 50002, mode: "open" }).match;
+  assert.equal(registry.reserve({ session: player(6), mapNodeId: 50002, mode: "open" }).match, open, "a mode that takes people in is filled from its own");
 });

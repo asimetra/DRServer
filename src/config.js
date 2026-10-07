@@ -461,6 +461,19 @@ export const loadServerConfig = (environment = process.env) => {
      */
     entryHandshakeMs: asInt(setting(environment, "ENTRY_HANDSHAKE_MS"), defaults.entryHandshakeMs ?? 120_000),
 
+    /**
+     * Modes of a deployment's own, beside the shipped ones: module paths (or
+     * file: URLs), comma-separated in ODS_MODES, relative to the working
+     * directory. Each thread imports them as it starts its modes, so a mode
+     * registers on the main thread and in every match worker alike; a module
+     * default-exports `{ name, together, start }` or calls registerMode itself
+     * (src/modes/README.md, "Where it runs").
+     */
+    modes: (setting(environment, "MODES") ?? (Array.isArray(defaults.modes) ? defaults.modes.join(",") : ""))
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+
     /** One-life runs (src/modes/one-life). Off unless asked for: ODS_ONELIFE=1. */
     oneLife: {
       enabled:

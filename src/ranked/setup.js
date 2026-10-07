@@ -11,7 +11,7 @@
  *           connection — entry, the friend list, logging in. The rest is on
  *           one worker (remote.js says why one), which reports its count.
  *   worker  inside that worker: the queue, the races and every ranked run,
- *           with `sessionOf` finding that worker's own players.
+ *           finding that worker's own players through modes/runtime.js.
  */
 import { config } from "../config.js";
 import { info, warn } from "../log.js";
@@ -19,7 +19,7 @@ import { createRankedService } from "./index.js";
 import { createRecords } from "./records.js";
 import { installRankedHooks } from "./hooks.js";
 import { nodePool, randomPicker } from "./race-spec.js";
-import { RANKED_WORKER, rankedStarted, rankedWaiting } from "./remote.js";
+import { RANKED_WORKER, rankedStarted, rankedWaiting, tellRankedWaiting } from "./remote.js";
 import { createStockClientAdapter, stockClientEntryHooks } from "./stock-client/adapter.js";
 
 const TICK_MS = 1000;
@@ -75,7 +75,6 @@ export const rewardOffersOf = (rewards, gm) => {
 /** The main thread's half with match workers on: the connection's hooks, and a way to stop the rest. */
 const startOnMain = async (settings) => {
   const { tellSystemPresence } = await import("../socket/presence.js");
-  const { activeMatchWorkerPool } = await import("../socket/match-worker-service.js");
   const uninstallCommands = await rankedCommands();
   const hooks = stockClientEntryHooks({
     settings,
@@ -101,7 +100,6 @@ const startOnMain = async (settings) => {
   return async () => {
     uninstall();
     uninstallCommands();
-    await activeMatchWorkerPool()?.stopRanked();
   };
 };
 
@@ -115,8 +113,6 @@ const rankedCommands = async () => {
 
 export const startRanked = async ({
   where = config.matchWorkerCount > 0 ? "main" : "local",
-  sessionOf = null,
-  onWaiting = () => {},
 } = {}) => {
   const settings = config.ranked;
   if (!settings?.enabled) return async () => {};
@@ -125,13 +121,12 @@ export const startRanked = async ({
   // Loaded here so a server with ranked off never reads any of it.
   const { loadGameMaster, mapNode } = await import("../gamemaster.js");
   const { floorPlanForMapNode, loadFloor, tileLibrariesFor } = await import("../socket/floors.js");
-  const { completeFloor, reportRunLost, reportRunWon } = await import("../socket/floorstate.js");
-  const { matchHost } = await import("../socket/match-host.js");
+  const { runControls } = await import("../modes/runtime.js");
   const { tellAsServer } = await import("../socket/chat.js");
   const { sayToListeners } = await import("../socket/global-chat.js");
   const { bookWords, playNotice } = await import("../socket/ui-effects.js");
   const { buildDungeonReport } = await import("../socket/summary.js");
-  const { sessionHolding, tellSystemPresence } = await import("../socket/presence.js");
+  const { tellSystemPresence } = await import("../socket/presence.js");
   const { loadExistingAccount } = await import("../accounts.js");
   const { buffGenerate, heroGenerate, heroHeadingUpdate, heroPositionUpdate, objectDisable, playerGenerate } = await import(
     "../socket/objects.js"
@@ -191,15 +186,17 @@ export const startRanked = async ({
   adapter = createStockClientAdapter({
     service,
     settings: { ...settings, raceTileLibraries: [...raceTileLibraries], raceGhost, rewards },
-    sessionOf: sessionOf ?? sessionHolding,
+    // Ending a run and finding a player are the mode surface's (modes/runtime.js);
+    // on a match worker the lookup is the worker's own members.
+    sessionOf: runControls.sessionOf,
     say: (session, text) => tellAsServer(session, text),
     show: playNotice,
     words: bookWords,
-    victory: reportRunWon,
-    defeat: reportRunLost,
+    victory: runControls.win,
+    defeat: runControls.lose,
     // An exit asked for on the player's behalf. Its answer, false when it was not
     // sent, reaches the adapter's endRun, which leaves the sweep to try again.
-    sendHome: (context) => matchHost().sendHome(context),
+    sendHome: runControls.sendHome,
     // The lobbies' shared channel, on the global one's rules: restricted and
     // blocked speakers stay unheard, a flood is held to its pace, and it is logged.
     relay: (speaker, line, listeners) => {
@@ -215,12 +212,21 @@ export const startRanked = async ({
       }
     },
     tellPresence: tellSystemPresence,
+    // Each floor carries the drawn node's level and tier: they follow the race
+    // onto the lobby's plan, which has neither, so its monsters are the node's
+    // own and not level 1 (floors.js, plannedNpcLevel).
     raceFloors: async (spec) => {
       const node = await mapNode(spec.mapNodeId);
       const plan = await floorPlanForMapNode(spec.mapNodeId, { seed: spec.seed });
-      return plan.floors.map((floor) => ({ ...floor, node }));
+      return plan.floors.map((floor) => ({
+        ...floor,
+        node,
+        ...(plan.npcLevel ? { npcLevel: plan.npcLevel } : {}),
+        ...(plan.tier ? { tier: plan.tier } : {}),
+      }));
     },
-    completeFloor,
+    // Ending the lobby floor into the race: the mode surface's (modes/runtime.js).
+    completeFloor: runControls.endFloor,
     nameOf: async (accountId) => (await loadExistingAccount(accountId))?.name ?? `#${accountId}`,
     ...(await gateQuestions()),
     // A copy is drawn and moved with what a party member is (stock-client/copies.js).
@@ -252,7 +258,7 @@ export const startRanked = async ({
     const { waiting } = service.queue.counts();
     if (waiting !== reported) {
       reported = waiting;
-      onWaiting(waiting);
+      tellRankedWaiting(waiting);
     }
   }, TICK_MS);
   timer.unref?.();

@@ -141,13 +141,13 @@ export class DungeonMatchRegistry {
     this.publicByKey = new Map();
   }
 
-  create({ mapNodeId, group = "", privateMatch = false, sourceMatch = null } = {}) {
-    const node = Number(mapNodeId ?? sourceMatch?.mapNodeId ?? 0);
+  create({ mapNodeId, group = "", privateMatch = false, mode = null } = {}) {
+    const node = Number(mapNodeId ?? 0);
     if (!node) throw new Error("a dungeon match needs a map node");
     const match = {
       id: this.nextId++,
       mapNodeId: node,
-      group: String(group ?? sourceMatch?.group ?? ""),
+      group: String(group ?? ""),
       private: Boolean(privateMatch),
       floorIndex: 0,
       members: new Set(),
@@ -156,6 +156,11 @@ export class DungeonMatchRegistry {
       state: "forming",
       createdAt: Date.now(),
       world: null,
+      /**
+       * The game mode this run is (run-rules.js), fixed as it is made: a run has
+       * one, whoever joins it later. Null for the game as shipped.
+       */
+      mode: typeof mode === "string" && mode ? mode : null,
     };
     this.matches.set(match.id, match);
     if (!match.private) {
@@ -343,9 +348,20 @@ export class DungeonMatchRegistry {
     return true;
   }
 
-  publicMatch({ mapNodeId, group = "", adminOverride = false }) {
-    return (this.publicByKey.get(keyOf({ mapNodeId, group })) ?? []).find((match) =>
-      this.canJoin(match, { publicSearch: true, adminOverride })
+  /**
+   * An open public run to fill. Only one of the same mode as the entry — a
+   * one-life entry is not put into an ordinary run, nor an ordinary one into a
+   * one-life run — and only of a mode that takes anybody in (run-rules.js,
+   * joinable): a run that a friend may not follow into, a stranger may not be
+   * matched into either.
+   */
+  publicMatch({ mapNodeId, group = "", adminOverride = false, mode = null }) {
+    const wanted = mode || null;
+    return (this.publicByKey.get(keyOf({ mapNodeId, group })) ?? []).find(
+      (match) =>
+        (match.mode ?? null) === wanted &&
+        rulesOfMode(match.mode).joinable &&
+        this.canJoin(match, { publicSearch: true, adminOverride })
     );
   }
 
@@ -379,6 +395,7 @@ export class DungeonMatchRegistry {
     group = "",
     eligibleForExplicitJoin = false,
     adminOverride = false,
+    mode = null,
   }) {
     const privileged = adminOverride === true;
     const target = this.explicitTarget({ friendId, mapId });
@@ -409,8 +426,10 @@ export class DungeonMatchRegistry {
     const source = friendOnly ? "private" : "public";
     const open = friendOnly
       ? null
-      : this.publicMatch({ mapNodeId, group, adminOverride: privileged });
-    return open ? { match: open, source } : { create: { mapNodeId, group, privateMatch: Boolean(friendOnly) }, source };
+      : this.publicMatch({ mapNodeId, group, adminOverride: privileged, mode });
+    return open
+      ? { match: open, source }
+      : { create: { mapNodeId, group, privateMatch: Boolean(friendOnly), mode }, source };
   }
 
   /**
