@@ -208,3 +208,10 @@ test("the friend door: the hooks it answers, its row, and its ids", async () => 
   assert.equal(second.friendList([])[0].trophies, 998);
   assert.throws(() => friendDoorHooks({ id: 991, trophies: 5000, entry: (c, r) => r }), /trophies/);
 });
+
+test("planAhead: a wrong call is refused before the run is looked for, and says so by name", () => {
+  let looked = 0;
+  const member = { member: null, world: { contextFor: () => (looked += 1, { floorPlan: { floors: [] } }) } };
+  assert.throws(() => runControls.planAhead(member, [{ bad: 1 }]), /planAhead takes plan floors/);
+  assert.equal(looked, 0, "no context bound for a call that was never going to happen");
+});

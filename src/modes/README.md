@@ -52,6 +52,16 @@ A mode that needs something the seam lacks adds a *knob the core reads*, never a
 branch on the mode's name: `revives` came with one life, and the bomb, the
 rescue and the defeat countdown read the rule without knowing who set it.
 
+Keeping out of the core is not doing its work again. A mode reuses what the
+game does — its floors, its drops, its matchmaking, its friend list — and says
+only what is different about it; the seam is thin, and the work behind it is
+the core's (the copies are drawn by `src/socket/copies.js`, a door's row is
+`social.js`'s, records are kept by `src/storage/mode-records.js`, a plan is
+extended by `floors.js`). A knob is worth adding when it opens one of the
+game's own numbers to a mode — how many floors take strangers, how many
+chests, how long a wipe waits; what is only one mode's story — its rating, its
+gifts, its ring — stays in its folder.
+
 ## The seam
 
 `src/modes/hooks.js` is the whole of it. The runtime calls `modeHooks.<name>`

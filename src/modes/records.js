@@ -8,18 +8,17 @@
  * which is how a player's own history is found. The same id twice is kept
  * once. Account ids, never names: a name is read when something shows it.
  *
- * PostgreSQL when the server runs on it (the mode_records table), a JSONL file
- * per mode under the data directory otherwise, memory for a test.
+ * Kept by the core's storage (storage/mode-records.js): PostgreSQL when the
+ * server runs on it (the mode_records table), a JSONL file per mode under the
+ * data directory otherwise, memory for a test.
  */
-import fs from "node:fs/promises";
-import path from "node:path";
 import { config } from "../config.js";
 import { warn } from "../log.js";
+import { byTime, modeRecordStore } from "../storage/mode-records.js";
 
 /** A mode's name: lower-case words and dashes, which is also a safe file name. */
 const MODE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
 
-const byTime = (a, b) => a.at - b.at || String(a.id).localeCompare(String(b.id));
 const about = (accountId) => (record) => record.accounts.some((id) => Number(id) === Number(accountId));
 const newestFirst = (rows, limit) => [...rows].sort((a, b) => byTime(b, a)).slice(0, limit);
 
@@ -34,63 +33,6 @@ const problemWith = (record) => {
   return null;
 };
 
-const memoryBackend = () => {
-  const rows = new Map();
-  return {
-    append: async (record) => {
-      if (!rows.has(record.id)) rows.set(record.id, record);
-    },
-    all: async () => [...rows.values()].sort(byTime),
-    version: async () => `${rows.size}`,
-  };
-};
-
-const fileBackend = (file) => {
-  const read = async () => {
-    let text;
-    try {
-      text = await fs.readFile(file, "utf8");
-    } catch (problem) {
-      if (problem.code === "ENOENT") return [];
-      throw problem;
-    }
-    const rows = new Map();
-    for (const [index, line] of text.split("\n").entries()) {
-      if (!line.trim()) continue;
-      try {
-        const record = JSON.parse(line);
-        if (!rows.has(record.id)) rows.set(record.id, record);
-      } catch {
-        warn(`modes: ${file} line ${index + 1} is not a record and was skipped`);
-      }
-    }
-    return [...rows.values()].sort(byTime);
-  };
-  return {
-    append: async (record) => {
-      await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.appendFile(file, `${JSON.stringify(record)}\n`, "utf8");
-    },
-    all: read,
-    version: async () => {
-      try {
-        const { size, mtimeMs } = await fs.stat(file);
-        return `${size}:${mtimeMs}`;
-      } catch (problem) {
-        if (problem.code === "ENOENT") return "none";
-        throw problem;
-      }
-    },
-  };
-};
-
-const postgresBackend = (mode, db) => ({
-  append: async (record) => (await db()).recordModeEntry(mode, record),
-  all: async () => (await db()).modeEntries(mode),
-  forAccount: async (accountId, limit) => (await db()).modeEntriesFor(mode, accountId, limit),
-  version: async () => (await db()).modeEntriesVersion?.(mode) ?? null,
-});
-
 /**
  * A mode's records. `storage` is "postgres", "file" or "memory", the server's
  * own by default; `db` stands in for the postgres module in a test.
@@ -104,15 +46,8 @@ export const createModeRecords = ({
   if (typeof mode !== "string" || !MODE_NAME.test(mode)) {
     throw new Error(`a mode's records are under its name: lower-case words and dashes, not ${JSON.stringify(mode)}`);
   }
-  let database = null;
-  const loadDb = async () => {
-    database ??= db ?? (await import("../storage/postgres.js"));
-    return database;
-  };
-  const backend =
-    storage === "postgres" ? postgresBackend(mode, loadDb)
-      : storage === "file" ? fileBackend(path.join(dataDir, "modes", `${mode}.jsonl`))
-        : memoryBackend();
+  // Where they are kept is the core's (storage/mode-records.js); what a record is, this file's.
+  const backend = modeRecordStore({ mode, storage, dataDir, db });
 
   return {
     /** True once it is kept. A record that is not one, or a failed write, is logged and answered false. */

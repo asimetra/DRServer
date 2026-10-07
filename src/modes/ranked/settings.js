@@ -10,30 +10,25 @@
  */
 import { modeSettings } from "../settings.js";
 
-const asInt = (value, fallback) => {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
 /** The settings from a config file section and an environment: for a test, or the server's own below. */
 export const readRankedSettings = (environment = process.env) => {
-  const { file, env } = modeSettings("ranked", environment);
+  const { file, env, int } = modeSettings("ranked", environment);
   return {
     enabled:
       env("RANKED") === undefined
         ? Boolean(file.enabled)
         : env("RANKED") === "1",
-    lobbyNode: asInt(env("RANKED_LOBBY_NODE"), file.lobbyNode ?? 50003),
+    lobbyNode: int("RANKED_LOBBY_NODE", file.lobbyNode ?? 50003),
     lobbyFloor: env("RANKED_LOBBY_FLOOR") ??
       file.lobbyFloor ?? "castle/arena/db_floor_TUTORIAL_LEVEL_final.json",
     nodeTypes: file.nodeTypes ?? ["DUNGEON"],
     exclude: file.exclude ?? [],
-    countdownMs: asInt(env("RANKED_COUNTDOWN_MS"), file.countdownMs ?? 5_000),
-    lobbyIdleMs: asInt(env("RANKED_LOBBY_IDLE_MS"), file.lobbyIdleMs ?? 300_000),
-    maxDurationMs: asInt(env("RANKED_MAX_DURATION_MS"), file.maxDurationMs ?? 1_800_000),
-    forfeitWindowMs: asInt(env("RANKED_FORFEIT_WINDOW_MS"), file.forfeitWindowMs ?? 120_000),
-    drawWindowMs: asInt(env("RANKED_DRAW_WINDOW_MS"), file.drawWindowMs ?? 5_000),
-    loadTimeoutMs: asInt(env("RANKED_LOAD_TIMEOUT_MS"), file.loadTimeoutMs ?? 120_000),
+    countdownMs: int("RANKED_COUNTDOWN_MS", file.countdownMs ?? 5_000),
+    lobbyIdleMs: int("RANKED_LOBBY_IDLE_MS", file.lobbyIdleMs ?? 300_000),
+    maxDurationMs: int("RANKED_MAX_DURATION_MS", file.maxDurationMs ?? 1_800_000),
+    forfeitWindowMs: int("RANKED_FORFEIT_WINDOW_MS", file.forfeitWindowMs ?? 120_000),
+    drawWindowMs: int("RANKED_DRAW_WINDOW_MS", file.drawWindowMs ?? 5_000),
+    loadTimeoutMs: int("RANKED_LOAD_TIMEOUT_MS", file.loadTimeoutMs ?? 120_000),
     /**
      * Where in the lobby standing means waiting for a race, in floor
      * coordinates; outside it are the stands, for talking. Its edge is drawn
@@ -68,7 +63,7 @@ export const readRankedSettings = (environment = process.env) => {
      * their heroes (ranked/stock-client/copies.js); the first to arrive
      * first. 0 shows nobody: every lobby is its own world again.
      */
-    lobbyCopies: Math.max(0, asInt(env("RANKED_LOBBY_COPIES"), file.lobbyCopies ?? 8)),
+    lobbyCopies: Math.max(0, int("RANKED_LOBBY_COPIES", file.lobbyCopies ?? 8)),
     /**
      * The rival's ghost in a race (ranked/stock-client/adapter.js): drawn
      * with one of the game's buffs as a shade (`buff`, a Buff constant;
@@ -89,7 +84,7 @@ export const readRankedSettings = (environment = process.env) => {
      * throwaway accounts start trading wins.
      */
     entry: {
-      minHeroLevel: Math.max(0, asInt(env("RANKED_MIN_HERO_LEVEL"), file.entry?.minHeroLevel ?? 0)),
+      minHeroLevel: Math.max(0, int("RANKED_MIN_HERO_LEVEL", file.entry?.minHeroLevel ?? 0)),
       requireTutorial:
         env("RANKED_REQUIRE_TUTORIAL") === undefined
           ? file.entry?.requireTutorial === true
@@ -113,9 +108,9 @@ export const readRankedSettings = (environment = process.env) => {
      * edges go with it.
      */
     rating: {
-      start: asInt(env("RANKED_RATING_START"), file.rating?.start ?? 1000),
-      k: asInt(env("RANKED_RATING_K"), file.rating?.k ?? 40),
-      floor: asInt(env("RANKED_RATING_FLOOR"), file.rating?.floor ?? 100),
+      start: int("RANKED_RATING_START", file.rating?.start ?? 1000),
+      k: int("RANKED_RATING_K", file.rating?.k ?? 40),
+      floor: int("RANKED_RATING_FLOOR", file.rating?.floor ?? 100),
     },
   };
 };

@@ -36,6 +36,9 @@ export const FLID_STOP_CHOREOGRAPHY = 179;
 
 /** Where a choreography names its attack: after the weapon slot and the consumable flag. */
 export const CHOREOGRAPHY_ATTACK_AT = 2;
+/** Its target: after the attack type (generatedCode/AttackChoreography.hx). */
+const CHOREOGRAPHY_TARGET_AT = 6;
+/** Its combat results, after the loop byte and two floats: a u16 byte length, then the rows. */
 const CHOREOGRAPHY_RESULTS_LENGTH_AT = 19;
 const CHOREOGRAPHY_RESULTS_AT = CHOREOGRAPHY_RESULTS_LENGTH_AT + 2;
 const COMBAT_RESULT_BYTES = 37;
@@ -64,6 +67,21 @@ const choreographyForView = (payload, skinType, view) => {
     copy.writeUInt32LE(shown, at);
   }
   return copy ?? payload;
+};
+
+/**
+ * The same attack, aimed at nothing and hitting nothing: for a hero drawn in
+ * another world than its own (copies.js), where the doids it names are other
+ * objects — a result naming one would draw a hit there. Cut after the result
+ * count; a payload too short to name a target is left as it is.
+ */
+export const choreographyWithoutTargets = (payload) => {
+  if (payload.length < CHOREOGRAPHY_TARGET_AT + 4) return payload;
+  const end = payload.length >= CHOREOGRAPHY_RESULTS_AT ? CHOREOGRAPHY_RESULTS_AT : payload.length;
+  const copy = Buffer.from(payload.subarray(0, end));
+  copy.writeUInt32LE(0, CHOREOGRAPHY_TARGET_AT);
+  if (end === CHOREOGRAPHY_RESULTS_AT) copy.writeUInt16LE(0, CHOREOGRAPHY_RESULTS_LENGTH_AT);
+  return copy;
 };
 
 const buildRemoteChoreography = (heroDoid, payload) =>

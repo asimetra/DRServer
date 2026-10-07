@@ -53,3 +53,19 @@ test("the prizes are offers in the game data, carried with their names; one that
   assert.equal(rewardOffersOf(null, gm), null, "null pays nothing");
   assert.deepEqual(rewardOffersOf({ loss: null, win: { "*": 51103 } }, gm), { win: { "*": { offerId: 51103, name: "8000 Coins" } } });
 });
+
+test("ranked's settings read its ODS_RANKED_* overrides as whole numbers, a bad one falling back to the default", async () => {
+  const { readRankedSettings } = await import("../src/modes/ranked/settings.js");
+  const settings = readRankedSettings({
+    ODS_RANKED: "1",
+    ODS_RANKED_COUNTDOWN_MS: "7000",
+    ODS_RANKED_RATING_K: "oops",
+    ODS_RANKED_LOBBY_COPIES: "-3",
+    ODS_RANKED_MIN_HERO_LEVEL: "12",
+  });
+  assert.equal(settings.enabled, true);
+  assert.equal(settings.countdownMs, 7000);
+  assert.equal(settings.rating.k, 40, "not a number: the default");
+  assert.equal(settings.lobbyCopies, 0, "never fewer than none");
+  assert.equal(settings.entry.minHeroLevel, 12);
+});

@@ -1156,3 +1156,40 @@ export const plannedChestMost = (session) => {
 
 /** How many floors a run has. */
 export const floorCountOf = (plan) => Math.max(1, plan?.floors?.length ?? 1);
+
+/** A floor plan entry the core can build: `{ authored: file }` or `{ generated: { tileLibrary, ... } }`. */
+export const isPlanFloor = (floor) =>
+  Boolean(floor) &&
+  typeof floor === "object" &&
+  (typeof floor.authored === "string" ||
+    (Boolean(floor.generated) && typeof floor.generated === "object" && typeof floor.generated.tileLibrary === "string"));
+
+/**
+ * Sets what comes after the floor a run is on (modes/runtime.js, planAhead):
+ * `floors` after the plan's last, or with `replace` in place of every floor
+ * after this one. The plan is the run's, shared by the party. Answers a
+ * function that puts it back — only while no later change has been made, since
+ * undoing an earlier one would throw the later away too (false then) — or null
+ * for a run with no plan.
+ */
+export const extendFloorPlan = (context, floors, { replace = false } = {}) => {
+  if (!Array.isArray(floors) || !floors.every(isPlanFloor)) {
+    throw new TypeError("a plan is extended by plan floors: each { authored: file } or { generated: { tileLibrary, ... } }");
+  }
+  const plan = context?.floorPlan;
+  if (!plan || !Array.isArray(plan.floors)) return null;
+  const was = { floors: plan.floors, floorCount: context.floorCount };
+  const kept = replace ? plan.floors.slice(0, (context.floorIndex ?? 0) + 1) : plan.floors;
+  const mine = [...kept, ...floors];
+  plan.floors = mine;
+  context.floorCount = mine.length;
+  return () => {
+    if (plan.floors !== mine) {
+      warn("floors: a plan change (a mode's planAhead) was undone after the plan had changed again; left as it is");
+      return false;
+    }
+    plan.floors = was.floors;
+    context.floorCount = was.floorCount;
+    return true;
+  };
+};

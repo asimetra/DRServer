@@ -134,6 +134,28 @@ export const friendRowOf = (account, isIngameFriend) => ({
   avatar_url: null,
 });
 
+/** One of the default hero skins: a friend row with a skin the client lacks crashes its portrait. */
+const SYSTEM_FRIEND_SKIN = 151;
+
+/**
+ * The row of a friend the server keeps rather than an account — a mode's door
+ * on every list (modes/friend-door.js): friendRowOf's fields, always an
+ * in-game friend, always online, "in" `dungeon` so the client draws JOIN, and
+ * no friend code, since nobody adds it.
+ */
+export const systemFriendRowOf = ({ id, name, trophies, dungeon = 0 }) => ({
+  account_id: id,
+  name,
+  trophies,
+  active_skin: SYSTEM_FRIEND_SKIN,
+  is_ingame_friend: true,
+  identifier: `${NETWORK_ID}_${id}`,
+  friend_code: "",
+  is_online: true,
+  current_dungeon: dungeon,
+  avatar_url: null,
+});
+
 /** Loads the accounts named by a list, skipping ids this server does not hold. */
 const loadKnown = async (ids) => {
   const known = new Set(await listAccountIds());

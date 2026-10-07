@@ -23,6 +23,7 @@ import { membersOf } from "../socket/match-world.js";
 import { sayToListeners } from "../socket/global-chat.js";
 import { buildDungeonReport } from "../socket/summary.js";
 import { declares as declaresOn } from "../socket/capabilities.js";
+import { extendFloorPlan, isPlanFloor } from "../socket/floors.js";
 
 /**
  * Who `sessionOf` asks. The main thread's connections by default; a match
@@ -30,13 +31,6 @@ import { declares as declaresOn } from "../socket/capabilities.js";
  * the runs there are not connections of that thread.
  */
 let lookup = null;
-
-/** A floor plan entry the core can build (README, "The floor plan"). */
-const isPlanFloor = (floor) =>
-  Boolean(floor) &&
-  typeof floor === "object" &&
-  (typeof floor.authored === "string" ||
-    (Boolean(floor.generated) && typeof floor.generated === "object" && typeof floor.generated.tileLibrary === "string"));
 
 /** The run's context for a session; a context (it has its member) is already one. */
 const contextOf = (session) => {
@@ -102,26 +96,11 @@ export const runControls = Object.freeze({
    * earlier would throw the later away too, so it does nothing and says so.
    */
   planAhead: (session, floors, { replace = false } = {}) => {
+    // Checked before the run is looked for: a wrong call is the mode's, run or no run, and touches nothing.
     if (!Array.isArray(floors) || !floors.every(isPlanFloor)) {
       throw new TypeError("planAhead takes plan floors: each { authored: file } or { generated: { tileLibrary, ... } }");
     }
-    const context = contextOf(session);
-    const plan = context?.floorPlan;
-    if (!plan || !Array.isArray(plan.floors)) return null;
-    const was = { floors: plan.floors, floorCount: context.floorCount };
-    const kept = replace ? plan.floors.slice(0, (context.floorIndex ?? 0) + 1) : plan.floors;
-    const mine = [...kept, ...floors];
-    plan.floors = mine;
-    context.floorCount = mine.length;
-    return () => {
-      if (plan.floors !== mine) {
-        warn("modes: a planAhead was undone after the plan had changed again; left as it is");
-        return false;
-      }
-      plan.floors = was.floors;
-      context.floorCount = was.floorCount;
-      return true;
-    };
+    return extendFloorPlan(contextOf(session), floors, { replace });
   },
 
   /**

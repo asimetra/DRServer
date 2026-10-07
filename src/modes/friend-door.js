@@ -14,15 +14,13 @@
  * added to answers.
  */
 import { tellSystemPresence } from "../socket/presence.js";
+import { systemFriendRowOf } from "../social.js";
 
 /** A door's id: under 1000, which no account, doid or client friend cast ever is. */
 export const FRIEND_DOOR_ID_MOST = 999;
 
 /** The core's presence for a door: says `id` is online at `where` to `session` (friendDoorHooks' default). */
 export const tellPresence = (session, id, where) => tellSystemPresence(session, id, where);
-
-/** One of the default hero skins: an unknown one crashes the client's portrait. */
-const PORTRAIT_SKIN = 151;
 
 /**
  * Above any real friend's trophies, so the client — which sorts online friends
@@ -37,19 +35,12 @@ const DOOR_TROPHIES_LEAST = 100;
 
 const valueOf = (value) => (typeof value === "function" ? value() : value);
 
-/** The row a door is on a friend list: `name` plain ASCII (the game's font promises nothing else). */
-export const friendDoorRow = ({ id, name, where = 0, trophies = PINNED_TROPHIES }) => ({
-  account_id: id,
-  name: String(valueOf(name) ?? ""),
-  trophies,
-  active_skin: PORTRAIT_SKIN,
-  is_ingame_friend: true,
-  identifier: `3_${id}`,
-  friend_code: "",
-  is_online: true,
-  current_dungeon: Number(valueOf(where)) || 0,
-  avatar_url: null,
-});
+/**
+ * The row a door is on a friend list, as the core draws a friend the server
+ * keeps (social.js): `name` plain ASCII, the game's font promising nothing else.
+ */
+export const friendDoorRow = ({ id, name, where = 0, trophies = PINNED_TROPHIES }) =>
+  systemFriendRowOf({ id, name: String(valueOf(name) ?? ""), trophies, dungeon: Number(valueOf(where)) || 0 });
 
 /**
  * The hooks a door is, for a mode to merge into its own:
