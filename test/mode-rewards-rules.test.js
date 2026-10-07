@@ -65,3 +65,33 @@ test("defeatCountdownSeconds: the client counts down from the mode's number", (t
   assert.ok(frame, "the countdown was sent");
   assert.equal(frame.readUInt16LE(frame.length - 2), 12);
 });
+
+test("a boss's hit through the server's own AI — where most monster hits land — steals too", async () => {
+  const { attackForConstant } = await import("../src/gamemaster.js");
+  const { performNpcAttack } = await import("../src/socket/combat.js");
+  const { TEAM } = await import("../src/socket/opcodes.js");
+  const skill = await attackForConstant("EN_SWORD_SLASH");
+  const boss = { constant: "KNIGHT", level: 40, partySize: 1, team: TEAM.ENEMIES, isEnemy: true, hitPoints: 500, maxHitPoints: 1000, position: { x: 0, y: 0 } };
+  const hero = { constant: "BERSERKER", level: 1, partySize: 1, team: TEAM.PLAYERS, hitPoints: 5000, maxHitPoints: 5000, position: { x: 40, y: 0 } };
+  const session = {
+    id: 902,
+    heroDoid: 30,
+    npcLifeSteal: 0.5,
+    floorToughestHitPoints: 1000,
+    objects: new Map([[20, CLID.DistributedNPCGameObject], [30, CLID.HeroGameObject]]),
+    actors: new Map([[20, boss], [30, hero]]),
+    playerActors: new Set([30]),
+    send: () => {},
+  };
+  assert.ok(skill, "a test attack in the game data");
+  await performNpcAttack(session, 20, {
+    attackType: skill.Id,
+    attackSpeed: skill.AttackSpd,
+    weaponPower: 1,
+    attackColliders: [{ type: "circleCollider", radius: 1000, xOffset: 0, frame: 0 }],
+    impactFrame: 0,
+  }, 30);
+  const dealt = 5000 - hero.hitPoints;
+  assert.ok(dealt > 0, "the hit landed");
+  assert.equal(boss.hitPoints, 500 + Math.max(1, Math.round(dealt * 0.5)), "and the boss drank half of it");
+});

@@ -107,7 +107,8 @@ const MISSING_SAID_MOST = 500;
 const sayMissing = (rest) => {
   if (missingSaid.has(rest) || missingSaid.size >= MISSING_SAID_MOST) return;
   missingSaid.add(rest);
-  warn(`web client: no ${rest} in the build; the browser reports it as an IO error`);
+  // Quoted: the path is the client's, and a newline in it must not make a line of its own.
+  warn(`web client: no ${JSON.stringify(rest)} in the build; the browser reports it as an IO error`);
 };
 
 /** Answers a GET or HEAD under /play/ from `root`. */

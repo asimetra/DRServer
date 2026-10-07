@@ -118,9 +118,12 @@ test("a two-map boss is one boss: the next is drawn after its last map, and it i
 });
 
 test("a modifier joins every few bosses and stays; a gift waits every few bosses, better the deeper", async () => {
-  const { enter, clear, controls } = setup({ bosses: [boss(1), boss(2)] });
+  const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
   const { session } = await enter();
-  session.party = [session, { accountId: 8 }];
+  // A second player, there from the first boss.
+  const friend = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: 0, floorPlan: session.floorPlan, floorCount: session.floorCount };
+  delve.hooks.heroRequested(friend);
+  session.party = [session, friend];
   for (let i = 0; i < 6; i++) clear(session);
   const atDepth = (depth) => session.floorPlan.floors[depth - 1];
   assert.deepEqual(atDepth(1).modifiers, []);
@@ -220,4 +223,21 @@ test("what each worker counts is added up where friend lists are answered", () =
   delve.heardInside(1, 3);
   delve.heardInside(1, 1);
   assert.equal(delve.inside(), 3, "worker 1's latest replaces its earlier count");
+});
+
+test("a gift is for bosses fought: somebody arriving just before a gift step gets nothing of it", async () => {
+  const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
+  const { session } = await enter(7);
+  clear(session); // boss 1 beaten
+  // A friend arrives on boss 2 and stands on its floor.
+  const late = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: session.floorIndex, floorPlan: session.floorPlan, floorCount: session.floorCount };
+  delve.hooks.heroRequested(late);
+  session.party = [session, late];
+  clear(session); // boss 2
+  clear(session); // boss 3: the first gift step
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(controls.gifts.map(([who]) => who), [7], "only the one who fought three bosses");
+  clear(session); clear(session); clear(session); // up to boss 6
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(controls.gifts.map(([who]) => who), [7, 7, 8], "by the next step the friend has fought enough");
 });

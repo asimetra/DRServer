@@ -244,7 +244,7 @@ export const createDelve = ({
 
     async planFor(session, mapNodeId) {
       if (session?.modeEntry !== DELVE_MODE) return null;
-      const state = { id: randomUUID(), depth: 1, last: null, modifiers: [], kept: new Set(), told: new Map() };
+      const state = { id: randomUUID(), depth: 1, last: null, modifiers: [], kept: new Set(), told: new Map(), since: new Map() };
       return {
         floors: step(state),
         // The first boss's art with the area; each next one's as its floor comes.
@@ -263,6 +263,8 @@ export const createDelve = ({
         runOf.set(accountId, state);
         countChanged();
       }
+      // The boss a player first stood at: a gift is for bosses fought, not for arriving before one.
+      if (!state.since.has(accountId)) state.since.set(accountId, state.depth);
       // Each player told once a boss: a two-map boss is one boss, and a late joiner hears the one they arrived at.
       if (state.told.get(accountId) === state.depth) return;
       state.told.set(accountId, state.depth);
@@ -285,8 +287,11 @@ export const createDelve = ({
       controls.planAhead(session, step(state));
       const gift = giftFor(beaten, settings);
       if (gift) {
-        // To everybody standing in the run now: whoever has left has had their delve.
+        // To everybody standing in the run now who fought at least a gift's worth of its bosses:
+        // a friend joining just before the twelfth does not walk off with its legendary key.
         for (const member of controls.party(session)) {
+          const since = state.since.get(idOf(member)) ?? state.depth;
+          if (beaten - since + 1 < settings.giftEvery) continue;
           Promise.resolve(controls.gift(member, gift.offerId, { from: settings.giftFrom })).catch(() => null);
           controls.say(member, `Delve: ${beaten} bosses beaten — a gift waits in town.`);
         }

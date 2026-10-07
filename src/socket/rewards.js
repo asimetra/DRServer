@@ -595,11 +595,16 @@ export const awardTreasureChest = async (session, dooberType) => {
   // Kept the moment it is picked up, where the run says so: a report that may
   // be a long way off is not what the chest waits on (run-rules.js, chestsKept).
   if (rules.chestsKept === "pickup") {
-    const { grantChest } = await import("./summary-chests.js");
-    const chest = await grantChest(account, { chestId: capped });
-    queueAccountSave(session);
-    info(`[${session.id}] treasure ${dooberType} collected — chest ${capped} kept now, instance ${chest.id}`);
-    return capped;
+    try {
+      const { grantChest } = await import("./summary-chests.js");
+      const chest = await grantChest(account, { chestId: capped });
+      queueAccountSave(session);
+      info(`[${session.id}] treasure ${dooberType} collected — chest ${capped} kept now, instance ${chest.id}`);
+      return capped;
+    } catch (problem) {
+      // Not lost: owed on the report instead, the way the game keeps a chest.
+      warn(`[${session.id}] chest ${capped} could not be kept on pickup (${problem?.message ?? problem}); owed on the report`);
+    }
   }
 
   session.dungeonTreasures ??= [];
