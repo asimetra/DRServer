@@ -35,7 +35,7 @@ import { leaveDungeon } from "./floor-exit.js";
 export { deathEffectMsFor, npcAwarenessProfile } from "./npc-spawn.js";
 export { cancelPetRespawn, spawnEquippedPet, rescaleNpcHealthForParty } from "./floor-population.js";
 export { isRewardPlaceholder } from "./floor-collectables.js";
-export { createPackDoor, nearestPartyHeroPosition, generatorSpawn, generatorCadenceFor, completeGenerator } from "./floor-generators.js";
+export { createPopulationDoor, generatorBeatWait, generatorRefillWait, nearestPartyHeroPosition, generatorSpawn, generatorCadenceFor, completeGenerator } from "./floor-generators.js";
 export { isInert, restingTriggerState } from "./floor-triggerables.js";
 export { buildFloorWorld } from "./floor-world.js";
 export { checkFloorExit, advanceFloor, leaveDungeon } from "./floor-exit.js";

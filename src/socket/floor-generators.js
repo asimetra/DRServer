@@ -7,7 +7,7 @@ import { spawnNpc } from "./npc-spawn.js";
 
 /**
  * Generators: the doors and spawners that release monsters in waves or packs
- * — the pack door, the wave cadence, the next wave's draw, and
+ * — the population door, the generator's clock, the next wave's draw, and
  * `buildGenerators`.
  */
 
@@ -47,52 +47,88 @@ const generatorWaitForDeath = (runtime) => {
 };
 
 /**
- * A generator's door: open for one pack of `maxPopulation` at a time, and
- * reopened by a death.
+ * A generator's door: up to `maxPopulation` of its spawns standing at once, and
+ * `maxSpawns` in all.
  *
- * Measured on the official's Battleheim boss floor (socket-20261005-165901:
- * 14 cave generators, `maxPopulation` 2 to 10, `maxSpawns` 8 to 25,
- * `spawnInterval` 0.1): every generator releases a whole pack on its input —
- * ten at a tenth of a second — and every later pack starts a tenth of a
- * second after the *first* death among its own spawns since the previous
- * pack ended (26 of 28; the two others are a second generator at the same
- * mouth starting on its timer). Five dying at once open one pack, not five.
- * Nine of the first pack still alive do not hold the second back, and
- * nothing waits for the mouth to clear. So the population is not "how many
- * stand", it is the size of a pack, and a death is the signal for the next.
+ * Measured over every official capture in the recorded corpus (532 generator
+ * mouths, 2681 spawns, authored floors and generated ones alike): none ever
+ * stood more than its maxPopulation, and every one that refilled did so one
+ * for one. The input releases a whole pack — the population — at the
+ * generator's clock (generatorCadenceFor); each death makes room for one more.
+ * The Battleheim boss's imp cave (socket-20261005-165901, population 10): ten
+ * out in 0.75s; five die together and five come back; four, and four.
  *
- * This server refilled one for one — a death, a spawn — which turned a cave
- * that pours ten out into one that leaks them, and is why two caves authored
- * alike felt unlike. A jail with `maxPopulation` 1 is the same either way:
- * one out, one dead, one out.
+ * For a while this was a pack door instead — the first death after a pack
+ * reopening a whole new one — read off that same capture. Killed one at a
+ * time, it stood six knights in a jail of two, nineteen imps in a cave of ten,
+ * and spent its quota early: the jail stood empty for the rest of the wave.
  *
- * Deaths while the door is open are absorbed: the pack is already coming.
+ * A pack that comes out all at once is this rule, not another: 763 of the
+ * game's 904 generators (each id once, the test levels left out) author
+ * maxSpawns no greater than maxPopulation, and pour everything out on their
+ * input. `standing` is who of an earlier wave
+ * still stands, for a generator its input switches on again.
  */
-export const createPackDoor = ({ maxPopulation, maxSpawns }) => {
-  const pack = Math.max(1, Number(maxPopulation) || 1);
+export const createPopulationDoor = ({ maxPopulation, maxSpawns, standing: already = 0 }) => {
+  const most = Math.max(1, Number(maxPopulation) || 1);
   const total = Math.max(1, Number(maxSpawns) || 1);
   let spawned = 0;
-  let left = Math.min(pack, total);
+  let standing = Math.max(0, Number(already) || 0);
   return {
     get open() {
-      return left > 0 && spawned < total;
+      return standing < most && spawned < total;
     },
     get exhausted() {
       return spawned >= total;
     },
-    /** One out: the pack shrinks by one. */
-    spawned() {
-      spawned++;
-      left = Math.max(0, left - 1);
+    get standing() {
+      return standing;
     },
-    /** One dead: reopens a closed door for the next pack; true when it did. */
+    /** One attempted; `stood` false for a spawn that never made it, which takes quota and no place. */
+    spawned(stood = true) {
+      spawned++;
+      if (stood) standing++;
+    },
+    /** One dead: its place is free; true while there is more to give. */
     died() {
-      if (left > 0 || spawned >= total) return false;
-      left = Math.min(pack, total - spawned);
-      return true;
+      standing = Math.max(0, standing - 1);
+      return spawned < total;
     },
   };
 };
+
+/**
+ * The official's clock beats about every 80ms: spawns of one generator with
+ * no authored interval at all come out 80ms apart at the median (p10 70, p90
+ * 100), over every official capture.
+ */
+export const GENERATOR_TICK_MS = 80;
+
+/**
+ * How long until the generator's clock next beats: `periodMs` after the last
+ * one out, and every period after that. The official's 1 and 2 second
+ * generators refill 0.3 to 2.2 seconds after a death — on their clock, not a
+ * whole period after it (one 2s generator refilled 0.38s after a death, 1.98s
+ * after its last). Longer clocks (3, 4, 5s) were never seen refilling; they are
+ * taken to run the same way. A clock that has stepped backwards waits one
+ * period rather than however far it stepped.
+ */
+export const generatorBeatWait = (lastAt, now, periodMs) => {
+  if (!(periodMs > 0) || lastAt == null) return 0;
+  const elapsed = now - lastAt;
+  if (elapsed < 0) return periodMs;
+  if (elapsed < periodMs) return periodMs - elapsed;
+  return (periodMs - (elapsed % periodMs)) % periodMs;
+};
+
+/**
+ * How long a refill waits once a death has made room: the death is seen on one
+ * tick, and the generator acts on a beat after that. The official arena's
+ * refills come 92 / 134 / 212ms (p10 / median / p90) after the death's own
+ * frame — both frames the server's, so no link in it (socket-20261007-163805).
+ */
+export const generatorRefillWait = (lastAt, now, periodMs) =>
+  GENERATOR_TICK_MS + generatorBeatWait(lastAt, now + GENERATOR_TICK_MS, periodMs);
 
 /** Nearby spawns are one burst; a five-second jail spawn is intentionally not. */
 const WAVE_JOIN_WINDOW_MS = 500;
@@ -224,7 +260,8 @@ export const generatorSpawn = (session, runtime, npc) => {
     /**
      * A real cage wave is created at its authored generator point and walks
      * through the mouth. The official tutorial creates all six members within
-     * sixteen units of (4080,3690), at the authored 100ms cadence. Pre-placing
+     * sixteen units of (4080,3690), a tick apart (its authored 0.1s is one).
+     * Pre-placing
      * later members in a column outside the cage made that look like direct
      * spawning and erased the authored release animation.
      *
@@ -262,10 +299,20 @@ export const generatorSpawn = (session, runtime, npc) => {
   };
 };
 
+/**
+ * A generator's clock (`periodMs`): its `spawnInterval` in whole seconds and
+ * more, a tick under one. Over every official capture, the first packs of
+ * generators authored 0, 0.1, 0.2, 0.3, 0.4, 0.5 and 0.6 all come out 80ms
+ * apart at the median (1724 gaps); 1 and 2 at 1000 and 2000; the arena's
+ * lions, authored 4, 4.08s apart. Taken at its word, a pack of eight at 0.3
+ * took 2.1s here against 0.6s there: the pour of a cave became a trickle. An
+ * interval the editor wrote as 0.9999999999999992 is a second.
+ */
 export const generatorCadenceFor = (placement) => ({
-  intervalMs: Number.isFinite(placement?.spawnInterval)
-    ? Math.max(0, Math.round(placement.spawnInterval * 1000))
-    : 1000,
+  periodMs: (() => {
+    const interval = Number.isFinite(placement?.spawnInterval) ? placement.spawnInterval : 1;
+    return interval >= 1 - 1e-6 ? Math.round(interval * 1000) : GENERATOR_TICK_MS;
+  })(),
   maxPopulation: Math.max(1, Number(placement?.maxPopulation ?? 1)),
   maxSpawns: Math.max(
     1,
@@ -299,25 +346,32 @@ export const completeGenerator = (session, runtime) => {
 const spawnGeneratorWave = async (context, runtime) => {
   const { session } = context;
   const { placement, maxSpawns } = runtime;
-  const { intervalMs, maxPopulation } = generatorCadenceFor(placement);
+  const { periodMs, maxPopulation } = generatorCadenceFor(placement);
 
   const firstAttempt = runtime.attemptedSpawns;
   /**
-   * The door (createPackDoor): a pack of `maxPopulation` on the input, the
-   * next pack on a death. Kept on the runtime so `onDeath` can knock.
+   * The door (createPopulationDoor): up to `maxPopulation` standing, one more
+   * for each death. Kept on the runtime so `onDeath` can knock; it starts from
+   * whoever of an earlier wave still stands.
    */
-  const door = createPackDoor({ maxPopulation, maxSpawns: maxSpawns - firstAttempt });
+  const door = createPopulationDoor({ maxPopulation, maxSpawns: maxSpawns - firstAttempt, standing: runtime.alive });
   runtime.door = door;
+  /** When the last one came out: the generator's clock beats from there (generatorBeatWait). */
+  let lastOutAt = null;
+  /** Whether the door last opened on a death: a refill, which waits for the tick after it. */
+  let refilling = false;
   while (!door.exhausted && runtime.attemptedSpawns < maxSpawns) {
     if (!door.open) {
       await generatorWaitForDeath(runtime);
       if (!context.isActive() || runtime.stopped) break;
+      refilling = true;
       continue;
     }
-    if (runtime.attemptedSpawns > firstAttempt && intervalMs > 0) {
-      await generatorSleep(runtime, intervalMs);
-    }
+    const wait = refilling ? generatorRefillWait(lastOutAt, Date.now(), periodMs) : generatorBeatWait(lastOutAt, Date.now(), periodMs);
+    refilling = false;
+    await generatorSleep(runtime, wait);
     if (!context.isActive() || runtime.stopped) break;
+    lastOutAt = Date.now();
 
     /**
      * The door is held open while this one comes out, not pulsed.
@@ -340,7 +394,7 @@ const spawnGeneratorWave = async (context, runtime) => {
         resolveSpawn: (npc) => generatorSpawn(session, runtime, npc),
         onDeath: (deadDoid) => {
           runtime.alive = Math.max(0, runtime.alive - 1);
-          // A death is the next pack's signal, when the door is shut.
+          // A death makes room for one more, on the generator's next beat.
           if (runtime.door?.died()) runtime.wakeDeath?.();
           // Breaking the chest is what pays the node out; the chest's own row
           // is blank on purpose.
@@ -370,7 +424,7 @@ const spawnGeneratorWave = async (context, runtime) => {
       }
     );
     runtime.attemptedSpawns++;
-    door.spawned();
+    door.spawned(Boolean(doid));
     if (doid) {
       runtime.alive++;
       runtime.spawnedDoids.add(doid);

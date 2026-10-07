@@ -653,7 +653,13 @@ const runVirtualTriggerable = (session, targetId, on) => {
   return true;
 };
 
-const deliverSignal = (session, targetId, on) => {
+/**
+ * A source that takes itself off: a reset gate's pulse (startResetGate). Its
+ * fall says only that the pulse is over, not that what it started should end.
+ */
+const isPulseSource = (session, sourceId) => session.logicGates?.get(sourceId)?.constant === "RESET_TIMER_GATE";
+
+const deliverSignal = (session, targetId, on, sourceId = null) => {
   if (runVirtualTriggerable(session, targetId, on)) return;
 
   const gate = session.logicGates?.get(targetId);
@@ -670,6 +676,14 @@ const deliverSignal = (session, targetId, on) => {
   const startGenerator = session.generatorHandlers?.get(targetId);
   if (startGenerator) {
     if (!initialTargetState(session, targetId)) {
+      /**
+       * A generator runs while its input holds, and a state going low stops it:
+       * the tutorial's jails close when the minotaur dies (five official runs,
+       * no brute after his death). A pulse ending is not that. The Battleheim
+       * boss's caves hang off reset gates of one tick and pour their twenty
+       * each on the official; stopped on the fall, they made one or two.
+       */
+      if (!on && isPulseSource(session, sourceId)) return;
       session.generatorStops?.get(targetId)?.();
       return;
     }
@@ -694,7 +708,7 @@ export const emitSignal = (session, sourceId, on) => {
 
   session.signalValues.set(sourceId, on);
   for (const targetId of session.signalTargets?.get(sourceId) ?? []) {
-    deliverSignal(session, targetId, on);
+    deliverSignal(session, targetId, on, sourceId);
   }
   return true;
 };
