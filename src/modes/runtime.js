@@ -14,9 +14,8 @@ import { matchHost } from "../socket/match-host.js";
 import { grantBuff as grantBuffOn } from "../socket/buffs.js";
 import { sessionHolding } from "../socket/presence.js";
 import { creditGoldAndExperience, healHero, queueAccountSave, restoreMana } from "../socket/rewards.js";
-import { giveGift } from "../gifts.js";
+import { giveGift, hasWeaponGiftFace, weaponGiftFace } from "../gifts.js";
 import { generateWeapon } from "../chests.js";
-import { storageLimit, unequippedWeapons } from "../inventory-space.js";
 import { loadGameMaster } from "../gamemaster.js";
 import { info, warn } from "../log.js";
 import { tellAsServer } from "../socket/chat.js";
@@ -180,13 +179,20 @@ export const runControls = Object.freeze({
   },
 
   /**
-   * Puts a weapon in the player's storage, as an opened chest would: one the
-   * hero they are playing can use, of `rarity` (a Rarity Type, COMMON to
-   * LEGENDARY) and at about `level` — the mode's level, not the hero's, never
-   * above the hero's last. Kept with the account and seen in town. Answers the
-   * weapon, or null: no account here, no such rarity, or storage full.
+   * Leaves a weapon waiting in town as a gift, said to be `from` that account
+   * id (as `gift`): one the hero they are playing can use, of `rarity` (a
+   * Rarity Type, COMMON to LEGENDARY) and at about `level` — the mode's level,
+   * not the hero's, never above the hero's last. Rolled now; the gift page
+   * shows it by the shop's offer for the same weapon, and accepting it hands
+   * over this weapon, or keeps it waiting while storage is full. Answers the
+   * gift (its `weapon` the weapon), or null: no `from`, no account here, no
+   * such rarity, or the player holding as many gifts as they may.
    */
-  weapon: async (session, { rarity, level } = {}) => {
+  weapon: async (session, { rarity, level, from } = {}) => {
+    if (!Number.isSafeInteger(from) || from < 0) {
+      warn(`modes: a weapon gift needs \`from\`, the account id it is said to be from; none was given`);
+      return null;
+    }
     const context = contextOf(session);
     const account = context?.dungeonAccount;
     const avatar = context?.dungeonAvatar;
@@ -199,22 +205,30 @@ export const runControls = Object.freeze({
       warn(`modes: no weapon of ${JSON.stringify(rarity)} at level ${JSON.stringify(level)} for ${account.id}`);
       return null;
     }
-    if (unequippedWeapons(account) >= storageLimit(account)) return null;
-    const item = generateWeapon({
+    const rolled = generateWeapon({
       gm,
       hero,
       rarity: row,
       level: wanted,
       accountId: account.id,
-      id: await matchHost().nextObjectId(account),
+      id: 0,
       random: context.random ?? Math.random,
+      among: (weapon) => hasWeaponGiftFace(gm, weapon.Id),
     });
-    if (!item) return null;
-    account.account_items = [...(account.account_items ?? []), item];
+    const face = rolled && weaponGiftFace(gm, rolled.item_id, rolled.requiredlevel);
+    if (!face) {
+      warn(`modes: no weapon with a shop offer for hero ${hero.Id}; no weapon gift for ${account.id}`);
+      return null;
+    }
+    // The weapon without an instance: its id and the rest are the account's to give it as it is accepted.
+    const { item_id, power, requiredlevel, rarity: rarityId, modifier1, modifier2, legendarymodifier } = rolled;
+    const weapon = { item_id, power, requiredlevel, rarity: rarityId, modifier1, modifier2, legendarymodifier };
+    const given = giveGift(account, { offerId: face, fromAccountId: from, weapon });
+    if (!given) return null;
     // Written now, not at a report that may be a long way off (a delve's comes when the party falls).
     queueAccountSave(context);
-    info(`[${context.id}] mode weapon ${item.item_id} (${rarity}, level ${item.requiredlevel}) for ${account.id}`);
-    return item;
+    info(`[${context.id}] mode weapon gift ${weapon.item_id} (${rarity}, level ${weapon.requiredlevel}) for ${account.id}, as offer ${face}`);
+    return given;
   },
 
   /**

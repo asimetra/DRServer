@@ -253,8 +253,11 @@ const rollLegendaryModifier = (gm, rarity, random) => {
  * One rolled weapon, as a chest would have produced it — exported so a tool
  * can stock a bag without pretending to open something that is not there.
  */
-export const generateWeapon = ({ gm, hero, rarity, level, accountId, id, random }) => {
-  const pool = eligibleWeapons(gm, hero);
+export const generateWeapon = ({ gm, hero, rarity, level, accountId, id, random, among = null }) => {
+  // `among` narrows the draw (a weapon gift wants one the shop sells), where it leaves any.
+  const eligible = eligibleWeapons(gm, hero);
+  const narrowed = among ? eligible.filter(among) : eligible;
+  const pool = narrowed.length ? narrowed : eligible;
   if (!pool.length) return null;
 
   const weapon = pool[Math.floor(random() * pool.length)];

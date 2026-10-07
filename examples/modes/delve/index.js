@@ -107,6 +107,7 @@ export const DELVE_DEFAULTS = Object.freeze({
    * A weapon may drop on the milestones — from the `from`th boss, every
    * `every`th — for each player there, at `chance`; of the deepest `rarities`
    * step reached, and at that boss's monster level (the hero's last at most).
+   * It waits in town as a gift, as the others do.
    */
   items: {
     from: 10,
@@ -370,14 +371,11 @@ export const createDelve = ({
         for (const member of earners) {
           if (random() >= settings.items.chance) continue;
           const rarity = item.rarity.toLowerCase();
-          Promise.resolve(controls.weapon(member, item))
-            .then((weapon) => {
-              if (weapon) {
-                const level = weapon.requiredlevel ?? item.level;
-                tell(member, "item", { beaten, rarity, level }, `Delve: boss ${beaten} dropped a ${rarity} weapon, level ${level}.`);
-              } else {
-                controls.say(member, `Delve: boss ${beaten} dropped a ${rarity} weapon, but your storage is full.`);
-              }
+          Promise.resolve(controls.weapon(member, { ...item, from: settings.giftFrom }))
+            .then((gift) => {
+              if (!gift) return;
+              const level = gift.weapon?.requiredlevel ?? item.level;
+              tell(member, "item", { beaten, rarity, level }, `Delve: boss ${beaten} dropped a ${rarity} weapon, level ${level} - it waits in town.`);
             })
             .catch(() => null);
         }

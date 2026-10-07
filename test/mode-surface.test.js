@@ -60,7 +60,7 @@ test("the run controls: what a mode may ask the core, these and no others", asyn
   assert.equal(runControls.lose(null), false);
   assert.equal(await runControls.sendHome(null), false);
   assert.equal(await runControls.grantBuff(null, "ANY"), null);
-  assert.equal(await runControls.weapon(null, { rarity: "RARE", level: 10 }), null);
+  assert.equal(await runControls.weapon(null, { rarity: "RARE", level: 10, from: 0 }), null);
   assert.equal(runControls.endFloor(null), false);
   assert.equal(runControls.planAhead(null, []), null);
   assert.deepEqual(runControls.reward(null, { gold: 5 }), { gold: 0, experience: 0 });

@@ -188,7 +188,7 @@
     "delve.boss": "Delve: boss {depth} - {name}, level {level}{mods}.",
     "delve.cursed": "Delve: a new curse - {curse}.",
     "delve.gift": "Delve: {beaten} bosses beaten - {what} waits in town.",
-    "delve.item": "Delve: boss {beaten} dropped a {rarity} weapon, level {level}.",
+    "delve.item": "Delve: boss {beaten} dropped a {rarity} weapon, level {level} - it waits in town.",
     "delve.lost": "Delve: your party fell at boss {depth}, {beaten} beaten."
   },
   "parts": {

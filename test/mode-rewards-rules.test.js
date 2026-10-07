@@ -10,6 +10,8 @@ import { CLID } from "../src/socket/opcodes.js";
 import { plannedTreasure } from "../src/socket/floors.js";
 import { spawnBossReward } from "../src/socket/drops.js";
 import { runControls } from "../src/modes/runtime.js";
+import { giftsFor, grantGift, returnGift } from "../src/gifts.js";
+import { loadGameMaster } from "../src/gamemaster.js";
 
 /** A run under `rules`, its floor plan saying `floor`. */
 const runUnder = (t, rules, floor = {}) => {
@@ -53,23 +55,41 @@ test("a floor plan's treasure stands in for the node's, a boss's chest included;
   assert.equal(run.doobers.get(doid).treasure, 30105, "a royal item box where the legendary chest was");
 });
 
-test("runControls.weapon: a weapon of the rarity at the mode's level, never past the hero's last; none with storage full", async (t) => {
+test("runControls.weapon: a weapon gift of the rarity at the mode's level, shown by the shop's offer for it", async (t) => {
   const run = runUnder(t, {});
-  run.dungeonAccount = { id: 7, buckets_weapon: 2, account_items: [] };
+  run.dungeonAccount = { id: 7, buckets_weapon: 1, account_items: [], gifts: [] };
   run.dungeonAvatar = { id: 70, avatar_id: 101 };
   run.member = run;
   run.random = () => 0.5;
   const saved = [];
   run.persistDungeonAccount = async (account) => saved.push(account.id);
-  const weapon = await runControls.weapon(run, { rarity: "RARE", level: 40 });
-  assert.equal(weapon.rarity, 3);
-  assert.equal(weapon.requiredlevel, 40);
-  assert.deepEqual(run.dungeonAccount.account_items, [weapon]);
+  assert.equal(await runControls.weapon(run, { rarity: "RARE", level: 40 }), null, "a gift says who it is from");
+  const gift = await runControls.weapon(run, { rarity: "RARE", level: 40, from: 0 });
+  assert.equal(gift.weapon.rarity, 3);
+  assert.equal(gift.weapon.requiredlevel, 40);
+  assert.equal(gift.weapon.id, undefined, "no instance until it is accepted");
+  const gm = await loadGameMaster();
+  const face = gm.raw.OfferDetails.find((d) => d.OfferId === gift.offer_id);
+  assert.equal(face.WeaponId, gift.weapon.item_id, "the face is the shop's offer for the same weapon");
+  assert.deepEqual(run.dungeonAccount.account_items, [], "waiting in town, not in storage");
   await run.rewardSavePromise;
   assert.deepEqual(saved, [7], "written at once, not at a far-off report");
-  assert.ok((await runControls.weapon(run, { rarity: "LEGENDARY", level: 500 })).requiredlevel <= 100, "no higher than a hero reaches");
-  assert.equal(await runControls.weapon(run, { rarity: "RARE", level: 40 }), null, "two held, room for two");
-  assert.equal(await runControls.weapon({ ...run, dungeonAccount: { id: 7, buckets_weapon: 9 } }, { rarity: "CONSUMABLE_SMALL", level: 5 }), null, "not a weapon rarity");
+  assert.equal(giftsFor(run.dungeonAccount).gifts[0].weapon, undefined, "the client is not told the weapon");
+  assert.ok((await runControls.weapon(run, { rarity: "LEGENDARY", level: 500, from: 0 })).weapon.requiredlevel <= 100, "no higher than a hero reaches");
+  assert.equal(await runControls.weapon(run, { rarity: "CONSUMABLE_SMALL", level: 5, from: 0 }), null, "not a weapon rarity");
+
+  // Accepted: that weapon, a new instance; a second with storage full stays on the pile.
+  const account = run.dungeonAccount;
+  let next = 500;
+  const [first, second] = account.gifts;
+  account.gifts = account.gifts.filter((row) => row !== first);
+  await grantGift({ account, gift: first, nextId: async () => next++ });
+  assert.deepEqual(account.account_items.map((item) => [item.id, item.item_id, item.requiredlevel]), [[500, first.weapon.item_id, 40]]);
+  account.gifts = account.gifts.filter((row) => row !== second);
+  await assert.rejects(grantGift({ account, gift: second, nextId: async () => next++ }), /storage is full/);
+  returnGift(account, second);
+  returnGift(account, second);
+  assert.deepEqual(account.gifts, [second], "back on the pile, once");
 });
 
 test("the floor's toughest heal a share of what they deal to a hero; the rest do not", (t) => {

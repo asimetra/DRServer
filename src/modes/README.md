@@ -100,7 +100,7 @@ round, and a mode reaches for nothing else in `src/socket` to do these:
 | `runControls.heal(session, { health, mana })` | Gives back a share (0 to 1) of the hero's most health and mana, as food does. A hero that is down is not healed | `{ health, mana }` gained |
 | `runControls.gift(session, offerId, { from })` | Leaves any offer from the game data waiting in town as a gift, said to be from account `from` (required) | A promise of the gift, or null (no `from`, no such offer, no account, too many waiting) |
 | `runControls.say(session, text)` | A line from the server in the player's chat log, to them alone | `false` with nobody to tell |
-| `runControls.weapon(session, { rarity, level })` | Puts a weapon the hero can use in the player's storage, of a Rarity Type (COMMON to LEGENDARY) at about `level`, never past the hero's last | A promise of the weapon, or null (no account, no such rarity, storage full) |
+| `runControls.weapon(session, { rarity, level, from })` | Leaves a weapon waiting in town as a gift from account `from`: one the hero can use, of a Rarity Type (COMMON to LEGENDARY) at about `level`, never past the hero's last. The gift page shows it by the shop's offer for the same weapon; accepting it hands over that weapon, or keeps it waiting while storage is full | A promise of the gift (its `weapon` the weapon), or null (no `from`, no account, no such rarity, too many waiting) |
 | `runControls.grantBuff(session, constant)` | Puts a buff from the game data on the hero | A promise of the buff's doid, or null |
 
 Each takes the session however the mode holds it, a hook's context or what
@@ -332,7 +332,7 @@ floor is a boss's own map, drawn from the game data (`game-data.js`), never the
 same twice running, each harder (`npcLevel`, the three bonuses, a modifier every
 few bosses) and added from `floorCompleting` with `planAhead`; every few bosses
 leave a gift for the party (`party`, `gift`), its bosses pay item boxes rather
-than chests (`treasure`), and its deep milestones may drop a weapon at the
+than chests (`treasure`), and its deep milestones may leave a weapon gift at the
 depth's level (`weapon`); how deep each player went is kept
 (`createModeRecords`). It is the one to read for a mode that draws its own floors.
 

@@ -41,7 +41,7 @@ import {
   unfriend,
   unignore,
 } from "./social.js";
-import { excludeIdsFor, giftsFor, sendGift, takeGift } from "./gifts.js";
+import { excludeIdsFor, giftsFor, grantGift, returnGift, sendGift, takeGift } from "./gifts.js";
 import { defineAccountOperation } from "./account-operations.js";
 import { info, warn } from "./log.js";
 import { modeHooks } from "./modes/hooks.js";
@@ -1334,14 +1334,17 @@ register("store/AcceptGift", async ([accountId, requestId]) => {
     return false;
   }
 
-  const { touched } = await purchaseOffer({
-    account,
-    offerId: Number(gift.offer_id),
-    nextId: () => nextObjectId(account),
-    free: true,
-  });
+  let touched;
+  try {
+    ({ touched } = await grantGift({ account, gift, nextId: () => nextObjectId(account) }));
+  } catch (problem) {
+    // Refused — a full storage, an offer that grants nothing — and kept, not lost.
+    returnGift(account, gift);
+    warn(`rpc: ${account.id} could not accept gift ${requestId} (${problem.message}); it waits`);
+    return false;
+  }
   await saveAccount(account);
-  info(`rpc: ${account.id} accepted offer ${gift.offer_id} from ${gift.from_account_id}`);
+  info(`rpc: ${account.id} accepted ${gift.weapon ? `weapon ${gift.weapon.item_id} as ` : ""}offer ${gift.offer_id} from ${gift.from_account_id}`);
   return accountHeader(account, touched);
 });
 
@@ -1354,12 +1357,14 @@ register("store/AcceptAllGifts", async ([accountId, requestIds]) => {
   for (const requestId of Array.isArray(requestIds) ? requestIds : []) {
     const gift = takeGift(account, requestId);
     if (!gift) continue;
-    const grant = await purchaseOffer({
-      account,
-      offerId: Number(gift.offer_id),
-      nextId: () => nextObjectId(account),
-      free: true,
-    });
+    let grant;
+    try {
+      grant = await grantGift({ account, gift, nextId: () => nextObjectId(account) });
+    } catch (problem) {
+      returnGift(account, gift);
+      warn(`rpc: ${account.id} could not accept gift ${requestId} (${problem.message}); it waits`);
+      continue;
+    }
     for (const list of grant.touched ?? []) touched.add(list);
     taken++;
   }

@@ -1,6 +1,8 @@
 import { config } from "./config.js";
 import { loadGameMaster } from "./gamemaster.js";
 import { friendIdsOf } from "./social.js";
+import { purchaseOffer } from "./store.js";
+import { occupiedSlots, storageLimit } from "./inventory-space.js";
 
 /**
  * Sending somebody a free consumable, and being allowed to do it again tomorrow.
@@ -102,7 +104,8 @@ export const pendingGiftsFor = (account) => (Array.isArray(account?.gifts) ? acc
  * modding this later should find the same thing the real server sent.
  */
 export const giftsFor = (account, now = Date.now()) => ({
-  gifts: pendingGiftsFor(account),
+  // A weapon gift's weapon is the server's to hand over, not the client's to read.
+  gifts: pendingGiftsFor(account).map(({ weapon, ...row }) => row),
   excludeIds: excludeIdsFor(account, now),
 });
 
@@ -212,7 +215,7 @@ export const takeGift = (account, requestId) => {
  * ceiling still holds, since that bounds what one account can be made to carry.
  * Returns the gift, or null when the pile is full.
  */
-export const giveGift = (recipient, { offerId, fromAccountId, now = Date.now() }) => {
+export const giveGift = (recipient, { offerId, fromAccountId, weapon = null, now = Date.now() }) => {
   if (pendingGiftsFor(recipient).length >= MAX_PENDING_GIFTS) return null;
   const gift = {
     id: Number(`${now}`.slice(-9)),
@@ -222,7 +225,68 @@ export const giveGift = (recipient, { offerId, fromAccountId, now = Date.now() }
     offer_id: Number(offerId),
     request_id: unusedRequestId(recipient, now),
     created: new Date(now).toISOString(),
+    // A weapon rolled when it was earned (runControls.weapon); the offer is its face.
+    ...(weapon && typeof weapon === "object" ? { weapon } : {}),
   };
   recipient.gifts = [...pendingGiftsFor(recipient), gift];
   return gift;
+};
+
+/**
+ * The shop's offer for a weapon, to be a weapon gift's face: the gift page
+ * draws an offer — a weapon offer as that weapon's name — and has no other
+ * way to say what a gift is. Of a weapon's offers, the one whose level is
+ * nearest, since the name the client draws is the weapon's look at that level.
+ * Null for a weapon the shop never sold.
+ */
+const facesByGameMaster = new WeakMap();
+export const weaponGiftFace = (gm, weaponId, level) => {
+  let faces = facesByGameMaster.get(gm);
+  if (!faces) {
+    const weaponOffers = new Set(gm.raw.Offers.filter((offer) => offer.Tab === "WEAPON").map((offer) => Number(offer.Id)));
+    faces = new Map();
+    for (const detail of gm.raw.OfferDetails) {
+      if (!detail.WeaponId || !weaponOffers.has(Number(detail.OfferId))) continue;
+      const list = faces.get(detail.WeaponId) ?? faces.set(detail.WeaponId, []).get(detail.WeaponId);
+      list.push({ offerId: Number(detail.OfferId), level: Number(detail.Level ?? 1) });
+    }
+    facesByGameMaster.set(gm, faces);
+  }
+  const offers = faces.get(Number(weaponId));
+  if (!offers?.length) return null;
+  return offers.reduce((best, offer) => (Math.abs(offer.level - level) < Math.abs(best.level - level) ? offer : best)).offerId;
+};
+
+/** Whether the shop sells this weapon, so a gift of it has a face (weaponGiftFace). */
+export const hasWeaponGiftFace = (gm, weaponId) => weaponGiftFace(gm, weaponId, 1) !== null;
+
+/**
+ * What accepting a gift hands over. Most are an offer, granted as the shop
+ * grants it. A weapon gift is its own weapon, rolled when it was earned, and
+ * needs room as a bought one does. A refusal throws, and the caller puts the
+ * gift back on the pile (returnGift): a full storage is not a gift lost.
+ */
+export const grantGift = async ({ account, gift, nextId }) => {
+  if (gift.weapon && typeof gift.weapon === "object") {
+    if (occupiedSlots(account) >= storageLimit(account)) throw new GiftError("weapon storage is full");
+    const item = {
+      ...gift.weapon,
+      id: await nextId(),
+      account_id: account.id,
+      avatar_id: null,
+      avatar_slot: null,
+      is_new: 1,
+      created: new Date().toISOString(),
+    };
+    account.account_items = [...(account.account_items ?? []), item];
+    return { touched: ["account_items"] };
+  }
+  return purchaseOffer({ account, offerId: Number(gift.offer_id), nextId, free: true });
+};
+
+/** A taken gift that could not be granted, back on the pile where it was. */
+export const returnGift = (account, gift) => {
+  if (!pendingGiftsFor(account).some((row) => String(row.request_id) === String(gift.request_id))) {
+    account.gifts = [...pendingGiftsFor(account), gift];
+  }
 };

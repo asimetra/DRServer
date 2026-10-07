@@ -30,7 +30,7 @@ const fakeControls = () => {
     weapons,
     weapon: async (session, item) => {
       weapons.push([session.accountId, item]);
-      return session.storageFull ? null : { requiredlevel: item.level };
+      return session.pileFull ? null : { weapon: { requiredlevel: item.level } };
     },
     say: (session, text) => said.push([session.accountId, text]),
     gift: async (session, offerId, { from }) => gifts.push([session.accountId, offerId, from]),
@@ -144,22 +144,23 @@ test("a modifier joins every few bosses and stays; a gift waits every few bosses
   ], "after the 3rd and the 6th boss, to everybody there, from nobody's account");
 });
 
-test("the tenth boss may drop a weapon for whoever fought for it, and a full storage is said", async () => {
+test("the tenth boss may drop a weapon gift for whoever fought for it", async () => {
   const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
   const { session } = await enter();
-  const full = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: 0, floorPlan: session.floorPlan, floorCount: session.floorCount, storageFull: true };
+  const full = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: 0, floorPlan: session.floorPlan, floorCount: session.floorCount, pileFull: true };
   delve.hooks.heroRequested(full);
   session.party = [session, full];
   for (let i = 0; i < 9; i++) clear(session);
   // A friend arriving for the tenth boss alone gets nothing of it.
-  const late = { ...full, accountId: 9, storageFull: false, floorIndex: session.floorIndex };
+  const late = { ...full, accountId: 9, pileFull: false, floorIndex: session.floorIndex };
   delve.hooks.heroRequested(late);
   session.party = [session, full, late];
   clear(session);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(controls.weapons, [[7, { rarity: "UNCOMMON", level: 64 }], [8, { rarity: "UNCOMMON", level: 64 }]]);
-  assert.ok(controls.said.some(([id, text]) => id === 7 && /dropped a uncommon weapon, level 64/.test(text)));
-  assert.ok(controls.said.some(([id, text]) => id === 8 && /storage is full/.test(text)));
+  const asked = { rarity: "UNCOMMON", level: 64, from: 0 };
+  assert.deepEqual(controls.weapons, [[7, asked], [8, asked]], "from nobody's account, as the gifts");
+  assert.ok(controls.said.some(([id, text]) => id === 7 && /dropped a uncommon weapon, level 64 - it waits in town/.test(text)));
+  assert.ok(!controls.said.some(([id, text]) => id === 8 && /weapon/.test(text)), "no gift given, nothing said of one");
 });
 
 test("how deep each player went is kept once a run, on falling or on walking out", async () => {
