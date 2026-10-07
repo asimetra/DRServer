@@ -24,6 +24,17 @@ const DEFAULT_EVICTION_GRACE_MS = 15_000;
 /** Bit 0 is reserved locally for server-authorized dungeon administration. */
 export const DUNGEON_ADMIN_OVERRIDE_FLAG = 1;
 
+/**
+ * On how many of a run's first floors strangers may be matched into it: the
+ * mode's `strangersUntil` (run-rules.js), a whole number from 1, or every floor
+ * for null; 1, the game's own, for anything else.
+ */
+const strangersFloors = (mode) => {
+  const until = rulesOfMode(mode).strangersUntil;
+  if (until === null) return Infinity;
+  return Number.isInteger(until) && until >= 1 ? until : 1;
+};
+
 const keyOf = ({ mapNodeId, group = "" }) => `${Number(mapNodeId)}|${group}`;
 
 export const isUltimateNode = (node) => node?.NodeType === "INFINITE";
@@ -238,8 +249,9 @@ export class DungeonMatchRegistry {
     // regardless of whether it arrived before or after the ordinary party.
     if (privileged ? privilegedCount >= 1 : ordinaryCount >= this.maxPlayers) return false;
     // Original captures allow explicit late join on later floors. The requested
-    // simplification applies only to random/public filling.
-    return privileged || !publicSearch || !this.publicFloorZeroOnly || match.floorIndex === 0;
+    // simplification applies only to random/public filling: the first floor, or
+    // as many of the first floors as the run's mode says (run-rules.js, strangersUntil).
+    return privileged || !publicSearch || !this.publicFloorZeroOnly || match.floorIndex < strangersFloors(match.mode);
   }
 
   add(match, session, { adminOverride = false } = {}) {

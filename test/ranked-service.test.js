@@ -242,3 +242,44 @@ test("stopping makes a last try for held matches", async () => {
   await service.stop();
   assert.deepEqual(written.map((r) => r.id), ["late"]);
 });
+
+test("two matches decided at once reach the log in the order they were decided, a slow refusal included", async () => {
+  const written = [];
+  let refuseFirst = true;
+  const records = {
+    all: async () => [...written],
+    // The first write fails, and slowly: the second is decided while it is still out.
+    append: async (record) => {
+      if (record.id === "m1" && refuseFirst) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return false;
+      }
+      written.push(record);
+      return true;
+    },
+  };
+  const { service } = setup({ records });
+  const first = service.keep({ id: "m1" });
+  const second = service.keep({ id: "m2" });
+  assert.deepEqual([await first, await second], [false, false], "the second waits behind the first rather than passing it");
+  refuseFirst = false;
+  await service.writeHeld();
+  assert.deepEqual(written.map((r) => r.id), ["m1", "m2"], "replayed in the order they happened");
+});
+
+test("stopping waits for a write still out, and holds and names one the log refused", async () => {
+  const written = [];
+  const records = {
+    all: async () => [...written],
+    // Refused, slowly: still out when the server is told to stop.
+    append: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return false;
+    },
+  };
+  const { service } = setup({ records });
+  const out = service.keep({ id: "x" });
+  await service.stop();
+  assert.deepEqual(service.unwritten.map((r) => r.id), ["x"], "known to be lost by the time stop returns, not after");
+  assert.equal(await out, false);
+});

@@ -9,6 +9,7 @@ import { beginFloorFailing, clearFloorFailing } from "../src/socket/floorstate.j
 import { CLID } from "../src/socket/opcodes.js";
 import { plannedTreasure } from "../src/socket/floors.js";
 import { spawnBossReward } from "../src/socket/drops.js";
+import { buildCollectables } from "../src/socket/floor-collectables.js";
 import { runControls } from "../src/modes/runtime.js";
 import { giftsFor, grantGift, returnGift } from "../src/gifts.js";
 import { loadGameMaster } from "../src/gamemaster.js";
@@ -145,4 +146,64 @@ test("a boss's hit through the server's own AI — where most monster hits land 
   const dealt = 5000 - hero.hitPoints;
   assert.ok(dealt > 0, "the hit landed");
   assert.equal(boss.hitPoints, 500 + Math.max(1, Math.round(dealt * 0.5)), "and the boss drank half of it");
+});
+
+/** A floor's reward spots built for `run` on `mapNodeId`: each a treasure doober's id, or the constant it paid instead. */
+const rewardSpots = async (run, mapNodeId, count) => {
+  let doid = 1000;
+  Object.assign(run, { mapNodeId, dungeonZone: 1, random: () => 0, allocateDoid: () => doid++, doobers: new Map() });
+  const spots = Array.from({ length: count }, (_, i) => ({ constant: "TREASURE", x: i * 100, y: 0 }));
+  await buildCollectables({ session: run, floorDoid: 8, isActive: () => true }, spots);
+  return [...run.doobers.values()].map((doober) => doober.treasure || doober.constant);
+};
+
+test("the run rules' treasure: a doober id or constant, or \"none\"; a floor plan's own wins over it", (t) => {
+  assert.equal(plannedTreasure(runUnder(t, { treasure: "ROYAL_ITEM_BOX" })), 30105, "by constant");
+  assert.equal(plannedTreasure(runUnder(t, { treasure: 30102 })), 30102, "by id");
+  assert.equal(plannedTreasure(runUnder(t, { treasure: "none" })), "none");
+  assert.equal(plannedTreasure(runUnder(t, { treasure: "GOLD_LARGE" })), null, "not a treasure: the node's as ever");
+  assert.equal(plannedTreasure(runUnder(t, { treasure: "none" }, { treasure: 30104 })), 30104, "the floor's own first");
+  assert.equal(plannedTreasure(runUnder(t, { treasure: 30104 }, { treasure: "none" })), "none", "\"none\" on the floor too");
+  assert.equal(plannedTreasure(runUnder(t, { treasure: "NONE" })), "none", "read as a config file may write it");
+  assert.equal(plannedTreasure(runUnder(t, { treasure: "30105" })), 30105, "an id as text");
+});
+
+test("\"none\": a boss's chest is its coins in one heap, no chest; the reward spots pay gold", async (t) => {
+  const sent = [];
+  const run = { ...runUnder(t, { treasure: "none" }), dungeonZone: 1, allocateDoid: () => 900, send: (frame) => sent.push(frame) };
+  const doid = spawnBossReward(run, { floorDoid: 8, origin: { x: 0, y: 0 }, node: { Id: 50009, BossRewardTreasureId: 30101, TotalEnemyCoin: 10 }, random: () => 0 });
+  const reward = run.doobers.get(doid);
+  assert.equal(reward.treasure, 0, "earns no chest");
+  assert.equal(reward.gold, 10, "the node's coins, all of them");
+  const goldLarge = Buffer.alloc(4);
+  goldLarge.writeUInt32LE(30003);
+  assert.ok(sent[0].includes(goldLarge), "drawn as GOLD_LARGE");
+  assert.equal(spawnBossReward(run, { floorDoid: 8, origin: { x: 0, y: 0 }, node: { Id: 50010, BossRewardTreasureId: 0, TotalEnemyCoin: 10 } }), null, "a node with no chest of its own drops nothing");
+  assert.deepEqual(await rewardSpots(runUnder(t, { treasure: "none" }), 50009, 2), ["GOLD_MEDIUM", "GOLD_MEDIUM"]);
+});
+
+test("treasureCount: how many of the reward spots pay a treasure, in place of the node's MaxTreasure", async (t) => {
+  assert.deepEqual(await rewardSpots(runUnder(t, {}), 50009, 3), [30101, "GOLD_MEDIUM", "GOLD_MEDIUM"], "the node's own: one");
+  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: 2 }), 50009, 3), [30101, 30101, "GOLD_MEDIUM"]);
+  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: 0 }), 50009, 2), ["GOLD_MEDIUM", "GOLD_MEDIUM"], "none at all");
+  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: "2" }), 50009, 3), [30101, 30101, "GOLD_MEDIUM"], "a number as text, as treasure and chestMost take it");
+  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: 1.5 }), 50009, 2), [30101, "GOLD_MEDIUM"], "not a whole number: the node's own");
+});
+
+test("a plan whose floors bring their own node owes each node's allowance on its own floors", async (t) => {
+  const run = runUnder(t, {});
+  run.floorPlan = { floors: [1, 2, 2].map((node) => ({ authored: "a.json", node: { Id: node } })) };
+  const onFloor = async (index) => {
+    run.floorIndex = index;
+    return rewardSpots(run, 50009, 2);
+  };
+  assert.deepEqual(await onFloor(0), [30101, "GOLD_MEDIUM"], "the first node's one");
+  assert.deepEqual(await onFloor(1), [30101, "GOLD_MEDIUM"], "the next node has its own");
+  assert.deepEqual(await onFloor(2), ["GOLD_MEDIUM", "GOLD_MEDIUM"], "and its second floor shares it");
+});
+
+test("the run rules' chestMost holds a chest down; a floor plan's own wins over it", async (t) => {
+  assert.equal(await awardTreasureChest(runUnder(t, { chestMost: 1 }), 30102), 60001, "a rare held to common");
+  assert.equal(await awardTreasureChest(runUnder(t, { chestMost: 1 }, { chestMost: 3 }), 30103), 60003, "the floor's three over the run's one");
+  assert.equal(await awardTreasureChest(runUnder(t, { chestMost: 1 }), 30105), 60006, "an item box is not a rarity");
 });

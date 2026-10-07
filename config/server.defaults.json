@@ -39,6 +39,9 @@
   "oneLife": {
     "enabled": false
   },
+  "delve": {
+    "enabled": false
+  },
   "ranked": {
     "enabled": false,
     "lobbyNode": 50003,

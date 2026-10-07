@@ -21,7 +21,7 @@ keep still for it.
 |---|---|---|
 | The hooks | `src/modes/hooks.js` — `installModeHooks`, `modeHooks`, `MODE_HOOK_NAMES`, `MODE_HOOK_COMBINE` | the 18 names, their arguments, and how several modes' answers combine |
 | Run controls | `src/modes/runtime.js` — `runControls`, `installSessionLookup` | what a mode may ask the core to do: `contextOf`, `party`, `sessionOf`, `win`, `lose`, `sendHome`, `planAhead`, `endFloor`, `reward`, `heal`, `gift`, `weapon`, `say`, `grantBuff`, `relay`, `reportOf`, `declares` |
-| The friend door | `src/modes/friend-door.js` — `friendDoorHooks`, `friendDoorRow` | how a player enters a mode: a row on every friend list with JOIN beside it |
+| The friend door | `src/modes/friend-door.js` — `friendDoorHooks`, `friendDoorRow` | how a player enters a mode: a row on every friend list with JOIN beside it, and its place among the doors (`trophies`) |
 | Game data | `src/modes/game-data.js` — `mapNodes`, `mapNode`, `nodePlan`, `planTileLibraries`, `gameTable`, `heroById`, `floorProblem`, `TILE_SIZE` | what a mode may read of the deployment's game data, to draw floors of its own |
 | Players | `src/modes/players.js` — `playerName`, `activeHeroLevel`, `nodeDone` | what a mode may read of an account: a name for a line, what an entry gate asks |
 | Settings | `src/modes/settings.js` — `modeSettings(section)` | a mode's own section of the config file and its `ODS_*` overrides: `file`, `env`, `int`, `flag`. The core keeps no setting of any mode's |
@@ -29,7 +29,7 @@ keep still for it.
 | The web | `src/modes/web.js` — `addModeRoute({ side, method, pattern, handler })`, `addProfileField(name, read)` | a mode's own HTTP routes (the game's API, signed; or the internal API, behind its token) and fields on a player's profile |
 | The session | what a hook is handed (below, "What a mode may read off a session") | `accountId`, `modeEntry`, `floorPlan`, `floorIndex`, `floorCount`, `floorDoid`, `heroPosition`, `dungeonAccount.name` |
 | Records | `src/modes/records.js` — `createModeRecords` | what a mode keeps across restarts: `append`, `all`, `forAccount`, `version`; a record is `{ id, at, accounts, ... }` |
-| Run rules | `src/modes/run-rules.js` — `runRules`, `STOCK_RUN_RULES`, `SEAT_WORKER` (the core reads them in `src/socket/run-rules.js`) | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable`, `together`, `chestsKept`, `defeatCountdownSeconds` |
+| Run rules | `src/modes/run-rules.js` — `runRules`, `STOCK_RUN_RULES`, `SEAT_WORKER` (the core reads them in `src/socket/run-rules.js`) | the knobs: `mode`, `unlockCheck`, `pays.{experience,gold,chests,keys,trophies,gems}`, `revives`, `mapCredit`, `rankable`, `joinable`, `strangersUntil`, `together`, `chestsKept`, `defeatCountdownSeconds`, `treasure`, `treasureCount`, `chestMost` |
 | The mark | `request.mode`, `match.mode`, `session.modeEntry` | a mode's name travels on these, set by `routeEntry`, never read off the wire |
 | The floor plan | the shape `planFor` answers (below) | `floors[]` of `{ node, quiet, retile, numbered, harmless, npcLevel, tier, modifiers, healthBonus, damageBonus, attackSpeedBonus, lifeSteal, chestMost, treasure }`, `preloadArtFloors`, `preloadTileLibraries` |
 | The effect book | `config/ui-effects.json`, `src/modes/effects.js` — `playNotice`, `bookWords` | a notice `{ mode, type, variant? }` plays the event `<mode>.<type>[.<variant>]`; an event is `{ banner, sound, shake, zoom, countdown, floater, to, replacesChat }`; lines and parts; `strings` for installed clients |
@@ -72,6 +72,13 @@ mode may be installed at once: how their answers are put together is each
 hook's rule (`COMBINE` in hooks.js — a chain, the first answer, all agreeing,
 any saying yes, or every mode told). A mode's answer that throws is logged and
 replaced by the default: a mode's fault never fails a dungeon.
+
+An entry is one mode's. Once a mode has marked it (`mode` on the request), the
+`routeEntry` chain stops there and no later mode sees it: a player armed for one
+mode who presses JOIN on another's door gets the door's mode, and the arming
+waits for their own next entry. A mode's `routeEntry` should leave a marked
+request alone too (`if (request.mode) return request`), as delve's and one
+life's do.
 
 The hooks, in the order a run meets them:
 
@@ -131,6 +138,7 @@ import { friendDoorHooks } from "../modes/friend-door.js";
 
 const door = friendDoorHooks({
   id: 998,                                   // reserved: 1 to 999, never an account's
+  trophies: 998,                             // its place among the doors: higher first, 999 by default
   name: () => `DELVE (${inside()})`,         // read each time a list is answered
   where: 50005,                              // the node it is "in"; JOIN does not check it
   entry: (connection, request) => ({ ...request, mapNodeId: 50005, friendId: 0, mode: "delve" }),
@@ -143,9 +151,12 @@ client sorts online friends by trophies, and a door's are pinned above any),
 `loggedIn` says it is online and in a dungeon so JOIN is drawn, `routeEntry`
 turns JOIN on it into the mode's entry, and `isSystemAccount` keeps the id from
 ever being an account. A mode with a `routeEntry` of its own calls the door's
-from it. Install the door on every thread: lists are answered on the main
-thread in town and on a match worker in a dungeon. Ranked's MATCHMAKER (999) and
-delve's DELVE (998) are doors.
+from it. Doors sort among themselves by `trophies` (100 to 999, all above any
+player's dozen), so give a second door a lower number than the first: two
+alike come out in whatever order the client leaves them. Install the door on
+every thread: lists are answered on the main thread in town and on a match
+worker in a dungeon. Ranked's MATCHMAKER (999, trophies 999) and delve's DELVE
+(998, trophies 998) are doors.
 
 ## What a mode keeps
 
@@ -184,16 +195,35 @@ export const MY_RUN_RULES = runRules({
   mapCredit: false,              // the node is not marked done
   rankable: false,               // off the run boards
   joinable: false,               // friends cannot follow a player in
+  strangersUntil: 1,             // on how many first floors strangers are matched in; null: every floor
   together: false,               // true: every run of the mode on one worker (the seat)
   chestsKept: "report",          // "pickup": a chest is on the account as it is picked up
   defeatCountdownSeconds: null,  // seconds to be revived in once all are down; null: the node's own
+  treasure: null,                // what reward spots and boss chests pay: a treasure doober, or "none" for gold
+  treasureCount: null,           // how many reward spots pay a treasure; null: the node's MaxTreasure
+  chestMost: null,               // the best chest a treasure may be, 1 common to 4 legendary
 });
 ```
 
 Answer it from `modeRules(mode)` (by name) and `runRules(session)` (for a run
 of yours); everything unsaid is the game's own. These are the only knobs:
 experience, gold, chests, keys, trophies, gems, the unlock check, revives, map
-credit, the boards, joining, the seat, when a chest is kept, the defeat countdown.
+credit, the boards, joining, how long strangers may join, the seat, when a
+chest is kept, the defeat countdown, what a treasure is, how many there are, and
+how good a chest may be. A floor plan's own `treasure` and `chestMost` (below)
+win over the run's for their floor.
+
+`treasure` takes a treasure doober by id (30100..30105) or constant
+(`WOODEN_CHEST`, `SILVER_CHEST`, `GOLD_CHEST`, `DRAGON_CHEST`, `SMALL_ITEM_BOX`,
+`ROYAL_ITEM_BOX`), or `"none"`: the reward spots pay gold, and a boss's chest is
+its coins in one heap of gold (`GOLD_LARGE`), with no chest earned. What a map
+places by name is placed as it is. `treasureCount`, like the node's
+`MaxTreasure` it stands in for, is an allowance for a stretch of floors of one
+node: the whole run, or each node's floors where the plan's floors bring their
+own (`node`, below) — a boss rush owes each boss its own, though the same boss
+twice running would share one. It is kept by whoever builds the floor, so in a
+party a floor another member builds starts from a full one; that is the core's
+as it stands, mode or no mode.
 
 Answer `modeRules` on **every thread**, the main one included: with match
 workers on, the main thread admits the entry (the unlock check), answers who
@@ -243,9 +273,10 @@ What `planFor` returns is read by the core for any run:
 - `chestMost`: the best chest a treasure on this floor may be, 1 common to 4
   legendary; a better one is held down to it. Item boxes are not a rarity.
 - `treasure`: what every treasure on this floor is instead of the node's own —
-  the tiles' reward spots and a boss's chest alike — as a treasure doober id,
-  30100..30105: the four chests, then the small and the royal item box. How
-  many the floor pays is still the node's.
+  the tiles' reward spots and a boss's chest alike — as the run rules'
+  `treasure` takes it (above): a treasure doober by id or constant, or
+  `"none"` for gold. It wins over the run rules' for this floor. How many the
+  floor pays is the node's, or the run rules' `treasureCount`.
 - `modifiers`: the `DungeonModifier` ids active on this floor, in place of the
   Infinite schedule's. They do what they do on an Infinite floor, server and
   client alike, and one the floor before did not have shows as new. An id the
@@ -355,14 +386,15 @@ else — the rest is the core's and moves without notice:
 
 `src/modes/delve/index.js` is a whole mode written against this surface
 alone, and off unless asked for (`ODS_DELVE=1`): a boss rush for a party
-anybody may join. DELVE on the friend list is the way
-in (a friend door, with how many are inside); every
-floor is a boss's own map, drawn from the game data (`game-data.js`), never the
-same twice running, each harder (`npcLevel`, the three bonuses, a modifier every
-few bosses) and added from `floorCompleting` with `planAhead`; every few bosses
-leave a gift for the party (`party`, `gift`), its bosses pay item boxes rather
-than chests (`treasure`), and its deep milestones may leave a weapon gift at the
-depth's level (`weapon`); how deep each player went is kept
+anybody may join. DELVE on the friend list is the way in (a friend door, with
+how many are inside), and strangers are matched into a delve under way on its
+first five floors (`strangersUntil`). Every floor is a boss's own map, drawn from the game data
+(`game-data.js`), never the same twice running, each harder (`npcLevel`, the
+three bonuses, a modifier every few bosses) and added from `floorCompleting`
+with `planAhead`; every few bosses leave a gift for whoever fought that boss,
+by how many they fought (`party`, `gift`); its bosses pay item boxes rather
+than chests (`treasure`), and its deep milestones may leave a weapon gift at
+the depth's level (`weapon`); how deep each player went is kept
 (`createModeRecords`). It is the one to read for a mode that draws its own floors.
 
 ## The smallest mode: one life

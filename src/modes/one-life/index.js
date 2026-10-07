@@ -59,6 +59,8 @@ export const createOneLife = ({ show = () => null, say = () => {}, line = () => 
     routeEntry(connection, request) {
       const accountId = Number(connection?.accountId);
       if (!armed.has(accountId)) return request;
+      // Another mode's entry already: theirs, and the arming waits.
+      if (request?.mode) return request;
       // Joining somebody — a friend's run, or a mode's own row (MATCHMAKER) —
       // is their run, played by its rules: the arming waits for the player's own.
       if (Number(request?.friendId) || Number(request?.mapId)) return request;

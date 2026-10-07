@@ -15,6 +15,7 @@ import {
 import { readJsonFile } from "../json-file.js";
 import { loadNavigationLibrary } from "./navigation.js";
 import { info, warn } from "../log.js";
+import { runRulesOf } from "./run-rules.js";
 
 /**
  * Floor layouts ship with the client. `Resources/Levels/<theme>/<area>/
@@ -1110,14 +1111,47 @@ export const plannedNpcLevel = (session) => {
 /** The tier: the floor's, else the run's. */
 export const plannedTier = (session) => plannedFloorEntry(session)?.tier ?? session?.floorPlan?.tier ?? null;
 
-/**
- * What every reward of this floor pays instead of the node's own (a mode's
- * floor plan, `treasure`): one of the treasure doobers, 30100..30105 — the
- * four chests and the two item boxes — or null, the node's as ever.
- */
-export const plannedTreasure = (session) => {
-  const id = Number(plannedFloorEntry(session)?.treasure);
+/** The treasure doobers by constant: the four chests and the two item boxes, 30100..30105. */
+const TREASURE_DOOBERS = Object.freeze({
+  WOODEN_CHEST: 30100,
+  SILVER_CHEST: 30101,
+  GOLD_CHEST: 30102,
+  DRAGON_CHEST: 30103,
+  SMALL_ITEM_BOX: 30104,
+  ROYAL_ITEM_BOX: 30105,
+});
+
+/** A treasure as a floor plan or the run rules name it: its doober id, "none", or null for no choice. */
+const treasureChoice = (value) => {
+  if (value == null || value === "") return null;
+  if (String(value).toLowerCase() === "none") return "none";
+  const id = TREASURE_DOOBERS[value] ?? Number(value);
   return Number.isInteger(id) && id >= 30100 && id <= 30105 ? id : null;
+};
+
+/**
+ * What this floor's reward spots and boss chest pay instead of the node's own:
+ * the floor plan's `treasure`, else the run rules' (run-rules.js) — a treasure
+ * doober id, or "none" for gold in their place — or null, the node's as ever.
+ */
+export const plannedTreasure = (session) =>
+  treasureChoice(plannedFloorEntry(session)?.treasure) ?? treasureChoice(runRulesOf(session).treasure);
+
+/** How many of the run's reward spots pay a treasure, by the run rules; null for the node's own. */
+export const plannedTreasureCount = (session) => {
+  const value = runRulesOf(session).treasureCount;
+  // A number as text too, as `treasure` and `chestMost` take theirs.
+  const count = value == null || value === "" ? NaN : Number(value);
+  return Number.isInteger(count) && count >= 0 ? count : null;
+};
+
+/** The best chest a treasure may be (1..4): the floor plan's, else the run rules'; null for no limit. */
+export const plannedChestMost = (session) => {
+  for (const value of [plannedFloorEntry(session)?.chestMost, runRulesOf(session).chestMost]) {
+    const most = Number(value);
+    if (value != null && Number.isInteger(most) && most >= 1) return Math.min(4, most);
+  }
+  return null;
 };
 
 /** How many floors a run has. */

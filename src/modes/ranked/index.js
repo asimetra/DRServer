@@ -42,7 +42,34 @@ class RankedService {
      * — which the board on the website and the next start replay — catches up.
      */
     this.unwritten = [];
-    this.writing = false;
+    /**
+     * Every write of the log, one after the other. A decision is settled from a
+     * tick and from a run event alike, and two in flight at once could land in
+     * either order — one refused slowly while the next went straight in — and
+     * the log is replayed in its own order (rating.js, replayRatings).
+     */
+    this.writes = Promise.resolve();
+    this.writesOut = 0;
+  }
+
+  /**
+   * `write` once every write before it is done; its answer. With none out it
+   * starts at once, as a lone write always did: its append is under way by the
+   * time the event that made it returns to its caller (done there, for the
+   * memory store; on its way, for a file or the database).
+   */
+  serially(write) {
+    this.writesOut += 1;
+    const run = async () => {
+      try {
+        return await write();
+      } finally {
+        this.writesOut -= 1;
+      }
+    };
+    const done = this.writesOut === 1 ? run() : this.writes.then(run);
+    this.writes = done.catch(() => {});
+    return done;
   }
 
   /** Ratings from the log. Called once, before the service takes anybody. */
@@ -237,31 +264,30 @@ class RankedService {
   }
 
   /** Writes a decided match, or holds it for the next try; true once it is in the log. */
-  async keep(record) {
-    // Behind others still waiting: in order, or the log would replay them out of it.
-    if (this.unwritten.length) {
+  keep(record) {
+    return this.serially(async () => {
+      // Behind others still waiting: in order, or the log would replay them out of it.
+      if (this.unwritten.length) {
+        this.unwritten.push(record);
+        return false;
+      }
+      if (await this.records.append(record)) return true;
       this.unwritten.push(record);
+      warn(`ranked: match ${record.id} is held until the log takes it (${this.unwritten.length} waiting)`);
       return false;
-    }
-    if (await this.records.append(record)) return true;
-    this.unwritten.push(record);
-    warn(`ranked: match ${record.id} is held until the log takes it (${this.unwritten.length} waiting)`);
-    return false;
+    });
   }
 
   /** The held matches, oldest first, for as long as the log takes them. */
-  async writeHeld() {
-    if (this.writing || !this.unwritten.length) return;
-    this.writing = true;
-    try {
+  writeHeld() {
+    if (!this.unwritten.length) return Promise.resolve();
+    return this.serially(async () => {
       while (this.unwritten.length) {
         if (!(await this.records.append(this.unwritten[0]))) return;
         const written = this.unwritten.shift();
         info(`ranked: match ${written.id} written late (${this.unwritten.length} still waiting)`);
       }
-    } finally {
-      this.writing = false;
-    }
+    });
   }
 
   /** `{ [accountId]: { place, of } }` on the board as it stands; no place for somebody not on it. */
@@ -343,6 +369,8 @@ class RankedService {
       entry.race.voided(this.clock(), "server_stopped");
       await this.settle(entry);
     }
+    // Whatever is still being written finishes first: a refusal it ends in is held, and said below.
+    await this.writes;
     // A last try for what the log refused: what is still held now is lost with the process.
     await this.writeHeld();
     if (this.unwritten.length) {

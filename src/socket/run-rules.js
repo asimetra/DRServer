@@ -45,6 +45,14 @@ export const STOCK_RUN_RULES = Object.freeze({
   /** Friends may follow a player into the run. */
   joinable: true,
   /**
+   * On how many of the run's first floors strangers may be matched into it: 1,
+   * as the game does it — the first floor only; public filling stops once the
+   * run is under way, and only friends follow (`joinable`). A run that goes on
+   * long (delve) may take them a few floors in, and not deep; null for every
+   * floor.
+   */
+  strangersUntil: 1,
+  /**
    * Every run of the mode on one match worker, the seat (SEAT_WORKER), however
    * busy it is: for a mode whose runs reach each other — ranked starts a race
    * by moving two runs on together, so both have to be in the thread that does
@@ -64,6 +72,19 @@ export const STOCK_RUN_RULES = Object.freeze({
    * own (sixty; ten on Infinite). The client counts down from what it is sent.
    */
   defeatCountdownSeconds: null,
+  /**
+   * What a floor's reward spots (the maps' TREASURE and RANDOM_REWARD) and a
+   * boss's chest pay: null for the node's own; one of the treasure doobers —
+   * WOODEN_CHEST, SILVER_CHEST, GOLD_CHEST, DRAGON_CHEST, SMALL_ITEM_BOX,
+   * ROYAL_ITEM_BOX, by constant or id — for every one of them; or "none", gold
+   * in their place. A floor plan's own `treasure` wins over it. What a map
+   * places by name is placed as it is.
+   */
+  treasure: null,
+  /** How many of a run's reward spots pay a treasure; null for the node's own (MaxTreasure). */
+  treasureCount: null,
+  /** The best chest a treasure may be, 1 common to 4 legendary; null for no limit. A floor plan's own wins. */
+  chestMost: null,
 });
 
 /** The match worker every run of a `together` mode goes to. */

@@ -120,7 +120,9 @@ export const stockClientEntryHooks = ({
       const level = await heroLevelOf(account);
       if (!(level >= entry.minHeroLevel)) return { ok: false, reason: `hero level ${level} is under ${entry.minHeroLevel}` };
     }
-    if (entry.requireTutorial && !tutorialDoneFor(account)) return { ok: false, reason: "the tutorial is not done" };
+    // Asked of the account's game data, which may be read from disk: awaited,
+    // or a promise — always truthy — would pass everybody.
+    if (entry.requireTutorial && !(await tutorialDoneFor(account))) return { ok: false, reason: "the tutorial is not done" };
     return { ok: true };
   },
 

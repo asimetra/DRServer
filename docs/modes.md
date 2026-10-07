@@ -52,7 +52,8 @@ arrives as an in-game gift.
 - **The prize:** a gift from `MATCHMAKER`, waiting in town, by result and by the
   league the race left the player in (`rewards` in the settings).
 - **Rating and leagues:** Elo from 1000; Wooden, Silver from 1050, Gold from
-  1200, and Dragon for the top 3% of the board. `/rank` says the player's place
+  1200, and Dragon for the top 3% of the board (nobody, under 17 rated
+  players). `/rank` says the player's place
   and who leads. The board and each player's standing are on the internal API
   for a website (`/internal/v1/ranked/board`, and `ranked` on every profile).
 - **Who may enter:** anybody, unless the operator sets a least hero level or
@@ -71,15 +72,18 @@ harder than the last. The run goes on until the whole party is down, or walks
 out.
 
 - **Getting in:** JOIN on `DELVE`, or `/delve` in a dungeon for the next run.
-  Strangers are matched in before the first boss; a friend may JOIN a friend's
-  delve at any point.
+  JOIN puts the player into a delve already under way, if one with room is
+  still on its first five floors (a two-map boss counts as two); otherwise a
+  new delve starts. Deeper in, a delve is the party's: strangers are not
+  matched into it, though a friend may still JOIN a friend's delve at any point.
 - **The bosses:** every boss map in the game data but the tutorial's and the
   village defence, which is not a boss fight.
 - **How it hardens, per boss after the first:** monster level +6 (from 10),
   health +12%, damage +8%, attack speed +5% (never past three times); from the
   third boss the floor's toughest monsters heal a share of the damage they deal
-  (5%, rising 5% a boss, 40% at most); and every third boss adds one of the
-  game's own dungeon modifiers, which stays for the rest of the run.
+  (5%, rising 5% a boss, 40% at most); and the fourth boss, then every third
+  after it (the 7th, the 10th, ...), adds one of the game's own dungeon
+  modifiers, which stays for the rest of the run.
 - **Falling:** a downed party has 10 seconds to get back up, not the minute an
   ordinary dungeon gives.
 - **What it pays:** gold and experience as any run does. The bosses' treasure
@@ -87,14 +91,19 @@ out.
   each is the player's the moment it is picked up, since a delve has no report
   until it ends. No keys, trophy or gems, and no map credit.
 - **Gifts in town:** every third boss beaten leaves a gift for each player who
-  fought at least three bosses of the run: 5 Health Bombs at the third, a Party
-  Bomb at the sixth, and 5 gems from the ninth on — a few, since a delve can be
-  run again and again.
-- **Weapons:** from the tenth boss, every fifth may drop a weapon for each such
-  player (one chance in two): uncommon, rare from the fifteenth, legendary from
-  the twenty-fifth, at that boss's monster level (never above what the hero can
-  reach). It waits in town as a gift, and a full storage only keeps it waiting.
-- **What is kept:** how deep each player went, once a run.
+  fought that boss, by how many of the run's bosses they fought: 5 Health
+  Bombs for up to five, a Party Bomb for six to eight, and 5 gems for nine or
+  more — a few, since a delve can be run again and again. Somebody who joined
+  late gets the bombs at the next step, not the gems the run's depth would pay.
+  One who walked out and came back counts from their return; a dropped
+  connection keeps its count.
+- **Weapons:** from the tenth boss, every fifth may drop a weapon for each
+  player who fought it (one chance in two), at that boss's monster level (never
+  above what the hero can reach): uncommon, rare for those who fought fifteen
+  bosses, legendary for twenty-five. It waits in town as a gift, and a full
+  storage only keeps it waiting.
+- **What is kept:** how deep each player went, once a run: the first time
+  they fall with the party or walk out.
 
 The numbers are `DELVE_DEFAULTS` in `src/modes/delve/index.js`.
 

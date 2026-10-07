@@ -370,6 +370,8 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
     "partyBombsUsed",
     // The run's remaining chest allowance, rolled once from the node.
     "treasuresOwed",
+    // And which node's that was, for a plan whose floors bring their own (floor-collectables.js).
+    "treasuresOwedNode",
     "accountSettled",
     "completionAwarded",
     "receivedTrophy",

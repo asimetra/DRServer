@@ -746,3 +746,34 @@ test("a run has one mode: public filling keeps modes apart, and a run nobody may
   const open = registry.reserve({ session: player(5), mapNodeId: 50002, mode: "open" }).match;
   assert.equal(registry.reserve({ session: player(6), mapNodeId: 50002, mode: "open" }).match, open, "a mode that takes people in is filled from its own");
 });
+
+test("strangersUntil: strangers are matched into a run on its first that many floors; the game's own is the first alone", (t) => {
+  const rules = { three: { joinable: true, strangersUntil: 3 }, any: { joinable: true, strangersUntil: null }, stock: { joinable: true } };
+  const undo = Object.keys(rules).map((name) => installModeHooks(name, { modeRules: (mode) => rules[mode] ?? null }));
+  t.after(() => undo.forEach((fn) => fn()));
+  const registry = new DungeonMatchRegistry();
+  let next = 1;
+  const runOn = (mode, floorIndex) => {
+    const match = registry.reserve({ session: player(next++), mapNodeId: 50002, mode }).match;
+    match.floorIndex = floorIndex;
+    return match;
+  };
+  const filled = (mode, match) => registry.reserve({ session: player(next++), mapNodeId: 50002, mode }).match === match;
+
+  assert.equal(filled("three", runOn("three", 2)), true, "on its third floor");
+  assert.equal(filled("three", runOn("three", 3)), false, "not on its fourth");
+  assert.equal(filled("any", runOn("any", 40)), true, "null: any floor");
+  assert.equal(filled("stock", runOn("stock", 0)), true, "the game's own: the first floor");
+  assert.equal(filled("stock", runOn("stock", 1)), false, "and no further");
+});
+
+test("a delve takes strangers on its first five floors, and not after: deep in, it is the party's", async (t) => {
+  const { DELVE_RUN_RULES } = await import("../src/modes/delve/index.js");
+  t.after(installModeHooks("delve", { modeRules: (mode) => (mode === "delve" ? DELVE_RUN_RULES : null) }));
+  const registry = new DungeonMatchRegistry();
+  const delve = registry.reserve({ session: player(1), mapNodeId: 50002, mode: "delve" }).match;
+  delve.floorIndex = 4; // the fifth floor
+  assert.equal(registry.reserve({ session: player(2), mapNodeId: 50002, mode: "delve" }).match, delve, "JOIN finds the delve under way");
+  delve.floorIndex = 5; // the sixth
+  assert.notEqual(registry.reserve({ session: player(3), mapNodeId: 50002, mode: "delve" }).match, delve, "a delve of their own instead");
+});

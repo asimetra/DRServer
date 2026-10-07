@@ -35,13 +35,16 @@ test("the hooks: eighteen names, in the order a run meets them, each combined on
 });
 
 test("the run rules: these knobs and no others, and the game as shipped pays everything", () => {
-  assert.deepEqual(Object.keys(STOCK_RUN_RULES), ["mode", "unlockCheck", "pays", "revives", "mapCredit", "rankable", "joinable", "together", "chestsKept", "defeatCountdownSeconds"]);
+  assert.deepEqual(Object.keys(STOCK_RUN_RULES), [
+    "mode", "unlockCheck", "pays", "revives", "mapCredit", "rankable", "joinable", "strangersUntil", "together",
+    "chestsKept", "defeatCountdownSeconds", "treasure", "treasureCount", "chestMost",
+  ]);
   assert.deepEqual(Object.keys(STOCK_RUN_RULES.pays), ["experience", "gold", "chests", "keys", "trophies", "gems"]);
   assert.deepEqual(STOCK_RUN_RULES, {
     mode: null, unlockCheck: true,
     pays: { experience: true, gold: true, chests: true, keys: true, trophies: true, gems: true },
-    revives: true, mapCredit: true, rankable: true, joinable: true, together: false,
-    chestsKept: "report", defeatCountdownSeconds: null,
+    revives: true, mapCredit: true, rankable: true, joinable: true, strangersUntil: 1, together: false,
+    chestsKept: "report", defeatCountdownSeconds: null, treasure: null, treasureCount: null, chestMost: null,
   });
   const mine = runRules({ mode: "m", pays: { chests: false } });
   assert.equal(mine.pays.chests, false);
@@ -199,4 +202,9 @@ test("the friend door: the hooks it answers, its row, and its ids", async () => 
   assert.equal(door.routeEntry({}, other), other, "anybody else's JOIN is left alone");
   assert.equal(FRIEND_DOOR_ID_MOST, 999);
   assert.throws(() => friendDoorHooks({ id: 1000, entry: () => null }), /1 to 999/);
+  // Doors are ordered among themselves by `trophies` (the client sorts by them): 999 unless a door says.
+  assert.equal(door.friendList([])[0].trophies, 999);
+  const second = friendDoorHooks({ id: 991, name: "D2", trophies: 998, entry: (c, r) => r });
+  assert.equal(second.friendList([])[0].trophies, 998);
+  assert.throws(() => friendDoorHooks({ id: 991, trophies: 5000, entry: (c, r) => r }), /trophies/);
 });

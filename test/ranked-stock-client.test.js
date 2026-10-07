@@ -1338,7 +1338,8 @@ test("the gate: a least hero level and the tutorial, both off unless the operato
   const barred = setup({
     extraSettings: { entry: { minHeroLevel: 5, requireTutorial: true } },
     heroLevelOf: async (account) => account.level,
-    tutorialDoneFor: (account) => account.tutorial === true,
+    // Async, as setup.js wires it (players.js reads the game data).
+    tutorialDoneFor: async (account) => account.tutorial === true,
   });
   const { entryAllowed } = barred.adapter.hooks;
   assert.equal((await entryAllowed({ level: 3, tutorial: true })).ok, false);

@@ -179,6 +179,9 @@ export const spawnNpcRewards = (
   return spawned;
 };
 
+/** GOLD_LARGE: what a boss's chest is drawn as when the run pays no treasure. */
+const GOLD_HEAP = 30003;
+
 /**
  * Drops a map node's boss reward where its chest stood.
  *
@@ -192,9 +195,12 @@ export const spawnNpcRewards = (
 export const spawnBossReward = (session, { floorDoid, origin, node, random = Math.random }) => {
   if (!node || !floorDoid || !origin) return null;
 
-  // The floor plan's treasure, where it names one, stands in for the node's.
-  const dooberType = plannedTreasure(session) ?? Number(node.BossRewardTreasureId ?? 0);
-  if (!dooberType) return null;
+  // The floor plan's or the run rules' treasure stands in for the node's; with
+  // "none" the chest's coins are a heap of gold, and no chest.
+  const planned = plannedTreasure(session);
+  const treasure = planned === "none" ? 0 : planned ?? Number(node.BossRewardTreasureId ?? 0);
+  if (!treasure && !(planned === "none" && node.BossRewardTreasureId)) return null;
+  const dooberType = treasure || GOLD_HEAP;
 
   const doid = session.allocateDoid(CLID.DistributedDooberGameObject);
   trackDoober(session, doid, {
@@ -205,8 +211,10 @@ export const spawnBossReward = (session, { floorDoid, origin, node, random = Mat
     crowd: 0,
     hpPercentage: 0,
     mpPercentage: 0,
-    // Marks this as a chest to be earned, not just coins on the floor.
-    treasure: dooberType,
+    // Marks this as a chest to be earned, not just coins on the floor. With
+    // "none" it is 0: the heap is gold like any other, a pet may fetch it, and
+    // picking it up earns no chest (pickups.js, collectNearbyForPet).
+    treasure,
   });
   session.send(
     dooberGenerate({

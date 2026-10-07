@@ -116,3 +116,43 @@ test("a chain hands each mode the last one's answer in its own place, and every 
   assert.deepEqual(modeHooks.reportRows({ accountId: 9 }, ["own"], {}), ["own", "a", "b"]);
   assert.deepEqual(seen, [["a", 7], ["b", 7], ["a rows", 9], ["b rows", 9]], "the second mode still sees the connection, and the recipient");
 });
+
+test("an entry one mode has marked is that mode's: no later mode in the chain takes it over", async (t) => {
+  const { stockClientEntryHooks } = await import("../src/modes/ranked/stock-client/adapter.js");
+  const { createDelve } = await import("../src/modes/delve/index.js");
+  const { createOneLife } = await import("../src/modes/one-life/index.js");
+  const oneLife = createOneLife();
+  const delve = createDelve({ bosses: [{ node: { Id: 50004 }, floors: [{ authored: "x.json" }] }], tellPresence: () => {} });
+  // The registry's own order (modes/index.js): one life, ranked, delve.
+  installed(
+    t,
+    ["onelife", oneLife.hooks],
+    ["ranked", stockClientEntryHooks({ settings: { lobbyNode: 50003, entry: {} }, waiting: () => 0 })],
+    ["delve", delve.hooks]
+  );
+
+  delve.arm(7);
+  const matchmaker = modeHooks.routeEntry({ accountId: 7 }, { mapNodeId: 0, friendId: 999, mapId: 0, friendOnly: 0 });
+  assert.equal(matchmaker.mode, "ranked", "JOIN on MATCHMAKER is ranked, whatever the player armed");
+  assert.equal(matchmaker.mapNodeId, 50003);
+  assert.equal(delve.armed(7), true, "and the delve waits for the player's own next run");
+
+  oneLife.arm(8);
+  delve.arm(8);
+  const plain = modeHooks.routeEntry({ accountId: 8 }, { mapNodeId: 50010, friendId: 0, mapId: 0 });
+  assert.equal(plain.mode, "onelife", "the first mode to mark it keeps it");
+  assert.equal(plain.mapNodeId, 50010);
+  assert.equal(delve.armed(8), true, "the other arming is not spent on a run it did not get");
+});
+
+test("the chain itself stops at the first mark: a later mode with no guard of its own never sees the entry", (t) => {
+  const seen = [];
+  installed(
+    t,
+    ["marks", { routeEntry: (connection, request) => ({ ...request, mode: "marks" }) }],
+    // Takes everything over, as a careless mode would.
+    ["careless", { routeEntry: (connection, request) => (seen.push(request.mode), { ...request, mode: "careless" }) }]
+  );
+  assert.equal(modeHooks.routeEntry({ accountId: 7 }, { mapNodeId: 1 }).mode, "marks");
+  assert.deepEqual(seen, [], "never asked");
+});

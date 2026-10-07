@@ -47,6 +47,10 @@ export const DELVE_RUN_RULES = runRules({
   mapCredit: false,
   rankable: false,
   joinable: true,
+  // Strangers are matched into a delve under way on its first five floors, or
+  // every JOIN after the first boss would be a delve alone — and not deeper,
+  // where walking in would be walking off with what a party fought down to.
+  strangersUntil: 5,
   // The report comes only when the party falls: a box is the player's as it is picked up.
   chestsKept: "pickup",
   // Ten seconds to be got back up, as Infinite gives, not the minute a dungeon does.
@@ -90,10 +94,12 @@ export const DELVE_DEFAULTS = Object.freeze({
     "INFINITE_ICE_BOMBS", "INFINITE_DANGEROUS_DEATHS", "INFINITE_HEALTH_SCARE", "INFINITE_REGEN_NEGATION",
   ],
   /**
-   * A gift every this many bosses beaten, by how deep: the offer of the
-   * deepest step reached. What a delve itself runs on early (bombs to get the
-   * party back up), and a few gems deeper down — a few, as a delve can be run
-   * again and again. `name` is what the line calls it.
+   * A gift every this many bosses beaten, for everybody who fought that boss:
+   * the offer of the deepest step the player's own count of bosses fought
+   * reaches, the first for one who joined late (giftFor). What a delve itself
+   * runs on early (bombs to get the party back up), and a few gems deeper down
+   * — a few, as a delve can be run again and again. `name` is what the line
+   * calls it.
    */
   giftEvery: 3,
   gifts: [
@@ -103,8 +109,9 @@ export const DELVE_DEFAULTS = Object.freeze({
   ],
   /**
    * A weapon may drop on the milestones — from the `from`th boss, every
-   * `every`th — for each player there, at `chance`; of the deepest `rarities`
-   * step reached, and at that boss's monster level (the hero's last at most).
+   * `every`th — for each player who fought that boss, at `chance`; of the
+   * deepest `rarities` step the player's own count reaches (uncommon for one
+   * who joined late), and at that boss's monster level (the hero's last at most).
    * It waits in town as a gift, as the others do.
    */
   items: {
@@ -124,23 +131,39 @@ export const DELVE_DEFAULTS = Object.freeze({
   giftFrom: 0,
   /** The friend door's id (modes/friend-door.js): reserved, under 1000; MATCHMAKER is 999. */
   doorId: 998,
+  /** Its place among the doors on a friend list: under MATCHMAKER's 999 (friend-door.js). */
+  doorTrophies: 998,
 });
 
-/** The gift for having beaten `beaten` bosses, or null when it is not a gift step. */
-export const giftFor = (beaten, settings = DELVE_DEFAULTS) => {
+/**
+ * The deepest of `steps` (each `{ from }`) that `fought` bosses reach — the
+ * first, for somebody who fought fewer than it asks — or null with none fought.
+ */
+const stepFor = (steps, fought) => (fought > 0 ? steps.filter((step) => fought >= step.from).at(-1) ?? steps[0] ?? null : null);
+
+/**
+ * The gift a player gets when the run's `beaten`th boss falls, having fought
+ * `fought` of its bosses (all of them, unless said): null when it is not a
+ * gift step. The step is the run's — every third boss — and what it pays is
+ * the player's own: somebody matched in deep gets the first gift at the next
+ * step, and the gems are for those who fought their way down to them.
+ */
+export const giftFor = (beaten, settings = DELVE_DEFAULTS, fought = beaten) => {
   if (!(beaten > 0) || beaten % settings.giftEvery !== 0) return null;
-  const earned = settings.gifts.filter((step) => beaten >= step.from);
-  return earned.length ? earned[earned.length - 1] : null;
+  return stepFor(settings.gifts, fought);
 };
 
 /**
- * The weapon the `beaten`th boss may drop, `{ rarity, level }`, or null when it
- * is not a milestone. Whether it drops is the roll's, not this.
+ * The weapon the `beaten`th boss may drop for a player who fought `fought` of
+ * the run's bosses, `{ rarity, level }`, or null when it is not a milestone.
+ * The milestone and the level are the run's (that boss's monster level); the
+ * rarity is the player's own, as a gift's is: the first, uncommon, for
+ * somebody who joined late. Whether it drops is the roll's, not this.
  */
-export const itemFor = (beaten, settings = DELVE_DEFAULTS) => {
+export const itemFor = (beaten, settings = DELVE_DEFAULTS, fought = beaten) => {
   const items = settings.items;
   if (!items || !(beaten >= items.from) || (beaten - items.from) % items.every !== 0) return null;
-  const step = items.rarities.filter((entry) => beaten >= entry.from).at(-1);
+  const step = stepFor(items.rarities, fought);
   return step ? { rarity: step.rarity, level: difficultyAt(beaten, settings).npcLevel } : null;
 };
 
@@ -242,11 +265,17 @@ export const createDelve = ({
    */
   const runOf = new Map();
 
-  /** How deep a player went, kept once per run: on falling with the party, or on walking out. */
-  const keep = (session) => {
+  /**
+   * How deep a player went, kept once per run: on falling with the party, or on
+   * walking out. `forget`: whether coming back counts from the return — yes for
+   * walking out, no for a dropped connection, which nobody chose.
+   */
+  const keep = (session, { forget = true } = {}) => {
     const accountId = idOf(session);
     const state = stateOf(session) ?? runOf.get(accountId);
     if (runOf.delete(accountId)) countChanged();
+    // Walked out: coming back, they have fought from their return (a gift is for bosses fought).
+    if (forget) state?.since.delete(accountId);
     if (!state || !records || !accountId || state.kept.has(accountId)) return;
     state.kept.add(accountId);
     records
@@ -275,6 +304,7 @@ export const createDelve = ({
     id: settings.doorId,
     name: () => (insideNow() > 0 ? `DELVE (${insideNow()})` : "DELVE"),
     where: entryNode,
+    trophies: settings.doorTrophies ?? 998,
     tellPresence,
     entry: (connection, request) => delveEntry(request),
   });
@@ -285,6 +315,8 @@ export const createDelve = ({
     isSystemAccount: door.isSystemAccount,
     routeEntry(connection, request) {
       if (Number(request?.friendId) === settings.doorId) return door.routeEntry(connection, request);
+      // Another mode's entry already (MATCHMAKER's JOIN): theirs, and the arming waits.
+      if (request?.mode) return request;
       const accountId = Number(connection?.accountId);
       if (!armed.has(accountId)) return request;
       // Joining somebody keeps the arming for the player's own next run, as one life does.
@@ -351,32 +383,29 @@ export const createDelve = ({
       const beaten = state.depth;
       state.depth += 1;
       controls.planAhead(session, step(state));
-      // Only to those standing in the run now who fought at least a gift's worth of its bosses:
-      // a friend joining just before a milestone does not walk off with its prize.
-      const earners = controls.party(session).filter(
-        (member) => beaten - (state.since.get(idOf(member)) ?? state.depth) + 1 >= settings.giftEvery
-      );
-      const gift = giftFor(beaten, settings);
-      if (gift) {
-        for (const member of earners) {
-          Promise.resolve(controls.gift(member, gift.offerId, { from: settings.giftFrom })).catch(() => null);
-          const what = gift.name ?? "a gift";
-          tell(member, "gift", { beaten, what }, `Delve: ${beaten} bosses beaten - ${what} waits in town.`);
-        }
+      // Whoever stands in the run now and fought this boss, each by how many of the
+      // run's bosses they fought: one who came in for it is paid as a newcomer.
+      const earners = controls.party(session)
+        .map((member) => ({ member, fought: beaten - (state.since.get(idOf(member)) ?? state.depth) + 1 }))
+        .filter(({ fought }) => fought > 0);
+      for (const { member, fought } of earners) {
+        const gift = giftFor(beaten, settings, fought);
+        if (!gift) continue;
+        Promise.resolve(controls.gift(member, gift.offerId, { from: settings.giftFrom })).catch(() => null);
+        const what = gift.name ?? "a gift";
+        tell(member, "gift", { beaten, what }, `Delve: ${beaten} bosses beaten - ${what} waits in town.`);
       }
-      const item = itemFor(beaten, settings);
-      if (item) {
-        for (const member of earners) {
-          if (random() >= settings.items.chance) continue;
-          const rarity = item.rarity.toLowerCase();
-          Promise.resolve(controls.weapon(member, { ...item, from: settings.giftFrom }))
-            .then((gift) => {
-              if (!gift) return;
-              const level = gift.weapon?.requiredlevel ?? item.level;
-              tell(member, "item", { beaten, rarity, level }, `Delve: boss ${beaten} dropped a ${rarity} weapon, level ${level} - it waits in town.`);
-            })
-            .catch(() => null);
-        }
+      for (const { member, fought } of earners) {
+        const item = itemFor(beaten, settings, fought);
+        if (!item || random() >= settings.items.chance) continue;
+        const rarity = item.rarity.toLowerCase();
+        Promise.resolve(controls.weapon(member, { ...item, from: settings.giftFrom }))
+          .then((gift) => {
+            if (!gift) return;
+            const level = gift.weapon?.requiredlevel ?? item.level;
+            tell(member, "item", { beaten, rarity, level }, `Delve: boss ${beaten} dropped a ${rarity} weapon, level ${level} - it waits in town.`);
+          })
+          .catch(() => null);
       }
       return true;
     },
@@ -388,7 +417,7 @@ export const createDelve = ({
       }
       keep(session);
     },
-    runLeft: keep,
+    runLeft: (session, how) => keep(session, { forget: how !== "dropped" }),
   };
 
   /** Arms (`on`) or disarms the account's next entry; whether it is armed now, or null for no account. */

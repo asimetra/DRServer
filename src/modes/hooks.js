@@ -116,6 +116,15 @@ const COMBINE = Object.freeze({
  */
 const CHAINED_ARGUMENT = Object.freeze({ routeEntry: 1, friendList: 0, reportRows: 1 });
 
+/**
+ * Where a chain stops early: an entry a mode has marked (`mode`) is that
+ * mode's. A later mode taking it over is a player armed for one mode (`/delve`)
+ * pressing JOIN on another's door (MATCHMAKER) and landing in the first — and
+ * spending another mode's arming on a run it did not get. The first mark wins;
+ * whatever else the player armed waits for their next entry.
+ */
+const CHAIN_SETTLED = Object.freeze({ routeEntry: (request) => Boolean(request?.mode) });
+
 /** mode name -> its guarded answers */
 const modes = new Map();
 
@@ -168,7 +177,9 @@ const dispatch = (name) => {
       case "chain": {
         const at = CHAINED_ARGUMENT[name] ?? 0;
         const call = [...args];
+        const settled = CHAIN_SETTLED[name] ?? (() => false);
         for (const answers of modes.values()) {
+          if (settled(call[at])) break;
           if (!answers[name]) continue;
           const next = answers[name](...call);
           if (next != null) call[at] = next;

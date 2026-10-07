@@ -3,7 +3,7 @@ import { treasureForTier, dooberForConstant, mapNode, dooberById } from "../game
 import { CLID } from "./opcodes.js";
 import { trackDoober } from "./pickups.js";
 import { warn } from "../log.js";
-import { plannedTreasure } from "./floors.js";
+import { plannedFloorEntry, plannedTreasure, plannedTreasureCount } from "./floors.js";
 
 /**
  * The treasures and doobers a floor places: which placements are rewards,
@@ -87,11 +87,25 @@ export const isRewardPlaceholder = (constant) => REWARD_PLACEHOLDERS.has(constan
  */
 const rewardForPlacement = async (session, placement, node) => {
   const random = session.random ?? Math.random;
-  session.treasuresOwed ??= treasuresOwedFor(node);
+  /**
+   * How many: the run rules' count where they give one (run-rules.js), else the
+   * node's — counted once for the run, or once for each node's stretch where
+   * the plan's floors bring their own (modes/README.md, `node`). An endless run
+   * of bosses (delve) is one boss after another, each with its own allowance;
+   * counted once, the first boss's would have stood for the whole run. Kept on
+   * the session that builds the floor, not the world: in a party, a floor
+   * another member builds starts from a full allowance (modes/README.md).
+   */
+  const countedFor = plannedFloorEntry(session)?.node?.Id ?? null;
+  if (session.treasuresOwed == null || session.treasuresOwedNode !== countedFor) {
+    session.treasuresOwed = plannedTreasureCount(session) ?? treasuresOwedFor(node);
+    session.treasuresOwedNode = countedFor;
+  }
+  // What: the floor plan's or the run rules' treasure where they name one; "none" pays gold.
+  const planned = plannedTreasure(session);
 
-  if (session.treasuresOwed > 0) {
-    // A floor plan that names its treasure pays that, whatever the node would.
-    const rewardId = plannedTreasure(session) ?? Number(node?.BossRewardTreasureId ?? 0);
+  if (session.treasuresOwed > 0 && planned !== "none") {
+    const rewardId = planned ?? Number(node?.BossRewardTreasureId ?? 0);
     const treasure =
       (rewardId && (await dooberById(rewardId))) ||
       (await treasureForTier(node?.TierRank, random));

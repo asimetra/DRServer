@@ -16,6 +16,7 @@ import { followRunSave } from "./run-saves.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { config } from "../config.js";
 import { runRulesOf } from "./run-rules.js";
+import { plannedChestMost } from "./floors.js";
 
 export { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 
@@ -585,7 +586,7 @@ export const awardTreasureChest = async (session, dooberType) => {
 
   // No better than this floor allows (a mode's floor plan, `chestMost`: 1 common
   // to 4 legendary). The two item boxes above the four are not rarities, and stay.
-  const most = Number(session.floorPlan?.floors?.[session.floorIndex ?? 0]?.chestMost);
+  const most = plannedChestMost(session);
   const capped =
     Number.isInteger(most) && most >= 1 && chestId < FIRST_CHEST + 4
       ? Math.min(chestId, FIRST_CHEST + Math.min(4, most) - 1)

@@ -151,14 +151,14 @@ test("the tenth boss may drop a weapon gift for whoever fought for it", async ()
   delve.hooks.heroRequested(full);
   session.party = [session, full];
   for (let i = 0; i < 9; i++) clear(session);
-  // A friend arriving for the tenth boss alone gets nothing of it.
+  // A friend arriving for the tenth boss rolls too: they fought it.
   const late = { ...full, accountId: 9, pileFull: false, floorIndex: session.floorIndex };
   delve.hooks.heroRequested(late);
   session.party = [session, full, late];
   clear(session);
   await new Promise((resolve) => setImmediate(resolve));
   const asked = { rarity: "UNCOMMON", level: 64, from: 0 };
-  assert.deepEqual(controls.weapons, [[7, asked], [8, asked]], "from nobody's account, as the gifts");
+  assert.deepEqual(controls.weapons, [[7, asked], [8, asked], [9, asked]], "from nobody's account, as the gifts");
   assert.ok(controls.said.some(([id, text]) => id === 7 && /dropped a uncommon weapon, level 64 - it waits in town/.test(text)));
   assert.ok(!controls.said.some(([id, text]) => id === 8 && /weapon/.test(text)), "no gift given, nothing said of one");
 });
@@ -186,8 +186,9 @@ test("how deep each player went is kept once a run, on falling or on walking out
   assert.deepEqual((await records.forAccount(9)).map((r) => r.beaten), [1], "walking out keeps it too, found by account");
 });
 
-test("its rules: anybody may join, no trophy, keys or gems, nothing marked", () => {
+test("its rules: anybody may join, strangers early on; no trophy, keys or gems, nothing marked", () => {
   assert.equal(DELVE_RUN_RULES.joinable, true);
+  assert.equal(DELVE_RUN_RULES.strangersUntil, 5, "strangers are matched into a delve on its first five floors, not deeper");
   assert.equal(DELVE_RUN_RULES.unlockCheck, false);
   assert.deepEqual([DELVE_RUN_RULES.pays.keys, DELVE_RUN_RULES.pays.trophies, DELVE_RUN_RULES.pays.gems], [false, false, false]);
   assert.equal(DELVE_RUN_RULES.pays.gold, true);
@@ -207,6 +208,11 @@ test("difficulty and gifts by the numbers", () => {
   assert.equal(giftFor(3).offerId, 51306, "bombs early: what a delve runs on");
   assert.equal(giftFor(9).offerId, 51250, "a few gems deep down");
   assert.equal(giftFor(30).offerId, 51250, "and never more: a delve can be run again and again");
+  assert.equal(giftFor(9, DELVE_DEFAULTS, 2).offerId, 51306, "two fought at the ninth: the first gift");
+  assert.equal(giftFor(9, DELVE_DEFAULTS, 0), null, "none fought: nothing");
+  assert.equal(itemFor(25, DELVE_DEFAULTS, 1).rarity, "UNCOMMON", "a legendary step reached on the first boss fought: uncommon");
+  assert.equal(itemFor(25, DELVE_DEFAULTS, 1).level, 154, "at the boss's level all the same");
+  assert.equal(itemFor(25, DELVE_DEFAULTS, 0), null);
   assert.deepEqual([9, 11, 12, 14].map((d) => itemFor(d)), [null, null, null, null], "a weapon only on the milestones");
   assert.deepEqual(itemFor(10), { rarity: "UNCOMMON", level: 64 }, "at the boss's monster level");
   assert.deepEqual(itemFor(15), { rarity: "RARE", level: 94 });
@@ -230,6 +236,7 @@ test("the way in is DELVE on the friend list: first, online in a dungeon, and JO
   assert.equal(row.name, "DELVE");
   assert.equal(row.is_online, true);
   assert.equal(row.current_dungeon, delve.entryNode, "in a dungeon: the client draws JOIN");
+  assert.equal(row.trophies, 998, "under MATCHMAKER's 999: the two doors keep one order on every list");
   assert.deepEqual(rest.map((friend) => friend.account_id), [5], "any stored copy dropped");
   delve.hooks.loggedIn({ accountId: 7 });
   assert.deepEqual(presence, [[7, 998, delve.entryNode]]);
@@ -255,7 +262,7 @@ test("what each worker counts is added up where friend lists are answered", () =
   assert.equal(delve.inside(), 3, "worker 1's latest replaces its earlier count");
 });
 
-test("a gift is for bosses fought: somebody arriving just before a gift step gets nothing of it", async () => {
+test("a gift step pays whoever fought its boss, by how many they fought: a late arrival gets the first gift, not the deep one", async () => {
   const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
   const { session } = await enter(7);
   clear(session); // boss 1 beaten
@@ -266,10 +273,38 @@ test("a gift is for bosses fought: somebody arriving just before a gift step get
   clear(session); // boss 2
   clear(session); // boss 3: the first gift step
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(controls.gifts.map(([who]) => who), [7], "only the one who fought three bosses");
+  assert.deepEqual(controls.gifts.map(([who, offer]) => [who, offer]), [[7, 51306], [8, 51306]], "both there for it: bombs");
   clear(session); clear(session); clear(session); // up to boss 6
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(controls.gifts.map(([who]) => who), [7, 7, 8], "by the next step the friend has fought enough");
+  assert.deepEqual(
+    controls.gifts.slice(2).map(([who, offer]) => [who, offer]),
+    [[7, 51369], [8, 51306]],
+    "six fought, a Party Bomb; five fought, still the first gift"
+  );
+});
+
+test("a stranger matched in deep gets the first gift at the next step, never the gems the run's depth would pay", async () => {
+  const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
+  const { session } = await enter(7);
+  for (let i = 0; i < 7; i++) clear(session); // bosses 1 to 7
+  const stranger = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: session.floorIndex, floorPlan: session.floorPlan, floorCount: session.floorCount };
+  delve.hooks.heroRequested(stranger); // in for boss 8
+  session.party = [session, stranger];
+  clear(session); clear(session); // bosses 8 and 9
+  await new Promise((resolve) => setImmediate(resolve));
+  const atNine = controls.gifts.slice(-2).map(([who, offer]) => [who, offer]);
+  assert.deepEqual(atNine, [[7, 51250], [8, 51306]], "the gems for nine fought, the bombs for two");
+});
+
+test("somebody who arrives after the gift step's boss is beaten gets nothing of it", async () => {
+  const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
+  const { session } = await enter(7);
+  clear(session); clear(session); // bosses 1, 2
+  // Not here for boss 3: listed in the party as it ends, but never stood on its floor.
+  session.party = [session, { accountId: 8, modeEntry: DELVE_MODE }];
+  clear(session); // boss 3
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(controls.gifts.map(([who]) => who), [7]);
 });
 
 test("what happens is told through the effect book: its event, then its line, the words falling back when it has none", async () => {
@@ -310,4 +345,49 @@ test("what happens is told through the effect book: its event, then its line, th
   assert.ok(said.some((line) => /BEEFY BROS/.test(line)));
   delve.hooks.runFailed(session);
   assert.equal(shown.at(-1), "delve.lost");
+});
+
+test("a player who walks out and comes back has fought from their return, not from their first arrival", async () => {
+  const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
+  const { session } = await enter(7);
+  // A friend there from the first boss walks out after it, and comes back for the fifth.
+  const friend = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: 0, floorPlan: session.floorPlan, floorCount: session.floorCount };
+  delve.hooks.heroRequested(friend);
+  session.party = [session, friend];
+  clear(session); // boss 1
+  delve.hooks.runLeft({ accountId: 8 }, "left");
+  session.party = [session];
+  clear(session); clear(session); clear(session); // bosses 2 to 4
+  const back = { ...friend, floorIndex: session.floorIndex };
+  delve.hooks.heroRequested(back);
+  session.party = [session, back];
+  clear(session); clear(session); // bosses 5 and 6: the second gift step
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    controls.gifts.slice(-2).map(([who, offer]) => [who, offer]),
+    [[7, 51369], [8, 51306]],
+    "two bosses since coming back: the first gift, not the Party Bomb"
+  );
+});
+
+test("a dropped connection is not walking out: back in the same delve, the bosses fought before still count", async () => {
+  const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2)] });
+  const { session } = await enter(7);
+  const friend = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: 0, floorPlan: session.floorPlan, floorCount: session.floorCount };
+  delve.hooks.heroRequested(friend);
+  session.party = [session, friend];
+  clear(session); // boss 1
+  delve.hooks.runLeft({ accountId: 8 }, "dropped");
+  session.party = [session];
+  clear(session); clear(session); clear(session); // bosses 2 to 4
+  const back = { ...friend, floorIndex: session.floorIndex };
+  delve.hooks.heroRequested(back);
+  session.party = [session, back];
+  clear(session); clear(session); // bosses 5 and 6
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    controls.gifts.slice(-2).map(([who, offer]) => [who, offer]),
+    [[7, 51369], [8, 51369]],
+    "there since the first boss, as far as the gift goes"
+  );
 });
