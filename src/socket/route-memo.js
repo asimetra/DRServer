@@ -48,10 +48,13 @@ export const colliderSetKey = (navigation) => {
   if (!(navigation?.triggerGroups instanceof Map) || !(navigation.obstacles instanceof Map)) {
     return null;
   }
-  let key = "";
-  for (const group of navigation.triggerGroups.values()) key += group.on ? "1" : "0";
-  for (const colliders of navigation.obstacles.values()) key += `|${serialOf(colliders)}`;
-  return key;
+  // Joined, not appended: a string grown a character at a time is kept as a
+  // chain of pieces until something compares it, and a key that is never hit
+  // again held about 10 KB that way instead of half of one.
+  const parts = [];
+  for (const group of navigation.triggerGroups.values()) parts.push(group.on ? "1" : "0");
+  for (const colliders of navigation.obstacles.values()) parts.push(`|${serialOf(colliders)}`);
+  return parts.join("");
 };
 
 const copyOf = (path) => path.map((point) => ({ ...point }));

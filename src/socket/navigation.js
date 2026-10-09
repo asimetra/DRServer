@@ -1669,7 +1669,8 @@ export const findPath = (navigation, start, goal, radius = 0) => {
    *
    * The step between two anchors has to be walkable, centres included: a thin
    * slanted board can run between two clear centres. Answers are kept per
-   * radius until the floor's colliders change, so each is worked out once. When
+   * radius, and a collider change forgets only those within its reach
+   * (`forgetAround`), so each is worked out once per change near it. When
    * the straight step clips the wall — the
    * anchor in a doorway sits to one side of the centres above and below it — a
    * right-angled one is tried through either corner of the pair, which is the
