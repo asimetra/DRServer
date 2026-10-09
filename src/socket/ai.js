@@ -10,6 +10,7 @@ import { heroMembersOf, matchStateOf, worldOf } from "./match-world.js";
 import { collectNearbyForPet } from "./pickups.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
 import {
+  collisionPointOf,
   hasLineOfSight,
   isPositionBlocked,
   moveWithNavigation,
@@ -201,6 +202,37 @@ const heroReach = (actor, hero) => {
     contact,
     ...attacksOf(actor.ai ?? {}).map((attack) => attackReach(attack, contact))
   );
+};
+
+/**
+ * Whether a swing from here can see its victim: a hero's feet or its body.
+ *
+ * A hero's wire position is its feet and its body is the circle 22 units above
+ * them (`collisionPointOf`). The client keeps that body out of the walls, not
+ * the feet, so a hero leaning on a wall *below* it has its feet on the wall's
+ * edge or a unit or two inside it. A sight line to the feet alone then ends
+ * inside the wall and every monster around reads the hero as behind it: they
+ * walk up to contact and stand there. In one played floor (nordic caves, seed
+ * 169884306) monsters spent 226 monster-seconds within 100 units of a hero
+ * leaning on NORDIC_CAVE_WALL_B/D and landed 4 hits, against 0.76 a second
+ * when the feet were clear. The official keeps swinging there: across the 96
+ * official captures, with the feet inside this server's geometry at a wall
+ * below, monsters within 100 units attacked 0.61 times a monster-second,
+ * against 0.75 elsewhere.
+ *
+ * The feet are still asked first, so nothing that could be hit before is safe
+ * now; the body only adds the hero whose feet are in the wall. A wall between
+ * the monster and the hero hides both: the body is 22 above feet that are at
+ * most on the near edge of a wall below, and 22 nearer a wall above them.
+ *
+ * Only for heroes. A monster's position is the point this server's own
+ * navigation keeps clear of the walls, so it is already the right end.
+ */
+const victimInSight = (navigation, actor, victim, target, heroDoids) => {
+  if (hasLineOfSight(navigation, actor.position, target, 0)) return true;
+  if (!heroDoids.has(victim.doid)) return false;
+  const body = collisionPointOf(victim.actor, target);
+  return Boolean(body) && body !== target && hasLineOfSight(navigation, actor.position, body, 0);
 };
 
 /** A clear authored-range point around the target for one teleport cycle. */
@@ -1574,12 +1606,8 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       continue;
     }
 
-    const clearAttack = stationary || hasLineOfSight(
-      state.navigation,
-      actor.position,
-      target,
-      0
-    );
+    const clearAttack =
+      stationary || victimInSight(state.navigation, actor, victim, target, heroDoids);
     if (distance > heroReach(actor, victim.actor) || !clearAttack) {
       // Walking straight at a hero it has no route to is still "blocked":
       // that is what the floor command and the debug line want to know.
