@@ -817,6 +817,22 @@ export const restrictedAccounts = async () => {
 };
 
 /**
+ * The accounts whose browser-client access (src/web-client-access.js) is in
+ * `state`: the longest waiting first, or the most recently decided.
+ */
+export const webClientAccounts = async (state, limit) => {
+  const order = state === "pending" ? "web_client->>'requested_at' ASC" : "web_client->>'at' DESC";
+  const { rows } = await connect().query(
+    `SELECT id, name, web_client FROM accounts
+      WHERE web_client->>'state' = $1
+      ORDER BY ${order}
+      LIMIT $2`,
+    [state, limit]
+  );
+  return rows.map((row) => ({ account_id: Number(row.id), name: row.name, access: row.web_client }));
+};
+
+/**
  * An account deleted at its player's request (src/account-deletion.js): its row
  * and, by cascade, every child of it; its standings and run history; and its
  * name from the market history, whose sales stay for the other side.

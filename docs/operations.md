@@ -136,6 +136,36 @@ button:
 - The pass opens the files and nothing else; it is not a game credential.
 - Leave the gate off when the client is opened by hand with no website in front.
 
+#### Letting players into the browser client
+
+A host who wants to choose who plays in the browser sets
+`ODS_WEB_CLIENT_APPROVAL=1` beside the gate:
+
+- An account is given a Play link only once it has been let in. Signing up, and
+  playing with the desktop client, are unchanged.
+- The player asks on the website. A helper or an admin sees who is waiting and
+  says yes or no. Either answer can be changed later.
+- A no ends a browser game already under way, as signing out of the website
+  does. Asking again does not undo it.
+- Helpers and admins are always let in.
+- Every answer is in the action log, as `web-client.approve` or
+  `web-client.deny`, under the helper who gave it.
+
+A helper may answer these requests and nothing else an admin can do. An admin
+makes one from the website's admin pages (find the player, then Permissions),
+which calls `PUT /internal/v1/accounts/:id/role`. An admin cannot change their
+own rank there, nor that of an account named in `ODS_ADMIN_ACCOUNTS`.
+
+Turning approval on for a server people already play in the browser leaves
+every one of them without Play until they ask. To let in every account that
+exists at that moment, on PostgreSQL:
+
+```sql
+UPDATE accounts
+   SET web_client = jsonb_build_object('state', 'approved', 'by', 0, 'at', now())
+ WHERE web_client IS NULL;
+```
+
 ### The desktop client behind https
 
 The desktop client's game socket is plain TCP with no TLS. An https proxy
@@ -239,11 +269,15 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 | `POST /internal/v1/accounts` | Register an account and return its id and token |
 | `GET /internal/v1/accounts/:id` | Read the account as the client receives it |
 | `DELETE /internal/v1/accounts/:id` | Delete an account (see [Deleting an account](#deleting-an-account)) |
-| `GET /internal/v1/accounts/:id/summary` | Read a web-ready account and active-hero summary, with its restriction and whether it is an admin |
+| `GET /internal/v1/accounts/:id/summary` | Read a web-ready account and active-hero summary, with its restriction, whether it is an admin or a helper, and whether it may open the browser client |
 | `GET /internal/v1/accounts/:id/inventory` | Read items eligible for web inventory/market views |
 | `POST /internal/v1/accounts/:id/token` | Issue a replacement token |
 | `DELETE /internal/v1/accounts/:id/token` | Invalidate the account's issued tokens |
-| `POST /internal/v1/accounts/:id/launch-code` | A one-time code for the website's Play link: good for a minute, traded once at the public `POST /launch` for a session token |
+| `POST /internal/v1/accounts/:id/launch-code` | A one-time code for the website's Play link: good for a minute, traded once at the public `POST /launch` for a session token. With `ODS_WEB_CLIENT_APPROVAL=1`, refused (`403`, `reason: "not_approved"`) to an account not let in |
+| `POST /internal/v1/accounts/:id/web-client/request` | The player asks to be let into the browser client; an answer already given stands |
+| `GET /internal/v1/web-client` | For a helper: the accounts waiting (`?state=pending`, longest waiting first), or let in or turned away (`approved`, `denied`) |
+| `PUT /internal/v1/accounts/:id/web-client` | For a helper: `{"state": "approved"}` or `{"state": "denied"}` |
+| `PUT /internal/v1/accounts/:id/role` | Give an account a rank: `{"role": "player" \| "helper" \| "admin"}`; not one's own, nor an account in `ODS_ADMIN_ACCOUNTS` |
 | `GET /internal/v1/maintenance` | Whether the dungeons are closed, since when, and why |
 | `PUT /internal/v1/maintenance` | Close the dungeons (see [Restarting without cutting runs short](#restarting-without-cutting-runs-short)) |
 | `DELETE /internal/v1/maintenance` | Open the dungeons again |
@@ -258,7 +292,7 @@ It listens on `127.0.0.1:8081` by default. Callers present the secret as
 | `PUT /internal/v1/accounts/:id/name` | Rename a player (`{"name": "…"}`), by sign-up's rules and uniqueness; the boards take the new name, sales and news keep the old; refused while the player is online |
 | `GET /internal/v1/admin-actions` | What admins did, newest first (`?limit=`, `?account=`) |
 | `GET /internal/v1/players/:name` | Read a public player profile by name, with its ranked league, place and record (`ranked`, null while ranked is off) |
-| `GET /internal/v1/players/:name/account` | For an admin: the account id behind a name, its restriction, and whether it is online |
+| `GET /internal/v1/players/:name/account` | For an admin: the account id behind a name, its restriction, whether it is online, its rank, and where its browser-client request stands |
 | `GET /internal/v1/leaderboards/:metric` | Read a paged leaderboard |
 | `GET /internal/v1/ranked/board` | The ranked leagues, and the players who have raced, best first (`?limit=`, 100 by default, 500 at most) |
 | `POST /internal/v1/trades` | Move weapons and gold atomically between two accounts |
@@ -285,11 +319,13 @@ admin making them, in an `X-Acting-Account` header:
 - the list of who is online, disconnecting a player, the list of restrictions,
   and finding the account behind a name;
 - the action log;
-- the list of match workers, and restarting one.
+- the list of match workers, and restarting one;
+- the browser-client requests, and answering them.
 
 The account named there must be an admin by the same rule the chat commands use:
-listed in `ODS_ADMIN_ACCOUNTS`, or holding the admin rank. Otherwise the call is
-refused with `403`, and with `400` if the header is missing. This way a website
+listed in `ODS_ADMIN_ACCOUNTS`, or holding the admin rank. The browser-client
+requests are the one exception: a helper may list and answer those. Otherwise
+the call is refused with `403`, and with `400` if the header is missing. This way a website
 page that forgets to check whether its user is an admin still cannot give
 ordinary players these powers.
 

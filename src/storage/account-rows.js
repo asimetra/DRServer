@@ -79,7 +79,7 @@ export const ACCOUNT_COLUMNS = [
   "buckets_weapon", "buckets_other", "active_avatar", "admin_flags",
   "ingame_friends", "ignore_friends", "friend_requests", "infinite_progress", "gifts", "gift_sends",
   "account_flags", "market_barred", "completed_dungeons", "matchmaker_group", "concurrent_days",
-  "last_reward_date", "last_login", "created", "restriction", "sanctions",
+  "last_reward_date", "last_login", "created", "restriction", "sanctions", "web_client",
 ];
 
 /**
@@ -153,6 +153,10 @@ export const accountRowOf = (account) => ({
     account.sanctions && typeof account.sanctions === "object"
       ? JSON.stringify(account.sanctions)
       : account.sanctions === undefined ? undefined : null,
+  web_client:
+    account.web_client && typeof account.web_client === "object"
+      ? JSON.stringify(account.web_client)
+      : account.web_client === undefined ? undefined : null,
 });
 
 /**

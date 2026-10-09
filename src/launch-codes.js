@@ -53,3 +53,11 @@ export const redeemLaunchCode = (code, now = Date.now()) => {
   if (!entry || entry.expiresAt <= now) return null;
   return entry.accountId;
 };
+
+/** Spends every code outstanding for `accountId`: one let out of the browser client is not let back by a code it already held. */
+export const dropLaunchCodes = (accountId) => {
+  const id = Number(accountId);
+  for (const [key, entry] of outstanding) {
+    if (entry.accountId === id) outstanding.delete(key);
+  }
+};

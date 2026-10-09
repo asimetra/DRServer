@@ -21,7 +21,7 @@ import {
 import { GRANT_LIMITS, GrantRefused, RARITIES, applyGrant, holdingsOf, parseGrant, weaponChests } from "./grants.js";
 import { NameRefused, accountIdNamed, checkName, nameKey, nameTaken, tidyName } from "./account-names.js";
 import { issueToken, revokeAccountTokens } from "./auth.js";
-import { createLaunchCode } from "./launch-codes.js";
+import { createLaunchCode, dropLaunchCodes } from "./launch-codes.js";
 import { TradeRefused, settleTrade } from "./trade.js";
 import {
   MarketRefused,
@@ -42,9 +42,17 @@ import {
 } from "./restrictions.js";
 import { beginMaintenance, endMaintenance, maintenanceState } from "./maintenance.js";
 import { adminActions, recordAdminAction } from "./admin-actions.js";
+import {
+  decideWebClient,
+  listWebClientAccess,
+  mayOpenWebClient,
+  requestWebClient,
+  webClientAccessOf,
+} from "./web-client-access.js";
 import { deleteAccount } from "./account-deletion.js";
 import { onlinePlayers } from "./socket/online.js";
-import { ROLE, roleOf } from "./socket/roles.js";
+import { ROLE, roleFromName, roleName, roleOf } from "./socket/roles.js";
+import { setAccountRole } from "./account-roles.js";
 import { MAX_ANNOUNCEMENT_BYTES, announceTo } from "./socket/announce.js";
 import { salesFor } from "./market-history.js";
 import { STAT_NAMES, maxHitPoints, maxManaPoints, statTotals } from "./hero-stats.js";
@@ -147,7 +155,15 @@ const accountExists = async (id) => (await listAccountIds()).includes(id);
 const isAdmin = (id, account) =>
   Boolean(account) && (config.adminAccounts?.includes(id) || roleOf(account) >= ROLE.ADMIN);
 
-const actingAdmin = async (req, { self = null } = {}) => {
+/** At least a helper: an admin by either rule, or holding the helper's rank. */
+const isHelper = (id, account) => isAdmin(id, account) || (Boolean(account) && roleOf(account) >= ROLE.HELPER);
+
+/**
+ * `rank` is the least the call needs. Nearly everything needs an admin; a
+ * helper is let through only where a call says so — answering who may open the
+ * browser client, so far.
+ */
+const actingAdmin = async (req, { self = null, rank = ROLE.ADMIN } = {}) => {
   const refusal = authorise(req);
   if (refusal) return { refusal };
   const named = req.headers?.["x-acting-account"];
@@ -161,9 +177,11 @@ const actingAdmin = async (req, { self = null } = {}) => {
   const account = await loadExistingAccount(actor);
   // Some calls an account may make about itself: deleting it, for one.
   if (self !== null && actor === self && account) return { actor };
-  if (!isAdmin(actor, account)) {
-    warn(`internal: refused an administrative call by account ${actor}, which is not an admin`);
-    return { refusal: json({ error: `account ${actor} is not an admin` }, 403) };
+  const allowed = rank === ROLE.HELPER ? isHelper(actor, account) : isAdmin(actor, account);
+  if (!allowed) {
+    const needed = rank === ROLE.HELPER ? "a helper" : "an admin";
+    warn(`internal: refused an administrative call by account ${actor}, which is not ${needed}`);
+    return { refusal: json({ error: `account ${actor} is not ${needed}` }, 403) };
   }
   return { actor };
 };
@@ -276,6 +294,9 @@ const reissueToken = async (req, [capture]) => {
  * The website puts it after "#" in the link that opens the browser client, and
  * the client's page trades it at POST /launch for a session token. Spent by
  * that, and good for a minute until then; see launch-codes.js.
+ *
+ * Refused, with `reason: "not_approved"`, to an account the host has not let
+ * into the browser client (web-client-access.js).
  */
 const issueLaunchCode = async (req, [capture]) => {
   const refusal = authorise(req);
@@ -285,6 +306,10 @@ const issueLaunchCode = async (req, [capture]) => {
   if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
   if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
 
+  const account = await loadExistingAccount(id);
+  if (!mayOpenWebClient(account, { trusted: isHelper(id, account) })) {
+    return json({ error: "this account has not been let into the browser client", reason: "not_approved" }, 403);
+  }
   return json(createLaunchCode(id));
 };
 
@@ -577,6 +602,13 @@ const readSummary = async (req, [capture]) => {
     /* Whether to offer the admin pages. Only an offer: every admin call is
        checked again here, by X-Acting-Account. */
     admin: isAdmin(account.id, account),
+    /* Whether to offer the browser-client requests page, by the same reasoning. */
+    helper: isHelper(account.id, account),
+    /* Whether to offer Play, and where its request stands (web-client-access.js). */
+    web_client: {
+      may_play: mayOpenWebClient(account, { trusted: isHelper(account.id, account) }),
+      state: webClientAccessOf(account)?.state ?? null,
+    },
     /* Same answer as the profile's, and by the same reasoning. */
     experience_total: (account.account_avatars ?? []).reduce(
       (total, avatar) => total + Number(avatar.experience ?? 0),
@@ -1546,7 +1578,101 @@ const findAccountByName = async (req, [capture]) => {
     name: account.name ?? null,
     restriction: restrictionOf(account),
     online: activeSessions().some((session) => session.accountId === id),
+    /* The stored rank, and whether ODS_ADMIN_ACCOUNTS makes it an admin whatever that says. */
+    role: roleName(roleOf(account)),
+    admin_by_config: Boolean(config.adminAccounts?.includes(id)),
+    web_client: webClientAccessOf(account),
   });
+};
+
+/**
+ * PUT /internal/v1/accounts/:id/role — give an account a rank:
+ *
+ *   { "role": "player" | "helper" | "admin" }
+ *
+ * An admin's call. Not on one's own account: the one way to lock every admin
+ * out is the last of them taking their own rank away by a slip of the mouse.
+ * An account named in ODS_ADMIN_ACCOUNTS is an admin whatever is stored, so a
+ * change to it would say it had been done and do nothing; that is refused too.
+ */
+const giveRole = async (req, [capture]) => {
+  const { refusal, actor } = await actingAdmin(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  const rank = typeof req.json?.role === "string" ? roleFromName(req.json.role) : null;
+  if (rank === null) return json({ error: 'role must be "player", "helper" or "admin"' }, 400);
+  if (id === actor) return json({ error: "an admin cannot change their own rank" }, 409);
+  if (config.adminAccounts?.includes(id)) {
+    return json({ error: "this account is an admin by ODS_ADMIN_ACCOUNTS; change it there" }, 409);
+  }
+
+  const { was, role } = await setAccountRole(id, rank);
+  info(`internal: account ${id} is now ${role} (was ${was}) by ${actor}`);
+  await recordAdminAction({ actor, action: "role.set", target: id, detail: { role, was } });
+  return json({ accountId: id, role, was });
+};
+
+/**
+ * POST /internal/v1/accounts/:id/web-client/request — the player asks to be let
+ * into the browser client. The website calls it for the signed-in player; an
+ * answer already given stands (web-client-access.js).
+ */
+const askForWebClient = async (req, [capture]) => {
+  const refusal = authorise(req);
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  const access = await requestWebClient(id);
+  return json({ accountId: id, state: access.state });
+};
+
+const WEB_CLIENT_LISTABLE = new Set(["pending", "approved", "denied"]);
+const WEB_CLIENT_DECISIONS = new Set(["approved", "denied"]);
+
+/** GET /internal/v1/web-client?state=pending — the accounts in one state, for a helper. */
+const readWebClientAccess = async (req) => {
+  const { refusal } = await actingAdmin(req, { rank: ROLE.HELPER });
+  if (refusal) return refusal;
+  const state = req.query?.get("state") ?? "pending";
+  if (!WEB_CLIENT_LISTABLE.has(state)) return json({ error: 'state must be "pending", "approved" or "denied"' }, 400);
+  return json({ state, accounts: await listWebClientAccess(state) });
+};
+
+/**
+ * PUT /internal/v1/accounts/:id/web-client — a helper's answer:
+ *
+ *   { "state": "approved" }   or   { "state": "denied" }
+ *
+ * Either may be given at any time, and changes a previous one. Turning down an
+ * account already playing in the browser ends that game: its session and its
+ * play pass stop working, as they do when the player signs out of the website.
+ */
+const answerWebClient = async (req, [capture]) => {
+  const { refusal, actor } = await actingAdmin(req, { rank: ROLE.HELPER });
+  if (refusal) return refusal;
+
+  const id = accountIdIn(capture);
+  if (id === null) return json({ error: "account id must be an unsigned 32-bit integer" }, 400);
+  if (!(await accountExists(id))) return json({ error: "no such account" }, 404);
+
+  const state = req.json?.state;
+  if (!WEB_CLIENT_DECISIONS.has(state)) return json({ error: 'state must be "approved" or "denied"' }, 400);
+
+  const access = await decideWebClient(id, state, actor);
+  if (state === "denied") {
+    dropLaunchCodes(id);
+    endBrowserSessions(id);
+  }
+  info(`internal: browser client ${state} for account ${id} by ${actor}`);
+  await recordAdminAction({ actor, action: `web-client.${state === "approved" ? "approve" : "deny"}`, target: id });
+  return json({ accountId: id, state: access.state });
 };
 
 /** GET /internal/v1/restrictions — the accounts restricted now, why and until when. */
@@ -1597,6 +1723,7 @@ export const internalRoutes = [
   { method: "POST", pattern: "/internal/v1/announcements", handler: makeAnnouncement },
   { method: "GET", pattern: "/internal/v1/online", handler: readOnline },
   { method: "GET", pattern: "/internal/v1/restrictions", handler: readRestrictions },
+  { method: "GET", pattern: "/internal/v1/web-client", handler: readWebClientAccess },
   { method: "GET", pattern: "/internal/v1/players/:name/account", handler: findAccountByName },
   { method: "GET", pattern: "/internal/v1/admin-actions", handler: readAdminActions },
   { method: "GET", pattern: "/internal/v1/match-workers", handler: readMatchWorkers },
@@ -1609,6 +1736,9 @@ export const internalRoutes = [
   { method: "GET", pattern: "/internal/v1/accounts/:id/inventory", handler: readInventory },
   { method: "POST", pattern: "/internal/v1/accounts/:id/token", handler: reissueToken },
   { method: "POST", pattern: "/internal/v1/accounts/:id/launch-code", handler: issueLaunchCode },
+  { method: "POST", pattern: "/internal/v1/accounts/:id/web-client/request", handler: askForWebClient },
+  { method: "PUT", pattern: "/internal/v1/accounts/:id/web-client", handler: answerWebClient },
+  { method: "PUT", pattern: "/internal/v1/accounts/:id/role", handler: giveRole },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/token", handler: revokeTokens },
   { method: "PUT", pattern: "/internal/v1/accounts/:id/restriction", handler: restrictAccount },
   { method: "DELETE", pattern: "/internal/v1/accounts/:id/restriction", handler: liftRestriction },

@@ -41,6 +41,8 @@ import { runAccountOperation } from "../account-operations.js";
 // Their account operations, so a transaction sent here by name finds them.
 import { observeMarketWrites } from "../market.js";
 import "../trade.js";
+import "../web-client-access.js";
+import "../account-roles.js";
 import { MalformedPacketError, PacketReader } from "./packet.js";
 import { MemberSession } from "./member-session.js";
 import { installMatchHost } from "./match-host.js";

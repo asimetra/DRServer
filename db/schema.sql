@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     -- How far up the anti-cheat ladder the account is (src/sanctions.js):
     -- {"step", "until", "lastStrikeAt"}. Null for an account never caught.
     sanctions              JSONB,
+    -- Whether it may open the browser client, when the host asks that somebody
+    -- decide (src/web-client-access.js): {"state", "requested_at", "by", "at"}.
+    -- Null for an account that has never asked.
+    web_client             JSONB,
     -- Raised by every save of the account. The server keeps a picture of the
     -- rows it last read or wrote and sends only what differs from it; the
     -- version is how it learns that the picture is out of date, and writes
@@ -426,6 +430,7 @@ ALTER TABLE IF EXISTS market_sales ADD COLUMN IF NOT EXISTS legendarymodifier IN
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS restriction JSONB;
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS sanctions JSONB;
+ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS web_client JSONB;
 
 CREATE INDEX IF NOT EXISTS dungeon_bests_board ON dungeon_bests(board_key, value);
 

@@ -361,6 +361,14 @@ export const loadServerConfig = (environment = process.env) => {
     webClientGate: setting(environment, "WEB_CLIENT_GATE") === "1",
 
     /**
+     * Whether an account needs a yes before it is given a Play link: it asks,
+     * through the website, and a helper or an admin answers
+     * (web-client-access.js). Off by default, and only meaningful with
+     * ODS_WEB_CLIENT_GATE on, which is what keeps /play/ for a Play link.
+     */
+    webClientApproval: setting(environment, "WEB_CLIENT_APPROVAL") === "1",
+
+    /**
      * Where the client should fetch overridden assets from, or "" to override
      * nothing. Set it and asset paths cross the wire as absolute URLs at this
      * base instead of as names the client resolves on its own disk.
