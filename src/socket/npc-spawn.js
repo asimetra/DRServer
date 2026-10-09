@@ -590,9 +590,6 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
               collisionRadius,
               behavior: npc.Aggro_AI_Type ?? "CHASE_AI",
               lockRotation: Boolean(npc.LockRotation),
-              fleeTimerMs: Math.max(0, Number(npc.FleeTimer ?? 0) * 1000),
-              fleeRandMs: Math.max(0, Number(npc.FleeTimerRand ?? 0) * 1000),
-              fleeArmed: true,
               teleportRange: Math.max(0, Number(npc.TeleportRange ?? 0)),
               teleportRecurMs: Math.max(0, Number(npc.TeleportRecurT ?? 0) * 1000),
               teleportRecurRandMs: Math.max(0, Number(npc.TeleportRecurRand ?? 0) * 1000),
@@ -631,10 +628,9 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
                * archers above, 350 for KNIGHT_THROWING against a measured p25
                * of 305, 70 for KNIGHT_HALBERD against a measured p05 of 69.
                *
-               * The standoff is also the threshold for the authored flee
-               * state. `ai.js` backs KITE_AI away when a target crosses it and
-               * holds attacks for FleeTimer/FleeTimerRand; rows authoring zero
-               * retain this stationary standoff without inventing a pause.
+               * The standoff is also where a KITE_AI starts backing off now
+               * and then (`ai.js`, BACK_OFF_STILL_PER_SECOND). It is not a ring
+               * kept around the player: one walking in is not pushed back.
                */
               keepDistance:
                 petRangedStandoff > 0

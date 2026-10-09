@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { tickNpcAi } from "../src/socket/ai.js";
+import { awayFromThreats, tickNpcAi } from "../src/socket/ai.js";
 import { CLID } from "../src/socket/opcodes.js";
 
 /**
@@ -301,7 +301,10 @@ test("a kiter holds its standoff instead of walking into the hero", async () => 
   );
 });
 
-test("a KITE_AI flees for its authored window before attacking again", async () => {
+/** A session random that plays `first` in order and then never rolls a back-off again. */
+const rolls = (...first) => () => (first.length ? first.shift() : 0.999);
+
+const kiterAlone = () => {
   const { session, first, second } = makeSession();
   session.actors.delete(second);
   session.objects.delete(second);
@@ -309,76 +312,126 @@ test("a KITE_AI flees for its authored window before attacking again", async () 
   archer.ai.behavior = "KITE_AI";
   archer.ai.attackRange = 600;
   archer.ai.keepDistance = 300;
-  archer.ai.fleeTimerMs = 4000;
-  archer.ai.fleeRandMs = 0;
   archer.ai.moveSpeed = 100;
   archer.ai.nextAttackAt = 0;
+  // A real attack holds the body for its wind-up; the promoted test attack has none.
+  archer.ai.attacks = [{ attackType: 920050, range: 600, minRange: 0, rechargeMs: 0, readyAt: 0, impactFrame: 11 }];
   archer.position = { x: 100, y: 0 };
+  const hero = session.actors.get(session.heroDoid);
+  session.heroPosition = hero.position;
   const sent = [];
   session.send = (frame) => sent.push(frame);
+  const attacks = () => sent.filter((frame) => frame.readUInt16LE(8) === 143).length;
+  return { session, archer, hero, attacks };
+};
 
-  for (let tick = 0; tick < 16; tick++) {
-    await tickNpcAi(session, 1000 + tick * 250, 0.25);
+/**
+ * Walked into, a kiter is not pushed along. Separation used to keep it at its
+ * keep distance from every hero, so a player walking at it dragged it across
+ * the room whether it was backing off or shooting.
+ */
+test("a kiter walked into stands its ground", async () => {
+  const { session, archer, hero, attacks } = kiterAlone();
+  session.random = rolls();
+  const start = archer.position.x;
+  for (let tick = 0; tick < 40; tick++) {
+    const gap = archer.position.x - hero.position.x;
+    hero.position.x += Math.max(0, Math.min(25, gap - 71)); // stopped by its body, as the client stops it
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
   }
-
-  assert.equal(archer.ai.state, "flee");
   assert.ok(
-    Math.abs(archer.position.x - 300) <= 1,
-    `it should retreat to its authored standoff, stopped at ${archer.position.x}`
+    Math.abs(archer.position.x - start) < 1,
+    `a player walking in pushed it ${(archer.position.x - start).toFixed(0)} units`
   );
-  assert.equal(
-    sent.filter((frame) => frame.readUInt16LE(8) === 143).length,
-    0,
-    "a kiter attacked during its flee window"
-  );
-
-  await tickNpcAi(session, 5000, 0.25);
-  assert.notEqual(archer.ai.state, "flee", "the authored flee window never ended");
-  assert.equal(
-    sent.filter((frame) => frame.readUInt16LE(8) === 143).length,
-    1,
-    "the kiter did not resume attacks when its flee window ended"
-  );
+  assert.ok(attacks() >= 2, "standing its ground, it should go on shooting");
 });
 
-test("a cornered KITE_AI fights instead of chaining flee windows forever", async () => {
+test("a kiter backs off until its shot is due, and the shot ends the back-off", async () => {
+  const { session, archer, attacks } = kiterAlone();
+  archer.ai.nextAttackAt = 1500;
+  // A back-off on the first tick, 3.2 s long (-ln(0.2) x 2000 ms).
+  session.random = rolls(0, 0.8);
+  await tickNpcAi(session, 1000, 0.1);
+  assert.ok(archer.ai.fleeUntil > 1000, "the roll should have started a back-off");
+
+  for (let tick = 1; tick <= 5; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+  assert.equal(attacks(), 1, "a back-off must not withhold a swing that is due");
+  assert.equal(archer.ai.fleeUntil, 0, "the shot should have ended the back-off");
+  const moved = archer.position.x - 100;
+  assert.ok(moved > 40 && moved < 70, `half a second at 100 u/s before the shot: moved ${moved.toFixed(0)}`);
+
+  for (let tick = 6; tick <= 20; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+  assert.ok(Math.abs(archer.position.x - 100 - moved) < 1, "after the shot it should fight from where it stands");
+  assert.notEqual(archer.ai.state, "flee");
+});
+
+test("a back-off stops at the keep distance instead of hopping past it", async () => {
+  const { session, archer } = kiterAlone();
+  archer.ai.nextAttackAt = Number.MAX_SAFE_INTEGER;
+  archer.position = { x: 290, y: 0 };
+  session.random = rolls(0, 0.99);
+  for (let tick = 0; tick < 4; tick++) await tickNpcAi(session, 1000 + tick * 250, 0.25);
+  assert.ok(
+    Math.abs(archer.position.x - 300) < 0.01,
+    `a 25-unit step from 10 inside should stop on the keep distance, stopped at ${archer.position.x.toFixed(2)}`
+  );
+  assert.equal(archer.ai.fleeUntil, 0, "back out at its keep distance, the back-off is over");
+});
+
+test("a back-off left a rounding error short of the keep distance is over", async () => {
+  const { session, archer, hero } = kiterAlone();
+  archer.ai.nextAttackAt = Number.MAX_SAFE_INTEGER;
+  archer.position = { x: 300 - 5.7e-14, y: 0 };
+  archer.ai.fleeUntil = 5000;
+  session.random = rolls();
+  await tickNpcAi(session, 1000, 0.25);
+  assert.equal(archer.ai.fleeUntil, 0, "a back-off with nowhere left to go should be over");
+  hero.position.x += 25;
+  await tickNpcAi(session, 1250, 0.25);
+  assert.ok(archer.position.x < 300.001, `a player walking in pushed it to ${archer.position.x.toFixed(3)}`);
+});
+
+test("a moving target makes a back-off likelier than a still one", async () => {
+  const { session, archer, hero } = kiterAlone();
+  archer.ai.nextAttackAt = Number.MAX_SAFE_INTEGER;
+  // 0.05 lies between the still chance (1 - e^-0.035) and the moving one (1 - e^-0.08) for a 0.1 s tick.
+  session.random = rolls(0.05, 0.05, 0.05, 0.5);
+  await tickNpcAi(session, 1000, 0.1);
+  await tickNpcAi(session, 1100, 0.1);
+  assert.ok(!(archer.ai.fleeUntil > 1100), "a still target should not have started one on that roll");
+  hero.position.x += 10; // 100 u/s
+  await tickNpcAi(session, 1200, 0.1);
+  assert.ok(archer.ai.fleeUntil > 1200, "a moving target should have started one on the same roll");
+});
+
+test("a kiter that cannot get away ends its back-off and fights", async () => {
   const { session, first, second } = makeSession();
-  session.actors.delete(second);
-  session.objects.delete(second);
   const archer = session.actors.get(first);
   archer.ai.behavior = "KITE_AI";
   archer.ai.attackRange = 600;
   archer.ai.keepDistance = 300;
-  archer.ai.fleeTimerMs = 4000;
-  archer.ai.fleeRandMs = 0;
-  archer.ai.moveSpeed = 0;
-  archer.ai.nextAttackAt = 0;
+  archer.ai.moveSpeed = 100;
+  archer.ai.nextAttackAt = Number.MAX_SAFE_INTEGER;
   archer.position = { x: 100, y: 0 };
-  const sent = [];
-  session.send = (frame) => sent.push(frame);
+  // Something standing right behind it, against its body.
+  const wall = session.actors.get(second);
+  wall.position = { x: 170, y: 0 };
+  wall.ai.moveSpeed = 0;
+  session.random = rolls(0, 0.99);
+  await tickNpcAi(session, 1000, 0.1);
+  assert.ok(archer.position.x < 105, "it should not have got past the body behind it");
+  assert.equal(archer.ai.fleeUntil, 0, "a back-off with nowhere to go should end at once");
+});
 
-  await tickNpcAi(session, 1000, 0.25);
-  await tickNpcAi(session, 4750, 0.25);
-  assert.equal(archer.ai.state, "flee");
-
-  await tickNpcAi(session, 5000, 0.25);
-  assert.equal(archer.ai.state, "attack", "the expired flee window immediately restarted");
+test("pressed from both sides, a kiter has no away to back off to", () => {
+  const actor = { position: { x: 0, y: 0 } };
   assert.equal(
-    sent.filter((frame) => frame.readUInt16LE(8) === 143).length,
-    1,
-    "a cornered kiter never fought back"
+    awayFromThreats(actor, [{ position: { x: -100, y: 0 } }, { position: { x: 100, y: 0 } }], 300),
+    null
   );
-
-  await tickNpcAi(session, 5250, 0.25);
-  assert.notEqual(archer.ai.state, "flee", "remaining close re-triggered the same flee");
-
-  archer.position = { x: 300, y: 0 };
-  await tickNpcAi(session, 5500, 0.25);
-  assert.equal(archer.ai.fleeArmed, true, "regaining standoff did not re-arm retreat");
-
-  archer.position = { x: 100, y: 0 };
-  await tickNpcAi(session, 5750, 0.25);
-  assert.equal(archer.ai.state, "flee", "a later approach did not start a new flee window");
+  const away = awayFromThreats(actor, [{ position: { x: -100, y: 0 } }, { position: { x: 0, y: 250 } }], 300);
+  assert.ok(away.x > 0.8 && away.y < 0, `away from the nearer one, a little from the other: ${JSON.stringify(away)}`);
+  assert.equal(awayFromThreats(actor, [{ position: { x: 400, y: 0 } }], 300), null, "nobody inside its keep distance");
 });
 
 test("a standoff never puts a monster outside its own reach", async () => {

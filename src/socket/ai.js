@@ -257,6 +257,66 @@ const keptOutOfHeroes = (target, actor, heroes) => {
 };
 
 /**
+ * How a kiter backs off: measured, not authored.
+ *
+ * Every official capture, every KITE_AI monster with a keep distance, the
+ * player inside it, neither side swinging nor hit in the last second, rebuilt
+ * from the monster's own position updates (549 back-offs, 1244 s solo):
+ *
+ *   starts     about 0.4 per second pooled, the same for every ranged kiter
+ *              within noise (marksman, both axe throwers, archer, imp,
+ *              savage bow), and the same however deep inside the player
+ *              stands. In open ground it is about 0.35 against a player
+ *              standing still and 0.8 against one moving, toward it or not.
+ *              With a monster close behind it is a third of that, which the
+ *              body in the way gives here (a back-off that gets nowhere ends).
+ *   ends       when it is back out at its keep distance (43%), blocked (25%),
+ *              when it shoots (16%), when hit (6%); otherwise about 12% a
+ *              250 ms tick, a mean near 2 s. p50 0.5 s, longest 3.25 s of 500.
+ *   shoots     in about a fifth of them, standing for the shot.
+ *
+ * `FleeTimer` and `FleeTimerRand` do not govern it: SAVAGE_BOW, which authors
+ * FleeTimer 0, backs off as often as the rows authoring 4, and a 4-7 s pause
+ * between back-offs fits the corpus worst of the models tried. Not modelled:
+ * a second back-off follows within 1.5 s more often than chance, then 2-4 s
+ * are quieter than chance (29 against 48 expected); and the official decides
+ * moves on a roughly 500 ms beat.
+ */
+const BACK_OFF_STILL_PER_SECOND = 0.35;
+const BACK_OFF_MOVING_PER_SECOND = 0.8;
+/** A player covering this much ground a second counts as moving. */
+const BACK_OFF_MOVING_SPEED = 60;
+const BACK_OFF_MEAN_MS = 2000;
+const BACK_OFF_MOST_MS = 3250;
+
+/**
+ * Away from everyone inside its keep distance, nearer ones counting more, or
+ * null when nobody is inside or it is pressed from opposite sides — backing
+ * off one player into another is not getting away. `depth` is how far the
+ * deepest one stands inside: no step backs off further than that.
+ */
+export const awayFromThreats = (actor, threats, keep) => {
+  let x = 0;
+  let y = 0;
+  let strongest = 0;
+  for (const { position } of threats) {
+    const dx = actor.position.x - position.x;
+    const dy = actor.position.y - position.y;
+    const distance = Math.hypot(dx, dy);
+    // A step of exactly `depth` lands on the keep distance give or take a
+    // rounding error; landed is out.
+    if (distance >= keep - 1e-6 || distance < 0.001) continue;
+    const weight = (keep - distance) / keep;
+    x += (dx / distance) * weight;
+    y += (dy / distance) * weight;
+    strongest = Math.max(strongest, weight);
+  }
+  const length = Math.hypot(x, y);
+  if (!strongest || length < strongest * 0.25) return null;
+  return { x: x / length, y: y / length, depth: strongest * keep };
+};
+
+/**
  * The attacks it could use from here, right now.
  *
  * `Range` is the most it may reach, widened to the bodies for the same reason
@@ -327,8 +387,7 @@ const clearNpcTarget = (actor) => {
   ai.walkSpeed = 0;
   ai.attackLockedUntil = 0;
   ai.fleeUntil = 0;
-  ai.fleeTargetDoid = null;
-  ai.fleeArmed = true;
+  ai.targetSeen = null;
 };
 
 /** Indexes active NPCs so local separation only considers nearby neighbours. */
@@ -443,9 +502,18 @@ const separationDisplacement = (
          * nearest peer sits on the sum of the two bodies: KNIGHT p25 84 against
          * 84, BRUTE p25 85 against 88, ICE_IMP p25 70 against 70. The player is
          * the same rule with one exception, which `heroStandoff` carries.
+         *
+         * That exception is a pet's alone. A kiter's standoff is where it stops
+         * walking in, not a ring a player pushes it along: kept at its keep
+         * distance here, a hero walking into a marksman dragged it 3528 units
+         * in 20 s, attacking or not. The official kiter stands its ground when
+         * a player closes on it, and only backs off now and then
+         * (`awayFromThreats`).
          */
         const minimumDistance = heroDoids.has(otherDoid)
-          ? heroStandoff(actor, other)
+          ? actor.ai?.kind === "pet"
+            ? heroStandoff(actor, other)
+            : heroContact(actor, other)
           : sameWave(actor, other)
             ? bodies
             : bodies + npcPadding;
@@ -1266,59 +1334,45 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       ? Math.max(heroContact(actor, victim.actor), ai.returnDistance ?? 0)
       : heroStandoff(actor, victim.actor);
     /**
-     * A kiter does not merely stop at range. When its target crosses the
-     * authored MinFleeDistMult threshold it enters one flee window, backs out
-     * to that threshold while still facing the target, and withholds attacks
-     * until the window ends. The official cadence exposes the pause: a
-     * KNIGHT_THROWING frequently has about four authored flee seconds between
-     * throws, while a prison thrower left at range can keep its one-second
-     * cadence.
+     * A kiter backs off now and then, for a moment, from whoever stands
+     * inside its keep distance, more often while its target is moving. It is
+     * a chance each tick, not a timer: there is no window to wait out and
+     * nothing to re-arm. A back-off ends when its time is up, when it is back
+     * out at its keep distance, when it swings, or when it cannot get away.
      */
-    if (ai.fleeTargetDoid !== victim.doid) {
-      ai.fleeUntil = 0;
-      ai.fleeTargetDoid = victim.doid;
-      ai.fleeArmed = true;
-    }
-    const canFlee =
+    const canBackOff =
       !followingOwner &&
+      ai.kind !== "pet" &&
       ai.behavior === "KITE_AI" &&
-      (ai.fleeTimerMs ?? 0) > 0 &&
       standoff > heroContact(actor, victim.actor) &&
-      route.direct;
-    const fleeWindowActive = canFlee && now < (ai.fleeUntil ?? 0);
-    /**
-     * Crossing the standoff starts one flee window, not an infinite loop.
-     *
-     * The old condition started another full window on the exact tick the
-     * previous one expired whenever the player was still close. A cornered or
-     * equally fast kiter therefore withheld attacks forever. It is re-armed
-     * only after a completed window and after it has actually regained its
-     * authored standoff. If the player keeps it pinned, the window ends and it
-     * fights at close range; moving clear lets a later approach trigger a new
-     * retreat.
-     */
-    if (
-      canFlee &&
-      !fleeWindowActive &&
-      ai.fleeArmed === false &&
-      distance >= standoff
-    ) {
-      ai.fleeArmed = true;
-    }
-    if (
-      canFlee &&
-      !fleeWindowActive &&
-      ai.fleeArmed !== false &&
-      distance < standoff
-    ) {
+      route.direct &&
+      mobility > 0;
+    const threats = heroes.some(({ doid: heroDoid }) => heroDoid === victim.doid)
+      ? heroes
+      : [...heroes, { position: target }];
+    const away = canBackOff ? awayFromThreats(actor, threats, standoff) : null;
+    const swinging = attackLocked || Boolean(ai.lunge && now < ai.lunge.until);
+    const seen = ai.targetSeen;
+    const targetMoving =
+      seen?.doid === victim.doid &&
+      now > seen.at &&
+      distanceTo(seen, target) / ((now - seen.at) / 1000) > BACK_OFF_MOVING_SPEED;
+    ai.targetSeen = { doid: victim.doid, x: target.x, y: target.y, at: now };
+    if (!away) {
+      ai.fleeUntil = 0;
+    } else if (now >= (ai.fleeUntil ?? 0) && !swinging) {
       const random = session.random ?? Math.random;
-      ai.fleeUntil = now + (ai.fleeTimerMs ?? 0) + random() * (ai.fleeRandMs ?? 0);
-      ai.fleeArmed = false;
+      const rate = targetMoving ? BACK_OFF_MOVING_PER_SECOND : BACK_OFF_STILL_PER_SECOND;
+      if (random() < 1 - Math.exp(-rate * deltaSeconds)) {
+        const length = -Math.log(1 - Math.min(0.999999, random())) * BACK_OFF_MEAN_MS;
+        ai.fleeUntil = now + Math.min(BACK_OFF_MOST_MS, length);
+      }
     }
-    const fleeing = canFlee && now < (ai.fleeUntil ?? 0);
+    let fleeing = Boolean(away) && now < (ai.fleeUntil ?? 0);
     let chaseX = 0;
     let chaseY = 0;
     let usedOrdinaryWalk = false;
+    let backingOff = false;
     /**
      * A lunge overrides the walk for as long as it lasts.
      *
@@ -1338,11 +1392,19 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     } else if (attackLocked) {
       // The swing owns this window. Ordinary chase here turns a dodgeable
       // melee windup into a homing hit; only authored lunge movement may run.
-    } else if (fleeing && distance < standoff) {
-      const retreat = Math.min(topSpeed * deltaSeconds, standoff - distance);
-      if (distance > 0.001) {
-        chaseX = ((actor.position.x - target.x) / distance) * retreat;
-        chaseY = ((actor.position.y - target.y) / distance) * retreat;
+    } else if (fleeing) {
+      // Out to its keep distance and no further: past it, the chase would
+      // only walk it back in, a hop out and back on every back-off.
+      const step = Math.min(topSpeed * deltaSeconds, away.depth);
+      if (step > 0.001) {
+        chaseX = away.x * step;
+        chaseY = away.y * step;
+        backingOff = true;
+      } else {
+        // Nowhere left to go: a back-off kept alive here would follow a
+        // player walking in, step for step.
+        ai.fleeUntil = 0;
+        fleeing = false;
       }
     } else if (
       ai.kind === "pet" &&
@@ -1392,6 +1454,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       heroes
     );
     const requestedTravel = distanceTo(actor.position, wanted);
+    const before = { x: actor.position.x, y: actor.position.y };
     if (requestedTravel > 0.001) {
       const nextPosition = moveWithNavigation(
         state.navigation,
@@ -1408,6 +1471,17 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       }
       distance = distanceTo(actor.position, target);
     }
+    // A wall, a crowd or a player in the way: it fights from where it stands.
+    // Progress is measured along the way out, so a neighbour's shove sideways
+    // does not count as getting away.
+    if (
+      backingOff &&
+      (actor.position.x - before.x) * away.x + (actor.position.y - before.y) * away.y <
+        0.25 * Math.min(topSpeed * deltaSeconds, away.depth)
+    ) {
+      ai.fleeUntil = 0;
+      fleeing = false;
+    }
 
     if (followingOwner) {
       ai.state = "return";
@@ -1417,11 +1491,6 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     // Nothing is fought from inside the scenery: out first. See routeToTarget.
     if (route.escaping) {
       ai.state = "escape";
-      continue;
-    }
-
-    if (fleeing) {
-      ai.state = "flee";
       continue;
     }
 
@@ -1437,7 +1506,13 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       0
     );
     if (distance > heroReach(actor, victim.actor) || !clearAttack) {
-      ai.state = route.waypoint ? "chase" : "blocked";
+      ai.state = fleeing ? "flee" : route.waypoint ? "chase" : "blocked";
+      continue;
+    }
+    // Backing off, it still shoots when its swing is due: it stands for the
+    // swing (the lock above) and carries on after.
+    if (fleeing && (cannotAttack || now < ai.nextAttackAt)) {
+      ai.state = "flee";
       continue;
     }
 
@@ -1521,6 +1596,8 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       ? victim.member.world?.contextFor(victim.member) ?? victim.member
       : session;
     ai.attackHeading = actor.heading;
+    // A shot ends a back-off: it stands for the swing and fights from there.
+    ai.fleeUntil = 0;
     await performNpcAttack(
       victimSession,
       doid,
