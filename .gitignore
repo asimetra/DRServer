@@ -45,7 +45,6 @@ logs-fresh/
 !/docs/images/
 !/docs/images/the-knight-custom-skin.webp
 !/docs/images/dr-server-banner.webp
-!/docs/images/dr-server-social-preview.png
 
 # Local audit reports are built from private capture evidence.
 /reports/

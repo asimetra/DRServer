@@ -1,6 +1,6 @@
 # DR Server
 
-![The Knight dashing through a Dungeon Rampage-style dungeon](docs/images/dr-server-banner.webp)
+![A Dungeon Rampage-style dungeon](docs/images/dr-server-banner.webp)
 
 An independent, server-only compatibility implementation for **Dungeon
 Rampage**, covering its HTTP services and multiplayer game socket.
