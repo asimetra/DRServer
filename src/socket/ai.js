@@ -10,13 +10,13 @@ import { heroMembersOf, matchStateOf, worldOf } from "./match-world.js";
 import { collectNearbyForPet } from "./pickups.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
 import {
-  findPath,
   hasLineOfSight,
   isPositionBlocked,
   moveWithNavigation,
   nearestClearPosition,
 } from "./navigation.js";
 import { objectDisable } from "./objects.js";
+import { searchRoute } from "./route-memo.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 const npcPositionUpdate = (doid, position) =>
@@ -727,7 +727,7 @@ const routeToTarget = (session, actor, target, now, heroes = []) => {
     targetMoved ||
     ai.navigationRevision !== navigation.revision
   ) {
-    ai.path = findPath(navigation, actor.position, target, radius);
+    ai.path = searchRoute(ai, navigation, actor.position, target, radius);
     ai.pathIndex = 0;
     ai.pathFailed = ai.path.length === 0;
     ai.pathTarget = { ...target };
