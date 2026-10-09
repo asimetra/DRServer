@@ -107,6 +107,97 @@ const boundsOf = (collider) => {
 };
 
 /**
+ * The most buckets the index lays out as a flat array. A floor is 30 by 30
+ * buckets at most; anything past this lives in the keyed overflow alone.
+ */
+const INDEX_GRID_LIMIT = 1 << 16;
+
+/**
+ * The flat part of the collider index: one slot per bucket inside the floor's
+ * bounds, which is every bucket a standing query can reach, since a circle
+ * that leaves the bounds is refused before the index is asked.
+ *
+ * Only where a bucket is kept changes. Each bucket holds the same entries in
+ * the same order as it did under its `"x,y"` key, and a bucket outside the
+ * range still lives under that key in `cells` — so the walk over buckets, and
+ * everything that depends on its order, is the one it was.
+ */
+const indexGridFor = (bounds) => {
+  const minX = Math.floor(bounds?.minX / INDEX_CELL);
+  const minY = Math.floor(bounds?.minY / INDEX_CELL);
+  const columns = Math.floor(bounds?.maxX / INDEX_CELL) - minX + 1;
+  const rows = Math.floor(bounds?.maxY / INDEX_CELL) - minY + 1;
+  if (!(columns > 0 && rows > 0 && columns * rows <= INDEX_GRID_LIMIT)) {
+    return { minX: 0, minY: 0, columns: 0, rows: 0, buckets: [] };
+  }
+  return { minX, minY, columns, rows, buckets: new Array(columns * rows).fill(null) };
+};
+
+/** The bucket at index cell (x, y), or a falsy value when there is none. */
+const bucketAt = (index, x, y) => {
+  const { grid } = index;
+  const column = x - grid.minX;
+  const row = y - grid.minY;
+  if (column >= 0 && column < grid.columns && row >= 0 && row < grid.rows) {
+    return grid.buckets[column * grid.rows + row];
+  }
+  return index.cells.get(`${x},${y}`);
+};
+
+const addToBucket = (index, x, y, entry) => {
+  const { grid } = index;
+  const column = x - grid.minX;
+  const row = y - grid.minY;
+  if (column >= 0 && column < grid.columns && row >= 0 && row < grid.rows) {
+    const slot = column * grid.rows + row;
+    const bucket = grid.buckets[slot];
+    if (bucket) bucket.push(entry);
+    else grid.buckets[slot] = [entry];
+    return;
+  }
+  const key = `${x},${y}`;
+  const bucket = index.cells.get(key);
+  if (bucket) bucket.push(entry);
+  else index.cells.set(key, [entry]);
+};
+
+const removeFromBucket = (index, x, y, entry) => {
+  const { grid } = index;
+  const column = x - grid.minX;
+  const row = y - grid.minY;
+  if (column >= 0 && column < grid.columns && row >= 0 && row < grid.rows) {
+    const slot = column * grid.rows + row;
+    const bucket = grid.buckets[slot];
+    if (!bucket) return;
+    const at = bucket.indexOf(entry);
+    if (at >= 0) bucket.splice(at, 1);
+    if (!bucket.length) grid.buckets[slot] = null;
+    return;
+  }
+  const key = `${x},${y}`;
+  const bucket = index.cells.get(key);
+  if (!bucket) return;
+  const at = bucket.indexOf(entry);
+  if (at >= 0) bucket.splice(at, 1);
+  if (!bucket.length) index.cells.delete(key);
+};
+
+/**
+ * An index entry: the collider, its box laid flat for the hot loop, and its
+ * rotation. `box` stays for the slower callers that read it whole.
+ */
+const indexEntry = (collider, box, cosine, sine) => ({
+  collider,
+  box,
+  minX: box.minX,
+  maxX: box.maxX,
+  minY: box.minY,
+  maxY: box.maxY,
+  cosine,
+  sine,
+});
+
+/**
  * A uniform grid over the active colliders, rebuilt with them.
  *
  * `isPositionBlocked` tested every collider on the floor against a circle of
@@ -120,31 +211,32 @@ const boundsOf = (collider) => {
  * every test of every rectangle was work with a constant answer.
  */
 const buildColliderIndex = (navigation) => {
-  const cells = new Map();
-  const entriesByCollider = new Map();
-  const prepared = navigation.colliders.map((collider) => ({
-    collider,
-    box: boundsOf(collider),
-    // Negated once, because overlapsRectangle rotates the point *into* the
-    // collider's frame rather than the other way about.
-    cosine: collider.type === "rectangle" ? Math.cos(-collider.angle) : 0,
-    sine: collider.type === "rectangle" ? Math.sin(-collider.angle) : 0,
-  }));
+  const index = {
+    forColliders: navigation.colliders,
+    cells: new Map(),
+    entriesByCollider: new Map(),
+    grid: indexGridFor(navigation.bounds),
+  };
+  const prepared = navigation.colliders.map((collider) =>
+    indexEntry(
+      collider,
+      boundsOf(collider),
+      // Negated once, because overlapsRectangle rotates the point *into* the
+      // collider's frame rather than the other way about.
+      collider.type === "rectangle" ? Math.cos(-collider.angle) : 0,
+      collider.type === "rectangle" ? Math.sin(-collider.angle) : 0
+    )
+  );
 
   for (const entry of prepared) {
-    entriesByCollider.set(entry.collider, entry);
+    index.entriesByCollider.set(entry.collider, entry);
     const { box } = entry;
     const fromX = Math.floor(box.minX / INDEX_CELL);
     const toX = Math.floor(box.maxX / INDEX_CELL);
     const fromY = Math.floor(box.minY / INDEX_CELL);
     const toY = Math.floor(box.maxY / INDEX_CELL);
     for (let x = fromX; x <= toX; x++) {
-      for (let y = fromY; y <= toY; y++) {
-        const key = `${x},${y}`;
-        const bucket = cells.get(key);
-        if (bucket) bucket.push(entry);
-        else cells.set(key, [entry]);
-      }
+      for (let y = fromY; y <= toY; y++) addToBucket(index, x, y, entry);
     }
   }
   /**
@@ -160,24 +252,21 @@ const buildColliderIndex = (navigation) => {
    * Holding the source array makes the check an identity comparison, and a
    * narrowed copy falls back to the linear scan by itself.
    */
-  navigation.colliderIndex = { forColliders: navigation.colliders, cells, entriesByCollider };
+  navigation.colliderIndex = index;
 };
 
 const addColliderToIndex = (navigation, collider) => {
   if (!collider || navigation.colliderIndex?.entriesByCollider.has(collider)) return false;
-  const entry = {
+  const entry = indexEntry(
     collider,
-    box: boundsOf(collider),
-    cosine: collider.type === "rectangle" ? Math.cos(-(collider.angle ?? 0)) : 0,
-    sine: collider.type === "rectangle" ? Math.sin(-(collider.angle ?? 0)) : 0,
-  };
+    boundsOf(collider),
+    collider.type === "rectangle" ? Math.cos(-(collider.angle ?? 0)) : 0,
+    collider.type === "rectangle" ? Math.sin(-(collider.angle ?? 0)) : 0
+  );
   const { box } = entry;
   for (let x = Math.floor(box.minX / INDEX_CELL); x <= Math.floor(box.maxX / INDEX_CELL); x++) {
     for (let y = Math.floor(box.minY / INDEX_CELL); y <= Math.floor(box.maxY / INDEX_CELL); y++) {
-      const key = `${x},${y}`;
-      const bucket = navigation.colliderIndex.cells.get(key);
-      if (bucket) bucket.push(entry);
-      else navigation.colliderIndex.cells.set(key, [entry]);
+      addToBucket(navigation.colliderIndex, x, y, entry);
     }
   }
   navigation.colliderIndex.entriesByCollider.set(collider, entry);
@@ -192,12 +281,7 @@ const removeColliderFromIndex = (navigation, collider) => {
   const { box } = entry;
   for (let x = Math.floor(box.minX / INDEX_CELL); x <= Math.floor(box.maxX / INDEX_CELL); x++) {
     for (let y = Math.floor(box.minY / INDEX_CELL); y <= Math.floor(box.maxY / INDEX_CELL); y++) {
-      const key = `${x},${y}`;
-      const bucket = index.cells.get(key);
-      if (!bucket) continue;
-      const at = bucket.indexOf(entry);
-      if (at >= 0) bucket.splice(at, 1);
-      if (!bucket.length) index.cells.delete(key);
+      removeFromBucket(index, x, y, entry);
     }
   }
   index.entriesByCollider.delete(collider);
@@ -267,6 +351,8 @@ export const createNavigationState = (definition) => {
     cellSize: definition.cellSize ?? DEFAULT_CELL_SIZE,
     tileSize: definition.tileSize ?? 900,
     tileKeys: new Set((definition.tiles ?? []).map((tile) => `${tile.x},${tile.y}`)),
+    // `tileKeys` laid out flat for the collision tests, built on first use.
+    tileGrid: null,
     staticColliders: [...(definition.staticColliders ?? [])],
     triggerGroups: new Map(),
     obstacles: new Map(),
@@ -326,10 +412,84 @@ export const removeNavigationObstacle = (navigation, id) => {
 export const isOnAuthoredTile = (navigation, point) => {
   if (!navigation || !point) return false;
   if (!navigation.tileKeys.size) return true;
+  return onAuthoredTile(navigation, point.x, point.y);
+};
+
+/** The most tiles the authored-tile lookup lays out flat; a floor uses about a hundred. */
+const TILE_GRID_LIMIT = 1 << 16;
+
+/**
+ * `tileKeys` as a flat array over the tile rows and columns it spans.
+ *
+ * Every collision test asks whether its point is on a laid tile, and building
+ * the `"x,y"` string to ask the set cost more than the rest of the test. Each
+ * slot holds exactly what the set answers for that slot's key, worked out by
+ * asking it once; a tile outside the span is still asked by key, so the answer
+ * does not depend on the span being right, only the speed does.
+ */
+const buildTileGrid = (tileKeys, tileSize) => {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const key of tileKeys) {
+    const [x, y] = String(key).split(",").map(Number);
+    const column = Math.floor(x / tileSize);
+    const row = Math.floor(y / tileSize);
+    if (!Number.isFinite(column) || !Number.isFinite(row)) continue;
+    minX = Math.min(minX, column);
+    maxX = Math.max(maxX, column);
+    minY = Math.min(minY, row);
+    maxY = Math.max(maxY, row);
+  }
+  const columns = maxX - minX + 1;
+  const rows = maxY - minY + 1;
+  const grid = { forKeys: tileKeys, size: tileSize, count: tileKeys.size, minX, minY, columns: 0, rows: 0, cells: null };
+  if (!(columns > 0 && rows > 0 && columns * rows <= TILE_GRID_LIMIT)) return grid;
+  grid.columns = columns;
+  grid.rows = rows;
+  grid.cells = new Uint8Array(columns * rows);
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const tileX = (minX + column) * tileSize;
+      const tileY = (minY + row) * tileSize;
+      grid.cells[row * columns + column] = tileKeys.has(`${tileX},${tileY}`) ? 1 : 0;
+    }
+  }
+  return grid;
+};
+
+/** The tile grid for this navigation's current tiles, built on first use. */
+const tileGridOf = (navigation) => {
+  const cached = navigation.tileGrid;
+  if (
+    cached &&
+    cached.forKeys === navigation.tileKeys &&
+    Object.is(cached.size, navigation.tileSize) &&
+    cached.count === navigation.tileKeys.size
+  ) {
+    return cached;
+  }
+  navigation.tileGrid = buildTileGrid(navigation.tileKeys, navigation.tileSize);
+  return navigation.tileGrid;
+};
+
+/** `isOnAuthoredTile` past its guards, on a bare coordinate pair. */
+const onAuthoredTile = (navigation, x, y) => {
   const { tileSize } = navigation;
-  const tileX = Math.floor(point.x / tileSize) * tileSize;
-  const tileY = Math.floor(point.y / tileSize) * tileSize;
-  return navigation.tileKeys.has(`${tileX},${tileY}`);
+  return tileAt(navigation, Math.floor(x / tileSize), Math.floor(y / tileSize));
+};
+
+/** Whether tile (column, row), in units of `tileSize`, is laid. */
+const tileAt = (navigation, column, row) => {
+  const grid = tileGridOf(navigation);
+  const gridColumn = column - grid.minX;
+  const gridRow = row - grid.minY;
+  if (gridColumn >= 0 && gridColumn < grid.columns && gridRow >= 0 && gridRow < grid.rows) {
+    return grid.cells[gridRow * grid.columns + gridColumn] === 1;
+  }
+  const { tileSize } = navigation;
+  return navigation.tileKeys.has(`${column * tileSize},${row * tileSize}`);
 };
 
 /**
@@ -364,7 +524,7 @@ export const segmentStaysOnAuthoredTiles = (navigation, from, to) => {
   let nextY = stepY > 0 ? (cellY + 1) * size : cellY * size;
   let maxX = stepX ? Math.abs((nextX - from.x) / dx) : Number.POSITIVE_INFINITY;
   let maxY = stepY ? Math.abs((nextY - from.y) / dy) : Number.POSITIVE_INFINITY;
-  const present = (x, y) => navigation.tileKeys.has(`${x * size},${y * size}`);
+  const present = (x, y) => tileAt(navigation, x, y);
 
   while (cellX !== endX || cellY !== endY) {
     if (maxX < maxY) {
@@ -411,15 +571,40 @@ const overlapsRectangle = (
 const overlapsCircle = (point, radius, collider) =>
   squaredDistance(point, collider) < (radius + collider.radius) ** 2;
 
+/**
+ * `overlapsRectangle` and `overlapsCircle` on a bare coordinate pair, for the
+ * hot loops that would otherwise build a point object per probe. The same
+ * expressions on the same values, so the same answers to the last bit.
+ */
+const rectangleOverlapsAt = (x, y, radius, collider, cosine, sine) => {
+  const offsetX = x - collider.x;
+  const offsetY = y - collider.y;
+  const localX = offsetX * cosine - offsetY * sine;
+  const localY = offsetX * sine + offsetY * cosine;
+  const closestX = Math.max(-collider.halfWidth, Math.min(collider.halfWidth, localX));
+  const closestY = Math.max(-collider.halfHeight, Math.min(collider.halfHeight, localY));
+  const dx = localX - closestX;
+  const dy = localY - closestY;
+  return dx * dx + dy * dy < radius * radius || (radius === 0 && dx === 0 && dy === 0);
+};
+
+const circleOverlapsAt = (x, y, radius, collider) => {
+  const dx = x - collider.x;
+  const dy = y - collider.y;
+  return dx * dx + dy * dy < (radius + collider.radius) ** 2;
+};
+
 /** Inside the floor's bounds and on one of its tiles; colliders aside. */
-const isWithinFloor = (navigation, point, radius) => {
+const isWithinFloor = (navigation, point, radius) => withinFloorAt(navigation, point.x, point.y, radius);
+
+const withinFloorAt = (navigation, x, y, radius) => {
   const { bounds } = navigation;
   return (
-    point.x - radius >= bounds.minX &&
-    point.x + radius <= bounds.maxX &&
-    point.y - radius >= bounds.minY &&
-    point.y + radius <= bounds.maxY &&
-    isOnAuthoredTile(navigation, point)
+    x - radius >= bounds.minX &&
+    x + radius <= bounds.maxX &&
+    y - radius >= bounds.minY &&
+    y + radius <= bounds.maxY &&
+    (!navigation.tileKeys.size || onAuthoredTile(navigation, x, y))
   );
 };
 
@@ -460,7 +645,7 @@ const collidersNear = (navigation, point, radius, { ignoredColliders } = {}) => 
   const found = new Set();
   for (let x = Math.floor((point.x - radius) / INDEX_CELL); x <= Math.floor((point.x + radius) / INDEX_CELL); x++) {
     for (let y = Math.floor((point.y - radius) / INDEX_CELL); y <= Math.floor((point.y + radius) / INDEX_CELL); y++) {
-      for (const entry of index.get(`${x},${y}`) ?? []) {
+      for (const entry of bucketAt(cached, x, y) || []) {
         if (!ignoredColliders?.has(entry.collider) && reaches(entry.box)) found.add(entry.collider);
       }
     }
@@ -541,7 +726,12 @@ export const isPositionBlocked = (
   { ignoredColliders } = {}
 ) => {
   if (!navigation) return false;
-  if (!isWithinFloor(navigation, point, radius)) return true;
+  return blockedAt(navigation, point.x, point.y, radius, ignoredColliders);
+};
+
+/** `isPositionBlocked` past its guards, on a bare coordinate pair. */
+const blockedAt = (navigation, x, y, radius, ignoredColliders) => {
+  if (!withinFloorAt(navigation, x, y, radius)) return true;
 
   /**
    * Only the colliders whose bucket the query circle touches.
@@ -552,46 +742,48 @@ export const isPositionBlocked = (
    * navigation object in a test working without one.
    */
   const cached = navigation.colliderIndex;
-  const index = cached?.forColliders === navigation.colliders ? cached.cells : null;
-  if (!index) {
+  if (cached?.forColliders !== navigation.colliders || !cached.cells) {
     for (const collider of navigation.colliders) {
       if (ignoredColliders?.has(collider)) continue;
       if (collider.type === "circle") {
-        if (overlapsCircle(point, radius, collider)) return true;
+        if (circleOverlapsAt(x, y, radius, collider)) return true;
       } else if (collider.type === "rectangle") {
-        if (overlapsRectangle(point, radius, collider)) return true;
+        if (
+          rectangleOverlapsAt(x, y, radius, collider, Math.cos(-collider.angle), Math.sin(-collider.angle))
+        ) {
+          return true;
+        }
       }
     }
     return false;
   }
 
-  const fromX = Math.floor((point.x - radius) / INDEX_CELL);
-  const toX = Math.floor((point.x + radius) / INDEX_CELL);
-  const fromY = Math.floor((point.y - radius) / INDEX_CELL);
-  const toY = Math.floor((point.y + radius) / INDEX_CELL);
+  const left = x - radius;
+  const right = x + radius;
+  const top = y - radius;
+  const bottom = y + radius;
+  const fromX = Math.floor(left / INDEX_CELL);
+  const toX = Math.floor(right / INDEX_CELL);
+  const fromY = Math.floor(top / INDEX_CELL);
+  const toY = Math.floor(bottom / INDEX_CELL);
 
-  for (let x = fromX; x <= toX; x++) {
-    for (let y = fromY; y <= toY; y++) {
-      const bucket = index.get(`${x},${y}`);
+  for (let cellX = fromX; cellX <= toX; cellX++) {
+    for (let cellY = fromY; cellY <= toY; cellY++) {
+      const bucket = bucketAt(cached, cellX, cellY);
       if (!bucket) continue;
-      for (const entry of bucket) {
+      for (let at = 0; at < bucket.length; at++) {
+        const entry = bucket[at];
         const { collider } = entry;
         if (ignoredColliders?.has(collider)) continue;
         // The box is the bucket's own filter: one collider can be listed in
         // several buckets, and most of a bucket is not near the point.
-        const { box } = entry;
-        if (
-          point.x + radius < box.minX ||
-          point.x - radius > box.maxX ||
-          point.y + radius < box.minY ||
-          point.y - radius > box.maxY
-        ) {
+        if (right < entry.minX || left > entry.maxX || bottom < entry.minY || top > entry.maxY) {
           continue;
         }
         if (collider.type === "circle") {
-          if (overlapsCircle(point, radius, collider)) return true;
+          if (circleOverlapsAt(x, y, radius, collider)) return true;
         } else if (collider.type === "rectangle") {
-          if (overlapsRectangle(point, radius, collider, entry.cosine, entry.sine)) return true;
+          if (rectangleOverlapsAt(x, y, radius, collider, entry.cosine, entry.sine)) return true;
         }
       }
     }
@@ -611,25 +803,25 @@ export const hasLineOfSight = (
   const distance = Math.sqrt(squaredDistance(from, to));
   const step = Math.max(8, Math.min(24, radius > 0 ? radius * 0.5 : 16));
   const samples = Math.max(1, Math.ceil(distance / step));
+  if (!(samples >= 1)) return true;
+  // Read once rather than per sample; destructured exactly as
+  // `isPositionBlocked` does, so the options it accepts are the same.
+  const ignoredColliders = ignoredCollidersOf(options);
 
+  const fromX = from.x;
+  const fromY = from.y;
+  const spanX = to.x - fromX;
+  const spanY = to.y - fromY;
   for (let index = 1; index <= samples; index++) {
     const ratio = index / samples;
-    if (
-      isPositionBlocked(
-        navigation,
-        {
-          x: from.x + (to.x - from.x) * ratio,
-          y: from.y + (to.y - from.y) * ratio,
-        },
-        radius,
-        options
-      )
-    ) {
+    if (blockedAt(navigation, fromX + spanX * ratio, fromY + spanY * ratio, radius, ignoredColliders)) {
       return false;
     }
   }
   return true;
 };
+
+const ignoredCollidersOf = ({ ignoredColliders } = {}) => ignoredColliders;
 
 const colliderBlocksPosition = (point, radius, collider) => {
   if (collider.type === "circle") return overlapsCircle(point, radius, collider);
@@ -784,49 +976,104 @@ export const findCageReleasePath = (navigation, origin, radius = 0, target = nul
   return null;
 };
 
-class MinHeap {
-  constructor() {
-    this.items = [];
-  }
+/**
+ * The open list of a route search, as two parallel arrays rather than one
+ * object per entry. The same binary heap, with the same comparisons in the same
+ * order, so entries of equal priority still leave it in the order they did.
+ *
+ * Shared by every search: `findPath` runs to completion without calling itself,
+ * and empties the heap before it starts.
+ */
+let heapPriorities = new Float64Array(1024);
+let heapKeys = new Int32Array(1024);
+let heapLength = 0;
 
-  get length() {
-    return this.items.length;
+const heapPush = (key, priority) => {
+  if (heapLength === heapKeys.length) {
+    const priorities = new Float64Array(heapLength * 2);
+    const keys = new Int32Array(heapLength * 2);
+    priorities.set(heapPriorities);
+    keys.set(heapKeys);
+    heapPriorities = priorities;
+    heapKeys = keys;
   }
-
-  push(item) {
-    this.items.push(item);
-    let index = this.items.length - 1;
-    while (index > 0) {
-      const parent = Math.floor((index - 1) / 2);
-      if (this.items[parent].priority <= item.priority) break;
-      this.items[index] = this.items[parent];
-      index = parent;
-    }
-    this.items[index] = item;
+  let index = heapLength++;
+  while (index > 0) {
+    const parent = Math.floor((index - 1) / 2);
+    if (heapPriorities[parent] <= priority) break;
+    heapPriorities[index] = heapPriorities[parent];
+    heapKeys[index] = heapKeys[parent];
+    index = parent;
   }
+  heapPriorities[index] = priority;
+  heapKeys[index] = key;
+};
 
-  pop() {
-    const first = this.items[0];
-    const last = this.items.pop();
-    if (!this.items.length) return first;
+/** Removes the lowest entry and returns its key. */
+const heapPop = () => {
+  const first = heapKeys[0];
+  heapLength--;
+  const lastPriority = heapPriorities[heapLength];
+  const lastKey = heapKeys[heapLength];
+  if (!heapLength) return first;
 
-    let index = 0;
-    while (true) {
-      const left = index * 2 + 1;
-      const right = left + 1;
-      if (left >= this.items.length) break;
-      const child =
-        right < this.items.length && this.items[right].priority < this.items[left].priority
-          ? right
-          : left;
-      if (this.items[child].priority >= last.priority) break;
-      this.items[index] = this.items[child];
-      index = child;
-    }
-    this.items[index] = last;
-    return first;
+  let index = 0;
+  while (true) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    if (left >= heapLength) break;
+    const child = right < heapLength && heapPriorities[right] < heapPriorities[left] ? right : left;
+    if (heapPriorities[child] >= lastPriority) break;
+    heapPriorities[index] = heapPriorities[child];
+    heapKeys[index] = heapKeys[child];
+    index = child;
   }
-}
+  heapPriorities[index] = lastPriority;
+  heapKeys[index] = lastKey;
+  return first;
+};
+
+/**
+ * Per-cell search state, kept between searches and told apart by a stamp: a
+ * slot belongs to this search only when its stamp is this search's. Stands in
+ * for the cost and came-from maps and the closed set, which were rebuilt and
+ * grown for every route.
+ */
+let searchStamp = 0;
+let costStamps = new Uint32Array(0);
+let costs = new Float64Array(0);
+let parentStamps = new Uint32Array(0);
+let parents = new Int32Array(0);
+let viasInto = [];
+let closedStamps = new Uint32Array(0);
+
+const beginSearch = (size) => {
+  heapLength = 0;
+  if (costStamps.length < size) {
+    costStamps = new Uint32Array(size);
+    costs = new Float64Array(size);
+    parentStamps = new Uint32Array(size);
+    parents = new Int32Array(size);
+    viasInto = new Array(size).fill(null);
+    closedStamps = new Uint32Array(size);
+    searchStamp = 0;
+  }
+  if (searchStamp === 0xffffffff) {
+    costStamps.fill(0);
+    parentStamps.fill(0);
+    closedStamps.fill(0);
+    searchStamp = 0;
+  }
+  return ++searchStamp;
+};
+
+/**
+ * The eight steps out of a cell: x, y and cost, in the order they are tried.
+ * A link is cached under its cell and its index here.
+ */
+const STEP_X = [-1, 1, 0, 0, -1, 1, -1, 1];
+const STEP_Y = [0, 0, -1, 1, -1, -1, 1, 1];
+const STEP_COST = [1, 1, 1, 1, Math.SQRT2, Math.SQRT2, Math.SQRT2, Math.SQRT2];
 
 const octileDistance = (ax, ay, bx, by) => {
   const dx = Math.abs(ax - bx);
@@ -867,24 +1114,11 @@ const ANCHOR_OFFSETS = (() => {
     .flatMap((dx) => steps.map((dy) => [dx, dy]))
     .sort(([ax, ay], [bx, by]) => ax * ax + ay * ay - (bx * bx + by * by));
 })();
+const ANCHOR_X = ANCHOR_OFFSETS.map(([dx]) => dx);
+const ANCHOR_Y = ANCHOR_OFFSETS.map(([, dy]) => dy);
 
 /** How far from its centre, in cells, an anchor can sit. */
 const ANCHOR_REACH = Math.max(...ANCHOR_OFFSETS.flat().map(Math.abs));
-
-/**
- * The eight steps out of a cell, in the order the search tries them. A link
- * is cached under its cell and its index here.
- */
-const DIRECTIONS = [
-  [-1, 0, 1],
-  [1, 0, 1],
-  [0, -1, 1],
-  [0, 1, 1],
-  [-1, -1, Math.SQRT2],
-  [1, -1, Math.SQRT2],
-  [-1, 1, Math.SQRT2],
-  [1, 1, Math.SQRT2],
-];
 
 /** A link's cached answer: two bits per direction, eight directions to a cell's 16 bits. */
 const LINK_UNKNOWN = 0;
@@ -1035,14 +1269,17 @@ export const findPath = (navigation, start, goal, radius = 0) => {
       const centreX = bounds.minX + x * cellSize + cellSize / 2;
       const centreY = bounds.minY + y * cellSize + cellSize / 2;
       cells.state[key] = SHUT;
-      for (const [dx, dy] of ANCHOR_OFFSETS) {
-        const point = { x: centreX + dx * cellSize, y: centreY + dy * cellSize };
-        if (isPositionBlocked(navigation, point, radius + ANCHOR_MARGIN)) continue;
+      for (let at = 0; at < ANCHOR_X.length; at++) {
+        const dx = ANCHOR_X[at];
+        const dy = ANCHOR_Y[at];
+        const pointX = centreX + dx * cellSize;
+        const pointY = centreY + dy * cellSize;
+        if (blockedAt(navigation, pointX, pointY, radius + ANCHOR_MARGIN, undefined)) continue;
         if (dx === 0 && dy === 0) {
           cells.state[key] = CENTRED;
         } else {
           cells.state[key] = 3;
-          cells.anchors.set(key, point);
+          cells.anchors.set(key, { x: pointX, y: pointY });
         }
         break;
       }
@@ -1068,24 +1305,24 @@ export const findPath = (navigation, start, goal, radius = 0) => {
    * right-angled one is tried through either corner of the pair, which is the
    * walk into a doorway and out of it.
    */
-  const { links, vias } = cells;
-  /** The step from `from` to its neighbour `to`, which lies in `direction`. */
-  const linkBetween = (from, to, direction) => {
-    const fromKey = keyFor(from.x, from.y);
+  const { links, vias: linkVias } = cells;
+  /** The step from (fromX, fromY) to its neighbour (toX, toY), which lies in `direction`. */
+  const linkBetween = (fromX, fromY, toX, toY, direction) => {
+    const fromKey = keyFor(fromX, fromY);
     const shift = direction * 2;
     let known = (links[fromKey] >>> shift) & 3;
     if (known === LINK_UNKNOWN) {
-      const link = walkBetween(from, to);
+      const link = walkBetween(fromX, fromY, toX, toY);
       known = !link ? LINK_NONE : link.via ? LINK_VIA : LINK_DIRECT;
-      if (known === LINK_VIA) vias.set(fromKey * 8 + direction, link);
+      if (known === LINK_VIA) linkVias.set(fromKey * 8 + direction, link);
       links[fromKey] = (links[fromKey] & ~(3 << shift)) | (known << shift);
     }
     if (known === LINK_NONE) return null;
-    return known === LINK_DIRECT ? DIRECT_LINK : vias.get(fromKey * 8 + direction);
+    return known === LINK_DIRECT ? DIRECT_LINK : linkVias.get(fromKey * 8 + direction);
   };
-  const walkBetween = (from, to) => {
-    const a = anchorOf(from.x, from.y);
-    const b = anchorOf(to.x, to.y);
+  const walkBetween = (fromX, fromY, toX, toY) => {
+    const a = anchorOf(fromX, fromY);
+    const b = anchorOf(toX, toY);
     if (hasLineOfSight(navigation, a, b, radius)) return DIRECT_LINK;
     for (const corner of [{ x: a.x, y: b.y }, { x: b.x, y: a.y }]) {
       if (
@@ -1098,74 +1335,74 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     }
     return null;
   };
-  const viaInto = new Map();
-
   const startCell = toCell(start);
   const goalCell = nearestOpenCell(toCell(goal), columns, rows, blocked);
   if (!goalCell) return [];
 
   const startKey = keyFor(startCell.x, startCell.y);
   const goalKey = keyFor(goalCell.x, goalCell.y);
-  const open = new MinHeap();
-  const cost = new Map([[startKey, 0]]);
-  const cameFrom = new Map();
-  const closed = new Set();
-  open.push({ key: startKey, x: startCell.x, y: startCell.y, priority: 0 });
+  const stamp = beginSearch(columns * rows);
+  costStamps[startKey] = stamp;
+  costs[startKey] = 0;
+  heapPush(startKey, 0);
 
   // The authored floor bounds make this a finite search. Do not impose an
   // arbitrary node ceiling: it turns a valid route on a larger floor into a
   // false "blocked" result, which strands enemies in place for the player.
-  while (open.length) {
-    const current = open.pop();
-    if (closed.has(current.key)) continue;
-    if (current.key === goalKey) break;
-    closed.add(current.key);
+  while (heapLength) {
+    const currentKey = heapPop();
+    if (closedStamps[currentKey] === stamp) continue;
+    if (currentKey === goalKey) break;
+    closedStamps[currentKey] = stamp;
+    const currentX = currentKey % columns;
+    const currentY = Math.floor(currentKey / columns);
 
-    for (let direction = 0; direction < DIRECTIONS.length; direction++) {
-      const [dx, dy, stepCost] = DIRECTIONS[direction];
-      const x = current.x + dx;
-      const y = current.y + dy;
+    for (let direction = 0; direction < 8; direction++) {
+      const dx = STEP_X[direction];
+      const dy = STEP_Y[direction];
+      const x = currentX + dx;
+      const y = currentY + dy;
       if (x < 0 || y < 0 || x >= columns || y >= rows || blocked(x, y)) continue;
       // Do not cut diagonally through the corner of two colliders.
-      if (dx !== 0 && dy !== 0 && (blocked(current.x + dx, current.y) || blocked(current.x, current.y + dy))) {
+      if (dx !== 0 && dy !== 0 && (blocked(currentX + dx, currentY) || blocked(currentX, currentY + dy))) {
         continue;
       }
       // A start cell with no anchor holds no body but this one, which is already
       // there; one that has an anchor is left through it like any other.
       let via = null;
-      if (current.key !== startKey || !blocked(startCell.x, startCell.y)) {
-        const link = linkBetween(current, { x, y }, direction);
+      if (currentKey !== startKey || !blocked(startCell.x, startCell.y)) {
+        const link = linkBetween(currentX, currentY, x, y, direction);
         if (!link) continue;
         via = link.via;
       }
 
       const key = keyFor(x, y);
-      const nextCost = cost.get(current.key) + stepCost;
-      if (nextCost >= (cost.get(key) ?? Number.POSITIVE_INFINITY)) continue;
-      cost.set(key, nextCost);
-      cameFrom.set(key, current.key);
-      viaInto.set(key, via);
-      open.push({
-        key,
-        x,
-        y,
-        priority: nextCost + octileDistance(x, y, goalCell.x, goalCell.y),
-      });
+      const nextCost = costs[currentKey] + STEP_COST[direction];
+      if (nextCost >= (costStamps[key] === stamp ? costs[key] : Number.POSITIVE_INFINITY)) continue;
+      costStamps[key] = stamp;
+      costs[key] = nextCost;
+      parentStamps[key] = stamp;
+      parents[key] = currentKey;
+      viasInto[key] = via;
+      heapPush(key, nextCost + octileDistance(x, y, goalCell.x, goalCell.y));
     }
   }
 
-  if (goalKey !== startKey && !cameFrom.has(goalKey)) return [];
+  if (goalKey !== startKey && parentStamps[goalKey] !== stamp) return [];
 
+  // Walked back from the goal and turned round once, rather than built by
+  // putting each point at the front.
   const raw = [];
   let key = goalKey;
   while (key !== startKey) {
     const anchor = anchorOf(key % columns, Math.floor(key / columns));
-    raw.unshift({ x: anchor.x, y: anchor.y });
-    const via = viaInto.get(key);
-    if (via) raw.unshift({ ...via });
-    key = cameFrom.get(key);
-    if (key === undefined) return [];
+    raw.push({ x: anchor.x, y: anchor.y });
+    const via = parentStamps[key] === stamp ? viasInto[key] : undefined;
+    if (via) raw.push({ ...via });
+    if (parentStamps[key] !== stamp) return [];
+    key = parents[key];
   }
+  raw.reverse();
   /**
    * The body's own cell first. It stands somewhere in that cell, not at its
    * anchor, and in a doorway the step from where it stands to the next cell can
