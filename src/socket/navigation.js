@@ -407,9 +407,11 @@ const rebuildActiveColliders = (navigation) => {
  * Each cached answer can only depend on colliders within a known reach of its
  * cell (see `forgetAround`), so only the answers within that reach of a
  * collider that came or went are forgotten. The rest are what a fresh search
- * would work out again, to the bit: `isPositionBlocked` asks only colliders
- * whose box reaches the probe, and is a plain any-overlap, so neither a far
- * collider nor the order of the index can change it.
+ * would work out again, to the bit: the point test (`blockedAt`, and
+ * `clearOfGathered` on a sight line's or a cell's gathered entries) puts only
+ * colliders whose box reaches the probe to the overlap test, and is a plain
+ * any-overlap, so neither a far collider, nor how many more a gathering
+ * picked up, nor the order of the index can change it.
  *
  * The forgetting itself waits for the next search at that radius, which is
  * the only reader: a trap that goes up and down four times between two
@@ -1547,10 +1549,11 @@ const routeCacheFor = (navigation, radius, columns, rows) => {
  * box could change.
  *
  * A cell's answer probes points at most ANCHOR_REACH cells from its centre with
- * a circle of radius + ANCHOR_MARGIN, and `isPositionBlocked` consults only
- * colliders whose box reaches the probe circle's square. So a collider whose
- * box stays beyond centre ± (ANCHOR_REACH·cell + radius + ANCHOR_MARGIN) cannot
- * change that cell. A link walks between the two cells' anchors, through a
+ * a circle of radius + ANCHOR_MARGIN, and the point test lets only colliders
+ * whose box reaches the probe circle's square decide (a gathering may collect
+ * more, but each probe applies the same box test before the overlap test). So
+ * a collider whose box stays beyond centre ± (ANCHOR_REACH·cell + radius +
+ * ANCHOR_MARGIN) cannot change that cell. A link walks between the two cells' anchors, through a
  * corner of the box they span, with a circle of `radius`, and rests on both
  * cells' answers; every point it tests is within one cell of its own cell's
  * reach. One more cell is taken on every side of both, which more than covers
