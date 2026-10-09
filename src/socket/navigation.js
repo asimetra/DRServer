@@ -220,10 +220,42 @@ const rebuildActiveColliders = (navigation) => {
   buildColliderIndex(navigation);
 };
 
-const invalidatePathfinding = (navigation) => {
+/**
+ * Records a change of colliders, and which route answers it could alter.
+ *
+ * `revision` moves on every change exactly as before; it is what tells an NPC
+ * its route may be stale. The per-radius route caches, though, used to be
+ * dropped whole each time, and a floor whose spike traps cycle every couple of
+ * seconds dropped them about sixteen times a second — every search after that
+ * worked out from scratch hundreds of cells and links nowhere near the trap.
+ *
+ * Each cached answer can only depend on colliders within a known reach of its
+ * cell (see `forgetAround`), so only the answers within that reach of a
+ * collider that came or went are forgotten. The rest are what a fresh search
+ * would work out again, to the bit: `isPositionBlocked` asks only colliders
+ * whose box reaches the probe, and is a plain any-overlap, so neither a far
+ * collider nor the order of the index can change it.
+ *
+ * The forgetting itself waits for the next search at that radius, which is
+ * the only reader: a trap that goes up and down four times between two
+ * searches is forgotten around once, and a radius nobody searches at costs a
+ * set insertion. `changed` is every collider that may have been added or
+ * removed — the old set and the new one together; one in both is forgotten
+ * around for nothing.
+ */
+const invalidatePathfinding = (navigation, changed) => {
   navigation.revision++;
-  navigation.pathfinding.blockedCellsByRadius.clear();
-  navigation.pathfinding.linksByRadius.clear();
+  const caches = navigation.pathfinding.byRadius;
+  if (!caches.size) return;
+  for (const [radiusKey, cache] of caches) {
+    if (!cache.local) {
+      caches.delete(radiusKey);
+      continue;
+    }
+    for (const collider of changed) cache.pending.add(collider);
+    // A floor rebuilding wholesale: starting over is cheaper than forgetting piecemeal.
+    if (cache.pending.size > MAX_PENDING_COLLIDERS) caches.delete(radiusKey);
+  }
 };
 
 /** Creates mutable per-session state from a cached floor navigation definition. */
@@ -240,10 +272,11 @@ export const createNavigationState = (definition) => {
     obstacles: new Map(),
     colliders: [],
     revision: 0,
-    // A route search lazily records which grid cells are blocked for a given
-    // actor radius. The geometry only changes when navigation revision does,
-    // so later NPCs do not repeat the same collider checks.
-    pathfinding: { blockedCellsByRadius: new Map(), linksByRadius: new Map() },
+    // A route search lazily records, per actor radius, which grid cells are
+    // open and which steps between neighbours can be walked, so later NPCs do
+    // not repeat the same collider checks. A collider change forgets only the
+    // answers near it: see invalidatePathfinding.
+    pathfinding: { byRadius: new Map() },
   };
 
   for (const [id, group] of definition.triggerColliders ?? []) {
@@ -265,7 +298,7 @@ export const setNavigationTriggerState = (navigation, id, on) => {
   const next = on ? group.onColliders : group.offColliders;
   group.on = on;
   replaceIndexedColliders(navigation, previous, next);
-  invalidatePathfinding(navigation);
+  invalidatePathfinding(navigation, [...previous, ...next]);
   return true;
 };
 
@@ -275,7 +308,7 @@ export const addNavigationObstacle = (navigation, id, colliders) => {
   const previous = navigation.obstacles.get(id) ?? [];
   replaceIndexedColliders(navigation, previous, colliders);
   navigation.obstacles.set(id, [...colliders]);
-  invalidatePathfinding(navigation);
+  invalidatePathfinding(navigation, [...previous, ...colliders]);
   return true;
 };
 
@@ -285,7 +318,7 @@ export const removeNavigationObstacle = (navigation, id) => {
   if (!colliders) return false;
   replaceIndexedColliders(navigation, colliders, []);
   navigation.obstacles.delete(id);
-  invalidatePathfinding(navigation);
+  invalidatePathfinding(navigation, colliders);
   return true;
 };
 
@@ -835,6 +868,135 @@ const ANCHOR_OFFSETS = (() => {
     .sort(([ax, ay], [bx, by]) => ax * ax + ay * ay - (bx * bx + by * by));
 })();
 
+/** How far from its centre, in cells, an anchor can sit. */
+const ANCHOR_REACH = Math.max(...ANCHOR_OFFSETS.flat().map(Math.abs));
+
+/**
+ * The eight steps out of a cell, in the order the search tries them. A link
+ * is cached under its cell and its index here.
+ */
+const DIRECTIONS = [
+  [-1, 0, 1],
+  [1, 0, 1],
+  [0, -1, 1],
+  [0, 1, 1],
+  [-1, -1, Math.SQRT2],
+  [1, -1, Math.SQRT2],
+  [-1, 1, Math.SQRT2],
+  [1, 1, Math.SQRT2],
+];
+
+/** A link's cached answer: two bits per direction, eight directions to a cell's 16 bits. */
+const LINK_UNKNOWN = 0;
+const LINK_NONE = 1;
+const LINK_DIRECT = 2;
+const LINK_VIA = 3;
+
+/** Radii kept at once; a floor has a few monster sizes, so this is never reached in play. */
+const MAX_CACHED_RADII = 32;
+
+/** Changed colliders a radius may owe before its answers are dropped whole instead. */
+const MAX_PENDING_COLLIDERS = 512;
+
+/**
+ * The route answers for one actor radius: per cell, 0 not yet asked, 1 shut, 2
+ * open at its centre, 3 open off-centre with its anchor in `anchors`; per cell
+ * and direction, whether the step to that neighbour can be walked, with its
+ * corner in `vias` when it needs one. Typed arrays because the search asks
+ * about every neighbour of every cell it opens, and because forgetting a
+ * region is then a few row fills. An entry left in `anchors` or `vias` after
+ * its cell or link is forgotten is never read: both are only consulted for a
+ * state of 3, which is written together with a fresh entry.
+ *
+ * `local` is false for a radius that is not an ordinary number. How far its
+ * answers reach cannot be bounded, so any collider change drops them whole, as
+ * every change used to.
+ */
+const routeCacheFor = (navigation, radius, columns, rows) => {
+  const caches = navigation.pathfinding.byRadius;
+  const radiusKey = String(radius);
+  let cache = caches.get(radiusKey);
+  if (
+    !cache ||
+    cache.columns !== columns ||
+    cache.rows !== rows ||
+    cache.minX !== navigation.bounds.minX ||
+    cache.minY !== navigation.bounds.minY ||
+    cache.cellSize !== navigation.cellSize
+  ) {
+    if (cache) caches.delete(radiusKey);
+    else if (caches.size >= MAX_CACHED_RADII) caches.delete(caches.keys().next().value);
+    cache = {
+      radius,
+      local: true,
+      columns,
+      rows,
+      minX: navigation.bounds.minX,
+      minY: navigation.bounds.minY,
+      cellSize: navigation.cellSize,
+      state: new Uint8Array(columns * rows),
+      anchors: new Map(),
+      links: new Uint16Array(columns * rows),
+      vias: new Map(),
+      // Colliders changed since this radius last searched; see invalidatePathfinding.
+      pending: new Set(),
+    };
+    caches.set(radiusKey, cache);
+  }
+  // String(radius) is the key, so "26" and 26 would share one; either taints it.
+  if (typeof radius !== "number" || !Number.isFinite(radius)) cache.local = false;
+  if (cache.pending.size) {
+    for (const collider of cache.pending) forgetAround(navigation, cache, boundsOf(collider));
+    cache.pending.clear();
+  }
+  return cache;
+};
+
+/**
+ * Forgets the cached cells and links of one radius that a collider with this
+ * box could change.
+ *
+ * A cell's answer probes points at most ANCHOR_REACH cells from its centre with
+ * a circle of radius + ANCHOR_MARGIN, and `isPositionBlocked` consults only
+ * colliders whose box reaches the probe circle's square. So a collider whose
+ * box stays beyond centre ± (ANCHOR_REACH·cell + radius + ANCHOR_MARGIN) cannot
+ * change that cell. A link walks between the two cells' anchors, through a
+ * corner of the box they span, with a circle of `radius`, and rests on both
+ * cells' answers; every point it tests is within one cell of its own cell's
+ * reach. One more cell is taken on every side of both, which more than covers
+ * the rounding of a point interpolated between two anchors.
+ */
+const forgetAround = (navigation, cache, box) => {
+  const { columns, rows, cellSize, minX, minY } = cache;
+  if (
+    !Number.isFinite(box.minX) ||
+    !Number.isFinite(box.maxX) ||
+    !Number.isFinite(box.minY) ||
+    !Number.isFinite(box.maxY)
+  ) {
+    // Never seen in authored data; whatever it is, forget everything.
+    cache.state.fill(0);
+    cache.links.fill(0);
+    return;
+  }
+  const reach = ANCHOR_REACH * cellSize + Math.abs(cache.radius) + ANCHOR_MARGIN;
+  // A cell's centre is min + (index + 0.5)·cellSize.
+  const first = (low, origin) => Math.max(0, Math.floor((low - origin) / cellSize - 0.5) - 1);
+  const last = (high, origin, count) =>
+    Math.min(count - 1, Math.ceil((high - origin) / cellSize - 0.5) + 1);
+  const forget = (array, margin) => {
+    const fromX = first(box.minX - margin, minX);
+    const toX = last(box.maxX + margin, minX, columns);
+    if (fromX > toX) return;
+    const toY = last(box.maxY + margin, minY, rows);
+    for (let y = first(box.minY - margin, minY); y <= toY; y++) {
+      array.fill(0, y * columns + fromX, y * columns + toX + 1);
+    }
+  };
+  forget(cache.state, reach);
+  forget(cache.links, reach + cellSize);
+};
+
 /**
  * A* over the authored floor collision geometry, returning compressed world waypoints.
  *
@@ -864,17 +1026,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     y: bounds.minY + y * cellSize + cellSize / 2,
   });
   const keyFor = (x, y) => y * columns + x;
-  const radiusKey = String(radius);
-  /**
-   * Per radius, per cell: 0 not yet asked, 1 shut, 2 open at its centre, 3 open
-   * off-centre, with the off-centre anchors beside it. Arrays rather than maps,
-   * since the search asks about every neighbour of every cell it opens.
-   */
-  let cells = navigation.pathfinding.blockedCellsByRadius.get(radiusKey);
-  if (!cells || cells.state.length !== columns * rows) {
-    cells = { state: new Uint8Array(columns * rows), anchors: new Map() };
-    navigation.pathfinding.blockedCellsByRadius.set(radiusKey, cells);
-  }
+  const cells = routeCacheFor(navigation, radius, columns, rows);
   const SHUT = 1;
   const CENTRED = 2;
   const stateOf = (x, y) => {
@@ -916,12 +1068,20 @@ export const findPath = (navigation, start, goal, radius = 0) => {
    * right-angled one is tried through either corner of the pair, which is the
    * walk into a doorway and out of it.
    */
-  const linkCache = navigation.pathfinding.linksByRadius.get(radiusKey) ?? new Map();
-  navigation.pathfinding.linksByRadius.set(radiusKey, linkCache);
-  const linkBetween = (from, to) => {
-    const linkKey = keyFor(from.x, from.y) * columns * rows + keyFor(to.x, to.y);
-    if (!linkCache.has(linkKey)) linkCache.set(linkKey, walkBetween(from, to));
-    return linkCache.get(linkKey);
+  const { links, vias } = cells;
+  /** The step from `from` to its neighbour `to`, which lies in `direction`. */
+  const linkBetween = (from, to, direction) => {
+    const fromKey = keyFor(from.x, from.y);
+    const shift = direction * 2;
+    let known = (links[fromKey] >>> shift) & 3;
+    if (known === LINK_UNKNOWN) {
+      const link = walkBetween(from, to);
+      known = !link ? LINK_NONE : link.via ? LINK_VIA : LINK_DIRECT;
+      if (known === LINK_VIA) vias.set(fromKey * 8 + direction, link);
+      links[fromKey] = (links[fromKey] & ~(3 << shift)) | (known << shift);
+    }
+    if (known === LINK_NONE) return null;
+    return known === LINK_DIRECT ? DIRECT_LINK : vias.get(fromKey * 8 + direction);
   };
   const walkBetween = (from, to) => {
     const a = anchorOf(from.x, from.y);
@@ -952,17 +1112,6 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   const closed = new Set();
   open.push({ key: startKey, x: startCell.x, y: startCell.y, priority: 0 });
 
-  const directions = [
-    [-1, 0, 1],
-    [1, 0, 1],
-    [0, -1, 1],
-    [0, 1, 1],
-    [-1, -1, Math.SQRT2],
-    [1, -1, Math.SQRT2],
-    [-1, 1, Math.SQRT2],
-    [1, 1, Math.SQRT2],
-  ];
-
   // The authored floor bounds make this a finite search. Do not impose an
   // arbitrary node ceiling: it turns a valid route on a larger floor into a
   // false "blocked" result, which strands enemies in place for the player.
@@ -972,7 +1121,8 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     if (current.key === goalKey) break;
     closed.add(current.key);
 
-    for (const [dx, dy, stepCost] of directions) {
+    for (let direction = 0; direction < DIRECTIONS.length; direction++) {
+      const [dx, dy, stepCost] = DIRECTIONS[direction];
       const x = current.x + dx;
       const y = current.y + dy;
       if (x < 0 || y < 0 || x >= columns || y >= rows || blocked(x, y)) continue;
@@ -984,7 +1134,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
       // there; one that has an anchor is left through it like any other.
       let via = null;
       if (current.key !== startKey || !blocked(startCell.x, startCell.y)) {
-        const link = linkBetween(current, { x, y });
+        const link = linkBetween(current, { x, y }, direction);
         if (!link) continue;
         via = link.via;
       }

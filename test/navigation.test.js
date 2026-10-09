@@ -485,3 +485,89 @@ test("narrowing the collider set is not answered from the whole-floor index", ()
   // And the static collider is still found through the narrowed set.
   assert.equal(isPositionBlocked(staticOnly, { x: 200, y: 200 }, 0), true);
 });
+
+/**
+ * Two doorways in one wall, each with a gate, a trap far from both, and a box
+ * that comes and goes: a floor whose colliders keep changing under the search.
+ */
+const gatedWall = (states) => ({
+  bounds: { minX: 0, minY: 0, maxX: 1800, maxY: 1200 },
+  staticColliders: [
+    rectangle(600, 150, 15, 150),
+    rectangle(600, 610, 15, 190),
+    rectangle(600, 1060, 15, 140),
+  ],
+  triggerColliders: [
+    ["north", { initialOn: states.north, onColliders: [rectangle(600, 360, 15, 60)], offColliders: [] }],
+    [
+      "south",
+      {
+        initialOn: states.south,
+        onColliders: [rectangle(600, 860, 15, 60)],
+        offColliders: [rectangle(560, 860, 10, 10)],
+      },
+    ],
+    ["far", { initialOn: states.far, onColliders: [rectangle(1650, 1100, 40, 40)], offColliders: [] }],
+  ],
+});
+
+test("a route after traps and boxes change is the route a fresh floor would find", () => {
+  const states = { north: true, south: false, far: true };
+  const box = [rectangle(300, 600, 40, 40)];
+  const navigation = createNavigationState(gatedWall(states));
+  let boxed = false;
+  let seed = 11;
+  const random = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const routes = [
+    [{ x: 200, y: 200 }, { x: 1400, y: 600 }],
+    [{ x: 200, y: 1000 }, { x: 1700, y: 150 }],
+    [{ x: 1500, y: 1000 }, { x: 100, y: 600 }],
+  ];
+
+  for (let step = 0; step < 60; step++) {
+    const roll = random();
+    if (roll < 0.75) {
+      const id = ["north", "south", "far"][Math.floor(random() * 3)];
+      states[id] = !states[id];
+      setNavigationTriggerState(navigation, id, states[id]);
+    } else if (boxed) {
+      removeNavigationObstacle(navigation, "box");
+      boxed = false;
+    } else {
+      addNavigationObstacle(navigation, "box", box);
+      boxed = true;
+    }
+
+    const fresh = createNavigationState(gatedWall(states));
+    if (boxed) addNavigationObstacle(fresh, "box", box);
+    for (const [start, goal] of routes) {
+      for (const radius of [20, 26, 35]) {
+        assert.deepEqual(
+          findPath(navigation, start, goal, radius),
+          findPath(fresh, start, goal, radius),
+          `step ${step}, radius ${radius}, ${JSON.stringify(states)}${boxed ? " boxed" : ""}`
+        );
+      }
+    }
+  }
+});
+
+test("a trap far from a route leaves the route's cached answers in place", () => {
+  const navigation = createNavigationState(gatedWall({ north: true, south: false, far: true }));
+  const start = { x: 200, y: 200 };
+  const goal = { x: 1400, y: 600 };
+  const route = findPath(navigation, start, goal, 26);
+  const known = () =>
+    navigation.pathfinding.byRadius.get("26").state.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+  const before = known();
+  assert.ok(before > 0);
+
+  const revision = navigation.revision;
+  assert.equal(setNavigationTriggerState(navigation, "far", false), true);
+  assert.equal(navigation.revision, revision + 1, "every change still moves the revision");
+  assert.deepEqual(findPath(navigation, start, goal, 26), route);
+  assert.ok(known() >= before - 20, `only cells near the trap were forgotten (${known()} of ${before})`);
+});
