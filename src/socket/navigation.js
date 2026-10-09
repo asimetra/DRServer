@@ -183,18 +183,101 @@ const removeFromBucket = (index, x, y, entry) => {
 };
 
 /**
- * An index entry: the collider, its box laid flat for the hot loop, and its
- * rotation. `box` stays for the slower callers that read it whole.
+ * How wide a cell of the point-test grid is.
+ *
+ * The 300-unit buckets above decide the order `collidersNear` hands colliders
+ * back in, and that order decides which wall a slide turns along, so they stay
+ * as they are. Whether a point is blocked has no order: any collider that
+ * overlaps it answers the same. So the point test walks a finer grid of its
+ * own, where a body's square meets fewer colliders than the seven or so a
+ * 300-unit bucket holds. 75, 100 and 150 time the same on real floors; 150
+ * costs half the memory of 100, about 60 KiB a floor.
+ */
+const FINE_CELL = 150;
+
+/** The most cells the point-test grid lays out; past it the test uses the buckets. */
+const FINE_GRID_LIMIT = 1 << 18;
+
+/**
+ * The point-test grid over the floor's bounds, empty to start.
+ *
+ * An entry is listed in every cell its box covers, clipped to the grid. A
+ * query whose square lies inside the grid then meets every entry whose box it
+ * reaches — the cells they share are inside the grid — which are exactly the
+ * entries the buckets would have handed it after their box test. A query that
+ * leaves the grid, or a box that is not a box (a minimum past its maximum,
+ * which the buckets list by rounding alone), sends the test back to the
+ * buckets, so the grid never has to be right about either.
+ */
+const fineGridFor = (bounds) => {
+  const minX = Math.floor(bounds?.minX / FINE_CELL);
+  const minY = Math.floor(bounds?.minY / FINE_CELL);
+  const columns = Math.floor(bounds?.maxX / FINE_CELL) - minX + 1;
+  const rows = Math.floor(bounds?.maxY / FINE_CELL) - minY + 1;
+  if (!(columns > 0 && rows > 0 && columns * rows <= FINE_GRID_LIMIT)) {
+    return { minX: 0, minY: 0, maxX: -1, maxY: -1, rows: 0, cells: [], unordered: 0 };
+  }
+  return {
+    minX,
+    minY,
+    maxX: minX + columns - 1,
+    maxY: minY + rows - 1,
+    rows,
+    cells: new Array(columns * rows).fill(null),
+    unordered: 0,
+  };
+};
+
+const isOrderedBox = (entry) => entry.minX <= entry.maxX && entry.minY <= entry.maxY;
+
+const addToFineGrid = (fine, entry) => {
+  if (!isOrderedBox(entry)) fine.unordered++;
+  const fromX = Math.max(fine.minX, Math.floor(entry.minX / FINE_CELL));
+  const toX = Math.min(fine.maxX, Math.floor(entry.maxX / FINE_CELL));
+  const fromY = Math.max(fine.minY, Math.floor(entry.minY / FINE_CELL));
+  const toY = Math.min(fine.maxY, Math.floor(entry.maxY / FINE_CELL));
+  for (let x = fromX; x <= toX; x++) {
+    for (let y = fromY; y <= toY; y++) {
+      const slot = (x - fine.minX) * fine.rows + (y - fine.minY);
+      const cell = fine.cells[slot];
+      if (cell) cell.push(entry);
+      else fine.cells[slot] = [entry];
+    }
+  }
+};
+
+const removeFromFineGrid = (fine, entry) => {
+  if (!isOrderedBox(entry)) fine.unordered--;
+  const fromX = Math.max(fine.minX, Math.floor(entry.minX / FINE_CELL));
+  const toX = Math.min(fine.maxX, Math.floor(entry.maxX / FINE_CELL));
+  const fromY = Math.max(fine.minY, Math.floor(entry.minY / FINE_CELL));
+  const toY = Math.min(fine.maxY, Math.floor(entry.maxY / FINE_CELL));
+  for (let x = fromX; x <= toX; x++) {
+    for (let y = fromY; y <= toY; y++) {
+      const slot = (x - fine.minX) * fine.rows + (y - fine.minY);
+      const cell = fine.cells[slot];
+      if (!cell) continue;
+      const at = cell.indexOf(entry);
+      if (at >= 0) cell.splice(at, 1);
+      if (!cell.length) fine.cells[slot] = null;
+    }
+  }
+};
+
+/**
+ * An index entry: the collider, its box laid flat on the entry, and its
+ * rotation. The entry is its own box wherever one is read.
  */
 const indexEntry = (collider, box, cosine, sine) => ({
   collider,
-  box,
   minX: box.minX,
   maxX: box.maxX,
   minY: box.minY,
   maxY: box.maxY,
   cosine,
   sine,
+  // Which sight line last gathered this entry; see `sweepIsClear`.
+  gathered: 0,
 });
 
 /**
@@ -216,6 +299,8 @@ const buildColliderIndex = (navigation) => {
     cells: new Map(),
     entriesByCollider: new Map(),
     grid: indexGridFor(navigation.bounds),
+    fine: fineGridFor(navigation.bounds),
+    sweepStamp: 0,
   };
   const prepared = navigation.colliders.map((collider) =>
     indexEntry(
@@ -230,14 +315,20 @@ const buildColliderIndex = (navigation) => {
 
   for (const entry of prepared) {
     index.entriesByCollider.set(entry.collider, entry);
-    const { box } = entry;
-    const fromX = Math.floor(box.minX / INDEX_CELL);
-    const toX = Math.floor(box.maxX / INDEX_CELL);
-    const fromY = Math.floor(box.minY / INDEX_CELL);
-    const toY = Math.floor(box.maxY / INDEX_CELL);
+    const fromX = Math.floor(entry.minX / INDEX_CELL);
+    const toX = Math.floor(entry.maxX / INDEX_CELL);
+    const fromY = Math.floor(entry.minY / INDEX_CELL);
+    const toY = Math.floor(entry.maxY / INDEX_CELL);
     for (let x = fromX; x <= toX; x++) {
       for (let y = fromY; y <= toY; y++) addToBucket(index, x, y, entry);
     }
+    addToFineGrid(index.fine, entry);
+  }
+  // Grown one push at a time, most cells hold ten times the room they use; a
+  // copy holds its entries, in their order, and no more.
+  const { cells: fineCells } = index.fine;
+  for (let slot = 0; slot < fineCells.length; slot++) {
+    if (fineCells[slot]) fineCells[slot] = fineCells[slot].slice();
   }
   /**
    * Tied to the exact array it was built from.
@@ -263,12 +354,12 @@ const addColliderToIndex = (navigation, collider) => {
     collider.type === "rectangle" ? Math.cos(-(collider.angle ?? 0)) : 0,
     collider.type === "rectangle" ? Math.sin(-(collider.angle ?? 0)) : 0
   );
-  const { box } = entry;
-  for (let x = Math.floor(box.minX / INDEX_CELL); x <= Math.floor(box.maxX / INDEX_CELL); x++) {
-    for (let y = Math.floor(box.minY / INDEX_CELL); y <= Math.floor(box.maxY / INDEX_CELL); y++) {
+  for (let x = Math.floor(entry.minX / INDEX_CELL); x <= Math.floor(entry.maxX / INDEX_CELL); x++) {
+    for (let y = Math.floor(entry.minY / INDEX_CELL); y <= Math.floor(entry.maxY / INDEX_CELL); y++) {
       addToBucket(navigation.colliderIndex, x, y, entry);
     }
   }
+  addToFineGrid(navigation.colliderIndex.fine, entry);
   navigation.colliderIndex.entriesByCollider.set(collider, entry);
   navigation.colliders.push(collider);
   return true;
@@ -278,12 +369,12 @@ const removeColliderFromIndex = (navigation, collider) => {
   const index = navigation.colliderIndex;
   const entry = index?.entriesByCollider.get(collider);
   if (!entry) return false;
-  const { box } = entry;
-  for (let x = Math.floor(box.minX / INDEX_CELL); x <= Math.floor(box.maxX / INDEX_CELL); x++) {
-    for (let y = Math.floor(box.minY / INDEX_CELL); y <= Math.floor(box.maxY / INDEX_CELL); y++) {
+  for (let x = Math.floor(entry.minX / INDEX_CELL); x <= Math.floor(entry.maxX / INDEX_CELL); x++) {
+    for (let y = Math.floor(entry.minY / INDEX_CELL); y <= Math.floor(entry.maxY / INDEX_CELL); y++) {
       removeFromBucket(index, x, y, entry);
     }
   }
+  removeFromFineGrid(index.fine, entry);
   index.entriesByCollider.delete(collider);
   const at = navigation.colliders.indexOf(collider);
   if (at >= 0) navigation.colliders.splice(at, 1);
@@ -646,7 +737,7 @@ const collidersNear = (navigation, point, radius, { ignoredColliders } = {}) => 
   for (let x = Math.floor((point.x - radius) / INDEX_CELL); x <= Math.floor((point.x + radius) / INDEX_CELL); x++) {
     for (let y = Math.floor((point.y - radius) / INDEX_CELL); y <= Math.floor((point.y + radius) / INDEX_CELL); y++) {
       for (const entry of bucketAt(cached, x, y) || []) {
-        if (!ignoredColliders?.has(entry.collider) && reaches(entry.box)) found.add(entry.collider);
+        if (!ignoredColliders?.has(entry.collider) && reaches(entry)) found.add(entry.collider);
       }
     }
   }
@@ -762,6 +853,37 @@ const blockedAt = (navigation, x, y, radius, ignoredColliders) => {
   const right = x + radius;
   const top = y - radius;
   const bottom = y + radius;
+
+  const { fine } = cached;
+  if (typeof x === "number" && typeof y === "number" && typeof radius === "number" && radius >= 0 && !fine.unordered) {
+    const fineFromX = Math.floor(left / FINE_CELL);
+    const fineToX = Math.floor(right / FINE_CELL);
+    const fineFromY = Math.floor(top / FINE_CELL);
+    const fineToY = Math.floor(bottom / FINE_CELL);
+    if (fineFromX >= fine.minX && fineToX <= fine.maxX && fineFromY >= fine.minY && fineToY <= fine.maxY) {
+      for (let cellX = fineFromX; cellX <= fineToX; cellX++) {
+        for (let cellY = fineFromY; cellY <= fineToY; cellY++) {
+          const cell = fine.cells[(cellX - fine.minX) * fine.rows + (cellY - fine.minY)];
+          if (!cell) continue;
+          for (let at = 0; at < cell.length; at++) {
+            const entry = cell[at];
+            const { collider } = entry;
+            if (ignoredColliders?.has(collider)) continue;
+            if (right < entry.minX || left > entry.maxX || bottom < entry.minY || top > entry.maxY) {
+              continue;
+            }
+            if (collider.type === "circle") {
+              if (circleOverlapsAt(x, y, radius, collider)) return true;
+            } else if (collider.type === "rectangle") {
+              if (rectangleOverlapsAt(x, y, radius, collider, entry.cosine, entry.sine)) return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+  }
+
   const fromX = Math.floor(left / INDEX_CELL);
   const toX = Math.floor(right / INDEX_CELL);
   const fromY = Math.floor(top / INDEX_CELL);
@@ -800,7 +922,14 @@ export const hasLineOfSight = (
   options
 ) => {
   if (!navigation) return true;
-  const distance = Math.sqrt(squaredDistance(from, to));
+  return lineIsClear(navigation, from.x, from.y, to.x, to.y, radius, options);
+};
+
+/** `hasLineOfSight` past its guard, between bare coordinate pairs. */
+const lineIsClear = (navigation, fromX, fromY, toX, toY, radius, options) => {
+  const distanceX = fromX - toX;
+  const distanceY = fromY - toY;
+  const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
   const step = Math.max(8, Math.min(24, radius > 0 ? radius * 0.5 : 16));
   const samples = Math.max(1, Math.ceil(distance / step));
   if (!(samples >= 1)) return true;
@@ -808,10 +937,11 @@ export const hasLineOfSight = (
   // `isPositionBlocked` does, so the options it accepts are the same.
   const ignoredColliders = ignoredCollidersOf(options);
 
-  const fromX = from.x;
-  const fromY = from.y;
-  const spanX = to.x - fromX;
-  const spanY = to.y - fromY;
+  const spanX = toX - fromX;
+  const spanY = toY - fromY;
+  if (samples > 1 && canSweep(navigation, fromX, fromY, radius, ignoredColliders)) {
+    return sweepIsClear(navigation, fromX, fromY, spanX, spanY, samples, radius, ignoredColliders);
+  }
   for (let index = 1; index <= samples; index++) {
     const ratio = index / samples;
     if (blockedAt(navigation, fromX + spanX * ratio, fromY + spanY * ratio, radius, ignoredColliders)) {
@@ -822,6 +952,195 @@ export const hasLineOfSight = (
 };
 
 const ignoredCollidersOf = ({ ignoredColliders } = {}) => ignoredColliders;
+
+/** How many samples of a sight line share one gathering of nearby colliders. */
+const SWEEP_CHUNK = 8;
+
+/** Entries near the stretch of sight line being tested; reused, never held. */
+const sweepCandidates = [];
+
+/**
+ * Whether `sweepIsClear` may answer for this sight line: plain numbers, a
+ * radius that is not negative, the point-test grid in force, and an ignore
+ * list that is a set or nothing. Anything else is sampled one point at a time.
+ */
+const canSweep = (navigation, fromX, fromY, radius, ignoredColliders) =>
+  typeof fromX === "number" &&
+  typeof fromY === "number" &&
+  typeof radius === "number" &&
+  radius >= 0 &&
+  canGather(navigation) &&
+  (ignoredColliders === undefined || ignoredColliders === null || ignoredColliders instanceof Set);
+
+/** Whether the point-test grid answers for this navigation's colliders. */
+const canGather = (navigation) => {
+  const index = navigation.colliderIndex;
+  return index?.forColliders === navigation.colliders && Boolean(index.cells) && !index.fine.unordered;
+};
+
+/**
+ * Puts in `sweepCandidates` each entry in the grid cells under a box whose
+ * own box reaches it, once, and returns how many; -1 when the box leaves the
+ * grid and nothing was gathered.
+ *
+ * Any entry that reaches a square inside the box is among them, and so is
+ * every entry `blockedAt` would have put to its overlap test for that square:
+ * they share a cell with it, and the cells under the square are under the box.
+ */
+const gatherNear = (index, left, right, top, bottom, ignoredColliders) => {
+  const { fine } = index;
+  const fromCellX = Math.floor(left / FINE_CELL);
+  const toCellX = Math.floor(right / FINE_CELL);
+  const fromCellY = Math.floor(top / FINE_CELL);
+  const toCellY = Math.floor(bottom / FINE_CELL);
+  if (!(fromCellX >= fine.minX && toCellX <= fine.maxX && fromCellY >= fine.minY && toCellY <= fine.maxY)) {
+    return -1;
+  }
+  // Each index counts its own gatherings, and an entry belongs to one index.
+  if (index.sweepStamp === 0x3fffffff) clearSweepStamps(index);
+  const stamp = ++index.sweepStamp;
+  let count = 0;
+  for (let cellX = fromCellX; cellX <= toCellX; cellX++) {
+    for (let cellY = fromCellY; cellY <= toCellY; cellY++) {
+      const cell = fine.cells[(cellX - fine.minX) * fine.rows + (cellY - fine.minY)];
+      if (!cell) continue;
+      for (let at = 0; at < cell.length; at++) {
+        const entry = cell[at];
+        if (entry.gathered === stamp) continue;
+        entry.gathered = stamp;
+        if (ignoredColliders?.has(entry.collider)) continue;
+        if (right < entry.minX || left > entry.maxX || bottom < entry.minY || top > entry.maxY) continue;
+        sweepCandidates[count++] = entry;
+      }
+    }
+  }
+  return count;
+};
+
+/**
+ * Whether a body at (x, y) is clear of the first `count` gathered entries: the
+ * box test and overlap test `blockedAt` gives each entry, without the floor.
+ */
+const clearOfGathered = (x, y, radius, count) => {
+  const left = x - radius;
+  const right = x + radius;
+  const top = y - radius;
+  const bottom = y + radius;
+  for (let at = 0; at < count; at++) {
+    const entry = sweepCandidates[at];
+    if (right < entry.minX || left > entry.maxX || bottom < entry.minY || top > entry.maxY) continue;
+    const { collider } = entry;
+    if (collider.type === "circle") {
+      if (circleOverlapsAt(x, y, radius, collider)) return false;
+    } else if (collider.type === "rectangle") {
+      if (rectangleOverlapsAt(x, y, radius, collider, entry.cosine, entry.sine)) return false;
+    }
+  }
+  return true;
+};
+
+/**
+ * The same samples, the same tests on each, gathered rather than looked up.
+ *
+ * A sight line is clear only if every sample is, so the order samples are
+ * tested in cannot change the answer, only how soon a blocked one is found.
+ * That frees two things:
+ *
+ * - The floor's bounds are asked of the first and last samples alone. Each
+ *   coordinate of a sample, `from + span * (index / samples)`, never decreases
+ *   or never increases with the index — every step of it rounds monotonically
+ *   — so every sample lies between those two, and if both keep the body inside
+ *   the bounds, all of them do.
+ * - The colliders near a run of samples are gathered once: every entry in the
+ *   grid cells under the run's box whose own box reaches that box. An entry
+ *   that reaches one sample's square reaches the run's box, which holds the
+ *   square, and shares a cell with it — so each sample still meets exactly the
+ *   entries its own lookup would have, and is put to the same box test and the
+ *   same overlap test.
+ *
+ * Which tile a sample stands on is still asked of every sample, since a line
+ * can clip a missing tile between two laid ones; only a repeat of the tile
+ * just asked about is answered from memory.
+ */
+const sweepIsClear = (navigation, fromX, fromY, spanX, spanY, samples, radius, ignoredColliders) => {
+  const { bounds } = navigation;
+  const firstRatio = 1 / samples;
+  const firstX = fromX + spanX * firstRatio;
+  const firstY = fromY + spanY * firstRatio;
+  const lastRatio = samples / samples;
+  const lastX = fromX + spanX * lastRatio;
+  const lastY = fromY + spanY * lastRatio;
+  if (
+    !(
+      firstX - radius >= bounds.minX &&
+      firstX + radius <= bounds.maxX &&
+      firstY - radius >= bounds.minY &&
+      firstY + radius <= bounds.maxY &&
+      lastX - radius >= bounds.minX &&
+      lastX + radius <= bounds.maxX &&
+      lastY - radius >= bounds.minY &&
+      lastY + radius <= bounds.maxY
+    )
+  ) {
+    return false;
+  }
+
+  const anyTile = !navigation.tileKeys.size;
+  const { tileSize } = navigation;
+  let tileColumn = NaN;
+  let tileRow = NaN;
+  let tileLaid = false;
+  const index = navigation.colliderIndex;
+
+  for (let first = 1; first <= samples; first += SWEEP_CHUNK) {
+    const last = Math.min(samples, first + SWEEP_CHUNK - 1);
+    const startRatio = first / samples;
+    const endRatio = last / samples;
+    const startX = fromX + spanX * startRatio;
+    const startY = fromY + spanY * startRatio;
+    const endX = fromX + spanX * endRatio;
+    const endY = fromY + spanY * endRatio;
+    const count = gatherNear(
+      index,
+      Math.min(startX, endX) - radius,
+      Math.max(startX, endX) + radius,
+      Math.min(startY, endY) - radius,
+      Math.max(startY, endY) + radius,
+      ignoredColliders
+    );
+
+    for (let sample = first; sample <= last; sample++) {
+      const ratio = sample / samples;
+      const x = fromX + spanX * ratio;
+      const y = fromY + spanY * ratio;
+      if (count < 0) {
+        if (blockedAt(navigation, x, y, radius, ignoredColliders)) return false;
+        continue;
+      }
+      if (!anyTile) {
+        const column = Math.floor(x / tileSize);
+        const row = Math.floor(y / tileSize);
+        if (column !== tileColumn || row !== tileRow) {
+          tileColumn = column;
+          tileRow = row;
+          tileLaid = tileAt(navigation, column, row);
+        }
+        if (!tileLaid) return false;
+      }
+      if (!clearOfGathered(x, y, radius, count)) return false;
+    }
+  }
+  return true;
+};
+
+/** After the stamp wraps, so an entry stamped long ago is not taken as gathered. */
+const clearSweepStamps = (index) => {
+  for (const entry of index.entriesByCollider.values()) entry.gathered = 0;
+  for (const cell of index.fine.cells) {
+    if (cell) for (const entry of cell) entry.gathered = 0;
+  }
+  index.sweepStamp = 0;
+};
 
 const colliderBlocksPosition = (point, radius, collider) => {
   if (collider.type === "circle") return overlapsCircle(point, radius, collider);
@@ -1068,6 +1387,43 @@ const beginSearch = (size) => {
 };
 
 /**
+ * Gathers the colliders near a cell's off-centre anchor probes, once its
+ * centre has been refused: the count for `clearOfGathered`, or -1 to probe one
+ * at a time. The box is taken over the probes' own coordinates.
+ */
+const gatherProbes = (navigation, centreX, centreY, cellSize, probeRadius) => {
+  if (
+    typeof centreX !== "number" ||
+    typeof centreY !== "number" ||
+    typeof probeRadius !== "number" ||
+    !(probeRadius >= 0) ||
+    !canGather(navigation)
+  ) {
+    return -1;
+  }
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let at = 1; at < ANCHOR_X.length; at++) {
+    const pointX = centreX + ANCHOR_X[at] * cellSize;
+    const pointY = centreY + ANCHOR_Y[at] * cellSize;
+    if (pointX < minX) minX = pointX;
+    if (pointX > maxX) maxX = pointX;
+    if (pointY < minY) minY = pointY;
+    if (pointY > maxY) maxY = pointY;
+  }
+  return gatherNear(
+    navigation.colliderIndex,
+    minX - probeRadius,
+    maxX + probeRadius,
+    minY - probeRadius,
+    maxY + probeRadius,
+    undefined
+  );
+};
+
+/**
  * The eight steps out of a cell: x, y and cost, in the order they are tried.
  * A link is cached under its cell and its index here.
  */
@@ -1269,12 +1625,23 @@ export const findPath = (navigation, start, goal, radius = 0) => {
       const centreX = bounds.minX + x * cellSize + cellSize / 2;
       const centreY = bounds.minY + y * cellSize + cellSize / 2;
       cells.state[key] = SHUT;
+      const probeRadius = radius + ANCHOR_MARGIN;
+      // -2 until the centre has been refused; then the gathered count, or -1.
+      let gathered = -2;
       for (let at = 0; at < ANCHOR_X.length; at++) {
         const dx = ANCHOR_X[at];
         const dy = ANCHOR_Y[at];
         const pointX = centreX + dx * cellSize;
         const pointY = centreY + dy * cellSize;
-        if (blockedAt(navigation, pointX, pointY, radius + ANCHOR_MARGIN, undefined)) continue;
+        if (at === 1) gathered = gatherProbes(navigation, centreX, centreY, cellSize, probeRadius);
+        if (
+          gathered >= 0
+            ? !withinFloorAt(navigation, pointX, pointY, probeRadius) ||
+              !clearOfGathered(pointX, pointY, probeRadius, gathered)
+            : blockedAt(navigation, pointX, pointY, probeRadius, undefined)
+        ) {
+          continue;
+        }
         if (dx === 0 && dy === 0) {
           cells.state[key] = CENTRED;
         } else {
@@ -1323,15 +1690,21 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   const walkBetween = (fromX, fromY, toX, toY) => {
     const a = anchorOf(fromX, fromY);
     const b = anchorOf(toX, toY);
-    if (hasLineOfSight(navigation, a, b, radius)) return DIRECT_LINK;
-    for (const corner of [{ x: a.x, y: b.y }, { x: b.x, y: a.y }]) {
-      if (
-        !isPositionBlocked(navigation, corner, radius) &&
-        hasLineOfSight(navigation, a, corner, radius) &&
-        hasLineOfSight(navigation, corner, b, radius)
-      ) {
-        return { via: corner };
-      }
+    if (lineIsClear(navigation, a.x, a.y, b.x, b.y, radius, undefined)) return DIRECT_LINK;
+    // Either corner of the pair, in that order; an object only for the one taken.
+    if (
+      !blockedAt(navigation, a.x, b.y, radius, undefined) &&
+      lineIsClear(navigation, a.x, a.y, a.x, b.y, radius, undefined) &&
+      lineIsClear(navigation, a.x, b.y, b.x, b.y, radius, undefined)
+    ) {
+      return { via: { x: a.x, y: b.y } };
+    }
+    if (
+      !blockedAt(navigation, b.x, a.y, radius, undefined) &&
+      lineIsClear(navigation, a.x, a.y, b.x, a.y, radius, undefined) &&
+      lineIsClear(navigation, b.x, a.y, b.x, b.y, radius, undefined)
+    ) {
+      return { via: { x: b.x, y: a.y } };
     }
     return null;
   };
