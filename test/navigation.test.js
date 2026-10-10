@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { loadFloor, readPlacements } from "../src/socket/floors.js";
+import { buildFloor as layOutFloor, loadFloor, readPlacements } from "../src/socket/floors.js";
 import {
   addNavigationObstacle,
   createNavigationState,
@@ -570,4 +570,97 @@ test("a trap far from a route leaves the route's cached answers in place", () =>
   assert.equal(navigation.revision, revision + 1, "every change still moves the revision");
   assert.deepEqual(findPath(navigation, start, goal, 26), route);
   assert.ok(known() >= before - 20, `only cells near the trap were forgotten (${known()} of ${before})`);
+});
+
+/** Each leg of a route from where the body stands, which is not its cell's anchor. */
+const assertWalkable = (navigation, start, path, radius) => {
+  let previous = start;
+  for (const [index, point] of path.entries()) {
+    assert.equal(
+      hasLineOfSight(navigation, previous, point, radius),
+      true,
+      `leg ${index} ${JSON.stringify(previous)} -> ${JSON.stringify(point)} cuts a wall`
+    );
+    previous = point;
+  }
+  return previous;
+};
+
+test("a body just past the end of a wall that shuts its whole cell is given the route that exists", () => {
+  /**
+   * The geometry a yeti stood in for the rest of a floor. Its cell is the one
+   * east of the wall's end: the wall reaches 31 units into it, so every probe
+   * of the cell is within a body's width of the wall and the cell has no
+   * anchor, while the body itself stands 23 units clear. A search used to leave
+   * such a cell in whichever direction was shortest with nothing to say the
+   * body could follow — north here, straight into the wall's corner — and
+   * then refused its own route, though the step east was open all along.
+   */
+  const radius = 22.75;
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    cellSize: 60,
+    staticColliders: [rectangle(425, 390, 86, 30)],
+  });
+  const start = { x: 534, y: 396 };
+  const goal = { x: 448, y: 269 };
+
+  assert.equal(isPositionBlocked(navigation, start, radius), false, "the body stands clear");
+  assert.equal(hasLineOfSight(navigation, start, goal, radius), false, "the wall is between them");
+  const path = findPath(navigation, start, goal, radius);
+  assert.ok(path.length, "expected a route past the end of the wall");
+  const end = assertWalkable(navigation, start, path, radius);
+  assert.deepEqual(end, goal);
+});
+
+test("a body whose cell's anchor lies across a thin wall from it is still given its route", () => {
+  /**
+   * The same refusal with an anchor: the cell has one, but a board through the
+   * cell puts it on the far side from the body, so the route's first point
+   * cannot be walked to and nor can the rest, which all lie beyond the board.
+   * Judged from where the body stands, the way round the board's end is open.
+   */
+  const radius = 22;
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    cellSize: 60,
+    staticColliders: [rectangle(258, 330, 78, 1)],
+  });
+  const start = { x: 310, y: 354 };
+  const goal = { x: 200, y: 240 };
+
+  assert.equal(isPositionBlocked(navigation, start, radius), false, "the body stands clear");
+  assert.equal(hasLineOfSight(navigation, start, goal, radius), false, "the board is between them");
+  const path = findPath(navigation, start, goal, radius);
+  assert.ok(path.length, "expected a route round the end of the board");
+  const end = assertWalkable(navigation, start, path, radius);
+  assert.deepEqual(end, goal);
+});
+
+test("the yeti's dead pocket on a laid-out ice cave has a way out", async () => {
+  /**
+   * Floor 1689 of a captured run, laid out again from its own seed: a
+   * CRAZED_YETI stood at (534,1356), eight units past the east end of a
+   * NORDIC_CAVE_WALL_3X1, for twenty seconds with the player at (448,1229) in
+   * plain view, and never moved. Every route search answered [].
+   */
+  const radius = 22.75;
+  const floor = await layOutFloor("nordic/caves/tiles.json", { tier: 2, tileCount: 7, seed: 848905916 });
+  const navigation = createNavigationState(floor.navigation);
+  const yeti = { x: 534, y: 1356 };
+  const hero = { x: 448, y: 1229 };
+
+  assert.equal(isPositionBlocked(navigation, yeti, radius), false, "the yeti stands clear");
+  assert.equal(hasLineOfSight(navigation, yeti, hero, radius), false, "the wall's end is between them");
+  const path = findPath(navigation, yeti, hero, radius);
+  assert.ok(path.length, "expected the route east and round the wall's end");
+  const end = assertWalkable(navigation, yeti, path, radius);
+  assert.deepEqual(end, hero);
+
+  // From every spot in that pocket, not only the one it stood in.
+  for (const start of [{ x: 534, y: 1348 }, { x: 534, y: 1352 }, { x: 534, y: 1360 }, { x: 534, y: 1364 }]) {
+    const route = findPath(navigation, start, hero, radius);
+    assert.ok(route.length, `expected a route from ${JSON.stringify(start)}`);
+    assertWalkable(navigation, start, route, radius);
+  }
 });

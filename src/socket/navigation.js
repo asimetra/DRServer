@@ -1691,9 +1691,9 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     if (known === LINK_NONE) return null;
     return known === LINK_DIRECT ? DIRECT_LINK : linkVias.get(fromKey * 8 + direction);
   };
-  const walkBetween = (fromX, fromY, toX, toY) => {
-    const a = anchorOf(fromX, fromY);
-    const b = anchorOf(toX, toY);
+  const walkBetween = (fromX, fromY, toX, toY) => walkFrom(anchorOf(fromX, fromY), anchorOf(toX, toY));
+  /** How a body walks from one point to another: straight, round a corner, or not at all. */
+  const walkFrom = (a, b) => {
     if (lineIsClear(navigation, a.x, a.y, b.x, b.y, radius, undefined)) return DIRECT_LINK;
     // Either corner of the pair, in that order; an object only for the one taken.
     if (
@@ -1715,13 +1715,43 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   const startCell = toCell(start);
   const goalCell = nearestOpenCell(toCell(goal), columns, rows, blocked);
   if (!goalCell) return [];
-
-  const startKey = keyFor(startCell.x, startCell.y);
   const goalKey = keyFor(goalCell.x, goalCell.y);
   const stamp = beginSearch(columns * rows);
-  costStamps[startKey] = stamp;
-  costs[startKey] = 0;
-  heapPush(startKey, 0);
+  /** Offers a cell a way in; taken when it is the cheapest so far. */
+  const offer = (x, y, from, nextCost, via) => {
+    const key = keyFor(x, y);
+    if (costStamps[key] === stamp && costs[key] <= nextCost) return;
+    costStamps[key] = stamp;
+    costs[key] = nextCost;
+    parentStamps[key] = stamp;
+    parents[key] = from;
+    viasInto[key] = via;
+    heapPush(key, nextCost + octileDistance(x, y, goalCell.x, goalCell.y));
+  };
+
+  /**
+   * The start is a point, not a cell: the body stands at `start`, not at its
+   * cell's anchor, so its first step is judged from there, into any of the nine
+   * cells around it whose anchor it can walk to, its own at no cost. Whether its
+   * own cell has an anchor is beside the point — a body stands clear in one that
+   * has none, just past the end of the wall that shuts it — and nothing here is
+   * cached, since the step is the body's and not the cell's. Left as a cell, in
+   * any direction when it had no anchor, a yeti stood 8 units past a wall's end
+   * for the rest of a floor: the step north it was given could not be walked,
+   * and the step east it could have taken was never asked for. The walk is all
+   * that is asked; the rule below against cutting the corner of two colliders
+   * is for anchors, and refused a body the clear step north-east it could see.
+   */
+  const START = -1;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const x = startCell.x + dx;
+      const y = startCell.y + dy;
+      if (x < 0 || y < 0 || x >= columns || y >= rows || blocked(x, y)) continue;
+      const link = walkFrom(start, anchorOf(x, y));
+      if (link) offer(x, y, START, Math.hypot(dx, dy), link.via);
+    }
+  }
 
   // The authored floor bounds make this a finite search. Do not impose an
   // arbitrary node ceiling: it turns a valid route on a larger floor into a
@@ -1744,51 +1774,24 @@ export const findPath = (navigation, start, goal, radius = 0) => {
       if (dx !== 0 && dy !== 0 && (blocked(currentX + dx, currentY) || blocked(currentX, currentY + dy))) {
         continue;
       }
-      // A start cell with no anchor holds no body but this one, which is already
-      // there; one that has an anchor is left through it like any other.
-      let via = null;
-      if (currentKey !== startKey || !blocked(startCell.x, startCell.y)) {
-        const link = linkBetween(currentX, currentY, x, y, direction);
-        if (!link) continue;
-        via = link.via;
-      }
-
-      const key = keyFor(x, y);
-      const nextCost = costs[currentKey] + STEP_COST[direction];
-      if (nextCost >= (costStamps[key] === stamp ? costs[key] : Number.POSITIVE_INFINITY)) continue;
-      costStamps[key] = stamp;
-      costs[key] = nextCost;
-      parentStamps[key] = stamp;
-      parents[key] = currentKey;
-      viasInto[key] = via;
-      heapPush(key, nextCost + octileDistance(x, y, goalCell.x, goalCell.y));
+      const link = linkBetween(currentX, currentY, x, y, direction);
+      if (!link) continue;
+      offer(x, y, currentKey, costs[currentKey] + STEP_COST[direction], link.via);
     }
   }
 
-  if (goalKey !== startKey && parentStamps[goalKey] !== stamp) return [];
+  if (parentStamps[goalKey] !== stamp) return [];
 
   // Walked back from the goal and turned round once, rather than built by
   // putting each point at the front.
   const raw = [];
-  let key = goalKey;
-  while (key !== startKey) {
+  for (let key = goalKey; key !== START; key = parents[key]) {
     const anchor = anchorOf(key % columns, Math.floor(key / columns));
     raw.push({ x: anchor.x, y: anchor.y });
-    const via = parentStamps[key] === stamp ? viasInto[key] : undefined;
+    const via = viasInto[key];
     if (via) raw.push({ ...via });
-    if (parentStamps[key] !== stamp) return [];
-    key = parents[key];
   }
   raw.reverse();
-  /**
-   * The body's own cell first. It stands somewhere in that cell, not at its
-   * anchor, and in a doorway the step from where it stands to the next cell can
-   * clip the wall the anchor is clear of. Dropped below when it can be seen past.
-   */
-  if (!blocked(startCell.x, startCell.y)) {
-    const anchor = anchorOf(startCell.x, startCell.y);
-    raw.unshift({ x: anchor.x, y: anchor.y });
-  }
 
   const compressed = [];
   let anchor = start;
@@ -1801,8 +1804,8 @@ export const findPath = (navigation, start, goal, radius = 0) => {
         break;
       }
     }
-    // Not even the next point can be walked to: this is no route, and handing
-    // it out would send the body through whatever is in the way.
+    // Each point can be walked to from the one before it, the first from the
+    // start, so this does not happen; a route through a wall is still not handed out.
     if (farthest < 0) return [];
     compressed.push(raw[farthest]);
     anchor = raw[farthest];
