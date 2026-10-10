@@ -25,6 +25,26 @@ reach, read from the files' imports (`tools/related-tests.js`); `--direct`
 narrows it to the tests that import a changed file themselves, `--list` only
 names them. The full suite is still the answer before a pull request.
 
+A change to the monster AI or the route search that is meant to change
+nothing — a refactor, a cache, a faster search — is proven rather than
+argued: two harnesses run the tree before and after over the same seeded
+work and compare every tick or every answer. They need the local game data.
+
+```bash
+npm run sim:ai -- --base master            # tickNpcAi, real floors, a scripted hero, a virtual clock
+npm run sim:routes -- --base master        # navigation.js and route-memo.js, query by query, with a cache audit
+npm run sim:ai -- --base master --full     # the whole matrix, for the end of a change
+```
+
+`--base` is a commit, a branch or another checkout; the candidate is the
+working tree. Both exit non-zero on the first difference and say where it is,
+and `--full` on each is what a pull request that claims equivalence should
+quote. `test/harness-selfcheck.test.js` keeps them honest by running each
+against a copy of the tree with one deliberate change, which they must
+report. Run them between steps of a long change, not only at its end: the
+first step that differs is the one to look at, and the last is where it is
+hardest to find.
+
 The public test suite runs without private client data. Contributors who have a
 compatible client copy they are lawfully entitled to use can additionally
 import local compatibility data and run the full suite:
