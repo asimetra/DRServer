@@ -745,6 +745,21 @@ const routeToTarget = (session, actor, target, now, heroes = []) => {
   ) {
     ai.pathIndex++;
   }
+  /**
+   * A route it cannot find is a straight walk at the target.
+   *
+   * The official does not plan to the nearest reachable point, nor detour: in
+   * 110 engaged episodes with no route to the hero (96 captures) it steers at
+   * the hero, slides along whatever it hits, and stands where the straight
+   * line is blocked — that model fits its stopping point to 152 u at the
+   * median against 191 for the closest reachable cell. Ranged ones shoot from
+   * there, kiters keep their distance. Ours stood where the search failed,
+   * which was most often a whole room away. Direct, so that it ends at the
+   * standoff and a kiter backs off as from any target in plain sight; the
+   * search above still retries on its own cadence, so a gate opening gives it
+   * a real route. Where the walk stops, see the blocked tick in `tickNpcAi`.
+   */
+  if (ai.pathFailed) return { waypoint: target, direct: true };
   return { waypoint: ai.path?.[ai.pathIndex] ?? null, direct: false };
 };
 
@@ -1310,7 +1325,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       info(
         `[ai] ${doid} at (${Math.round(actor.position.x)},${Math.round(actor.position.y)}) ` +
           `-> (${Math.round(route.waypoint.x)},${Math.round(route.waypoint.y)}) ` +
-          `${route.direct ? "direct" : `via path ${ai.pathIndex}/${ai.path?.length ?? 0}`} ` +
+          `${ai.pathFailed ? "no route" : route.direct ? "direct" : `via path ${ai.pathIndex}/${ai.path?.length ?? 0}`} ` +
           `hero (${Math.round(target.x)},${Math.round(target.y)})`
       );
     }
@@ -1443,6 +1458,26 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         chaseX = ((route.waypoint.x - actor.position.x) / waypointDistance) * chaseTravel;
         chaseY = ((route.waypoint.y - actor.position.y) / waypointDistance) * chaseTravel;
       }
+      // The blocked tick of a straight walk with no route (see routeToTarget):
+      // a step the scenery gives nothing back on, not even a slide, is not
+      // taken. It stands at the wall rather than grinding into it, and does
+      // not pace along it as the official does.
+      if (ai.pathFailed && chaseTravel > 0.001) {
+        const tried = moveWithNavigation(
+          state.navigation,
+          actor.position,
+          { x: chaseX, y: chaseY },
+          collisionRadius(actor)
+        );
+        const headway =
+          ((tried.x - actor.position.x) * chaseX + (tried.y - actor.position.y) * chaseY) /
+          chaseTravel;
+        if (headway < 0.1 * chaseTravel) {
+          chaseX = 0;
+          chaseY = 0;
+          usedOrdinaryWalk = false;
+        }
+      }
     }
     if (ai.kind !== "pet" && !usedOrdinaryWalk) ai.walkSpeed = 0;
 
@@ -1506,7 +1541,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       0
     );
     if (distance > heroReach(actor, victim.actor) || !clearAttack) {
-      ai.state = fleeing ? "flee" : route.waypoint ? "chase" : "blocked";
+      // Walking straight at a hero it has no route to is still "blocked":
+      // that is what the floor command and the debug line want to know.
+      ai.state = fleeing ? "flee" : route.waypoint && !ai.pathFailed ? "chase" : "blocked";
       continue;
     }
     // Backing off, it still shoots when its swing is due: it stands for the
