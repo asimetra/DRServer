@@ -44,13 +44,18 @@ test("Freeze Imp selection is closed only by each move's reach", async () => {
   );
 });
 
+/**
+ * A contact move's Range is the gap between the bodies (`availableAt` puts
+ * them at 60): the claw's 80 reaches 140 feet-to-feet and the tackle's 100
+ * reaches 160. See ai.js `attackReach`.
+ */
 test("Lion selection opens roar, tackle, and claw at their authored ranges", async () => {
   const { ai, named } = await choicesFor("LION");
 
   assert.deepEqual(availableAt(ai, named, 300), ["EN_LION_ROAR"]);
-  assert.deepEqual(availableAt(ai, named, 90), ["EN_LION_ROAR", "EN_LION_TACKLE"]);
+  assert.deepEqual(availableAt(ai, named, 150), ["EN_LION_ROAR", "EN_LION_TACKLE"]);
   assert.deepEqual(
-    availableAt(ai, named, 60),
+    availableAt(ai, named, 90),
     ["EN_LION_ROAR", "EN_LION_TACKLE", "EN_MONSTER_CLAW"]
   );
 });

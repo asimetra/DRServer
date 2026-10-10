@@ -497,7 +497,9 @@ test("a nearby hero keeps aggro even when the pet is slightly closer", async () 
           nextAttackAt: 0,
           attackType: 920050,
           damage: 1,
-          attackColliders: [{ type: "circleCollider", radius: 0, xOffset: 90, frame: 0 }],
+          // A point 65 past the edge of the 25 body: at 90, on the hero's
+          // body (50..110) and past the pet's (30..80).
+          attackColliders: [{ type: "circleCollider", radius: 0, xOffset: 65, frame: 0 }],
         },
       }],
     ]),

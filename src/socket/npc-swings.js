@@ -124,10 +124,40 @@ const landNpcSwing = async (
   if (npcAttackDisabled(session, attackerDoid)) return false;
 
   if (shape?.length) {
+    /**
+     * From the body, not from the feet, and a shape authored in front of the
+     * body starts at its edge.
+     *
+     * The victims are tested at their body (`collisionPointOf`, 22 above the
+     * feet for every hero and most monsters), so a shape placed at the feet
+     * reached 22 further facing down the screen than facing up: a sword's
+     * circle took a player at 130 below the knight and only 80 above it. The
+     * client places the hero's own colliders at `worldCenter` and the shot
+     * already leaves from there (`launchNpcProjectile`); the swing now does
+     * too.
+     *
+     * The authored `xOffset` is measured from where the body ends. The AI
+     * swings from `Range` past the two bodies (ai.js `attackReach`), and the
+     * official lands from there: a knight's sword, circle r40 at 45, landed on
+     * a standing player at 111, 117 and 128 feet-to-feet, which from the
+     * middle it cannot reach (110 at most) and from the body's edge it can
+     * (152); the halberd's 200-long box landed at 240-260 in front on 80% of
+     * 5 swings, 225 being its most from the middle. Measured from the edge
+     * every contact attack reaches at least as far as the AI swings from, so a
+     * swing the gate allows can land on a player who stands still. A shape
+     * authored at or behind the middle — a stomp, a howl, a tail — is where it
+     * says it is.
+     */
+    const body = Math.max(0, Number(ai.collisionRadius ?? attacker.collisionRadius ?? 0));
+    const fromEdge = shape.map((collider) =>
+      Number(collider.xOffset ?? 0) > 0
+        ? { ...collider, xOffset: Number(collider.xOffset) + body }
+        : collider
+    );
     const reach = worldColliders(
-      attacker.position,
+      collisionPointOf(attacker, attacker.position) ?? attacker.position,
       ai.attackHeading ?? attacker.heading ?? 0,
-      shape
+      fromEdge
     );
     const caught = hazardVictims(session, reach, { attack, team: attacker.team })
       .filter(({ doid }) => doid !== attackerDoid && !alreadyHit?.has(doid));
@@ -271,7 +301,8 @@ const launchNpcProjectile = (session, attackerDoid, ai, attack, launch = {}) => 
  *   EN_RAPTOR_BITE    circle r35 at 70 in front, frame 3
  *
  * These are the same shapes, read the same way, that traps have been resolved
- * with since the mace stopped hurting people it swung over.
+ * with since the mace stopped hurting people it swung over. Where "in front"
+ * starts — at the edge of the body, not its middle — is in `landNpcSwing`.
  *
  * Ranged attacks author no collider — `EN_ICE_IMP_ATTACK` and `EN_ARROW_SHOT`
  * carry Range 700 and 600 and nothing else — and are left resolving as they

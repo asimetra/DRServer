@@ -122,6 +122,9 @@ const enableBuffs = (session) => {
 
 test("chase AI moves and faces an aggroed hero", async () => {
   const { session, sent, knightDoid } = makeSession();
+  // Range 80 is the gap between the bodies (35 and 35 here), so a step that
+  // ends at 150 ends in reach. Sixty keeps this one a step short of its swing.
+  session.actors.get(knightDoid).ai.attackRange = 60;
   await tickNpcAi(session, 1000, 0.5);
 
   assert.equal(session.actors.get(knightDoid).ai.state, "chase");

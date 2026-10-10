@@ -138,26 +138,77 @@ const heroStandoff = (actor, hero) => {
 };
 
 /**
- * How far this one may swing from.
+ * How far one attack reaches, feet to feet.
  *
- * The furthest of its attacks, or the width of the two bodies if that is
- * greater. The second case used to be thirteen rows and is now three —
- * GIANT_LEECH, BIG_LEECH and BABY_YETI — because reading `Attack2` and
- * `Attack3` gave the other ten something that does reach: the four brutes and
- * the dragon all carry EN_FART_ATTACK at range 250 against bodies of 87 to 206.
- * For the three left, a leech whose body meets the player's at 131 and whose
- * bite reaches 70 could never bite on range alone. Letting it hit what it is
- * physically touching costs nothing, where moving its body inside the player
- * cost the player being shoved.
+ * A contact attack's `Range` is the gap it closes between the two bodies, not
+ * the distance between their feet: it may swing when the edge of its body is
+ * within `Range` of the edge of the player's, which is `Range` plus both radii
+ * from the middle. Measured on the official, solo captures, swings at a player
+ * who had not moved for 800ms (so the position on the wire is where they
+ * stood):
+ *
+ *   KNIGHT_HALBERD  Range 140  bodies 68  swings up to 200, 71% beyond 140, none beyond 208
+ *   KNIGHT          Range  80  bodies 68  swings up to 137, 42% beyond  80, none beyond 148
+ *   KNIGHT_BOXERS   Range  80  bodies 64  swings up to 129, 48% beyond  80, none beyond 144
+ *   BRUTE_DARK      Range  80  bodies 70  swings up to 137, 52% beyond  80, none beyond 150
+ *   BABY_YETI       Range  65  bodies 68  swings up to 138, every one beyond 65, one of 68 beyond 133
+ *
+ * With the player moving, 3-13% of swings sit past that line and 1-8% past it
+ * by forty, which is the lag between what the server had seen and where the
+ * player then was. Reading `Range` from the middle instead held a halberd
+ * knight at 134-141 from the player for 45 seconds, swinging once, and a sword
+ * knight could only ever swing from inside 80 where the official swings from
+ * 148.
+ *
+ * A shot keeps its `Range` as the furthest it is thrown, from the middle:
+ * KNIGHT_MARKSMAN's 600 has 16% of its shots beyond 600 and 13% beyond 626,
+ * which is the same lag tail and not a wider band. The bodies are still the
+ * floor for anything, so a leech whose body meets the player's at 131 may bite
+ * what it is touching.
  */
-const heroReach = (actor, hero) => Math.max(actor.ai?.attackRange ?? 0, heroContact(actor, hero));
+const attackReach = (attack, contact) =>
+  attack?.projectile
+    ? Math.max(Number(attack.range ?? 0), contact)
+    : Number(attack.range ?? 0) + contact;
+
+/**
+ * The attacks this one has, in the per-attack shape `usableAttacks` reads.
+ *
+ * An `ai` built before `attacks` existed, or by a test, has its single attack
+ * promoted into the same shape rather than being special-cased anywhere.
+ */
+const attacksOf = (ai) =>
+  (ai.attacks ??= [
+    {
+      attackType: ai.attackType,
+      range: ai.attackRange ?? 0,
+      minRange: 0,
+      rechargeMs: 0,
+      readyAt: 0,
+      projectile: ai.projectile ?? null,
+    },
+  ]);
+
+/**
+ * How far this one may swing from: the furthest of its attacks' reaches, or the
+ * width of the two bodies if that is greater. The second case is only a shot
+ * from a body wider than its range now — a contact attack always reaches at
+ * least the bodies, see `attackReach`.
+ */
+const heroReach = (actor, hero) => {
+  const contact = heroContact(actor, hero);
+  return Math.max(
+    contact,
+    ...attacksOf(actor.ai ?? {}).map((attack) => attackReach(attack, contact))
+  );
+};
 
 /** A clear authored-range point around the target for one teleport cycle. */
 const teleportDestinationFor = (session, actor, target, victim, random) => {
   const ai = actor.ai;
   const contact = heroContact(actor, victim);
-  const attackReach = Math.max(contact, Number(ai.attackRange ?? contact) - 8);
-  const maximum = Math.max(contact, Math.min(Number(ai.teleportRange ?? 0), attackReach));
+  const swingReach = Math.max(contact, Number(ai.attackRange ?? contact) - 8);
+  const maximum = Math.max(contact, Math.min(Number(ai.teleportRange ?? 0), swingReach));
   const minimum = Math.min(maximum, Math.max(contact, maximum * 0.5));
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -319,9 +370,10 @@ export const awayFromThreats = (actor, threats, keep) => {
 /**
  * The attacks it could use from here, right now.
  *
- * `Range` is the most it may reach, widened to the bodies for the same reason
- * `heroReach` is, and `AI_RechargeT` is that attack's own cooldown, which is
- * what makes a shaman's fifteen-second summon rare among its three-second bolts.
+ * `Range` is the most it may reach — from the edge of its body for a swing and
+ * from the middle for a shot, see `attackReach` — and `AI_RechargeT` is that
+ * attack's own cooldown, which is what makes a shaman's fifteen-second summon
+ * rare among its three-second bolts.
  *
  * `MinRange` is not a floor for a monster. It reads like one — a spear throw at
  * 400 to 700 — and the official ignores it: the ice imp's throw, authored
@@ -334,26 +386,14 @@ export const awayFromThreats = (actor, threats, keep) => {
  *
  * A pet keeps it: a ranged pet backs out to its projectile's MinRange (see the
  * standoff in tickNpcAi), which is measured on pets and is theirs.
- *
- * An `ai` built before this existed, or by a test, has its single attack
- * promoted into the same shape rather than being special-cased below.
  */
 const usableAttacks = (ai, distance, contact, now) => {
-  ai.attacks ??= [
-    {
-      attackType: ai.attackType,
-      range: ai.attackRange ?? 0,
-      minRange: 0,
-      rechargeMs: 0,
-      readyAt: 0,
-    },
-  ];
   const honoursMinRange = ai.kind === "pet";
-  return ai.attacks.filter(
+  return attacksOf(ai).filter(
     (attack) =>
       now >= (attack.readyAt ?? 0) &&
       (!honoursMinRange || distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0)) &&
-      distance <= Math.max(attack.range ?? 0, contact) + ATTACK_RANGE_EPSILON
+      distance <= attackReach(attack, contact) + ATTACK_RANGE_EPSILON
   );
 };
 
@@ -1431,7 +1471,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
           !attack.projectile &&
           now >= (attack.readyAt ?? 0) &&
           distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0) &&
-          distance <= Math.max(attack.range ?? 0, heroContact(actor, victim.actor)) +
+          distance <= attackReach(attack, heroContact(actor, victim.actor)) +
             ATTACK_RANGE_EPSILON
       )
     ) {
