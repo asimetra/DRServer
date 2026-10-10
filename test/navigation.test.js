@@ -664,3 +664,90 @@ test("the yeti's dead pocket on a laid-out ice cave has a way out", async () => 
     assertWalkable(navigation, start, route, radius);
   }
 });
+
+test("a route to a target in a slot the body cannot enter ends as near it as a straight walk gets", () => {
+  /**
+   * A target between two boxes, in a slot 40 units wide that a body of 26
+   * fits nowhere near; a wall between it and the start, so the route has to
+   * be searched. The nearest open cell to the target lies above the upper
+   * box, and a route that ended at its anchor left the body 150 units from
+   * the target with the box between them. From that anchor a straight walk at
+   * the target slides down the box's side to the slot's mouth, and that is
+   * where the route now ends: a knight whose route ended at such an anchor
+   * stood 134 units from a hero in a slot between barrel racks for 45 seconds,
+   * swinging only when the hero's drift brought the distance under its reach,
+   * while the straight walk from there got it inside.
+   */
+  const radius = 26;
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    cellSize: 60,
+    staticColliders: [rectangle(300, 450, 10, 250), rectangle(480, 400, 60, 30), rectangle(480, 500, 60, 30)],
+  });
+  const start = { x: 150, y: 450 };
+  const target = { x: 480, y: 450 };
+
+  assert.equal(isPositionBlocked(navigation, target, 10), false, "something small stands there");
+  assert.equal(isPositionBlocked(navigation, target, radius), true, "the body does not fit the slot");
+  const path = findPath(navigation, start, target, radius);
+  assert.ok(path.length, "expected a route round the wall");
+  const end = assertWalkable(navigation, start, path, radius);
+  assert.equal(isPositionBlocked(navigation, end, radius), false, "the route ends where the body can stand");
+  const gap = Math.hypot(end.x - target.x, end.y - target.y);
+  assert.ok(gap < 100, `expected the route to end at the slot's mouth, not ${gap.toFixed(1)} from the target`);
+  // At the mouth: against a box's end, level with the slot.
+  assert.ok(Math.abs(end.x - target.x) >= 60 + radius - 1, `expected the body against a box's end, not at ${JSON.stringify(end)}`);
+  assert.ok(Math.abs(end.y - target.y) <= 30, `expected the body level with the slot, not at ${JSON.stringify(end)}`);
+});
+
+test("a target standing clear just past the end of a wall is reached, not its neighbour's anchor across the wall", () => {
+  /**
+   * The dead pocket of the yeti test with the ends swapped: the target stands
+   * 23 units clear past the wall's end, in a cell every probe of which is
+   * within a body's width of the wall, so the cell has no anchor. The nearest
+   * cell with one lies on the far side of the wall, and a route that ended
+   * there left the body across the wall from a target it could have walked
+   * to from the cell beyond the wall's end.
+   */
+  const radius = 22.75;
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    cellSize: 60,
+    staticColliders: [rectangle(425, 390, 86, 30)],
+  });
+  const start = { x: 448, y: 269 };
+  const target = { x: 534, y: 396 };
+
+  assert.equal(isPositionBlocked(navigation, target, radius), false, "the target stands clear");
+  assert.equal(hasLineOfSight(navigation, start, target, radius), false, "the wall is between them");
+  const path = findPath(navigation, start, target, radius);
+  assert.ok(path.length, "expected a route round the wall's end");
+  const end = assertWalkable(navigation, start, path, radius);
+  assert.deepEqual(end, target);
+});
+
+test("a knight's route to a hero between the prison's barrel racks ends inside its reach", async () => {
+  /**
+   * The capture of 2026-10-10: a hero at (167,684) in the slot between three
+   * CASTLE_PRISON_SMASH_BARRELRACK props, the fourth smashed; a KNIGHT_HALBERD
+   * of radius 42 and reach 140 from the east. Its route ended at the anchor
+   * (282,642), and it stood 134-141 units away for 45 seconds.
+   */
+  const radius = 42;
+  const floor = await loadFloor("scenario-test/db_floor_GAPS_CASTLE_PRISON.json");
+  const navigation = createNavigationState(floor.navigation);
+  for (const [index, placement] of floor.placements.npc.entries()) {
+    if (!placement.navigationColliders?.length) continue;
+    // The north-east rack had been smashed before the knight came.
+    if (placement.constant === "CASTLE_PRISON_SMASH_BARRELRACK" && Math.hypot(placement.x - 217, placement.y - 671) < 10) continue;
+    addNavigationObstacle(navigation, `prop-${index}`, placement.navigationColliders);
+  }
+  const hero = { x: 167, y: 684 };
+  for (const knight of [{ x: 300.9, y: 641.1 }, { x: 346, y: 639 }]) {
+    const path = findPath(navigation, knight, hero, radius);
+    assert.ok(path.length, `expected a route from ${JSON.stringify(knight)}`);
+    const end = assertWalkable(navigation, knight, path, radius);
+    const gap = Math.hypot(end.x - hero.x, end.y - hero.y);
+    assert.ok(gap < 140, `expected the route to end inside the halberd's reach, not ${gap.toFixed(1)} away`);
+  }
+});

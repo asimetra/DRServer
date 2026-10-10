@@ -1591,6 +1591,48 @@ const forgetAround = (navigation, cache, box) => {
 };
 
 /**
+ * Where a straight walk from `from` at `goal` takes a body: the points it
+ * passes, in `moveWithNavigation`'s own steps, each aimed at the goal from
+ * where the last one ended, sliding along whatever it meets, until it stands
+ * at the goal or a step gives back less than a tenth of itself — the tick an
+ * NPC's walk is not taken on (see `tickNpcAi`). A slide along a wall shortens
+ * each step by the angle it makes, so the walk is given four times the steps
+ * the straight line would take, after which it is as good as stopped.
+ */
+const walkStraightAt = (navigation, from, goal, radius) => {
+  const passed = [];
+  const stepLength = Math.max(8, radius > 0 ? radius * 0.4 : 12);
+  let position = from;
+  let distance = Math.hypot(goal.x - position.x, goal.y - position.y);
+  const limit = Math.ceil(distance / stepLength) * 4 + 1;
+  for (let count = 0; count < limit && distance > 0.001; count++) {
+    const travel = Math.min(stepLength, distance);
+    const stepX = ((goal.x - position.x) / distance) * travel;
+    const stepY = ((goal.y - position.y) / distance) * travel;
+    const next = moveWithNavigation(navigation, position, { x: stepX, y: stepY }, radius);
+    const headway = ((next.x - position.x) * stepX + (next.y - position.y) * stepY) / travel;
+    if (headway < 0.1 * travel) {
+      // The step that stops it is cut down to what fits, to within two units,
+      // so the walk ends against what stops it rather than up to a step short.
+      let fits = 0;
+      let fails = 1;
+      while ((fails - fits) * travel > 2) {
+        const middle = (fits + fails) / 2;
+        if (blockedAt(navigation, position.x + stepX * middle, position.y + stepY * middle, radius, undefined)) fails = middle;
+        else fits = middle;
+      }
+      if (fits > 0) passed.push({ x: position.x + stepX * fits, y: position.y + stepY * fits });
+      break;
+    }
+    distance = Math.hypot(goal.x - next.x, goal.y - next.y);
+    // The last step lands on the goal itself, not a rounding of it.
+    position = distance < 1e-6 ? { ...goal } : next;
+    passed.push(position);
+  }
+  return passed;
+};
+
+/**
  * A* over the authored floor collision geometry, returning compressed world waypoints.
  *
  * A cell is open when a body fits somewhere in it, not only at its centre, and
@@ -1713,20 +1755,66 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     return null;
   };
   const startCell = toCell(start);
-  const goalCell = nearestOpenCell(toCell(goal), columns, rows, blocked);
-  if (!goalCell) return [];
+  const goalCell = toCell(goal);
   const goalKey = keyFor(goalCell.x, goalCell.y);
-  const stamp = beginSearch(columns * rows);
-  /** Offers a cell a way in; taken when it is the cheapest so far. */
-  const offer = (x, y, from, nextCost, via) => {
-    const key = keyFor(x, y);
+  /**
+   * The goal is a point too. Where the body can stand at it, the route ends
+   * there: through its own cell's anchor when the goal can be walked to from
+   * that, straight or round a corner, as it always did; else through any of
+   * the nine cells round it whose anchor can, judged as the start's step is,
+   * since a goal just past the end of the wall that shuts its cell has no
+   * anchor of its own. Where it cannot stand — a hero in a slot a knight does
+   * not fit — the search ends at the nearest open cell, as before, and the
+   * route then carries on from that anchor as far as a straight walk at the
+   * goal gets (`walkStraightAt`). A knight whose route ended at that anchor
+   * stood there, 134 units from a hero in a slot between three barrel racks,
+   * for 45 seconds; the straight walk from it ends 47 units from the hero,
+   * well inside its reach. The walk depends on the goal point, so it is not
+   * cached per cell.
+   */
+  const stands = !blockedAt(navigation, goal.x, goal.y, radius, undefined);
+  const ownAnchor = stands ? anchorOf(goalCell.x, goalCell.y) : null;
+  const ownLink = ownAnchor ? walkFrom(ownAnchor, goal) : null;
+  /** The goal point as a node of the search, one past the grid. */
+  const GOAL = columns * rows;
+  let target = goalKey;
+  if (!ownLink) {
+    if (stands) target = GOAL;
+    else {
+      const landing = nearestOpenCell(goalCell, columns, rows, blocked);
+      if (!landing) return [];
+      target = keyFor(landing.x, landing.y);
+    }
+  }
+  const aimX = target === GOAL ? goalCell.x : target % columns;
+  const aimY = target === GOAL ? goalCell.y : Math.floor(target / columns);
+  const stamp = beginSearch(GOAL + 1);
+  /**
+   * Offers a node a way in; taken when it is the cheapest so far. The cell
+   * (x, y) measures what is left to the aim: the goal node is offered as its
+   * own cell, which is the aim, so nothing is left.
+   */
+  const offer = (key, x, y, from, nextCost, via) => {
     if (costStamps[key] === stamp && costs[key] <= nextCost) return;
     costStamps[key] = stamp;
     costs[key] = nextCost;
     parentStamps[key] = stamp;
     parents[key] = from;
     viasInto[key] = via;
-    heapPush(key, nextCost + octileDistance(x, y, goalCell.x, goalCell.y));
+    heapPush(key, nextCost + octileDistance(x, y, aimX, aimY));
+  };
+  /**
+   * A cell round the goal is asked for its walk to the goal once, when the
+   * search reaches it; the goal's own cell was asked above. The walk is the
+   * route's last leg, measured in cells like the rest.
+   */
+  const linkGoalFrom = (key, x, y) => {
+    if (key === goalKey || Math.abs(x - goalCell.x) > 1 || Math.abs(y - goalCell.y) > 1) return;
+    const anchor = anchorOf(x, y);
+    const link = walkFrom(anchor, goal);
+    if (!link) return;
+    const walk = costs[key] + Math.hypot(goal.x - anchor.x, goal.y - anchor.y) / cellSize;
+    offer(GOAL, goalCell.x, goalCell.y, key, walk, link.via);
   };
 
   /**
@@ -1749,7 +1837,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
       const y = startCell.y + dy;
       if (x < 0 || y < 0 || x >= columns || y >= rows || blocked(x, y)) continue;
       const link = walkFrom(start, anchorOf(x, y));
-      if (link) offer(x, y, START, Math.hypot(dx, dy), link.via);
+      if (link) offer(keyFor(x, y), x, y, START, Math.hypot(dx, dy), link.via);
     }
   }
 
@@ -1759,10 +1847,12 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   while (heapLength) {
     const currentKey = heapPop();
     if (closedStamps[currentKey] === stamp) continue;
-    if (currentKey === goalKey) break;
+    if (currentKey === target) break;
     closedStamps[currentKey] = stamp;
     const currentX = currentKey % columns;
     const currentY = Math.floor(currentKey / columns);
+
+    if (target === GOAL) linkGoalFrom(currentKey, currentX, currentY);
 
     for (let direction = 0; direction < 8; direction++) {
       const dx = STEP_X[direction];
@@ -1776,16 +1866,28 @@ export const findPath = (navigation, start, goal, radius = 0) => {
       }
       const link = linkBetween(currentX, currentY, x, y, direction);
       if (!link) continue;
-      offer(x, y, currentKey, costs[currentKey] + STEP_COST[direction], link.via);
+      offer(keyFor(x, y), x, y, currentKey, costs[currentKey] + STEP_COST[direction], link.via);
     }
   }
 
-  if (parentStamps[goalKey] !== stamp) return [];
+  let end = target;
+  if (parentStamps[end] !== stamp) {
+    if (target !== GOAL) return [];
+    // No cell round the goal that can walk to it was reached. The search has
+    // been everywhere the body can go, so if the nearest open cell is among
+    // that, its route is on record; the walk from it is what is left.
+    const landing = nearestOpenCell(goalCell, columns, rows, blocked);
+    if (!landing) return [];
+    end = keyFor(landing.x, landing.y);
+    if (parentStamps[end] !== stamp) return [];
+  }
+  const endLink = end === GOAL ? { via: viasInto[GOAL] } : target === goalKey ? ownLink : null;
+  const lastCell = end === GOAL ? parents[GOAL] : end;
 
-  // Walked back from the goal and turned round once, rather than built by
+  // Walked back from the last cell and turned round once, rather than built by
   // putting each point at the front.
   const raw = [];
-  for (let key = goalKey; key !== START; key = parents[key]) {
+  for (let key = lastCell; key !== START; key = parents[key]) {
     const anchor = anchorOf(key % columns, Math.floor(key / columns));
     raw.push({ x: anchor.x, y: anchor.y });
     const via = viasInto[key];
@@ -1794,31 +1896,47 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   raw.reverse();
 
   const compressed = [];
-  let anchor = start;
+  const anchor = compressInto(navigation, radius, compressed, raw, start);
+  if (!anchor) return [];
+
+  // The last anchor can itself be the corner that clears an obstacle, so the
+  // goal follows it rather than replaces it: put in its place, the preceding
+  // segment would cut back through that obstacle on a multi-corner route.
+  if (endLink) {
+    if (endLink.via && squaredDistance(anchor, endLink.via) > 0.001) compressed.push({ ...endLink.via });
+    if (squaredDistance(anchor, goal) > 0.001) compressed.push({ ...goal });
+  } else if (hasLineOfSight(navigation, anchor, goal, radius)) {
+    if (squaredDistance(anchor, goal) > 0.001) compressed.push({ ...goal });
+  } else if (!compressInto(navigation, radius, compressed, walkStraightAt(navigation, anchor, goal, radius), anchor)) {
+    return [];
+  }
+  return compressed;
+};
+
+/**
+ * Adds to `compressed` those of `points` a body needs to walk them in turn
+ * from `from`, each the farthest it can see from the one before; returns the
+ * last, or null when a point cannot be reached from the one before it. Each
+ * point can be walked to from the one before it, the first from the start, so
+ * that does not happen; a route through a wall is still not handed out.
+ */
+const compressInto = (navigation, radius, compressed, points, from) => {
+  let anchor = from;
   let index = 0;
-  while (index < raw.length) {
+  while (index < points.length) {
     let farthest = -1;
-    for (let candidate = raw.length - 1; candidate >= index; candidate--) {
-      if (hasLineOfSight(navigation, anchor, raw[candidate], radius)) {
+    for (let candidate = points.length - 1; candidate >= index; candidate--) {
+      if (hasLineOfSight(navigation, anchor, points[candidate], radius)) {
         farthest = candidate;
         break;
       }
     }
-    // Each point can be walked to from the one before it, the first from the
-    // start, so this does not happen; a route through a wall is still not handed out.
-    if (farthest < 0) return [];
-    compressed.push(raw[farthest]);
-    anchor = raw[farthest];
+    if (farthest < 0) return null;
+    compressed.push(points[farthest]);
+    anchor = points[farthest];
     index = farthest + 1;
   }
-
-  if (hasLineOfSight(navigation, anchor, goal, radius)) {
-    // The last grid-cell center can itself be the corner that clears an
-    // obstacle. Replacing it with the exact target would make the preceding
-    // segment cut back through that obstacle on multi-corner routes.
-    if (squaredDistance(anchor, goal) > 0.001) compressed.push({ ...goal });
-  }
-  return compressed;
+  return anchor;
 };
 
 /**
