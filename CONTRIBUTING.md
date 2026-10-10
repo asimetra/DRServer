@@ -72,11 +72,11 @@ that is not that game is: **the core takes seams, not features.**
   changed and why. A change that fails that test without touching it is not a
   surface change; it is a mistake.
 - A behaviour of the shipped game is claimed from evidence, not memory: a
-  capture of the official server, a measurement on the client, a reading of
-  the client code — and the commit says which. One capture is enough to notice
-  a behaviour and not enough to copy an odd one: say how many runs you have,
-  and where the official server was wrong (a bug of theirs), prefer the design
-  intent and say so.
+  session log from the client, a measurement on the client, a reading of the
+  client code — and the commit says which. One session is enough to notice a
+  behaviour and not enough to copy an odd one: say how many runs you have,
+  and where the game was wrong (a bug of its own), prefer the design intent
+  and say so.
 - A fix stays a fix: the smallest change that makes the behaviour the game's,
   with a test that would have failed before it. A feature that arrives inside a
   fix is a second pull request.

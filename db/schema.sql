@@ -1,8 +1,8 @@
--- Account storage for the private server.
+-- Account storage for the server.
 --
--- Every table here is transcribed from a live capture of the official server's
--- GET /api/dbAccountInfo/accountdetails response, so the column names are the
--- ones the client already knows. They are deliberately *not* tidied up:
+-- Every table here follows the account the client reads from
+-- GET /api/dbAccountInfo/accountdetails, so the column names are the ones the
+-- client already knows. They are deliberately *not* tidied up:
 -- `requiredlevel` and `legendarymodifier` really are single lowercase words,
 -- and renaming them would only mean translating on every read and write.
 --

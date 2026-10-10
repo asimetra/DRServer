@@ -10,10 +10,10 @@ import { weaponPowerAt } from "./weapon-power.js";
  *
  * Most of this is a port rather than a design: the drop distribution, the
  * modifier roll and the pool of eligible weapons all come from GameMaster
- * tables and from one successful capture of the live server. The weapon's
+ * tables and from what the client was sent for an opened chest. The weapon's
  * power is the game's own curve — see `weapon-power.js`.
  *
- * Contract, from docs/private-server.md §3.0:
+ * Contract:
  *   request  [accountId, chestInstanceId, token, forHeroId, forHeroSkinId]
  *   success  the account payload plus OfferId / WeaponId / NewWeaponDetails
  *   failure  error -537 when nothing could be awarded

@@ -138,7 +138,7 @@ const WAVE_COORDINATION_MS = 8000;
 
 /**
  * Builds a dungeon for a player: the objects the client expects the server to
- * own (see docs/private-server.md §4.3).
+ * own.
  *
  * Each placement kind gets one builder below. They all take the same context
  * and report how many objects they produced, so supporting a new kind is a
