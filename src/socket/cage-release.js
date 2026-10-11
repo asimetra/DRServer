@@ -1,5 +1,5 @@
 import { hasLineOfSight, isPositionBlocked } from "./clearance.js";
-import { colliderBlocksPosition, squaredDistance } from "./geometry.js";
+import { overlapsAt, squaredDistance, turnedX, turnedY } from "./geometry.js";
 
 /** The way out of a triggerable cage, for what a generator spawns inside one. */
 
@@ -7,7 +7,7 @@ const activeTriggerCollidersAt = (navigation, point, radius) => {
   const colliders = [];
   for (const group of navigation.triggerGroups.values()) {
     for (const collider of group.on ? group.onColliders : group.offColliders) {
-      if (colliderBlocksPosition(point, radius, collider)) colliders.push(collider);
+      if (overlapsAt(point.x, point.y, radius, collider)) colliders.push(collider);
     }
   }
   return colliders;
@@ -37,8 +37,8 @@ const rectangleReleaseCandidates = (origin, radius, collider) => {
   const sine = Math.sin(-collider.angle);
   const offsetX = origin.x - collider.x;
   const offsetY = origin.y - collider.y;
-  const localX = offsetX * cosine - offsetY * sine;
-  const localY = offsetX * sine + offsetY * cosine;
+  const localX = turnedX(offsetX, offsetY, cosine, sine);
+  const localY = turnedY(offsetX, offsetY, cosine, sine);
   const gap = radius + RELEASE_STEP;
   const candidates = [
     { x: collider.halfWidth + gap, y: clamp(localY, -collider.halfHeight, collider.halfHeight) },
@@ -48,6 +48,8 @@ const rectangleReleaseCandidates = (origin, radius, collider) => {
   ];
   const worldCosine = Math.cos(collider.angle);
   const worldSine = Math.sin(collider.angle);
+  // Not `collider.x + turnedX(...)`: the sum is taken left to right, and
+  // grouping the turn first would move a candidate by a rounding.
   return candidates.map((candidate) => ({
     x: collider.x + candidate.x * worldCosine - candidate.y * worldSine,
     y: collider.y + candidate.x * worldSine + candidate.y * worldCosine,

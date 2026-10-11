@@ -13,19 +13,16 @@ import { onAuthoredTile, tileAt } from "./tiles.js";
  * coordinates, for the hot loops of the route search.
  */
 
+/** Whether a body circle at (x, y) lies wholly inside the floor's bounds. */
+const insideBounds = (bounds, x, y, radius) =>
+  x - radius >= bounds.minX && x + radius <= bounds.maxX && y - radius >= bounds.minY && y + radius <= bounds.maxY;
+
 /** Inside the floor's bounds and on one of its tiles; colliders aside. */
 export const isWithinFloor = (navigation, point, radius) => withinFloorAt(navigation, point.x, point.y, radius);
 
-export const withinFloorAt = (navigation, x, y, radius) => {
-  const { bounds } = navigation;
-  return (
-    x - radius >= bounds.minX &&
-    x + radius <= bounds.maxX &&
-    y - radius >= bounds.minY &&
-    y + radius <= bounds.maxY &&
-    (!navigation.tileKeys.size || onAuthoredTile(navigation, x, y))
-  );
-};
+export const withinFloorAt = (navigation, x, y, radius) =>
+  insideBounds(navigation.bounds, x, y, radius) &&
+  (!navigation.tileKeys.size || onAuthoredTile(navigation, x, y));
 
 /** True when an actor circle would overlap authored navigation geometry. */
 export const isPositionBlocked = (
@@ -131,20 +128,7 @@ const sweepIsClear = (navigation, fromX, fromY, spanX, spanY, samples, radius, i
   const lastRatio = samples / samples;
   const lastX = fromX + spanX * lastRatio;
   const lastY = fromY + spanY * lastRatio;
-  if (
-    !(
-      firstX - radius >= bounds.minX &&
-      firstX + radius <= bounds.maxX &&
-      firstY - radius >= bounds.minY &&
-      firstY + radius <= bounds.maxY &&
-      lastX - radius >= bounds.minX &&
-      lastX + radius <= bounds.maxX &&
-      lastY - radius >= bounds.minY &&
-      lastY + radius <= bounds.maxY
-    )
-  ) {
-    return false;
-  }
+  if (!insideBounds(bounds, firstX, firstY, radius) || !insideBounds(bounds, lastX, lastY, radius)) return false;
 
   const anyTile = !navigation.tileKeys.size;
   const { tileSize } = navigation;

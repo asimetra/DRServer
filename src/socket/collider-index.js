@@ -1,4 +1,4 @@
-import { boundsOf, circleOverlapsAt, rectangleOverlapsAt } from "./geometry.js";
+import { boundsOf, entryOverlapsAt, overlapsAt } from "./geometry.js";
 
 /**
  * The active colliders of one navigation, laid out so a query near a point
@@ -222,7 +222,7 @@ export const buildColliderIndex = (navigation) => {
     indexEntry(
       collider,
       boundsOf(collider),
-      // Negated once, because overlapsRectangle rotates the point *into* the
+      // Negated once, because rectangleOverlapsAt rotates the point *into* the
       // collider's frame rather than the other way about.
       collider.type === "rectangle" ? Math.cos(-collider.angle) : 0,
       collider.type === "rectangle" ? Math.sin(-collider.angle) : 0
@@ -345,15 +345,7 @@ export const anyColliderAt = (navigation, x, y, radius, ignoredColliders) => {
   if (cached?.forColliders !== navigation.colliders || !cached.cells) {
     for (const collider of navigation.colliders) {
       if (ignoredColliders?.has(collider)) continue;
-      if (collider.type === "circle") {
-        if (circleOverlapsAt(x, y, radius, collider)) return true;
-      } else if (collider.type === "rectangle") {
-        if (
-          rectangleOverlapsAt(x, y, radius, collider, Math.cos(-collider.angle), Math.sin(-collider.angle))
-        ) {
-          return true;
-        }
-      }
+      if (overlapsAt(x, y, radius, collider)) return true;
     }
     return false;
   }
@@ -381,11 +373,7 @@ export const anyColliderAt = (navigation, x, y, radius, ignoredColliders) => {
             if (right < entry.minX || left > entry.maxX || bottom < entry.minY || top > entry.maxY) {
               continue;
             }
-            if (collider.type === "circle") {
-              if (circleOverlapsAt(x, y, radius, collider)) return true;
-            } else if (collider.type === "rectangle") {
-              if (rectangleOverlapsAt(x, y, radius, collider, entry.cosine, entry.sine)) return true;
-            }
+            if (entryOverlapsAt(x, y, radius, entry)) return true;
           }
         }
       }
@@ -411,11 +399,7 @@ export const anyColliderAt = (navigation, x, y, radius, ignoredColliders) => {
         if (right < entry.minX || left > entry.maxX || bottom < entry.minY || top > entry.maxY) {
           continue;
         }
-        if (collider.type === "circle") {
-          if (circleOverlapsAt(x, y, radius, collider)) return true;
-        } else if (collider.type === "rectangle") {
-          if (rectangleOverlapsAt(x, y, radius, collider, entry.cosine, entry.sine)) return true;
-        }
+        if (entryOverlapsAt(x, y, radius, entry)) return true;
       }
     }
   }
@@ -482,12 +466,7 @@ export const clearOfGathered = (x, y, radius, count) => {
   for (let at = 0; at < count; at++) {
     const entry = sweepCandidates[at];
     if (right < entry.minX || left > entry.maxX || bottom < entry.minY || top > entry.maxY) continue;
-    const { collider } = entry;
-    if (collider.type === "circle") {
-      if (circleOverlapsAt(x, y, radius, collider)) return false;
-    } else if (collider.type === "rectangle") {
-      if (rectangleOverlapsAt(x, y, radius, collider, entry.cosine, entry.sine)) return false;
-    }
+    if (entryOverlapsAt(x, y, radius, entry)) return false;
   }
   return true;
 };
