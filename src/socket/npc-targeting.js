@@ -1,8 +1,7 @@
-import { contact } from "./body.js";
 import { nearestTo, squaredDistanceTo } from "./npc-crowd.js";
-import { collectNearbyForPet } from "./pickups.js";
 import { forgetRoute } from "./routing.js";
 import { forgetBackOff } from "./behaviours/kite.js";
+import { petTarget } from "./behaviours/pet.js";
 
 /**
  * Who each one goes for this tick, one selector per kind.
@@ -148,49 +147,11 @@ const allyTarget = ({ huntable }, actor, now) => {
   return victim ? fighting(victim) : LET_GO;
 };
 
-/**
- * A player's pet: the nearest monster while it is engaged or one comes within
- * its aggro radius, and its owner otherwise, or when it has been outside its
- * tether too long. Back at its owner it lets go and waits. It also picks up
- * for its owner, four times a second.
- */
-const petTarget = ({ heroes, petTargets }, actor, now) => {
-  const { ai } = actor;
-  const owner = heroes.find(({ doid: heroDoid }) => heroDoid === ai.ownerDoid);
-  if (!owner) return LET_GO;
-  if (now >= (ai.nextPickupAt ?? 0)) {
-    ai.nextPickupAt = now + 250;
-    const ownerSession = owner.member.world?.contextFor(owner.member) ?? owner.member;
-    collectNearbyForPet(ownerSession, actor.position, ai.collects);
-  }
-  const enemy = nearestTo(actor.position, petTargets);
-  const ownerDistance = distanceTo(actor.position, owner.position);
-  const enemyDistance = enemy ? distanceTo(actor.position, enemy.position) : Infinity;
-  if (ai.tetherDistance > 0 && ownerDistance > ai.tetherDistance) {
-    ai.outsideTetherAt ??= now;
-  } else {
-    ai.outsideTetherAt = null;
-  }
-  const mustReturn =
-    ai.outsideTetherAt != null && now - ai.outsideTetherAt >= (ai.tetherTimerMs ?? 0);
-  if (mustReturn || !enemy || (!ai.engaged && enemyDistance > ai.aggroRadius)) {
-    if (ownerDistance <= Math.max(contact(actor, owner.actor), ai.returnDistance ?? 0)) {
-      return LET_GO;
-    }
-    ai.engaged = false;
-    ai.state = "return";
-    ai.targetDoid = owner.doid;
-    return { victim: owner, following: true };
-  }
-  ai.targetDoid = enemy.doid;
-  return fighting(enemy);
-};
-
 /** One selector per `ai.kind`; anything else picks as an enemy does. */
 const SELECTORS = new Map([
   ["enemy", enemyTarget],
   ["beast", beastTarget],
-  ["pet", petTarget],
+  ["pet", (crowd, actor, now) => petTarget(crowd, actor, now) ?? LET_GO],
   ["ally", allyTarget],
 ]);
 

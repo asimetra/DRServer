@@ -3,15 +3,16 @@ import { info, warn } from "../log.js";
 import { attackStopped, buffMultiplierFor } from "./buffs.js";
 import { matchStateOf, worldOf } from "./match-world.js";
 import { moveWithNavigation } from "./navigation.js";
-import { bodyRadius, contact, reach, standoff } from "./body.js";
+import { bodyRadius, contact, standoff } from "./body.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
 import { describeRoute, NO_ROUTE_ASKED, routeToTarget } from "./routing.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { clearNpcTarget, LET_GO, pickTarget } from "./npc-targeting.js";
 import { advanceNpcRelease } from "./npc-release.js";
-import { act, ATTACK_RANGE_EPSILON } from "./npc-act.js";
+import { act } from "./npc-act.js";
 import { comeBack, teleportsOnCycle, teleportSwung, teleportTurn } from "./behaviours/teleport.js";
-import { backingOff, backOffHeadway, backOffStep, backOffTurn, backsOffFrom } from "./behaviours/kite.js";
+import { backingOff, backOffHeadway, backOffStep, backOffTurn } from "./behaviours/kite.js";
+import { petRetreat } from "./behaviours/pet.js";
 import {
   boundedPush,
   nobodyToFight,
@@ -272,6 +273,10 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
           deltaSeconds,
         })
         : null;
+    const retreat =
+      ai.kind === "pet"
+        ? petRetreat(actor, { target, route, distance, stopAt, bodies, topSpeed, deltaSeconds, now })
+        : null;
     let chaseX = 0;
     let chaseY = 0;
     let usedOrdinaryWalk = false;
@@ -303,30 +308,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         chaseY = step.y;
         backingAway = true;
       }
-    } else if (
-      ai.kind === "pet" &&
-      (ai.keepDistance ?? 0) > 0 &&
-      backsOffFrom(route) &&
-      distance < stopAt &&
-      !(ai.attacks ?? []).some(
-        (attack) =>
-          !attack.projectile &&
-          now >= (attack.readyAt ?? 0) &&
-          distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0) &&
-          distance <= reach(attack, bodies) + ATTACK_RANGE_EPSILON
-      )
-    ) {
-      /**
-       * A ranged pet caught between its bite and projectile bands backs out to
-       * the projectile's authored MinRange. Without this, a stationary target
-       * at 100-199 units left Dragon with neither bite nor fireball available,
-       * so both actors could stand still forever.
-       */
-      const retreat = Math.min(topSpeed * deltaSeconds, stopAt - distance);
-      if (distance > 0.001) {
-        chaseX = ((actor.position.x - target.x) / distance) * retreat;
-        chaseY = ((actor.position.y - target.y) / distance) * retreat;
-      }
+    } else if (retreat) {
+      chaseX = retreat.x;
+      chaseY = retreat.y;
     } else if (route.waypoint && (distance > stopAt || !headsAtTarget)) {
       const waypointDistance = distanceTo(actor.position, route.waypoint);
       // At the target itself the walk ends at the standoff; at a point on

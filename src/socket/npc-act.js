@@ -96,8 +96,8 @@ export const inBand = (attack, distance, bodies, now, honoursMinRange) =>
  * hopped back and walked in again with nothing but another hop, so ours threw
  * 16% of the time against the official's 36% and hopped 48% against 27%.
  *
- * A pet keeps it: a ranged pet backs out to its projectile's MinRange (see the
- * standoff in tickNpcAi), which is measured on pets and is theirs.
+ * A pet keeps it: a ranged pet backs out to its projectile's MinRange (see
+ * `petRetreat`, behaviours/pet.js), which is measured on pets and is theirs.
  */
 const usableAttacks = (ai, distance, bodies, now) => {
   const honoursMinRange = ai.kind === "pet";
