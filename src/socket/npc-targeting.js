@@ -45,12 +45,19 @@ const lockOn = (ai, victim, now) => {
 /** Whether the pick it made still holds. */
 const stillLocked = (ai, now) => now < (ai.nextTargetAt ?? 0);
 
-/** The target is gone or out of reach: everything it was doing about it is dropped. */
+/**
+ * The target is gone or out of reach: everything it was doing about it is
+ * dropped. It shows as idle, which the AI says for it (ai.js `letGo`).
+ *
+ * The way out of the scenery a stalled cage release hands on (`ai.escape`,
+ * npc-release.js) is not dropped: routing.js `wayOut` keeps it until the
+ * body is out or it no longer leads anywhere. Whether letting go should drop
+ * it too is open (review risk 5); it is left as it was.
+ */
 export const clearNpcTarget = (actor) => {
   const { ai } = actor;
   if (!ai) return;
   ai.engaged = false;
-  ai.state = "idle";
   forgetRoute(ai);
   ai.targetDoid = null;
   ai.nextTargetAt = 0;

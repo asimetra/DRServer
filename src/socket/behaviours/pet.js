@@ -24,9 +24,10 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 /**
  * Its target (npc-targeting.js): the nearest monster while it is engaged or
  * one comes within its aggro radius, and its owner otherwise, or when it has
- * been outside its tether too long — `following`, then. Null when it has no
- * owner on the floor, or is back at it with nothing to fight: it lets go and
- * waits. It also picks up for its owner, four times a second.
+ * been outside its tether too long — `following`, then, which the AI shows
+ * as "return". Null when it has no owner on the floor, or is back at it with
+ * nothing to fight: it lets go and waits. It also picks up for its owner,
+ * four times a second.
  */
 export const petTarget = ({ heroes, petTargets }, actor, now) => {
   const { ai } = actor;
@@ -52,7 +53,6 @@ export const petTarget = ({ heroes, petTargets }, actor, now) => {
       return null;
     }
     ai.engaged = false;
-    ai.state = "return";
     ai.targetDoid = owner.doid;
     return { victim: owner, following: true };
   }
