@@ -1,6 +1,6 @@
 import { attackById, FRAMES_PER_SECOND, invulnerableForMs, suicideDelayMs } from "../gamemaster.js";
 import { buffMultiplierFor, grantBuff, hasAbility } from "./buffs.js";
-import { collisionPointOf } from "./navigation.js";
+import { swingBodyRadius, swingOrigin } from "./body.js";
 import { floorAttackSpeedScale, npcAttackSpeed, npcAttackSpeedStat } from "./npc-attacks.js";
 import { worldColliders } from "./heading.js";
 import { info, warn } from "../log.js";
@@ -128,7 +128,7 @@ const landNpcSwing = async (
      * From the body, not from the feet, and a shape authored in front of the
      * body starts at its edge.
      *
-     * The victims are tested at their body (`collisionPointOf`, 22 above the
+     * The victims are tested at their body (`bodyPointOf`, 22 above the
      * feet for every hero and most monsters), so a shape placed at the feet
      * reached 22 further facing down the screen than facing up: a sword's
      * circle took a player at 130 below the knight and only 80 above it. The
@@ -137,7 +137,7 @@ const landNpcSwing = async (
      * too.
      *
      * The authored `xOffset` is measured from where the body ends. The AI
-     * swings from `Range` past the two bodies (ai.js `attackReach`), and the
+     * swings from `Range` past the two bodies (body.js `reach`), and the
      * official lands from there: a knight's sword, circle r40 at 45, landed on
      * a standing player at 111, 117 and 128 feet-to-feet, which from the
      * middle it cannot reach (110 at most) and from the body's edge it can
@@ -148,14 +148,14 @@ const landNpcSwing = async (
      * authored at or behind the middle — a stomp, a howl, a tail — is where it
      * says it is.
      */
-    const body = Math.max(0, Number(ai.collisionRadius ?? attacker.collisionRadius ?? 0));
+    const body = swingBodyRadius(ai, attacker);
     const fromEdge = shape.map((collider) =>
       Number(collider.xOffset ?? 0) > 0
         ? { ...collider, xOffset: Number(collider.xOffset) + body }
         : collider
     );
     const reach = worldColliders(
-      collisionPointOf(attacker, attacker.position) ?? attacker.position,
+      swingOrigin(attacker),
       ai.attackHeading ?? attacker.heading ?? 0,
       fromEdge
     );
@@ -231,7 +231,7 @@ const launchNpcProjectile = (session, attackerDoid, ai, attack, launch = {}) => 
    * six arrows out of a statue's mouth into six fired forty degrees off the
    * ones the player can see.
    *
-   * `worldCenter` is the body above the feet — the same `collisionPointOf` the
+   * `worldCenter` is the body above the feet — the same `bodyPointOf` the
    * victims are tested at, so both ends of the shot are finally in one
    * coordinate system.
    */
@@ -242,7 +242,7 @@ const launchNpcProjectile = (session, attackerDoid, ai, attack, launch = {}) => 
     Number(launch.headingOffsetAngle ?? 0) +
     (spread ? (random() * 2 - 1) * spread : 0);
   const radians = (angle * Math.PI) / 180;
-  const centre = collisionPointOf(attacker, attacker.position) ?? attacker.position;
+  const centre = swingOrigin(attacker);
   const muzzle = Number(launch.headingOffset ?? 0);
   const origin = {
     x: centre.x + muzzle * Math.cos(radians) + Number(launch.xOffset ?? 0),

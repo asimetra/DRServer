@@ -1,6 +1,7 @@
 import { emitGeneratorRelease, emitSignal, initialTargetState } from "./triggers.js";
 import { checkFloorCleared } from "./floorstate.js";
 import { findCageReleasePath, isPositionBlocked, nearestClearPosition } from "./navigation.js";
+import { rowBodyRadius } from "./body.js";
 import { info, warn } from "../log.js";
 import { spawnBossReward } from "./drops.js";
 import { spawnNpc } from "./npc-spawn.js";
@@ -203,7 +204,7 @@ export const generatorSpawn = (session, runtime, npc) => {
    * `CollisionSize` also author a `Scale` other than 1, so testing the unscaled
    * radius can choose a mouth the rendered actor cannot actually pass through.
    */
-  const collisionRadius = Math.max(12, (npc.CollisionSize ?? 35) * (npc.Scale ?? 1));
+  const collisionRadius = rowBodyRadius(npc);
   const { placement } = runtime;
   const { navigation } = session;
   /**

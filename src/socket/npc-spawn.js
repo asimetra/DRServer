@@ -11,6 +11,7 @@ import { playDeathAttack, reportNpcDamage, reportNpcDeath } from "./triggers.js"
 import { worldColliders } from "./heading.js";
 import { npcAttackChoices } from "./npc-attacks.js";
 import { addNavigationObstacle, navigationEntryFor, removeNavigationObstacle } from "./navigation.js";
+import { authoredBodyRadius, furthestAttackRange } from "./body.js";
 import { config } from "../config.js";
 import { warn } from "../log.js";
 import { spawnNpcRewards } from "./drops.js";
@@ -270,7 +271,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
    * `GMActor.CollisionSize` is read in exactly one place there, and that place
    * is the boomerang's hit radius.
    *
-   * The authored body is the nav shape, the same circle `collisionPointOf`
+   * The authored body is the nav shape, the same circle `bodyPointOf`
    * takes its offset from and the same one the client builds its Box2D body
    * out of.
    *
@@ -292,11 +293,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
    * `CollisionSize * Scale` stays as the second answer for the rows with no
    * shape, and twelve stays under both.
    */
-  const authoredBody = navigationEntryFor(resolved)?.navCollisions?.[0]?.radius;
-  const collisionRadius = Math.max(
-    12,
-    (Number(authoredBody) || (npc.CollisionSize ?? 35)) * (npc.Scale ?? 1)
-  );
+  const collisionRadius = authoredBodyRadius(npc, resolved);
   const navigationColliders =
     npc.CharType === "PROP"
       ? (options.navigationColliders ?? []).map((collider) => ({
@@ -603,10 +600,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
               teleportOutDelayMs:
                 1000 / Math.max(1, Number(npc.PreTeleportAttack ?? 1)),
               teleportPhase: "visible",
-              // The furthest any of its attacks reaches. This is the "may it
-              // swing from here at all" bar; which attack it then uses is
-              // decided per swing against that attack's own band.
-              attackRange: Math.max(20, ...attackSet.map((attack) => attack.range)),
+              attackRange: furthestAttackRange(attackSet),
               attacks: attackSet,
               /**
                * How far off the player this one wants to stay, for the ones

@@ -10,13 +10,13 @@ import { heroMembersOf, matchStateOf, worldOf } from "./match-world.js";
 import { collectNearbyForPet } from "./pickups.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
 import {
-  collisionPointOf,
   hasLineOfSight,
   isPositionBlocked,
   moveWithNavigation,
   nearestClearPosition,
 } from "./navigation.js";
 import { objectDisable } from "./objects.js";
+import { bodyPointOf, bodyRadius, contact, furthestReach, reach, sightOrigin, standoff } from "./body.js";
 import { searchRoute } from "./route-memo.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
@@ -82,95 +82,8 @@ export const npcWalkingSpeed = (ai, targetSpeed, deltaSeconds) => {
   return ai.walkSpeed;
 };
 
-const collisionRadius = (actor) =>
-  Math.max(12, actor.ai?.collisionRadius ?? actor.collisionRadius ?? 35);
-
 const sameWave = (actor, other) =>
   actor.ai?.wave?.group && actor.ai.wave.group === other.ai?.wave?.group;
-
-/**
- * How close this monster is allowed to stand to a hero.
- *
- * Bodies touching. The corpus is unambiguous that this and not the attack
- * range is where the walk ends — for a monster standing still in a fight, the
- * fifth percentile of its distance to the hero sits on the sum of the two
- * bodies whatever its range happens to be:
- *
- *   KNIGHT            p05 67   bodies 67.9   Range  80
- *   SKELETON_WARRIOR  p05 67   bodies 67.1   Range  80
- *   BABY_YETI         p05 65   bodies 67.9   Range  65
- *   RAPTOR            p05 69   bodies 71.9   Range 100
- *   KNIGHT_HALBERD    p05 69   bodies 67.9   Range 140
- *
- * KNIGHT_HALBERD settles it. Its range is 140 and its bodies meet at 68, and
- * its distances pile up in the 60-80 bin with a *trough* from there to 140 —
- * so it is walking to contact and not stopping at its reach. Ours stopped at
- * the reach, which put a halberd knight in a ring 140 units off the player
- * poking at them, and a marksman in one 600 units out.
- *
- * Never inside the bodies, whatever the reach says. This used to allow a
- * monster whose body is wider than its swing to stand *inside* the player so it
- * could still connect, on the reasoning that a dragon which cannot bite is not
- * what the table says. Thirteen of the 98 fighting rows qualified and the worst
- * of them, GIANT_LEECH, was parked 69 units inside the player — and on the
- * client the local hero is the only dynamic body in the room, so a monster
- * inside it is not a monster standing close, it is the player being shoved. A
- * BABY_YETI sat 10.4 units in for half of every tick it was engaged.
- *
- * The official does not do it. For those same rows its standing distance is at
- * or beyond the bodies: BRUTE_CAVE p05 98 against bodies of 87, GREEN_BRUTE 85
- * against 78, JUNGLE_LEECH 66 against 67, BABY_YETI 65 against 68. The reason
- * it can afford to is that those monsters have a longer attack than the one
- * this server gives them — BRUTE_CAVE's swings in the corpus are EN_FART_ATTACK
- * at range 250, not the range-80 `Attack1` we read. So the clamp was
- * compensating for a missing attack by moving the body, and the compensation
- * belongs on the attack instead: see `heroReach` below.
- *
- * And except for the ones that do not want contact. `keepDistance` carries the
- * kiters' standoff from the NPC row; see where it is read in dungeon.js for the
- * corpus behind it.
- */
-const heroContact = (actor, hero) => collisionRadius(actor) + collisionRadius(hero);
-
-const heroStandoff = (actor, hero) => {
-  const contact = heroContact(actor, hero);
-  const reach = Math.max(12, (actor.ai?.attackRange ?? contact) - 8);
-  return Math.max(contact, Math.min(actor.ai?.keepDistance ?? 0, reach));
-};
-
-/**
- * How far one attack reaches, feet to feet.
- *
- * A contact attack's `Range` is the gap it closes between the two bodies, not
- * the distance between their feet: it may swing when the edge of its body is
- * within `Range` of the edge of the player's, which is `Range` plus both radii
- * from the middle. Measured on the official, solo captures, swings at a player
- * who had not moved for 800ms (so the position on the wire is where they
- * stood):
- *
- *   KNIGHT_HALBERD  Range 140  bodies 68  swings up to 200, 71% beyond 140, none beyond 208
- *   KNIGHT          Range  80  bodies 68  swings up to 137, 42% beyond  80, none beyond 148
- *   KNIGHT_BOXERS   Range  80  bodies 64  swings up to 129, 48% beyond  80, none beyond 144
- *   BRUTE_DARK      Range  80  bodies 70  swings up to 137, 52% beyond  80, none beyond 150
- *   BABY_YETI       Range  65  bodies 68  swings up to 138, every one beyond 65, one of 68 beyond 133
- *
- * With the player moving, 3-13% of swings sit past that line and 1-8% past it
- * by forty, which is the lag between what the server had seen and where the
- * player then was. Reading `Range` from the middle instead held a halberd
- * knight at 134-141 from the player for 45 seconds, swinging once, and a sword
- * knight could only ever swing from inside 80 where the official swings from
- * 148.
- *
- * A shot keeps its `Range` as the furthest it is thrown, from the middle:
- * KNIGHT_MARKSMAN's 600 has 16% of its shots beyond 600 and 13% beyond 626,
- * which is the same lag tail and not a wider band. The bodies are still the
- * floor for anything, so a leech whose body meets the player's at 131 may bite
- * what it is touching.
- */
-const attackReach = (attack, contact) =>
-  attack?.projectile
-    ? Math.max(Number(attack.range ?? 0), contact)
-    : Number(attack.range ?? 0) + contact;
 
 /**
  * The attacks this one has, in the per-attack shape `usableAttacks` reads.
@@ -189,20 +102,6 @@ const attacksOf = (ai) =>
       projectile: ai.projectile ?? null,
     },
   ]);
-
-/**
- * How far this one may swing from: the furthest of its attacks' reaches, or the
- * width of the two bodies if that is greater. The second case is only a shot
- * from a body wider than its range now — a contact attack always reaches at
- * least the bodies, see `attackReach`.
- */
-const heroReach = (actor, hero) => {
-  const contact = heroContact(actor, hero);
-  return Math.max(
-    contact,
-    ...attacksOf(actor.ai ?? {}).map((attack) => attackReach(attack, contact))
-  );
-};
 
 /**
  * Whether a swing from here can see its victim: a hero's feet or its body.
@@ -229,19 +128,18 @@ const heroReach = (actor, hero) => {
  * navigation keeps clear of the walls, so it is already the right end.
  */
 const victimInSight = (navigation, actor, victim, target, heroDoids) => {
-  if (hasLineOfSight(navigation, actor.position, target, 0)) return true;
+  const origin = sightOrigin(actor);
+  if (hasLineOfSight(navigation, origin, target, 0)) return true;
   if (!heroDoids.has(victim.doid)) return false;
-  const body = collisionPointOf(victim.actor, target);
-  return Boolean(body) && body !== target && hasLineOfSight(navigation, actor.position, body, 0);
+  const body = bodyPointOf(victim.actor, target);
+  return Boolean(body) && body !== target && hasLineOfSight(navigation, origin, body, 0);
 };
 
-/** A clear authored-range point around the target for one teleport cycle. */
-const teleportDestinationFor = (session, actor, target, victim, random) => {
-  const ai = actor.ai;
-  const contact = heroContact(actor, victim);
-  const swingReach = Math.max(contact, Number(ai.attackRange ?? contact) - 8);
-  const maximum = Math.max(contact, Math.min(Number(ai.teleportRange ?? 0), swingReach));
-  const minimum = Math.min(maximum, Math.max(contact, maximum * 0.5));
+/** A clear authored-range point around the target for one teleport cycle; `bodies` is `contact` with the victim. */
+const teleportDestinationFor = (session, actor, target, bodies, random) => {
+  const maximum = standoff(actor, bodies, Number(actor.ai.teleportRange ?? 0));
+  const minimum = Math.min(maximum, Math.max(bodies, maximum * 0.5));
+  const radius = bodyRadius(actor);
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const angle = random() * Math.PI * 2;
@@ -254,12 +152,11 @@ const teleportDestinationFor = (session, actor, target, victim, random) => {
     const clear = nearestClearPosition(
       session.navigation,
       desired,
-      collisionRadius(actor),
+      radius,
       {
         reach: Math.max(60, maximum * 0.5),
         towards: target,
-        accept: (candidate) =>
-          hasLineOfSight(session.navigation, candidate, target, collisionRadius(actor)),
+        accept: (candidate) => hasLineOfSight(session.navigation, candidate, target, radius),
       }
     );
     if (clear) return clear;
@@ -302,7 +199,7 @@ const keptOutOfHeroes = (target, actor, heroes) => {
   let { x, y } = target;
   for (const hero of heroes) {
     if (!hero.position || !hero.actor) continue;
-    const contact = heroContact(actor, hero.actor);
+    const bodies = contact(actor, hero.actor);
     const fromX = start.x - hero.position.x;
     const fromY = start.y - hero.position.y;
     const fromDistance = Math.hypot(fromX, fromY);
@@ -312,23 +209,23 @@ const keptOutOfHeroes = (target, actor, heroes) => {
     if (stepLengthSquared < 1e-9) continue;
 
     const towards = fromX * stepX + fromY * stepY;
-    if (fromDistance < contact - 0.001) {
+    if (fromDistance < bodies - 0.001) {
       const targetX = x - hero.position.x;
       const targetY = y - hero.position.y;
       const targetDistance = Math.hypot(targetX, targetY);
-      if (targetDistance >= contact) continue;
+      if (targetDistance >= bodies) continue;
       // Separation and backwards attack movement must still be able to lift an
       // already-overlapping spawn out. An inward/crossing step, however, keeps
       // the existing visible position instead of choosing the opposite side.
       if (towards <= 0 || targetDistance < 0.001) return { ...start };
-      x = hero.position.x + (targetX / targetDistance) * contact;
-      y = hero.position.y + (targetY / targetDistance) * contact;
+      x = hero.position.x + (targetX / targetDistance) * bodies;
+      y = hero.position.y + (targetY / targetDistance) * bodies;
       continue;
     }
 
-    if (fromDistance <= contact + 0.001 && towards >= 0) continue;
+    if (fromDistance <= bodies + 0.001 && towards >= 0) continue;
 
-    const c = fromX * fromX + fromY * fromY - contact * contact;
+    const c = fromX * fromX + fromY * fromY - bodies * bodies;
     const discriminant = 4 * towards * towards - 4 * stepLengthSquared * c;
     if (discriminant < 0) continue;
     const root = (-2 * towards - Math.sqrt(discriminant)) / (2 * stepLengthSquared);
@@ -403,7 +300,7 @@ export const awayFromThreats = (actor, threats, keep) => {
  * The attacks it could use from here, right now.
  *
  * `Range` is the most it may reach — from the edge of its body for a swing and
- * from the middle for a shot, see `attackReach` — and `AI_RechargeT` is that
+ * from the middle for a shot, see `reach` (body.js) — and `AI_RechargeT` is that
  * attack's own cooldown, which is what makes a shaman's fifteen-second summon
  * rare among its three-second bolts.
  *
@@ -419,13 +316,13 @@ export const awayFromThreats = (actor, threats, keep) => {
  * A pet keeps it: a ranged pet backs out to its projectile's MinRange (see the
  * standoff in tickNpcAi), which is measured on pets and is theirs.
  */
-const usableAttacks = (ai, distance, contact, now) => {
+const usableAttacks = (ai, distance, bodies, now) => {
   const honoursMinRange = ai.kind === "pet";
   return attacksOf(ai).filter(
     (attack) =>
       now >= (attack.readyAt ?? 0) &&
       (!honoursMinRange || distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0)) &&
-      distance <= attackReach(attack, contact) + ATTACK_RANGE_EPSILON
+      distance <= reach(attack, bodies) + ATTACK_RANGE_EPSILON
   );
 };
 
@@ -433,11 +330,11 @@ const usableAttacks = (ai, distance, contact, now) => {
 export const chooseNpcAttack = (
   ai,
   distance,
-  contact,
+  bodies,
   now,
   random = Math.random
 ) => {
-  const choices = usableAttacks(ai, distance, contact, now);
+  const choices = usableAttacks(ai, distance, bodies, now);
   if (!choices.length) return null;
   const roll = Math.min(1 - Number.EPSILON, Math.max(0, Number(random()) || 0));
   return choices[Math.floor(roll * choices.length)];
@@ -477,7 +374,7 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
   let maximumTravel = 0;
   for (const actor of actors.values()) {
     if (actor.ai && !actor.dead && actor.position) {
-      largestRadius = Math.max(largestRadius, collisionRadius(actor));
+      largestRadius = Math.max(largestRadius, bodyRadius(actor));
       maximumTravel = Math.max(maximumTravel, (actor.ai.moveSpeed ?? 0) * deltaSeconds);
     }
   }
@@ -536,6 +433,7 @@ const separationDisplacement = (
    * at one target spreads into a ring instead of a pile.
    */
   const contacts = [];
+  const radius = bodyRadius(actor);
   const cellX = Math.floor(actor.position.x / spatialIndex.cellSize);
   const cellY = Math.floor(actor.position.y / spatialIndex.cellSize);
 
@@ -565,7 +463,7 @@ const separationDisplacement = (
          * keeping them out of one another, and at a quarter of the distance they
          * needed it was letting a released wave overlap by design.
          */
-        const bodies = collisionRadius(actor) + collisionRadius(other);
+        const bodies = radius + bodyRadius(other);
         /**
          * A burst may stand shoulder to shoulder; it may not stand inside
          * itself. Unrelated NPCs keep a little air between them as well.
@@ -573,7 +471,7 @@ const separationDisplacement = (
          * Measured against the official for monsters standing in a fight, the
          * nearest peer sits on the sum of the two bodies: KNIGHT p25 84 against
          * 84, BRUTE p25 85 against 88, ICE_IMP p25 70 against 70. The player is
-         * the same rule with one exception, which `heroStandoff` carries.
+         * the same rule with one exception, which `standoff` (body.js) carries.
          *
          * That exception is a pet's alone. A kiter's standoff is where it stops
          * walking in, not a ring a player pushes it along: kept at its keep
@@ -584,8 +482,8 @@ const separationDisplacement = (
          */
         const minimumDistance = heroDoids.has(otherDoid)
           ? actor.ai?.kind === "pet"
-            ? heroStandoff(actor, other)
-            : heroContact(actor, other)
+            ? standoff(actor, bodies)
+            : bodies
           : sameWave(actor, other)
             ? bodies
             : bodies + npcPadding;
@@ -719,7 +617,7 @@ const separateIdleNpc = (
     session.navigation,
     actor.position,
     { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
-    collisionRadius(actor)
+    bodyRadius(actor)
   );
   const actualTravel = distanceTo(actor.position, nextPosition);
   if (actualTravel <= 0.001) return false;
@@ -733,7 +631,7 @@ const separateIdleNpc = (
 const routeToTarget = (session, actor, target, now, heroes = []) => {
   const { ai } = actor;
   const navigation = session.navigation;
-  const radius = collisionRadius(actor);
+  const radius = bodyRadius(actor);
   /**
    * A body in the scenery gets out before it goes anywhere.
    *
@@ -894,7 +792,7 @@ const advanceNpcRelease = (
   ai.state = "release";
   if (now < (release.startsAt ?? 0)) return true;
 
-  const radius = collisionRadius(actor);
+  const radius = bodyRadius(actor);
 
   /**
    * Out of the cage is enough; the release point is not a destination.
@@ -1033,7 +931,7 @@ export const slideShoved = (session, doid, actor, now) => {
     session.navigation,
     actor.position,
     { x: shove.x * step, y: shove.y * step },
-    collisionRadius(actor)
+    bodyRadius(actor)
   );
   if (distanceTo(actor.position, nextPosition) < 0.5) {
     actor.ai.shove = null;
@@ -1215,7 +1113,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       const mustReturn =
         ai.outsideTetherAt != null && now - ai.outsideTetherAt >= (ai.tetherTimerMs ?? 0);
       if (mustReturn || !enemy || (!ai.engaged && enemyDistance > ai.aggroRadius)) {
-        if (ownerDistance <= Math.max(heroContact(actor, owner.actor), ai.returnDistance ?? 0)) {
+        if (ownerDistance <= Math.max(contact(actor, owner.actor), ai.returnDistance ?? 0)) {
           clearNpcTarget(actor);
           continue;
         }
@@ -1252,6 +1150,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     }
     if (!victim) continue;
     const target = victim.position;
+    // Its body and the victim's, asked once: neither changes in the tick.
+    const radius = bodyRadius(actor);
+    const bodies = contact(actor, victim.actor);
     const recurringTeleport =
       ai.behavior === "TELEPORT_AI" &&
       (ai.teleportRecurMs ?? 0) > 0 &&
@@ -1260,7 +1161,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     if (actor.teleportHidden) {
       if (!recurringTeleport || now < (ai.teleportReturnAt ?? Infinity)) continue;
       const random = session.random ?? Math.random;
-      const destination = teleportDestinationFor(session, actor, target, victim.actor, random);
+      const destination = teleportDestinationFor(session, actor, target, bodies, random);
       actor.position.x = destination.x;
       actor.position.y = destination.y;
       actor.heading =
@@ -1413,13 +1314,13 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * with the player alone in the middle: a halberd knight held 140 off, a
      * marksman 600, and a whole wave of one kind at identical range from the
      * player and from each other. The official does not do that — see
-     * `heroStandoff` for the corpus that says where it does stop — and the
+     * `standoff` (body.js) for the corpus that says where it does stop — and the
      * range is only ever asked one question, which is whether the thing may
      * swing from where it now stands. That question is still below.
      */
-    const standoff = followingOwner
-      ? Math.max(heroContact(actor, victim.actor), ai.returnDistance ?? 0)
-      : heroStandoff(actor, victim.actor);
+    const stopAt = followingOwner
+      ? Math.max(bodies, ai.returnDistance ?? 0)
+      : standoff(actor, bodies);
     /**
      * A kiter backs off now and then, for a moment, from whoever stands
      * inside its keep distance, more often while its target is moving. It is
@@ -1431,13 +1332,13 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       !followingOwner &&
       ai.kind !== "pet" &&
       ai.behavior === "KITE_AI" &&
-      standoff > heroContact(actor, victim.actor) &&
+      stopAt > bodies &&
       route.direct &&
       mobility > 0;
     const threats = heroes.some(({ doid: heroDoid }) => heroDoid === victim.doid)
       ? heroes
       : [...heroes, { position: target }];
-    const away = canBackOff ? awayFromThreats(actor, threats, standoff) : null;
+    const away = canBackOff ? awayFromThreats(actor, threats, stopAt) : null;
     const swinging = attackLocked || Boolean(ai.lunge && now < ai.lunge.until);
     const seen = ai.targetSeen;
     const targetMoving =
@@ -1497,14 +1398,13 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       ai.kind === "pet" &&
       (ai.keepDistance ?? 0) > 0 &&
       route.direct &&
-      distance < standoff &&
+      distance < stopAt &&
       !(ai.attacks ?? []).some(
         (attack) =>
           !attack.projectile &&
           now >= (attack.readyAt ?? 0) &&
           distance + ATTACK_RANGE_EPSILON >= (attack.minRange ?? 0) &&
-          distance <= attackReach(attack, heroContact(actor, victim.actor)) +
-            ATTACK_RANGE_EPSILON
+          distance <= reach(attack, bodies) + ATTACK_RANGE_EPSILON
       )
     ) {
       /**
@@ -1513,14 +1413,14 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
        * at 100-199 units left Dragon with neither bite nor fireball available,
        * so both actors could stand still forever.
        */
-      const retreat = Math.min(topSpeed * deltaSeconds, standoff - distance);
+      const retreat = Math.min(topSpeed * deltaSeconds, stopAt - distance);
       if (distance > 0.001) {
         chaseX = ((actor.position.x - target.x) / distance) * retreat;
         chaseY = ((actor.position.y - target.y) / distance) * retreat;
       }
-    } else if (route.waypoint && (distance > standoff || !route.direct)) {
+    } else if (route.waypoint && (distance > stopAt || !route.direct)) {
       const waypointDistance = distanceTo(actor.position, route.waypoint);
-      const remaining = route.direct ? Math.max(0, distance - standoff) : waypointDistance;
+      const remaining = route.direct ? Math.max(0, distance - stopAt) : waypointDistance;
       const speed = ai.kind === "pet"
         ? topSpeed
         : npcWalkingSpeed(ai, topSpeed, deltaSeconds);
@@ -1539,7 +1439,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
           state.navigation,
           actor.position,
           { x: chaseX, y: chaseY },
-          collisionRadius(actor)
+          radius
         );
         const headway =
           ((tried.x - actor.position.x) * chaseX + (tried.y - actor.position.y) * chaseY) /
@@ -1567,7 +1467,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         state.navigation,
         actor.position,
         { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
-        collisionRadius(actor)
+        radius
       );
       const actualTravel = distanceTo(actor.position, nextPosition);
       actor.position.x = nextPosition.x;
@@ -1608,7 +1508,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
 
     const clearAttack =
       stationary || victimInSight(state.navigation, actor, victim, target, heroDoids);
-    if (distance > heroReach(actor, victim.actor) || !clearAttack) {
+    if (distance > furthestReach(attacksOf(ai), bodies) || !clearAttack) {
       // Walking straight at a hero it has no route to is still "blocked":
       // that is what the floor command and the debug line want to know.
       ai.state = fleeing ? "flee" : route.waypoint && !ai.pathFailed ? "chase" : "blocked";
@@ -1642,7 +1542,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const chosen = chooseNpcAttack(
       ai,
       distance,
-      heroContact(actor, victim.actor),
+      bodies,
       now,
       random
     );

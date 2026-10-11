@@ -36,6 +36,7 @@ import {
   stateUpdate,
 } from "./combat.js";
 import { hasLineOfSight, isPositionBlocked, nearestClearPosition } from "./navigation.js";
+import { furthestAttackRange, rowBodyRadius } from "./body.js";
 import { inFrontOf, worldColliders } from "./heading.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
@@ -539,7 +540,7 @@ export const spawnPlaceable = async (
     return null;
   }
 
-  const collisionRadius = Math.max(12, (npc.CollisionSize ?? 35) * (npc.Scale ?? 1));
+  const collisionRadius = rowBodyRadius(npc);
   const clearsGroup = (candidate) =>
     (placementGroup?.positions ?? []).every(
       (reserved) =>
@@ -606,7 +607,7 @@ export const spawnPlaceable = async (
         ),
         moveSpeed: Math.max(0, Number(npc.BaseMove ?? 180)),
         collisionRadius,
-        attackRange: Math.max(20, ...attackSet.map((attack) => attack.range)),
+        attackRange: furthestAttackRange(attackSet),
         attacks: attackSet,
         keepDistance: 0,
         attackTimerMs: Math.max(0, Number(npc.AttackTimer ?? 1.5) * 1000),
