@@ -40,8 +40,11 @@ export const FLOORS = [
  * toggling  searches around the colliders that actually toggle, where cached answers go stale
  * mob       a dozen monsters of three sizes closing on the player, a third of
  *           them stuck and asking the same question again through the route memo
+ * smash     the floor's props smashed one by one, every obstacle the build put
+ *           in, with the searches and the point and sight questions asked onto
+ *           and across the spots just smashed and the ones about to be
  */
-export const MODES = ["chase", "uniform", "toggling", "mob"];
+export const MODES = ["chase", "uniform", "toggling", "mob", "smash"];
 
 const RADII = [20, 22.5, 26, 30.8, 35, 42, 46, 52, 65];
 const ODD_RADII = [undefined, null, 0, 0.5, -5, 1000];
@@ -150,6 +153,27 @@ export const buildWorkload = (trace, { seconds, seed = 7, mode = "chase", search
   };
   const oddPoint = () => (random() < 0.5 ? pick(ODD_POINTS) : { x: Math.round(sample().x), y: Math.round(sample().y) });
 
+  /**
+   * `smash`: every obstacle the build put in, in a seeded order, one at a time
+   * over the run — the props a party breaks on its way through a floor. The
+   * questions go where a smash changes the answer: onto the spot, across it,
+   * from beside it, for the last few smashed and the next few to be.
+   */
+  const smashOrder = mode === "smash" ? [...obstacleIds] : [];
+  for (let index = smashOrder.length - 1; index > 0; index--) {
+    const other = Math.floor(random() * (index + 1));
+    [smashOrder[index], smashOrder[other]] = [smashOrder[other], smashOrder[index]];
+  }
+  const smashEvery = smashOrder.length ? Math.max(STEP_MS, Math.floor((seconds * 1000) / (smashOrder.length + 1) / STEP_MS) * STEP_MS) : 0;
+  const spotOf = (id) => {
+    const colliders = removed.get(id) ?? [];
+    return colliders.length
+      ? { x: colliders.reduce((sum, c) => sum + c.x, 0) / colliders.length, y: colliders.reduce((sum, c) => sum + c.y, 0) / colliders.length }
+      : sample();
+  };
+  let smashed = 0;
+  const smashSpot = () => pick(smashOrder.slice(Math.max(0, smashed - 4), smashed + 2).map(spotOf));
+
   for (let t = 0; t <= seconds * 1000; t += STEP_MS) {
     while (event < trace.events.length && trace.events[event].t <= t) {
       const { id, on } = trace.events[event++];
@@ -176,6 +200,9 @@ export const buildWorkload = (trace, { seconds, seed = 7, mode = "chase", search
     if (random() < 0.002) {
       const at = near(800);
       ops.push({ t, op: "add", id: nextObstacle++, colliders: [{ type: "circle", x: at.x, y: at.y, radius: 20 + random() * 30 }] });
+    }
+    if (smashEvery && t > 0 && t % smashEvery === 0 && smashed < smashOrder.length) {
+      ops.push({ t, op: "remove", id: smashOrder[smashed++] });
     }
 
     if (mode === "mob") {
@@ -204,6 +231,13 @@ export const buildWorkload = (trace, { seconds, seed = 7, mode = "chase", search
         ops.push({ t, op: "findPath", start: { ...monster.at }, goal: { ...player }, radius: monster.radius });
         continue;
       }
+      if (smashOrder.length) {
+        const spot = smashSpot();
+        const start = { x: spot.x + (random() - 0.5) * 900, y: spot.y + (random() - 0.5) * 900 };
+        const goal = random() < 0.5 ? spot : { x: 2 * spot.x - start.x, y: 2 * spot.y - start.y };
+        ops.push({ t, op: "findPath", start, goal, radius: pick(RADII) });
+        continue;
+      }
       const radius = pick(RADII);
       const start = mode === "chase" ? near(2400) : mode === "toggling" ? nearToggling(900) : sample();
       const goal = mode === "chase" ? near(200) : mode === "toggling" ? nearToggling(900) : sample();
@@ -212,9 +246,13 @@ export const buildWorkload = (trace, { seconds, seed = 7, mode = "chase", search
     for (let i = 0; i < Math.max(1, Math.round(queryScale)); i++) {
       const odd = random() < 0.03;
       const radius = odd ? pick(ODD_RADII) : pick(RADII);
-      const from = odd ? oddPoint() : near(1600);
+      const spot = smashOrder.length && !odd ? smashSpot() : null;
+      const from = odd ? oddPoint() : spot ? { x: spot.x + (random() - 0.5) * 300, y: spot.y + (random() - 0.5) * 300 } : near(1600);
       const kind = random();
-      if (kind < 0.28) ops.push({ t, op: "los", from, to: odd ? oddPoint() : near(1600), radius, ignored: ignoredOf() });
+      if (kind < 0.28) {
+        const to = odd ? oddPoint() : spot ? { x: 2 * spot.x - from.x, y: 2 * spot.y - from.y } : near(1600);
+        ops.push({ t, op: "los", from, to, radius, ignored: ignoredOf() });
+      }
       else if (kind < 0.5) ops.push({ t, op: "blocked", point: from, radius, ignored: ignoredOf() });
       else if (kind < 0.72) {
         const angle = random() * Math.PI * 2;

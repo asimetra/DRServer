@@ -63,7 +63,7 @@ process.env.ODS_LOG_LEVEL ??= "silent";
 const usage = () => {
   console.error(
     "usage: node tools/route-lockstep.js --base <dir|git-ref> [--candidate <dir>] [--quick|--full]\n" +
-      "         [--floors a/b,c/d] [--seeds 3,5] [--seconds N] [--modes chase,uniform,toggling,mob]\n" +
+      "         [--floors a/b,c/d] [--seeds 3,5] [--seconds N] [--modes chase,uniform,toggling,mob,smash]\n" +
       "         [--scale N] [--audit N|0] [--stress N] [--stress-steps N] [--tile-count N] [--show N]"
   );
   process.exit(2);
