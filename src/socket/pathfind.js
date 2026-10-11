@@ -437,9 +437,20 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   }
   raw.reverse();
 
+  // Of those, the points a body needs to walk them in turn from the start:
+  // each the farthest it can see from the one before. Every point can be
+  // walked to from the one before it, the first from the start, so none goes
+  // unseen; if one did, a route through a wall is still not handed out.
   const compressed = [];
-  const anchor = compressInto(navigation, radius, compressed, raw, start);
-  if (!anchor) return [];
+  let anchor = start;
+  for (let index = 0; index < raw.length; ) {
+    let farthest = raw.length - 1;
+    while (farthest >= index && !hasLineOfSight(navigation, anchor, raw[farthest], radius)) farthest--;
+    if (farthest < index) return [];
+    compressed.push(raw[farthest]);
+    anchor = raw[farthest];
+    index = farthest + 1;
+  }
 
   // The last anchor can itself be the corner that clears an obstacle, so the
   // goal follows it rather than replaces it: put in its place, the preceding
@@ -453,30 +464,4 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     compressed.endsShort = true;
   }
   return compressed;
-};
-
-/**
- * Adds to `compressed` those of `points` a body needs to walk them in turn
- * from `from`, each the farthest it can see from the one before; returns the
- * last, or null when a point cannot be reached from the one before it. Each
- * point can be walked to from the one before it, the first from the start, so
- * that does not happen; a route through a wall is still not handed out.
- */
-const compressInto = (navigation, radius, compressed, points, from) => {
-  let anchor = from;
-  let index = 0;
-  while (index < points.length) {
-    let farthest = -1;
-    for (let candidate = points.length - 1; candidate >= index; candidate--) {
-      if (hasLineOfSight(navigation, anchor, points[candidate], radius)) {
-        farthest = candidate;
-        break;
-      }
-    }
-    if (farthest < 0) return null;
-    compressed.push(points[farthest]);
-    anchor = points[farthest];
-    index = farthest + 1;
-  }
-  return anchor;
 };
