@@ -15,6 +15,7 @@
     "test:combat-matrix": "node tools/combat-matrix.js",
     "sim:ai": "node tools/ai-sim.js",
     "sim:routes": "node tools/route-lockstep.js",
+    "sim:gaps": "node tools/gap-census.js",
     "audit:account-ids": "node tools/account-id-audit.js",
     "check:public": "node tools/check-public-release.js",
     "check:data": "node tools/sync-game-data.js --check",

@@ -45,6 +45,15 @@ report. Run them between steps of a long change, not only at its end: the
 first step that differs is the one to look at, and the last is where it is
 hardest to find.
 
+A change that is meant to change what monsters do where they cannot reach the
+hero is judged on the whole class of such places, not on the one that
+prompted it. `npm run sim:gaps -- --base master` (`tools/gap-census.js`) puts
+heroes near the walls and props of every floor, keeps those five kinds of
+monster cannot route to, and reports for the base and the working tree how
+often each kind still swings where it could, how soon, how often it ends out
+of sight or goes to and fro, and the cases that got worse. It takes about
+half a minute.
+
 The public test suite runs without private client data. Contributors who have a
 compatible client copy they are lawfully entitled to use can additionally
 import local compatibility data and run the full suite:
