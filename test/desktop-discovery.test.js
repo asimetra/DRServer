@@ -43,3 +43,35 @@ test("with no desktop socket set, the desktop is told what everybody is", async 
   config.desktopSocketHost = null;
   assert.deepEqual(await discovery(DESKTOP), await discovery(ORDINARY));
 });
+
+/** `--use-fallback-socket-port` connects to this one, and zero is fatal. */
+test("the fallback port is a port the client can connect to", async (t) => {
+  const kept = { host: config.desktopSocketHost, port: config.desktopSocketPort };
+  t.after(() => {
+    config.desktopSocketHost = kept.host;
+    config.desktopSocketPort = kept.port;
+  });
+  config.desktopSocketHost = "game.example.net";
+  config.desktopSocketPort = 7198;
+
+  for (const answer of [await discovery(ORDINARY), await discovery(DESKTOP)]) {
+    assert.ok(answer.gameSocketPort > 0);
+    assert.equal(answer.gameSocketFallbackPort, answer.gameSocketPort);
+  }
+});
+
+test("a fallback port the operator set goes to the desktop, and the browser keeps its own", async (t) => {
+  const kept = { host: config.desktopSocketHost, port: config.desktopSocketPort, fallback: config.socketFallbackPort };
+  t.after(() => {
+    config.desktopSocketHost = kept.host;
+    config.desktopSocketPort = kept.port;
+    config.socketFallbackPort = kept.fallback;
+  });
+  config.desktopSocketHost = "game.example.net";
+  config.desktopSocketPort = 7198;
+  config.socketFallbackPort = 80;
+
+  assert.equal((await discovery(DESKTOP)).gameSocketFallbackPort, 80);
+  const ordinary = await discovery(ORDINARY);
+  assert.equal(ordinary.gameSocketFallbackPort, ordinary.gameSocketPort);
+});

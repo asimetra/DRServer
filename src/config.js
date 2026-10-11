@@ -196,6 +196,14 @@ export const loadServerConfig = (environment = process.env) => {
     ),
 
     /**
+     * The port a desktop client started with `--use-fallback-socket-port` is
+     * sent to instead, for networks that let only common ports out. Advertising
+     * only: forwarding it to the game port is the operator's. Unset, the client
+     * is sent the desktop's own port (routes.js).
+     */
+    socketFallbackPort: asInt(setting(environment, "SOCKET_FALLBACK_PORT"), null),
+
+    /**
      * The proxies whose `X-Forwarded-For` is believed: addresses and ranges,
      * "127.0.0.1, ::1" for one on the same machine. Without them every player
      * behind a proxy is the proxy's address, and shares its limits. See
@@ -929,7 +937,7 @@ export const configProblems = (environment = process.env) => {
   const warnings = [];
   const settings = loadServerConfig(environment);
 
-  for (const name of ["PORT", "SOCKET_PORT", "INTERNAL_PORT", "PUBLIC_PORT", "PUBLIC_SOCKET_PORT", "DESKTOP_SOCKET_PORT"]) {
+  for (const name of ["PORT", "SOCKET_PORT", "INTERNAL_PORT", "PUBLIC_PORT", "PUBLIC_SOCKET_PORT", "DESKTOP_SOCKET_PORT", "SOCKET_FALLBACK_PORT"]) {
     const given = spelled(environment, name);
     // Assigned nothing is the default, as it always has been.
     if (!given || given.value === "") continue;

@@ -88,18 +88,27 @@ const sessionForRequest = (accountId, req) => {
 };
 
 /**
+ * Where the game socket is. A client started with `--use-fallback-socket-port`
+ * (the DRH launcher's default) connects to gameSocketFallbackPort instead, and
+ * a zero there is fatal before it connects (DBFacade.hx). The server listens on
+ * one game port, so unless the operator names a second one the fallback is
+ * that same port.
+ */
+const socketAnswer = (host, port, fallback = port) => ({
+  webServicesUrl: publicBaseUrl(),
+  gameSocketAddress: host,
+  gameSocketPort: port,
+  gameSocketFallbackPort: fallback,
+});
+
+/**
  * GET /game-status/service-discovery
  * config/ServiceDiscoveryLoader.hx requires webServicesUrl, gameSocketAddress
  * and gameSocketPort; it aborts with Logger.fatal if any is missing.
  * DBFacade derives /rpc/, /api/ and /steam/ roots from webServicesUrl.
  */
 const serviceDiscovery = () =>
-  json({
-    webServicesUrl: publicBaseUrl(),
-    gameSocketAddress: config.publicSocketHost,
-    gameSocketPort: config.publicSocketPort,
-    gameSocketFallbackPort: 0,
-  });
+  json(socketAnswer(config.publicSocketHost, config.publicSocketPort));
 
 /**
  * GET /desktop/game-status/service-discovery — the same answer, for the
@@ -110,13 +119,12 @@ const serviceDiscovery = () =>
  * `/game-status/service-discovery` itself (ServiceDiscoveryLoader.hx), and
  * takes every other address from `webServicesUrl`, so nothing else moves.
  */
-const desktopServiceDiscovery = () =>
-  json({
-    webServicesUrl: publicBaseUrl(),
-    gameSocketAddress: config.desktopSocketHost ?? config.publicSocketHost,
-    gameSocketPort: config.desktopSocketHost ? config.desktopSocketPort : config.publicSocketPort,
-    gameSocketFallbackPort: 0,
-  });
+const desktopServiceDiscovery = () => {
+  const [host, port] = config.desktopSocketHost
+    ? [config.desktopSocketHost, config.desktopSocketPort]
+    : [config.publicSocketHost, config.publicSocketPort];
+  return json(socketAnswer(host, port, config.socketFallbackPort ?? port));
+};
 
 /** GET /game-status — how busy each dungeon is, for the world map (game-status.js). */
 const gameStatus = async () => json(await gameStatusFor());
