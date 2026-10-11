@@ -17,8 +17,8 @@ import {
 } from "./navigation.js";
 import { objectDisable } from "./objects.js";
 import { bodyPointOf, bodyRadius, contact, furthestReach, reach, sightOrigin, standoff } from "./body.js";
-import { faceTarget, keptOutOfHeroes, placeNpc, stepNpc } from "./npc-move.js";
-import { searchRoute } from "./route-memo.js";
+import { faceTarget, placeNpc, stepNpc } from "./npc-move.js";
+import { describeRoute, forgetRoute, NO_ROUTE_ASKED, routeToTarget, searchAgain } from "./routing.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
 const npcTimelineAction = (doid, timeline) =>
@@ -29,8 +29,6 @@ const npcTimelineAction = (doid, timeline) =>
     .frame();
 
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
-const ROUTE_REFRESH_MS = 1000;
-const FAILED_PATH_RETRY_MS = 2000;
 const ATTACK_RANGE_EPSILON = 2;
 const NPC_WALK_ACCELERATION_SECONDS = 0.9;
 /** Only this many enemies may deliberately choose one pet over a live hero. */
@@ -184,6 +182,26 @@ const BACK_OFF_MEAN_MS = 2000;
 const BACK_OFF_MOST_MS = 3250;
 
 /**
+ * Whether a kiter or a ranged pet may back off from its target, given the
+ * route to it: when it sees the target, and when it has no route to it.
+ *
+ * The second half is today's behaviour kept on purpose, not a rule anyone
+ * chose for both. c13780e made a failed route hand out the target as a
+ * "direct" waypoint so that the walk would end at the standoff, and both
+ * back-offs read that same flag. For the kiter it was meant — the commit
+ * says "a kiter backs off as from any target in sight", from the captures'
+ * "kiters keep their distance", and test/no-route-walk.test.js holds it. For
+ * the pet's MinRange retreat it came along unasked (and no placed pet has a
+ * keep distance today, so it does not run). A target with a route that is
+ * not in sight is not backed off from, and a body escaping the scenery backs
+ * off from nothing.
+ *
+ * DECISION FOR THE MAINTAINER: should a pet or a kiter back off from a target
+ * it has no route to?
+ */
+const backsOffFrom = (route) => route.sees || (route.blocked && !route.escaping);
+
+/**
  * Away from everyone inside its keep distance, nearer ones counting more, or
  * null when nobody is inside or it is pressed from opposite sides — backing
  * off one player into another is not getting away. `depth` is how far the
@@ -266,12 +284,7 @@ const clearNpcTarget = (actor) => {
   if (!ai) return;
   ai.engaged = false;
   ai.state = "idle";
-  ai.path = null;
-  ai.pathIndex = 0;
-  ai.pathTarget = null;
-  ai.pathFailed = false;
-  ai.nextPathAt = 0;
-  ai.navigationRevision = undefined;
+  forgetRoute(ai);
   ai.targetDoid = null;
   ai.nextTargetAt = 0;
   ai.walkSpeed = 0;
@@ -493,111 +506,6 @@ const separateIdleNpc = (
   if (!step || step.travel <= 0.001) return false;
   placeNpc(session, doid, actor, step);
   return true;
-};
-
-const routeToTarget = (session, actor, target, now, heroes = []) => {
-  const { ai } = actor;
-  const navigation = session.navigation;
-  const radius = bodyRadius(actor);
-  /**
-   * A body in the scenery gets out before it goes anywhere.
-   *
-   * Neither route finds a way from inside a collider: a sight line skips its
-   * first point and so reads clear from a body half in the bars, and the grid
-   * search starts in a cell it can never leave. The first walked it along the
-   * face of the jail, one refused step at a time; the second gave up and left
-   * it "blocked" in the cage for the rest of the floor. So it is sent to open
-   * ground first — the cage's own mouth if it was let out of one, else the
-   * nearest clear spot towards its target — and `moveWithNavigation` lets a
-   * buried body take the steps that bring it out.
-   */
-  if (navigation && isPositionBlocked(navigation, actor.position, radius)) {
-    const escapableWithoutHeroes = (candidate) => {
-      const permitted = keptOutOfHeroes(candidate, actor, heroes);
-      if (isPositionBlocked(navigation, permitted, radius)) return false;
-      // Clear ground across the collider is not useful when the first step has
-      // to go deeper into it. `moveWithNavigation` permits only progress out.
-      const firstMove = moveWithNavigation(
-        navigation,
-        actor.position,
-        {
-          x: permitted.x - actor.position.x,
-          y: permitted.y - actor.position.y,
-        },
-        radius
-      );
-      return squaredDistanceTo(firstMove, actor.position) > 0.01;
-    };
-    // A way out the body does not fit at, or the player physically closes off,
-    // is no way out. Re-evaluate an old target as heroes move through the room.
-    if (
-      ai.escape &&
-      (isPositionBlocked(navigation, ai.escape, radius) || !escapableWithoutHeroes(ai.escape))
-    ) {
-      ai.escape = null;
-    }
-    ai.escape ??= nearestClearPosition(navigation, actor.position, radius, {
-      towards: target,
-      accept: escapableWithoutHeroes,
-    });
-    // Not direct: the walk is to the way out, however near the target is.
-    // Even when there is no exit, a body inside scenery must never attack.
-    return { waypoint: ai.escape, direct: false, escaping: true };
-  } else {
-    ai.escape = null;
-  }
-  if (!navigation || hasLineOfSight(navigation, actor.position, target, radius)) {
-    ai.path = null;
-    ai.pathIndex = 0;
-    ai.pathFailed = false;
-    return { waypoint: target, direct: true };
-  }
-
-  const targetMoved =
-    !ai.pathTarget ||
-    squaredDistanceTo(ai.pathTarget, target) >= navigation.cellSize * navigation.cellSize;
-  const pathFinished = ai.path?.length && (ai.pathIndex ?? 0) >= ai.path.length;
-  if (
-    !Array.isArray(ai.path) ||
-    pathFinished ||
-    now >= (ai.nextPathAt ?? 0) ||
-    targetMoved ||
-    ai.navigationRevision !== navigation.revision
-  ) {
-    ai.path = searchRoute(ai, navigation, actor.position, target, radius);
-    ai.pathIndex = 0;
-    ai.pathFailed = ai.path.length === 0;
-    ai.pathTarget = { ...target };
-    // A closed route should not make every NPC redo a full map search five
-    // times per second. A changed target or navigation revision retries early.
-    ai.nextPathAt = now + (ai.pathFailed ? FAILED_PATH_RETRY_MS : ROUTE_REFRESH_MS);
-    ai.navigationRevision = navigation.revision;
-  }
-
-  const reachedDistance = Math.max(18, radius * 0.5);
-  while (
-    ai.path &&
-    ai.pathIndex < ai.path.length &&
-    squaredDistanceTo(actor.position, ai.path[ai.pathIndex]) <= reachedDistance * reachedDistance
-  ) {
-    ai.pathIndex++;
-  }
-  /**
-   * A route it cannot find is a straight walk at the target.
-   *
-   * The official does not plan to the nearest reachable point, nor detour: in
-   * 110 engaged episodes with no route to the hero (96 captures) it steers at
-   * the hero, slides along whatever it hits, and stands where the straight
-   * line is blocked — that model fits its stopping point to 152 u at the
-   * median against 191 for the closest reachable cell. Ranged ones shoot from
-   * there, kiters keep their distance. Ours stood where the search failed,
-   * which was most often a whole room away. Direct, so that it ends at the
-   * standoff and a kiter backs off as from any target in plain sight; the
-   * search above still retries on its own cadence, so a gate opening gives it
-   * a real route. Where the walk stops, see the blocked tick in `tickNpcAi`.
-   */
-  if (ai.pathFailed) return { waypoint: target, direct: true };
-  return { waypoint: ai.path?.[ai.pathIndex] ?? null, direct: false };
 };
 
 /**
@@ -1007,10 +915,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       ai.teleportReturnAt = 0;
       ai.teleportCycleStarted = true;
       ai.nextAttackAt = now + (ai.preTeleportAttackMs ?? 0);
-      ai.path = null;
-      ai.pathIndex = 0;
-      ai.pathTarget = null;
-      ai.nextPathAt = 0;
+      searchAgain(ai);
       ai.walkSpeed = 0;
       actor.teleportRegenerate(destination, actor.heading);
       session.send(npcTimelineAction(doid, ai.teleportInTimeline ?? "TELEPORT_IN"));
@@ -1121,9 +1026,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * colliders in the arena.
      */
     const stationary = ai.behavior === "STATIONARY_AI";
-    const route = stationary
-      ? { waypoint: null, direct: true, escaping: false }
-      : routeToTarget(session, actor, target, now, heroes);
+    const route = stationary ? NO_ROUTE_ASKED : routeToTarget(session, actor, target, now, heroes);
+    // The waypoint is the target itself: in sight, or walked at straight.
+    const headsAtTarget = route.sees || route.steers;
 
     // DR_DEBUG_AI=1 prints where each chaser is actually heading, which is the
     // only way to tell a legitimate detour around geometry from a detour to
@@ -1132,7 +1037,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       info(
         `[ai] ${doid} at (${Math.round(actor.position.x)},${Math.round(actor.position.y)}) ` +
           `-> (${Math.round(route.waypoint.x)},${Math.round(route.waypoint.y)}) ` +
-          `${ai.pathFailed ? "no route" : route.direct ? "direct" : `via path ${ai.pathIndex}/${ai.path?.length ?? 0}`} ` +
+          `${describeRoute(ai, route)} ` +
           `hero (${Math.round(target.x)},${Math.round(target.y)})`
       );
     }
@@ -1167,7 +1072,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       ai.kind !== "pet" &&
       ai.behavior === "KITE_AI" &&
       stopAt > bodies &&
-      route.direct &&
+      backsOffFrom(route) &&
       mobility > 0;
     const threats = heroes.some(({ doid: heroDoid }) => heroDoid === victim.doid)
       ? heroes
@@ -1231,7 +1136,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     } else if (
       ai.kind === "pet" &&
       (ai.keepDistance ?? 0) > 0 &&
-      route.direct &&
+      backsOffFrom(route) &&
       distance < stopAt &&
       !(ai.attacks ?? []).some(
         (attack) =>
@@ -1252,9 +1157,11 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         chaseX = ((actor.position.x - target.x) / distance) * retreat;
         chaseY = ((actor.position.y - target.y) / distance) * retreat;
       }
-    } else if (route.waypoint && (distance > stopAt || !route.direct)) {
+    } else if (route.waypoint && (distance > stopAt || !headsAtTarget)) {
       const waypointDistance = distanceTo(actor.position, route.waypoint);
-      const remaining = route.direct ? Math.max(0, distance - stopAt) : waypointDistance;
+      // At the target itself the walk ends at the standoff; at a point on
+      // the way, or the way out of the scenery, it ends there.
+      const remaining = headsAtTarget ? Math.max(0, distance - stopAt) : waypointDistance;
       const speed = ai.kind === "pet"
         ? topSpeed
         : npcWalkingSpeed(ai, topSpeed, deltaSeconds);
@@ -1267,8 +1174,10 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       // The blocked tick of a straight walk with no route (see routeToTarget):
       // a step the scenery gives nothing back on, not even a slide, is not
       // taken. It stands at the wall rather than grinding into it, and does
-      // not pace along it as the official does.
-      if (ai.pathFailed && chaseTravel > 0.001) {
+      // not pace along it as the official does. Asked of `blocked`, which an
+      // escaping body still carries from its last search, so the walk out of
+      // the scenery is held to it too when that search failed.
+      if (route.blocked && chaseTravel > 0.001) {
         const tried = moveWithNavigation(
           state.navigation,
           actor.position,
@@ -1334,7 +1243,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     if (distance > furthestReach(attacksOf(ai), bodies) || !clearAttack) {
       // Walking straight at a hero it has no route to is still "blocked":
       // that is what the floor command and the debug line want to know.
-      ai.state = fleeing ? "flee" : route.waypoint && !ai.pathFailed ? "chase" : "blocked";
+      ai.state = fleeing ? "flee" : route.waypoint && !route.blocked ? "chase" : "blocked";
       continue;
     }
     // Backing off, it still shoots when its swing is due: it stands for the

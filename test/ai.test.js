@@ -403,8 +403,8 @@ test("generator burst members plan their own route around an obstacle", async ()
 
   await tickNpcAi(session, 1000, 0.1);
 
-  assert.ok(first.ai.path?.length, "first member should own an obstacle route");
-  assert.ok(second.ai.path?.length, "second member should plan its own obstacle route");
+  assert.ok(first.ai.routing?.points?.length, "first member should own an obstacle route");
+  assert.ok(second.ai.routing?.points?.length, "second member should plan its own obstacle route");
 });
 
 test("release movement exits only its enclosing cage before normal AI starts", async () => {
@@ -786,15 +786,20 @@ test("AI releases a downed hero instead of retaining a stale chase target", asyn
   hero.dead = true;
   knight.ai.engaged = true;
   knight.ai.state = "chase";
-  knight.ai.path = [{ x: 100, y: 0 }];
-  knight.ai.pathTarget = { x: 0, y: 0 };
+  knight.ai.routing = {
+    points: [{ x: 100, y: 0 }],
+    next: 0,
+    aimedAt: { x: 0, y: 0 },
+    failed: false,
+    searchAt: 5000,
+    revision: 0,
+  };
 
   await tickNpcAi(session, 1000, 0.1);
 
   assert.equal(knight.ai.engaged, false);
   assert.equal(knight.ai.state, "idle");
-  assert.equal(knight.ai.path, null);
-  assert.equal(knight.ai.pathTarget, null);
+  assert.equal(knight.ai.routing, null);
   assert.equal(sent.length, 0);
 });
 

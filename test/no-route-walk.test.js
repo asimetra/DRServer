@@ -170,12 +170,12 @@ test("a gate opening turns the straight walk back into a route", async () => {
 
   await run(10);
   assert.ok(actor.position.x >= 325 && actor.position.x < 340, `it stood at the wall first: x=${actor.position.x.toFixed(1)}`);
-  assert.equal(actor.ai.pathFailed, true);
+  assert.equal(actor.ai.routing.failed, true);
 
   assert.equal(setNavigationTriggerState(navigation, "gate", false), true);
   await run(1);
-  assert.equal(actor.ai.pathFailed, false, "the changed revision searched again at once");
-  assert.ok(actor.ai.path.length > 1, "and found the way round through the gate");
+  assert.equal(actor.ai.routing.failed, false, "the changed revision searched again at once");
+  assert.ok(actor.ai.routing.points.length > 1, "and found the way round through the gate");
 
   await run(40);
   assert.ok(distance() <= 60, `it reached the hero round the corner: ${distance().toFixed(0)} away`);
