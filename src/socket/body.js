@@ -47,11 +47,12 @@ export const bodyPointOf = (actor, position) => collisionPointOf(actor, position
  * Where a monster's sight line starts, and where its swing and its shot start.
  *
  * Open decision: they are not the same point. A sight line is drawn from the
- * feet (ai.js `victimInSight`), the point this server's navigation keeps clear
- * of the walls. A swing's shape and a shot leave from the body (npc-swings.js
- * `landNpcSwing`, `launchNpcProjectile`), as the client places its own
- * colliders at `worldCenter`. So a monster sees from 22 below where it hits
- * from. Both answers are kept as they were; which one is right is not decided.
+ * feet (npc-act.js `victimInSight`), the point this server's navigation keeps
+ * clear of the walls. A swing's shape and a shot leave from the body
+ * (npc-swings.js `landNpcSwing`, `launchNpcProjectile`), as the client places
+ * its own colliders at `worldCenter`. So a monster sees from 22 below where it
+ * hits from. Both answers are kept as they were; which one is right is not
+ * decided.
  */
 export const sightOrigin = (actor) => feetOf(actor);
 export const swingOrigin = (actor) => bodyPointOf(actor, feetOf(actor)) ?? feetOf(actor);

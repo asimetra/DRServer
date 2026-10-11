@@ -101,7 +101,10 @@ const traceRoute = (doid, actor, route, target) =>
       `hero (${Math.round(target.x)},${Math.round(target.y)})`
   );
 
-/** The move stage: the intent's step, pushed by the crowd, kept out of the players, through the scenery. */
+/**
+ * The move stage: the intent's step, pushed by the crowd, kept out of the
+ * players, through the scenery (`stepNpc`), and sent.
+ */
 const move = (session, state, crowd, doid, actor, intent, turn) => {
   const { ai } = actor;
   if (ai.kind !== "pet" && !intent.walking) ai.walkSpeed = 0;

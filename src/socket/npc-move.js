@@ -7,11 +7,12 @@ import { PacketWriter } from "./packet.js";
  * How a monster's body gets from where it stands to where it is sent.
  *
  * The AI decides the step — a chase, a back-off, a lunge, a cage exit, an idle
- * body pushed off another — and what it faces while taking it (ai.js). What
- * happens to that step after is the same every time and is here once: the part
- * that runs into a body it touches is dropped, the push of the crowd is added
- * within one walking budget, the players are kept out of it, the walls get
- * the last word, and the client is told where it ended and which way it faces.
+ * body pushed off another — and what it faces while taking it (ai.js and
+ * behaviours/). What happens to that step after is the same every time and
+ * is here once: the part that runs into a body it touches is dropped, the
+ * push of the crowd is added within one walking budget, the players are kept
+ * out of it, the walls get the last word, and the client is told where it
+ * ended and which way it faces.
  */
 
 const npcPositionUpdate = (doid, position) =>

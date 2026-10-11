@@ -66,11 +66,12 @@ const npcPositionUpdate = (doid, position) =>
  * pass through the attacker and land behind him, which is not a pull.
  *
  * Over the time the throw is given, when it is given one: a monster the AI
- * walks is handed the push as a shove in flight (`slideShoved` in ai.js) and
- * covers it across the next ticks, the way the official's position frames do —
- * a `Blastback` victim reads 149 at +158ms and 230 at +408ms. One frame at
- * the far end is a teleport, and it looked like one. What the AI does not
- * walk, or a push with no duration, moves at once.
+ * walks is handed the push as a shove in flight (`slideShoved`,
+ * behaviours/overrides.js) and covers it across the next ticks, the way the
+ * official's position frames do — a `Blastback` victim reads 149 at +158ms
+ * and 230 at +408ms. One frame at the far end is a teleport, and it looked
+ * like one. What the AI does not walk, or a push with no duration, moves at
+ * once.
  *
  * The first frame goes out with the hit. Left to the tick alone the body stood
  * still for up to 250ms and then set off, which read as lag — the client

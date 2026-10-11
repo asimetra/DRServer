@@ -539,8 +539,8 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
        * saved, a princess, a barricade, a defence orb. The official's monsters
        * go for these as for anybody: Battleheim's warhogs land 517 hits on
        * barricades and 308 on defence orbs, and the Cretaceous sorcerers put
-       * 20 on the chef. Targeted by distance like a hero (ai.js), and the one
-       * that walks (the chef) fights back with an AI of its own.
+       * 20 on the chef. Targeted by distance like a hero (npc-targeting.js),
+       * and the one that walks (the chef) fights back with an AI of its own.
        */
       isAlly: npc.CharType === "HERO" && !options.petOwnerDoid && Boolean(npc.IsAttackable),
       ai:
@@ -623,8 +623,9 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
                * of 305, 70 for KNIGHT_HALBERD against a measured p05 of 69.
                *
                * The standoff is also where a KITE_AI starts backing off now
-               * and then (`ai.js`, BACK_OFF_STILL_PER_SECOND). It is not a ring
-               * kept around the player: one walking in is not pushed back.
+               * and then (behaviours/kite.js, BACK_OFF_STILL_PER_SECOND). It
+               * is not a ring kept around the player: one walking in is not
+               * pushed back.
                */
               keepDistance:
                 petRangedStandoff > 0

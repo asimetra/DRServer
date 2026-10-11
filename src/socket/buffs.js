@@ -392,8 +392,8 @@ export const hasBuff = (session, actorDoid, constant) => {
 
 /**
  * The abilities that stop a monster swinging: a stun, and shock, paralysis
- * and disabled controls, which stop the moving too (ai.js, where `MOVEMENT`
- * is read). A root is not one of them; a rooted monster still swings.
+ * and disabled controls, which stop the moving too (behaviours/overrides.js,
+ * where `MOVEMENT` is read). A root is not one of them; a rooted monster still swings.
  */
 export const ATTACK_STOPPING_ABILITIES = ["STUN", "SHOCK", "PARALYZED", "DISABLE_CONTROLS"];
 

@@ -82,7 +82,7 @@ export const npcAttackChoices = async (
       // Ordinary chase and target tracking pause through the last authored
       // damaging action. Attack-specific MoveAmount remains active.
       attackLockFrame: Math.max(0, ...actionFrames),
-      // The attack's own move (ai.js, `lunge`): how far, which way off the
+      // The attack's own move (npc-act.js, `lunge`): how far, which way off the
       // facing, how long, and the timeline frame it starts on. Only a timeline
       // that authors the action moves — null is "this attack stands still".
       moveAmount: moveFrame === null ? 0 : Math.max(0, Number(attack.MoveAmount ?? 0)),

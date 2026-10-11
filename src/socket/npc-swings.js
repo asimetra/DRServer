@@ -17,7 +17,7 @@ import { stealLife } from "./life-steal.js";
 /**
  * An NPC's attack as it lands: the swing's timeline frames, the projectile it
  * launches, the hit it deals and the state it leaves the victim in.
- * `performNpcAttack` is what the AI tick calls (ai.js).
+ * `performNpcAttack` is what the AI tick calls (npc-act.js).
  */
 
 /**
