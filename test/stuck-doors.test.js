@@ -29,7 +29,7 @@ const floorWith = ({ triggers = [], generators = [], gates = [], wiring = [] }) 
 });
 
 const sessionFor = (floor) => {
-  const session = { navigation: { triggerGroups: new Map() } };
+  const session = { navigation: { objects: new Map() } };
   trackTriggers(session, floor);
   return session;
 };
@@ -171,7 +171,7 @@ test("a trap nothing can trigger is not left armed for ever", async () => {
       tileCount: 25,
       seed,
     });
-    const session = { navigation: { triggerGroups: new Map() }, floorGenerated: true };
+    const session = { navigation: { objects: new Map() }, floorGenerated: true };
     trackTriggers(session, floor);
 
     for (const placement of floor.placements.triggerable) {
@@ -225,7 +225,7 @@ test("standing on a button presses it", async () => {
     logicGates: new Map(),
     logicGateTimers: new Map(),
     triggerableDoids: new Map(),
-    navigation: { triggerGroups: new Map() },
+    navigation: { objects: new Map() },
     send: () => {},
   };
   const pressed = () => session.signalValues.get("button") === true;

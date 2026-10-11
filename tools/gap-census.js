@@ -247,7 +247,11 @@ const censusFloor = async (modules, floor, mapNodeId, label, seed, per) => {
   const navigation = session.navigation;
   const heroActor = session.actors.get(HERO_DOID);
   const random = seededRandom(seed * 7919 + label.length * 31);
-  const colliders = [...navigation.staticColliders, ...[...navigation.obstacles.values()].flat()].filter((c) => Number.isFinite(c?.x));
+  // Its actors' shapes: an obstacle map before navigation.js kept one record per object, the records after.
+  const actorShapes = navigation.objects
+    ? [...navigation.objects.values()].filter((record) => !record.wired && record.state === "on").flatMap((record) => record.on)
+    : [...navigation.obstacles.values()].flat();
+  const colliders = [...navigation.staticColliders, ...actorShapes].filter((c) => Number.isFinite(c?.x));
   const context = { session, floorDoid: FLOOR_DOID, heroDoid: HERO_DOID, mapNodeId, gm: modules.gm, isActive: () => true };
   const records = [];
   for (const names of ROWS) {

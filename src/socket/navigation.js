@@ -3,13 +3,14 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { config } from "../config.js";
 import { buildColliderIndex, replaceIndexedColliders } from "./collider-index.js";
+import { activeCollidersOf } from "./navigation-objects.js";
 import { invalidatePathfinding } from "./route-cache.js";
 
 /**
  * A floor's navigation: the collision library, and the per-session state built
- * from a floor's definition — static colliders, trigger groups, obstacles, the
- * index over the active set, and the revision that tells a route it may be
- * stale. The questions asked of that state are answered by the modules
+ * from a floor's definition — static colliders, every object's record (see
+ * "Every object's colliders" below), the index over the active set, and the
+ * revision that tells a route it may be stale. The questions asked of that state are answered by the modules
  * re-exported at the end, which with this file are the API the rest of the
  * server imports from here:
  *
@@ -104,19 +105,34 @@ export const collisionPointOf = (actor, position) => {
   return { x: position.x + offset.x, y: position.y + offset.y };
 };
 
-const activeTriggerColliders = (navigation) => {
-  const colliders = [];
-  for (const group of navigation.triggerGroups.values()) {
-    colliders.push(...(group.on ? group.onColliders : group.offColliders));
-  }
-  return colliders;
-};
-
+/**
+ * Every object's colliders, owned by one record over its life.
+ *
+ * An object with a shape in the floor — a gate the wiring opens, a spike bed,
+ * a barricade, a smashable prop, a secret wall — has one record, keyed by
+ * what addresses it (a triggerable's placement id, an actor's doid), holding
+ * the shapes it has `on` and `off` and the stage of its life it is at:
+ *
+ *   on      standing, its `on` shapes (NPCGameObject's navCollisions)
+ *   off     switched off by its wiring, its `off` shapes (navCollisions_off)
+ *   broken  killed but kept: a `PermCorpse` row — a gate, a secret wall —
+ *           stands broken, its `off` shapes, until the floor ends; the
+ *           official switches its trigger state to 0 and never sends it dead
+ *           (158 of 158 such deaths in its captures)
+ *   gone    killed and taken away: a barricade, a defence orb, a killable
+ *           trap, a smashed prop or cage; nothing (the official sends its
+ *           barricades, orbs and catacomb tomb and statue traps dead and
+ *           destroys them at once, 174 of 174)
+ *
+ * `wired` marks the floor's triggerables, the records its wiring switches
+ * (`setNavigationTriggerState`) and the cages a generator's prisoners walk
+ * out of (cage-release.js). Broken and gone are for good: the wiring no
+ * longer moves them.
+ */
 const rebuildActiveColliders = (navigation) => {
   navigation.colliders = [
     ...navigation.staticColliders,
-    ...activeTriggerColliders(navigation),
-    ...[...navigation.obstacles.values()].flat(),
+    ...[...navigation.objects.values()].flatMap(activeCollidersOf),
   ];
   buildColliderIndex(navigation);
 };
@@ -133,8 +149,7 @@ export const createNavigationState = (definition) => {
     // `tileKeys` laid out flat for the collision tests, built on first use.
     tileGrid: null,
     staticColliders: [...(definition.staticColliders ?? [])],
-    triggerGroups: new Map(),
-    obstacles: new Map(),
+    objects: new Map(),
     colliders: [],
     revision: 0,
     // A route search lazily records, per actor radius, which grid cells are
@@ -145,48 +160,72 @@ export const createNavigationState = (definition) => {
   };
 
   for (const [id, group] of definition.triggerColliders ?? []) {
-    navigation.triggerGroups.set(id, {
-      on: group.initialOn ?? true,
-      onColliders: [...(group.onColliders ?? [])],
-      offColliders: [...(group.offColliders ?? [])],
+    navigation.objects.set(id, {
+      on: [...(group.onColliders ?? [])],
+      off: [...(group.offColliders ?? [])],
+      state: (group.initialOn ?? true) ? "on" : "off",
+      wired: true,
     });
   }
   rebuildActiveColliders(navigation);
   return navigation;
 };
 
-/** Keeps server pathing in sync with NPCGameObject.triggerState. */
+/**
+ * Puts `record` in as the object's, its colliders with it. Every collider
+ * change ends here, and each forgets the
+ * routes near what changed (`invalidatePathfinding`), so a trap toggling or a
+ * wall breaking sends the monsters near it searching again.
+ */
+const changeObject = (navigation, id, record) => {
+  const before = navigation.objects.get(id);
+  const previous = before ? activeCollidersOf(before) : [];
+  const current = activeCollidersOf(record);
+  if (record.state === "gone") navigation.objects.delete(id);
+  else navigation.objects.set(id, record);
+  replaceIndexedColliders(navigation, previous, current);
+  invalidatePathfinding(navigation, [...previous, ...current]);
+  return true;
+};
+
+/** Keeps server pathing in sync with NPCGameObject.triggerState: a wired object switched on or off. */
 export const setNavigationTriggerState = (navigation, id, on) => {
-  const group = navigation?.triggerGroups.get(id);
-  if (!group || group.on === on) return false;
-  const previous = group.on ? group.onColliders : group.offColliders;
-  const next = on ? group.onColliders : group.offColliders;
-  group.on = on;
-  replaceIndexedColliders(navigation, previous, next);
-  invalidatePathfinding(navigation, [...previous, ...next]);
-  return true;
+  const record = navigation?.objects?.get(id);
+  if (!record?.wired || (record.state !== "on" && record.state !== "off")) return false;
+  const state = on ? "on" : "off";
+  if (record.state === state) return false;
+  return changeObject(navigation, id, { ...record, state });
 };
 
-/** Adds an actor-backed obstacle such as a smashable barrel or wooden box. */
-export const addNavigationObstacle = (navigation, id, colliders) => {
+/**
+ * Puts an actor's shape in the floor as it is generated — a smashable barrel,
+ * a wooden box, a gate, a secret wall: standing on `colliders`, `off` the
+ * shapes it is left with if it breaks and stays (`retireNavigationObject`).
+ */
+export const addNavigationObstacle = (navigation, id, colliders, off = []) => {
   if (!navigation || !colliders?.length) return false;
-  const previous = navigation.obstacles.get(id) ?? [];
-  replaceIndexedColliders(navigation, previous, colliders);
-  navigation.obstacles.set(id, [...colliders]);
-  invalidatePathfinding(navigation, [...previous, ...colliders]);
-  return true;
+  return changeObject(navigation, id, { on: [...colliders], off: [...off], state: "on", wired: false });
 };
 
-/** Removes an actor-backed obstacle when the corresponding object is destroyed. */
+/** Takes an actor's shape out of the floor. */
 export const removeNavigationObstacle = (navigation, id) => {
-  const colliders = navigation?.obstacles.get(id);
-  if (!colliders) return false;
-  replaceIndexedColliders(navigation, colliders, []);
-  navigation.obstacles.delete(id);
-  invalidatePathfinding(navigation, colliders);
-  return true;
+  const record = navigation?.objects?.get(id);
+  if (!record || record.wired) return false;
+  return changeObject(navigation, id, { ...record, state: "gone" });
 };
 
+/**
+ * What is left of an object once it is killed: `broken` it stays as its off
+ * shapes until the floor ends, otherwise it is gone. The one call for a
+ * death, whatever placed the object.
+ */
+export const retireNavigationObject = (navigation, id, { broken = false } = {}) => {
+  const record = navigation?.objects?.get(id);
+  if (!record || record.state === "broken") return false;
+  return changeObject(navigation, id, { ...record, state: broken ? "broken" : "gone" });
+};
+
+export { activeCollidersOf } from "./navigation-objects.js";
 export { findCageReleasePath } from "./cage-release.js";
 export { hasLineOfSight, isPositionBlocked } from "./clearance.js";
 export { moveWithNavigation, nearestClearPosition } from "./movement.js";

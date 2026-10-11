@@ -24,7 +24,7 @@ const timedSession = (triggers) => {
     logicGates: new Map(),
     logicGateTimers: new Map(),
     triggerableDoids: new Map(),
-    navigation: { triggerGroups: new Map() },
+    navigation: { objects: new Map() },
     send: () => {},
   };
   return { session, stop: startTimerTriggers(session) };
@@ -125,7 +125,7 @@ test("a reset gate holds its pulse back by its start delay", (t) => {
     logicGates: new Map([["ripple", gate]]),
     logicGateTimers: new Map(),
     triggerableDoids: new Map(),
-    navigation: { triggerGroups: new Map() },
+    navigation: { objects: new Map() },
     send: () => {},
   };
   const pulse = () => session.signalValues.get("ripple");
@@ -168,7 +168,7 @@ test("a trap wired to a running timer starts the floor switched on", async () =>
     tileCount: 25,
     seed: 14,
   });
-  const session = { navigation: { triggerGroups: new Map() } };
+  const session = { navigation: { objects: new Map() } };
   trackTriggers(session, floor);
 
   const timerIds = new Set(
@@ -242,7 +242,7 @@ test("a reset gate with no authored duration still holds for one tick", (t) => {
     logicGates: new Map([["flat", gate]]),
     logicGateTimers: new Map(),
     triggerableDoids: new Map(),
-    navigation: { triggerGroups: new Map() },
+    navigation: { objects: new Map() },
     send: () => {},
   };
   const pulse = () => session.signalValues.get("flat");
@@ -273,7 +273,7 @@ test("a reset time of almost exactly zero is read as zero", (t) => {
     logicGates: new Map([["epsilon", gate]]),
     logicGateTimers: new Map(),
     triggerableDoids: new Map(),
-    navigation: { triggerGroups: new Map() },
+    navigation: { objects: new Map() },
     send: () => {},
   };
 
@@ -317,7 +317,7 @@ test("a counter gate waits for all eight of its zones", async () => {
   assert.ok(gate, "no layout in forty seeds carried a counter gate");
   assert.equal(gate.threshold, 8, "the authored threshold survives the parser");
 
-  const session = { navigation: { triggerGroups: new Map() }, floorGenerated: true };
+  const session = { navigation: { objects: new Map() }, floorGenerated: true };
   trackTriggers(session, floor);
 
   const sources = session.signalIncoming.get(gate.id) ?? [];
@@ -370,7 +370,7 @@ test("hitting a damage-trigger statue wakes what is wired behind it", async () =
   assert.ok(trigger, "no layout in forty seeds carried a damage trigger");
   assert.ok(trigger.npcId, "it names the object it watches");
 
-  const session = { navigation: { triggerGroups: new Map() }, floorGenerated: true };
+  const session = { navigation: { objects: new Map() }, floorGenerated: true };
   trackTriggers(session, floor);
   assert.notEqual(session.signalValues.get(trigger.id), true, "asleep to begin with");
 
@@ -412,7 +412,7 @@ test("a pressure plate makes a spike bed safe, it does not set one off", async (
       tileCount: 30,
       seed,
     });
-    const session = { navigation: { triggerGroups: new Map() }, floorGenerated: true };
+    const session = { navigation: { objects: new Map() }, floorGenerated: true };
     trackTriggers(session, candidate);
 
     for (const placement of candidate.placements.triggerable ?? []) {
@@ -440,7 +440,7 @@ test("a pressure plate makes a spike bed safe, it does not set one off", async (
    */
   const states = [];
   const session = {
-    navigation: { triggerGroups: new Map() },
+    navigation: { objects: new Map() },
     floorGenerated: true,
     triggerableDoids: new Map([[spike.id, 9001]]),
     send: (frame) => {

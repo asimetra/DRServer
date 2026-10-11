@@ -308,6 +308,7 @@ export const buildNpcs = async (context, placements) => {
      */
     const doid = await spawnNpc(context, placement.constant, placement, placement.scale, {
       navigationColliders: placement.navigationColliders,
+      navigationCollidersOff: placement.navigationCollidersOff,
       returnDoid: true,
     });
     if (doid) {

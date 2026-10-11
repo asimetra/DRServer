@@ -79,24 +79,22 @@ export const recordFloorTrace = async (library, { seed = 3, tileCount = 24, seco
     session.stopAfkWatch?.();
     session.stopManaRegen?.();
     const navigation = session.navigation;
-    if (!(navigation?.triggerGroups instanceof Map) || !(navigation.obstacles instanceof Map)) {
-      throw new Error(`${library}: the navigation state no longer exposes triggerGroups and obstacles; the trace recorder needs updating`);
+    if (!(navigation?.objects instanceof Map)) {
+      throw new Error(`${library}: the navigation state no longer exposes its object records; the trace recorder needs updating`);
     }
-    const initialObstacles = [...navigation.obstacles.entries()];
-    const initialTriggerStates = [...navigation.triggerGroups.entries()].map(([id, group]) => [id, group.on]);
+    // An actor's shape goes in as an obstacle; a wired object's state is a toggle (navigation.js).
+    const records = [...navigation.objects.entries()];
+    const initialObstacles = records.filter(([, record]) => !record.wired && record.state === "on").map(([id, record]) => [id, record.on]);
+    const initialTriggerStates = records.filter(([, record]) => record.wired).map(([id, record]) => [id, record.state === "on"]);
     const events = [];
-    for (const [id, group] of navigation.triggerGroups) {
-      let value = group.on;
-      Object.defineProperty(group, "on", {
-        get: () => value,
-        set: (next) => {
-          value = next;
-          events.push({ t: clock.now - 1_000_000, id, on: next });
-        },
-        enumerable: true,
-        configurable: true,
-      });
-    }
+    const set = navigation.objects.set.bind(navigation.objects);
+    navigation.objects.set = (id, record) => {
+      const before = navigation.objects.get(id);
+      if (record.wired && before?.wired && before.state !== record.state && (record.state === "on" || record.state === "off")) {
+        events.push({ t: clock.now - 1_000_000, id, on: record.state === "on" });
+      }
+      return set(id, record);
+    };
     await clock.advance(clock.now + seconds * 1000);
     session.runScope?.dispose?.();
     return { library, seed, definition: floor.navigation, initialObstacles, initialTriggerStates, events };

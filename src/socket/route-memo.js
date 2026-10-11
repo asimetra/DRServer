@@ -1,4 +1,5 @@
 import { findPath } from "./navigation.js";
+import { activeCollidersOf } from "./navigation-objects.js";
 
 /**
  * A body's route searches, remembered by the colliders they were made under.
@@ -21,10 +22,11 @@ import { findPath } from "./navigation.js";
  *
  * A hit needs the start, goal and radius equal to the bit, the same navigation
  * object and the same active collider set, so it is what the search would have
- * returned. The set is named by the trigger groups' states and the identity of
- * every obstacle's collider list; `navigation.js` swaps both whole and never
- * edits one in place, and no collider belongs to two groups (route-memo.test.js
- * holds the floors to that). A set that cannot be named is not remembered.
+ * returned. The set is named by each object's record (navigation-objects.js):
+ * a wired object's state, and the identity of anything else's active collider
+ * list; `navigation.js` swaps them whole and never edits one in place, and no
+ * collider belongs to two objects (route-memo.test.js holds the floors to
+ * that). A set that cannot be named is not remembered.
  *
  * Sixty-four, because a stranded monster on that ice-cave floor saw a few dozen
  * collider sets go round; sixteen kept two thirds of its repeats, sixty-four all.
@@ -45,15 +47,15 @@ const serialOf = (colliders) => {
 
 /** A name for the active collider set, or null when there is none to give. */
 export const colliderSetKey = (navigation) => {
-  if (!(navigation?.triggerGroups instanceof Map) || !(navigation.obstacles instanceof Map)) {
-    return null;
-  }
+  if (!(navigation?.objects instanceof Map)) return null;
   // Joined, not appended: a string grown a character at a time is kept as a
   // chain of pieces until something compares it, and a key that is never hit
   // again held about 10 KB that way instead of half of one.
   const parts = [];
-  for (const group of navigation.triggerGroups.values()) parts.push(group.on ? "1" : "0");
-  for (const colliders of navigation.obstacles.values()) parts.push(`|${serialOf(colliders)}`);
+  for (const record of navigation.objects.values()) {
+    // A wired object switches between two fixed sets; anything else is named by what it now holds.
+    parts.push(record.wired ? (record.state === "on" ? "1" : "0") : `|${record.state[0]}${serialOf(activeCollidersOf(record))}`);
+  }
   return parts.join("");
 };
 

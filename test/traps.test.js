@@ -1420,54 +1420,30 @@ test("a tar pit leaves the slow it authors", async () => {
 });
 
 /**
- * A barrier with a broken half breaks in place.
+ * A barrier breaks in place where its row says `PermCorpse`, and nowhere else.
  *
- * `PermCorpse` says so on nineteen rows and misses one — and the miss is the
- * only one anybody can hit. Of the 48 rows carrying an authored *off* state
- * without the column, 46 are traps and trigger-driven gates that can never be
- * killed. The two that can are `JURASSIC_AZTEC_EXIT_GATE_A`, reported as
- * vanishing where the arena's gate leaves its broken half standing, and
- * `HERO_DEFENSE_ORB`.
- *
- * An off state is authored collision for what the thing becomes once it gives
- * way, and the aztec gate carries four shapes of it. Nothing that dies and
- * disappears has any use for them.
+ * Two killable rows carry an authored off shape without the column:
+ * `JURASSIC_AZTEC_EXIT_GATE_A` and `HERO_DEFENSE_ORB`. Reading the off shape
+ * as the same statement kept the orb standing broken, and the official sends
+ * its orbs dead and destroys them (2 of 2 in its captures, with its 6
+ * barricades; its 158 `PermCorpse` deaths all stand). The aztec gate is not
+ * killed in any capture, so the column is what there is for it.
  */
-test("a smashable gate with an authored broken half stays in place", async () => {
+test("a smashable gate stands broken only where its row says PermCorpse", async () => {
   const { npcForConstant } = await import("../src/gamemaster.js");
-  const { loadNavigationLibrary, navigationEntryFor } = await import(
-    "../src/socket/navigation.js"
-  );
+  const { loadNavigationLibrary, navigationEntryFor } = await import("../src/socket/navigation.js");
+  const { npcIsPermCorpse } = await import("../src/socket/npc-spawn.js");
   await loadNavigationLibrary();
 
-  const gate = await npcForConstant("JURASSIC_AZTEC_EXIT_GATE_A");
-  assert.equal(gate.IsAttackable, 1, "it is a gate you smash");
-  assert.ok(!gate.PermCorpse, "and the column that would say so is empty");
-  assert.equal(
-    navigationEntryFor("JURASSIC_AZTEC_EXIT_GATE_A").navCollisions_off.length,
-    4,
-    "but its broken half is authored"
-  );
-
-  // The arena's gate, which behaves correctly, says it both ways.
   const arena = await npcForConstant("CASTLE_ARENA_GATE_B");
-  assert.ok(arena.PermCorpse);
   assert.ok(navigationEntryFor("CASTLE_ARENA_GATE_B").navCollisions_off.length);
+  assert.equal(npcIsPermCorpse(arena), true);
 
-  // Nothing that can be killed is left out by reading both.
-  const { loadGameMaster } = await import("../src/gamemaster.js");
-  const gm = await loadGameMaster();
-  const missed = [...gm.npcByConstant.values()].filter(
-    (row) =>
-      row.IsAttackable &&
-      !row.PermCorpse &&
-      navigationEntryFor(row.Constant)?.navCollisions_off?.length
-  );
-  assert.deepEqual(
-    missed.map(({ Constant }) => Constant).sort(),
-    ["HERO_DEFENSE_ORB", "JURASSIC_AZTEC_EXIT_GATE_A"],
-    "the column misses exactly these two"
-  );
+  for (const constant of ["HERO_DEFENSE_ORB", "JURASSIC_AZTEC_EXIT_GATE_A"]) {
+    const row = await npcForConstant(constant);
+    assert.ok(row.IsAttackable && navigationEntryFor(constant).navCollisions_off.length, `${constant} has an off shape`);
+    assert.equal(npcIsPermCorpse(row), false, `but ${constant}'s row does not say PermCorpse`);
+  }
 });
 
 /**

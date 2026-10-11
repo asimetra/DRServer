@@ -10,7 +10,7 @@ import { PacketWriter } from "./packet.js";
 import { playDeathAttack, reportNpcDamage, reportNpcDeath } from "./triggers.js";
 import { worldColliders } from "./heading.js";
 import { npcAttackChoices } from "./npc-attacks.js";
-import { addNavigationObstacle, navigationEntryFor, removeNavigationObstacle } from "./navigation.js";
+import { addNavigationObstacle, retireNavigationObject } from "./navigation.js";
 import { authoredBodyRadius, furthestAttackRange } from "./body.js";
 import { config } from "../config.js";
 import { warn } from "../log.js";
@@ -81,6 +81,20 @@ export const npcAwarenessProfile = (
     : Math.max(authoredDisengage, aggroRadius + 400);
   return { aggroRadius, disengageDistance };
 };
+
+/**
+ * Whether it breaks rather than dying — see applyDamage: its row's
+ * `PermCorpse`, and nothing else.
+ *
+ * The official agrees with the column. Of the objects killed in its 97
+ * captures, the 158 `PermCorpse` gates and secret walls were switched to
+ * trigger state 0 and stayed until the floor ended, never sent dead; the 6
+ * barricades and 2 defence orbs were sent dead and destroyed at once. An
+ * authored off shape is not the same statement: `HERO_DEFENSE_ORB` carries
+ * one, and dies. (`JURASSIC_AZTEC_EXIT_GATE_A`, the one other killable row
+ * with an off shape and no `PermCorpse`, is not killed in any capture.)
+ */
+export const npcIsPermCorpse = (npc) => Boolean(npc?.PermCorpse);
 
 export const spawnNpc = async (context, constant, position, scale, options = {}) => {
   const { session, floorDoid, heroDoid, mapNodeId, gm } = context;
@@ -294,15 +308,24 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
    * shape, and twelve stays under both.
    */
   const collisionRadius = authoredBodyRadius(npc, resolved);
-  const navigationColliders =
+  const sourced = (colliders, sourceState) =>
     npc.CharType === "PROP"
-      ? (options.navigationColliders ?? []).map((collider) => ({
+      ? (colliders ?? []).map((collider) => ({
           ...collider,
           sourceKind: "LENPC",
           sourceConstant: resolved,
-          sourceState: "alive",
+          sourceState,
         }))
       : [];
+  const navigationColliders = sourced(options.navigationColliders, "alive");
+  const brokenColliders = sourced(options.navigationCollidersOff, "broken");
+  /**
+   * The record its shape is kept under (navigation.js): a triggerable's is
+   * the floor's own, by its placement id, which its wiring switches; any
+   * other's is put in under its doid as it is generated. Either way its
+   * death ends it the same way (`onDeath`).
+   */
+  const recordId = session.navigation?.objects?.get(position?.id)?.wired ? position.id : npcDoid;
   /**
    * The row's awareness wins; the configured value is only a fallback.
    *
@@ -404,24 +427,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
        * holds the death announcement open for exactly this long.
        */
       deathEffectMs: deathEffectMsFor(gm, deathAttack),
-      /**
-       * A gate breaks rather than dying — see applyDamage.
-       *
-       * `PermCorpse` says so on nineteen rows and misses one, and the miss is
-       * the only one anybody can hit: of the 48 rows carrying an authored
-       * *off* state without the column, 46 are traps and trigger-driven gates
-       * that can never be killed in the first place. The two that can are
-       * `JURASSIC_AZTEC_EXIT_GATE_A` — reported as vanishing where the arena's
-       * gate leaves its broken half standing — and `HERO_DEFENSE_ORB`.
-       *
-       * An off state is four authored collision shapes for what the thing
-       * becomes once it gives way. Nothing that dies and disappears has any use
-       * for them, so carrying one is the same statement `PermCorpse` makes, in
-       * a column that was filled in more carefully.
-       */
-      permCorpse:
-        Boolean(npc.PermCorpse) ||
-        Boolean(npc.IsAttackable && navigationEntryFor(resolved)?.navCollisions_off?.length),
+      permCorpse: npcIsPermCorpse(npc),
       /**
        * An exploding barrel is scenery with a `DeathAttack`, and until now
        * nothing fired it — the placeable path honoured the column and the spawn
@@ -511,7 +517,9 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
             xpWorth: star ?? undefined,
           });
         }
-        removeNavigationObstacle(session.navigation, doid);
+        // A gate or a secret wall stands broken as its off shapes; anything
+        // else that dies leaves its ground (navigation.js).
+        retireNavigationObject(session.navigation, recordId, { broken: npcIsPermCorpse(npc) });
         // An NPC_LIFE_TRIGGER may be watching this exact placement — the boss
         // tile's is, and it is what starts the reward chest and the floor's
         // completion chain.
@@ -710,7 +718,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
     }
   }
 
-  addNavigationObstacle(session.navigation, npcDoid, navigationColliders);
+  addNavigationObstacle(session.navigation, npcDoid, navigationColliders, brokenColliders);
 
   session.send(npcCreateFrame(at, spawnHeading));
   if (npc.CharType === "ENEMY") {

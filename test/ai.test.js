@@ -539,7 +539,7 @@ test("release movement exits only its enclosing cage before normal AI starts", a
       ],
     ]),
   });
-  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  const jail = session.navigation.objects.get("jail").on[0];
   knight.ai.release = {
     target: { x: 198, y: 150 },
     ignoredColliders: new Set([jail]),
@@ -632,7 +632,7 @@ test("a cage exit aimed at a point still in the cage does not end there", async 
       ],
     ]),
   });
-  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  const jail = session.navigation.objects.get("jail").on[0];
   knight.ai.release = { target: { x: 190, y: 150 }, ignoredColliders: new Set([jail]), startsAt: 0 };
   for (let tick = 0; tick < 40; tick++) {
     await tickNpcAi(session, 1000 + tick * 100, 0.1);
@@ -674,7 +674,7 @@ test("a cage exit lasts until the body is out of the cage, the player in sight o
   session.heroPosition = { x: 800, y: 520 };
   session.actors.get(session.heroDoid).position = session.heroPosition;
   session.navigation = bridgeJail();
-  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  const jail = session.navigation.objects.get("jail").on[0];
   knight.ai.release = { target: { x: 804, y: 248 }, ignoredColliders: new Set([jail]), startsAt: 0 };
 
   for (let tick = 0; tick < 30; tick++) {
@@ -795,7 +795,7 @@ test("a cage exit given up on still leaves by the cage's mouth", async () => {
   session.heroPosition = { x: 560, y: 108 };
   session.actors.get(session.heroDoid).position = session.heroPosition;
   session.navigation = bridgeJail();
-  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  const jail = session.navigation.objects.get("jail").on[0];
   const mouth = { x: 850, y: 250 };
   knight.ai.release = { target: mouth, ignoredColliders: new Set([jail]), startsAt: 0 };
 
@@ -835,7 +835,7 @@ test("an overlapping cage wave stays on release AI until every member is outside
       ],
     ]),
   });
-  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  const jail = session.navigation.objects.get("jail").on[0];
   first.ai.release = {
     target: { x: 220, y: 150 },
     ignoredColliders: new Set([jail]),
@@ -892,7 +892,7 @@ test("a released NPC chases the latest hero position instead of its old cage tar
       ],
     ]),
   });
-  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  const jail = session.navigation.objects.get("jail").on[0];
   knight.ai.release = {
     target: { x: 198, y: 150 },
     ignoredColliders: new Set([jail]),

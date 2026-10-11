@@ -1,12 +1,16 @@
 import { hasLineOfSight, isPositionBlocked } from "./clearance.js";
 import { overlapsAt, squaredDistance, turnedX, turnedY } from "./geometry.js";
+import { activeCollidersOf } from "./navigation-objects.js";
 
 /** The way out of a triggerable cage, for what a generator spawns inside one. */
 
+/** The floor's wired objects, as the cages a prisoner may be standing in (navigation.js). */
+const wiredObjects = (navigation) => [...navigation.objects.values()].filter((record) => record.wired);
+
 const activeTriggerCollidersAt = (navigation, point, radius) => {
   const colliders = [];
-  for (const group of navigation.triggerGroups.values()) {
-    for (const collider of group.on ? group.onColliders : group.offColliders) {
+  for (const record of wiredObjects(navigation)) {
+    for (const collider of activeCollidersOf(record)) {
       if (overlapsAt(point.x, point.y, radius, collider)) colliders.push(collider);
     }
   }
@@ -15,11 +19,11 @@ const activeTriggerCollidersAt = (navigation, point, radius) => {
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 
-/** The active colliders of every trigger group one of `colliders` belongs to: the whole cage. */
+/** The active colliders of every wired object one of `colliders` belongs to: the whole cage. */
 const cagesHolding = (navigation, colliders) => {
   const cage = new Set();
-  for (const group of navigation.triggerGroups.values()) {
-    const active = group.on ? group.onColliders : group.offColliders;
+  for (const record of wiredObjects(navigation)) {
+    const active = activeCollidersOf(record);
     if (active.some((collider) => colliders.includes(collider))) {
       for (const collider of active) cage.add(collider);
     }

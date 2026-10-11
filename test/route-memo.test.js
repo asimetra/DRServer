@@ -115,7 +115,7 @@ test("a goal carrying more than its coordinates is searched, not remembered", ()
   const route = searchRoute(owner, navigation, start, { ...goal, layer: 1 }, 22);
   assert.equal(owner.routeMemo, undefined);
   assert.deepEqual(route, findPath(navigation, start, { ...goal, layer: 1 }, 22));
-  const unnamed = { ...navigation, triggerGroups: undefined };
+  const unnamed = { ...navigation, objects: undefined };
   assert.deepEqual(searchRoute(owner, unnamed, start, goal, 22), findPath(navigation, start, goal, 22));
   assert.equal(owner.routeMemo, undefined, "no collider set to name");
 });
