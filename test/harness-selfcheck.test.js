@@ -47,7 +47,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
 
   const routeMutant = mutantRoot(TOOL_ROOT, [
     {
-      file: "src/socket/navigation.js",
+      file: "src/socket/pathfind.js",
       from: "if (heapPriorities[parent] <= priority) break;",
       to: "if (heapPriorities[parent] < priority) break;",
     },
