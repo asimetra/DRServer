@@ -6,25 +6,42 @@ import { searchAgain } from "../routing.js";
 
 /**
  * A teleporter's cycle: TELEPORT_AI with a `TeleportRecurT`, the specters and
- * the shadow wolf pet. It fights from where it stands, and after each swing
- * leaves and comes back somewhere else round its victim. One phase at a time,
- * in `ai.teleportPhase`:
+ * the shadow wolf pet. Each visible period runs on its own clock, swing or
+ * not: it appears, waits `PreTeleportAttack`, has its attack moment — a swing
+ * if the attack gate lets it (in reach, in sight, due) — stands
+ * `PostTeleportAttack` from that moment, goes out, is hidden `TeleportRecurT`
+ * and a roll of `TeleportRecurRand`, and comes back at a clear point of its
+ * range round its victim, or where it went out when there is none. One phase
+ * at a time, in `ai.teleportPhase`:
  *
- *   visible       it fights as anything else does; its first swing of a
- *                 cycle waits `PreTeleportAttack`;
- *   post-attack   it swung, and stands for `PostTeleportAttack`
- *                 ("teleport-wait");
+ *   visible       it fights as anything else does, its swing held until the
+ *                 attack moment (`teleportAttackAt`);
+ *   attack-moment the tick of the attack moment: the fight has it, and the
+ *                 cycle moves on whatever the swing did (`teleportAttacked`);
+ *   post-attack   it stands for `PostTeleportAttack` ("teleport-wait");
  *   teleport-out  the out animation plays (`teleportOutDelayMs`), then the
  *                 object is disabled ("teleport-out");
- *   hidden        off the floor (`actor.teleportHidden`) for `TeleportRecurT`
- *                 and a roll of `TeleportRecurRand`, then made again at a
- *                 clear point of its range round its victim ("teleport-in").
+ *   hidden        off the floor (`actor.teleportHidden`) until it comes back
+ *                 ("teleport-in").
+ *
+ * The official leaves on that clock. Over 7 solo captures, 208 of 350
+ * TELEPORT_OUTs came in a visible period with no swing, and 146 from a
+ * specter that never swung; the time from appearing to going out is the
+ * same swung or not (PURPLE_SPECTER p50 4.8 s swung, n 97, and 4.9 s not,
+ * n 154; RED 3.3 and 3.3 s), on Pre + Post (4.5 and 3.0 s) and a little.
+ * Ours waited for a swing: 0 of 271 outs without one, visible for a p50 of
+ * 10.6 s and up to a minute, staring at a hero it could not reach.
+ *
+ * And it starts by going: a specter standing where the floor put it is
+ * disabled, no out animation, about 0.4 s after its victim first comes
+ * within its aggro radius, and comes back with TELEPORT_IN some 2.5 s later,
+ * 87-92% of the time. So the first tick of a fight hides it (`teleportTurn`).
  *
  * The AI asks it three things, at the three points of the tick where they
  * belong: a hidden one whether it comes back (`comeBack`), before anything
  * else, since one off the floor is not released, noticed or lost; a visible
- * one in the fight what its phase does this tick (`teleportTurn`); and one
- * that has swung starts waiting (`teleportSwung`).
+ * one in the fight what its phase does this tick (`teleportTurn`); and, after
+ * the fight's act, one at its attack moment moves on (`teleportAttacked`).
  */
 
 const npcTimelineAction = (doid, timeline) =>
@@ -89,7 +106,8 @@ export const comeBack = (session, doid, actor, target, bodies, now) => {
   ai.teleportHideAt = 0;
   ai.teleportReturnAt = 0;
   ai.teleportCycleStarted = true;
-  ai.nextAttackAt = now + (ai.preTeleportAttackMs ?? 0);
+  ai.teleportAttackAt = now + (ai.preTeleportAttackMs ?? 0);
+  ai.nextAttackAt = ai.teleportAttackAt;
   searchAgain(ai);
   ai.walkSpeed = 0;
   actor.teleportRegenerate(destination, actor.heading);
@@ -97,48 +115,53 @@ export const comeBack = (session, doid, actor, target, bodies, now) => {
   return true;
 };
 
+/** Off the floor until `TeleportRecurT` and a roll of `TeleportRecurRand` from now. */
+const hide = (session, doid, actor, now) => {
+  const { ai } = actor;
+  const random = session.random ?? Math.random;
+  actor.teleportHidden = true;
+  ai.teleportPhase = "hidden";
+  ai.teleportDisableAt = 0;
+  ai.teleportReturnAt = now + (ai.teleportRecurMs ?? 0) + random() * (ai.teleportRecurRandMs ?? 0);
+  session.send(objectDisable(doid));
+};
+
 /**
  * A visible one's tick once it is in the fight, by phase: `{ said }` when the
  * phase has the tick — `said` the state it shows, or null for none new — and
  * null when the tick is the fight's. Its first tick in a fight starts the
- * cycle, holding its first swing back by `PreTeleportAttack`.
+ * cycle by going, with no out animation.
  */
 export const teleportTurn = (session, doid, actor, now) => {
   const { ai } = actor;
   if (!ai.teleportCycleStarted) {
     ai.teleportCycleStarted = true;
-    ai.nextAttackAt = Math.max(
-      ai.nextAttackAt ?? 0,
-      now + (ai.preTeleportAttackMs ?? 0)
-    );
+    hide(session, doid, actor, now);
+    return { said: "teleport-hidden" };
   }
   switch (ai.teleportPhase) {
+    case "visible":
+      // Its attack moment: the fight has this tick, and the cycle goes on after it.
+      if (now >= (ai.teleportAttackAt ?? 0)) ai.teleportPhase = "attack-moment";
+      return null;
     case "post-attack":
       if (now < (ai.teleportHideAt ?? 0)) return { said: "teleport-wait" };
       ai.teleportPhase = "teleport-out";
       ai.teleportDisableAt = now + Math.max(0, Number(ai.teleportOutDelayMs ?? 1000));
       session.send(npcTimelineAction(doid, ai.teleportOutTimeline ?? "TELEPORT_OUT"));
       return { said: "teleport-out" };
-    case "teleport-out": {
+    case "teleport-out":
       if (now < (ai.teleportDisableAt ?? Infinity)) return { said: null };
-      const random = session.random ?? Math.random;
-      actor.teleportHidden = true;
-      ai.teleportPhase = "hidden";
-      ai.teleportDisableAt = 0;
-      ai.teleportReturnAt =
-        now +
-        (ai.teleportRecurMs ?? 0) +
-        random() * (ai.teleportRecurRandMs ?? 0);
-      session.send(objectDisable(doid));
+      hide(session, doid, actor, now);
       return { said: "teleport-hidden" };
-    }
     default:
       return null;
   }
 };
 
-/** It swung: it stands for `PostTeleportAttack`, then goes. */
-export const teleportSwung = (ai, now) => {
+/** Its attack moment has passed, swung or not: it stands for `PostTeleportAttack`, then goes. */
+export const teleportAttacked = (ai, now) => {
+  if (ai.teleportPhase !== "attack-moment") return;
   ai.teleportPhase = "post-attack";
   ai.teleportHideAt = now + (ai.postTeleportAttackMs ?? 0);
 };

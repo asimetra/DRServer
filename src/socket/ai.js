@@ -15,7 +15,7 @@ import { kite, backingOff } from "./behaviours/kite.js";
 import { heldByHit, swingIntent, whatItMayDo } from "./behaviours/overrides.js";
 import { pet } from "./behaviours/pet.js";
 import { isStationary, stationary } from "./behaviours/stationary.js";
-import { comeBack, teleportsOnCycle, teleportSwung, teleportTurn } from "./behaviours/teleport.js";
+import { comeBack, teleportAttacked, teleportsOnCycle, teleportTurn } from "./behaviours/teleport.js";
 
 /**
  * The monster AI: every actor with an `ai`, every tick, the same pipeline.
@@ -320,7 +320,7 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     seesAlways: isStationary(ai),
     navigation: state.navigation,
   });
-  if (reason === "swung" && cycle) teleportSwung(ai, now);
+  if (cycle) teleportAttacked(ai, now);
   turnAfter(session, doid, actor, turn, reason, walked);
   return stateAfterAct(reason, fleeing, route);
 };

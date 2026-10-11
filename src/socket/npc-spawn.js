@@ -96,6 +96,9 @@ export const npcAwarenessProfile = (
  */
 export const npcIsPermCorpse = (npc) => Boolean(npc?.PermCorpse);
 
+/** From a teleporter's TELEPORT_OUT to its disable (see where it is set). */
+const TELEPORT_OUT_MS = 1000;
+
 export const spawnNpc = async (context, constant, position, scale, options = {}) => {
   const { session, floorDoid, heroDoid, mapNodeId, gm } = context;
   const emptyResult = options.returnDoid ? null : 0;
@@ -604,11 +607,16 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
               postTeleportAttackMs: Math.max(0, Number(npc.PostTeleportAttack ?? 0) * 1000),
               teleportInTimeline: npc.TeleportInTimeline || "TELEPORT_IN",
               teleportOutTimeline: npc.TeleportOutTimeline || "TELEPORT_OUT",
-              // The out animation plays before the object is disabled. Rows
-              // author the pre-teleport pace; its reciprocal gives the client
-              // roughly one animation beat without naming either specter.
-              teleportOutDelayMs:
-                1000 / Math.max(1, Number(npc.PreTeleportAttack ?? 1)),
+              /**
+               * The out animation plays before the object is disabled: a
+               * second. Over 7 solo official captures, of 357 TELEPORT_OUTs
+               * followed by the disable, 190 came 1000 ms after (+-50) and
+               * 102 at 500, the same for PURPLE_SPECTER (n 255) and
+               * RED_SPECTER (n 102); nothing in between. It used to be
+               * 1000 / PreTeleportAttack, 667 ms for PURPLE, which no official
+               * delay comes near. No row authors it.
+               */
+              teleportOutDelayMs: TELEPORT_OUT_MS,
               teleportPhase: "visible",
               attackRange: furthestAttackRange(attackSet),
               attacks: attackSet,
