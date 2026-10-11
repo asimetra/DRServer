@@ -22,8 +22,9 @@ const run = promisify(execFile);
  * branch, says "no difference" about everything. So each is also run against
  * a copy of the tree with one deliberate edit that a refactor could plausibly
  * make by mistake: the heap's tie-break flipped, so cells of equal cost pop
- * in the other order; the walk's acceleration ramp changed. Both must be
- * reported. The quick presets are what a developer runs between steps, so
+ * in the other order; the walk's acceleration ramp changed; monsters' bodies
+ * no longer holding a walk (npc-move.js), so a crowd walks into itself again.
+ * Each must be reported. The quick presets are what a developer runs between steps, so
  * they are what is checked here.
  */
 
@@ -59,17 +60,26 @@ test("both harnesses pass a tree against itself and fail it against a changed on
       to: "const NPC_WALK_ACCELERATION_SECONDS = 0.8;",
     },
   ]);
+  const crowdMutant = mutantRoot(TOOL_ROOT, [
+    {
+      file: "src/socket/ai.js",
+      from: "bodies: intent.throughBodies ? null : crowding.bodies,",
+      to: "bodies: null,",
+    },
+  ]);
   t.after(() => {
     routeMutant.cleanup();
     aiMutant.cleanup();
+    crowdMutant.cleanup();
   });
 
   // Independent processes, so they run side by side; each ai-sim keeps to one worker per root.
-  const [routesSame, routesChanged, aiSame, aiChanged] = await Promise.all([
+  const [routesSame, routesChanged, aiSame, aiChanged, crowdChanged] = await Promise.all([
     invoke("route-lockstep.js", ["--base", TOOL_ROOT, "--quick"]),
     invoke("route-lockstep.js", ["--base", routeMutant.dir, "--quick"]),
     invoke("ai-sim.js", ["--base", TOOL_ROOT, "--quick", "--jobs", "1", "--explain", "0"]),
     invoke("ai-sim.js", ["--base", aiMutant.dir, "--quick", "--jobs", "1", "--explain", "1"]),
+    invoke("ai-sim.js", ["--base", crowdMutant.dir, "--quick", "--jobs", "1", "--explain", "0"]),
   ]);
 
   assert.equal(routesSame.code, 0, `route-lockstep against itself:\n${routesSame.stdout}${routesSame.stderr ?? ""}`);
@@ -87,4 +97,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
   // The explanation names the monster that moved differently, not only the tick.
   assert.match(aiChanged.stdout, /^ {2}base {6}\d+ \S+ /m);
   assert.match(aiChanged.stdout, /^ {2}candidate \d+ \S+ /m);
+
+  assert.equal(crowdChanged.code, 1, `ai-sim against the crowd mutant:\n${crowdChanged.stdout}${crowdChanged.stderr ?? ""}`);
+  assert.match(crowdChanged.stdout, /differs at tick \d+/);
 });

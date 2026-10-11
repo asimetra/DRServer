@@ -615,7 +615,6 @@ export const spawnPlaceable = async (
         attackRandMs: Math.max(0, Number(npc.AttackTimeRand ?? 0) * 1000),
         nextAttackAt: 0,
         release: null,
-        wave: null,
       }
     : null;
 

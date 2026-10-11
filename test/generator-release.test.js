@@ -57,7 +57,6 @@ test("caged generator members are created at the authored origin, not pre-positi
       "the origin should be usable while only its enclosing cage is ignored"
     );
   }
-  assert.deepEqual(spawns.map((spawn) => spawn.wave.index), [0, 1, 2, 3, 4, 5]);
 });
 
 test("generator pacing comes from each authored cage instead of one global release style", async () => {

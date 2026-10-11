@@ -329,7 +329,9 @@ test("overlapping melee NPCs separate instead of stacking on the hero", async ()
     first.position.x - second.position.x,
     first.position.y - second.position.y
   );
-  assert.ok(spacing >= 70, `expected visible separation, got ${spacing}`);
+  // Touching is where two bodies rest (npc-crowd.js): the push closes the
+  // last of an overlap by halves, so they settle a fraction of a unit short.
+  assert.ok(spacing >= 70 - 0.5, `expected visible separation, got ${spacing}`);
   for (const npc of [first, second]) {
     const fromHero = Math.hypot(npc.position.x, npc.position.y);
     assert.ok(fromHero >= 70 - 0.01, `and neither left standing inside him: ${fromHero}`);
@@ -341,6 +343,63 @@ test("overlapping melee NPCs separate instead of stacking on the hero", async ()
     `a separated monster dropped combat: ${states}`
   );
   assert.ok(first.ai.engaged && second.ai.engaged);
+});
+
+/** Two knights on `makeSession`'s floor: one touching the hero, one coming for him from `at`. */
+const knightBehind = (at) => {
+  const made = makeSession();
+  const { session, knightDoid } = made;
+  const front = session.actors.get(knightDoid);
+  front.position = { x: 70, y: 0 };
+  front.ai.collisionRadius = 35;
+  front.ai.engaged = true;
+  front.ai.nextAttackAt = Number.POSITIVE_INFINITY;
+  const behindDoid = knightDoid + 1;
+  const behind = structuredClone(front);
+  behind.position = { ...at };
+  session.objects.set(behindDoid, CLID.DistributedNPCGameObject);
+  session.actors.set(behindDoid, behind);
+  return { ...made, front, behind };
+};
+
+test("a monster held behind another waits at its body, and goes on when the hero moves", async () => {
+  const { session, front, behind } = knightBehind({ x: 200, y: 20 });
+  let nearest = Infinity;
+  for (let tick = 0; tick < 20; tick++) {
+    await tickNpcAi(session, 1000 + tick * 250, 0.25);
+    nearest = Math.min(nearest, Math.hypot(behind.position.x - front.position.x, behind.position.y - front.position.y));
+  }
+  /**
+   * The official: of 14,989 samples of a chaser held behind another with the
+   * hero still, 56.8% waited out the second and 9.1% walked round it. Ours
+   * used to keep the part of its walk that ran along the other body and slide
+   * round it to the hero.
+   */
+  assert.ok(nearest >= 70 - 0.5, `walked into the knight in front: ${nearest}`);
+  const fromHero = Math.hypot(behind.position.x, behind.position.y);
+  assert.ok(fromHero >= 130, `slid round the knight in front to ${fromHero} from the hero`);
+  const resting = { ...behind.position };
+  await tickNpcAi(session, 1000 + 20 * 250, 0.25);
+  assert.deepEqual(behind.position, resting, "and stands while it waits");
+  assert.equal(behind.ai.walkSpeed, 0, "at rest, so its next walk sets off from standing");
+
+  // The hero steps away round the front knight: the way is open again.
+  session.heroPosition = { x: 0, y: 160 };
+  session.actors.get(session.heroDoid).position = session.heroPosition;
+  for (let tick = 21; tick < 30; tick++) await tickNpcAi(session, 1000 + tick * 250, 0.25);
+  assert.ok(
+    Math.hypot(behind.position.x - resting.x, behind.position.y - resting.y) > 40,
+    "it goes on once the hero has moved"
+  );
+});
+
+test("a lunge goes through the monster in its way", async () => {
+  const { session, front, behind } = knightBehind({ x: 200, y: 0 });
+  front.position = { x: 130, y: 0 };
+  behind.heading = 180;
+  behind.ai.lunge = { from: 0, until: 1000 + 600, x: -400, y: 0 };
+  for (let tick = 0; tick < 6; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
+  assert.ok(behind.position.x < 100, `the lunge stopped at the knight in front: ${behind.position.x}`);
 });
 
 test("members of one generator burst stay compact without overlapping", async () => {

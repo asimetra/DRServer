@@ -104,9 +104,10 @@ const traceRoute = (doid, actor, route, target) =>
   );
 
 /**
- * The move stage: the intent's step, pushed by the crowd, kept out of the
- * players, through the scenery (`stepNpc`), and sent. True when it went
- * anywhere.
+ * The move stage: the intent's step, held by the monsters in its way, pushed
+ * by the crowd, kept out of the players, through the scenery (`stepNpc`), and
+ * sent. True when it went anywhere. A walk is held by the monsters in its
+ * way; a lunge, and the way out of the scenery, are not (`throughBodies`).
  */
 const move = (session, state, crowd, doid, actor, intent, turn) => {
   const { ai } = actor;
@@ -117,6 +118,7 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
   const step = stepNpc(state.navigation, actor, {
     walk: { x: intent.x, y: intent.y },
     contacts: crowding.contacts,
+    bodies: intent.throughBodies ? null : crowding.bodies,
     separation: boundedPush(crowding, ai, turn.deltaSeconds),
     heroes: crowd.heroes,
     radius: turn.radius,
@@ -125,12 +127,13 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
     steering: intent.steering,
   });
   /**
-   * A walk the scenery would not take is not taken, and a body that did not
-   * walk is at rest: the next walk sets off from standing, as any walk from
-   * standing does (`npcWalkingSpeed`). Kept up instead, a body held at a wall
-   * would set off at full speed the moment the wall let it slide.
+   * A walk the scenery or the crowd would not take is not taken, and a body
+   * that did not walk is at rest: the next walk sets off from standing, as
+   * any walk from standing does (`npcWalkingSpeed`). Kept up instead, a body
+   * held at a wall, or behind another monster, would set off at full speed
+   * the moment it was let go.
    */
-  if (step?.refused && ai.kind !== "pet") ai.walkSpeed = 0;
+  if ((step?.refused || step?.blocked) && ai.kind !== "pet") ai.walkSpeed = 0;
   if (!step) return false;
   placeNpc(session, doid, actor, step);
   return step.travel > 0.001;

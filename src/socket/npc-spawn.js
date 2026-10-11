@@ -688,7 +688,6 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
                 ? Math.min(...nativeAttackShape.map((collider) => Number(collider.frame ?? 0)))
                 : 0,
               release: spawn?.release ?? null,
-              wave: spawn?.wave ?? null,
             }
           : null,
     });

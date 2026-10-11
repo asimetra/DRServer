@@ -1,5 +1,5 @@
 import { isHuntable } from "./actor-roles.js";
-import { bodyRadius, standoff } from "./body.js";
+import { bodyPointOf, bodyRadius, standoff } from "./body.js";
 import { heroMembersOf } from "./match-world.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
 
@@ -19,10 +19,6 @@ export const squaredDistanceTo = (from, to) => {
   return x * x + y * y;
 };
 
-const sameWave = (actor, other) =>
-  actor.ai?.wave?.group && actor.ai.wave.group === other.ai?.wave?.group;
-
-/** Indexes active NPCs so local separation only considers nearby neighbours. */
 /**
  * The crowd the separation works against, monsters and the player alike.
  *
@@ -42,9 +38,15 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
     }
   }
 
-  // An actor can change cells during the sequential tick. Making a cell at
-  // least one maximum step wide keeps its old bucket within the 3x3 query.
-  const cellSize = Math.max(1, largestRadius * 2 + 8, maximumTravel);
+  /**
+   * Whatever a body could meet this tick is in the 3x3 cells round it: two
+   * bodies touching, the walk it takes towards the other, and the step the
+   * other may already have taken this tick (the tick is sequential, and an
+   * actor is found where it now stands but bucketed where it stood). Eight
+   * more is for two bodies drawn at different sizes, whose middles sit at
+   * different heights above their feet.
+   */
+  const cellSize = Math.max(1, largestRadius * 2 + maximumTravel * 2 + 8);
   const cells = new Map();
   for (const [doid, actor] of actors) {
     if ((!actor.ai && !heroDoids.has(doid)) || actor.dead || !actor.position) continue;
@@ -59,44 +61,49 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
 };
 
 /**
- * Local collision avoidance for moving NPCs.
+ * The crowd round one body: the push out of whatever it already overlaps,
+ * the players it touches, and the monsters it may not walk into.
  *
- * The client renders Box2D bodies, but the server is authoritative for NPC
- * positions. Driving every melee actor toward the exact same point therefore
- * makes them stack even though their client-side bodies are solid. This
- * computes a small symmetric displacement for overlapping server actors. The
- * stable pair angle also separates two actors that arrived at identical
- * coordinates instead of leaving the direction undefined.
+ * Monster bodies are hard. On the client every actor but the local hero is a
+ * static Box2D body, so two monsters never push each other apart there, and
+ * the official server does not walk one into another: over 57 solo captures
+ * (144,244 engaged monster samples) a body is more than 10 units inside
+ * another's on 3.3% of them, where ours, pushing apart half the shortfall a
+ * tick against a whole step of chase, sat at 18-38%. So a walk stops where it
+ * would touch another monster's body (`bodies`, swept by `stepNpc`,
+ * npc-move.js), and the push below only lifts a body out of one it is already
+ * inside: after a lunge, a knockback, or a burst that spawned on one spot.
+ * Two monsters touching are at rest; nothing pushes them further apart.
+ *
+ * Monsters meet at their bodies (`bodyPointOf`, body.js), where they meet the
+ * walls; a player at his feet, as `keptOutOfHeroes` keeps him. The stable
+ * pair angle separates two actors on identical coordinates instead of leaving
+ * the direction undefined.
+ *
+ * `x`, `y` is the push; `contacts` the players it touches, each as the way
+ * out of him; `bodies` every other monster near enough to meet this tick,
+ * its body point and the distance at which the two touch.
  */
 export const separationDisplacement = (
   doid,
   actor,
   spatialIndex,
   heroDoids,
-  {
-    includeHeroes = true,
-    npcPadding = 8,
-    correctionShare = 0.5,
-  } = {}
+  { includeHeroes = true, correctionShare = 0.5 } = {}
 ) => {
   let x = 0;
   let y = 0;
   /**
-   * The bodies it is resting against, each as the way out of that one.
+   * The players it is resting against, each as the way out of that one.
    *
-   * Pushing apart alone does not hold a crowd open. The push is half the
-   * shortfall and shrinks as the gap closes, while the chase is a whole step
-   * every tick and does not — so two monsters converging on one hero settle
-   * wherever those balance, which is inside each other. Measured at a 50.8 gap
-   * where their bodies needed 78.
-   *
-   * A contact is the other half of it: you may walk around a body you are
-   * touching, not into it. The chase keeps whatever part of itself runs along
-   * the contact and loses the part that runs through it, so a crowd arriving
-   * at one target spreads into a ring instead of a pile.
+   * The chase keeps whatever part of itself runs along a player it touches
+   * and loses the part that runs through him (`stepNpc`), so a crowd
+   * arriving at one player spreads round him instead of piling into him.
    */
   const contacts = [];
+  const bodies = [];
   const radius = bodyRadius(actor);
+  const own = bodyPointOf(actor, actor.position);
   const cellX = Math.floor(actor.position.x / spatialIndex.cellSize);
   const cellY = Math.floor(actor.position.y / spatialIndex.cellSize);
 
@@ -107,49 +114,34 @@ export const separationDisplacement = (
 
       for (const [otherDoid, other] of cell) {
         if (otherDoid === doid) continue;
+        const isHero = heroDoids.has(otherDoid);
         // Idle separation solves mob spawn overlap. A passive AggroRadius=0
         // actor must not look as though it is fleeing merely because the hero
         // walked into it; engaged/release movement keeps the hero-body rule.
-        if (!includeHeroes && heroDoids.has(otherDoid)) continue;
+        if (!includeHeroes && isHero) continue;
 
-        let dx = actor.position.x - other.position.x;
-        let dy = actor.position.y - other.position.y;
+        const from = isHero ? actor.position : own;
+        const at = isHero ? other.position : bodyPointOf(other, other.position);
+        let dx = from.x - at.x;
+        let dy = from.y - at.y;
         let distance = Math.hypot(dx, dy);
+        const touching = radius + bodyRadius(other);
+        if (!isHero) bodies.push({ x: at.x, y: at.y, touching });
         /**
-         * Everyone gets the full buffer, wave or not.
+         * The nearest peer sits on the sum of the two bodies. Measured
+         * against the official for monsters standing in a fight: KNIGHT p25
+         * 84 against 84, BRUTE p25 85 against 88, ICE_IMP p25 70 against 70.
+         * The player is the same rule with one exception, which `standoff`
+         * (body.js) carries.
          *
-         * Members of one burst used to settle for three quarters of a single
-         * radius on the grounds that "the client already owns physical body
-         * contact". It does not: the client makes a dynamic Box2D body for the
-         * local hero and leaves every other actor static, so two monsters never
-         * push each other apart there. This displacement is the only thing
-         * keeping them out of one another, and at a quarter of the distance they
-         * needed it was letting a released wave overlap by design.
-         */
-        const bodies = radius + bodyRadius(other);
-        /**
-         * A burst may stand shoulder to shoulder; it may not stand inside
-         * itself. Unrelated NPCs keep a little air between them as well.
-         *
-         * Measured against the official for monsters standing in a fight, the
-         * nearest peer sits on the sum of the two bodies: KNIGHT p25 84 against
-         * 84, BRUTE p25 85 against 88, ICE_IMP p25 70 against 70. The player is
-         * the same rule with one exception, which `standoff` (body.js) carries.
-         *
-         * That exception is a pet's alone. A kiter's standoff is where it stops
-         * walking in, not a ring a player pushes it along: kept at its keep
-         * distance here, a hero walking into a marksman dragged it 3528 units
-         * in 20 s, attacking or not. The official kiter stands its ground when
-         * a player closes on it, and only backs off now and then
+         * That exception is a pet's alone. A kiter's standoff is where it
+         * stops walking in, not a ring a player pushes it along: kept at its
+         * keep distance here, a hero walking into a marksman dragged it 3528
+         * units in 20 s, attacking or not. The official kiter stands its
+         * ground when a player closes on it, and only backs off now and then
          * (`awayFromThreats`).
          */
-        const minimumDistance = heroDoids.has(otherDoid)
-          ? actor.ai?.kind === "pet"
-            ? standoff(actor, bodies)
-            : bodies
-          : sameWave(actor, other)
-            ? bodies
-            : bodies + npcPadding;
+        const minimumDistance = isHero && actor.ai?.kind === "pet" ? standoff(actor, touching) : touching;
         if (distance >= minimumDistance) continue;
 
         if (distance < 0.001) {
@@ -169,12 +161,12 @@ export const separationDisplacement = (
           (minimumDistance - Math.min(distance, minimumDistance)) * correctionShare;
         x += (dx / distance) * correction;
         y += (dy / distance) * correction;
-        contacts.push({ x: dx / distance, y: dy / distance });
+        if (isHero) contacts.push({ x: dx / distance, y: dy / distance });
       }
     }
   }
 
-  return { x, y, contacts };
+  return { x, y, contacts, bodies };
 };
 
 /**
@@ -220,7 +212,6 @@ export const separateIdleNpc = (
     heroDoids,
     {
       includeHeroes: false,
-      npcPadding: 0,
       correctionShare: 1,
     }
   );

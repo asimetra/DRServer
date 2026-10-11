@@ -82,9 +82,9 @@ test("two monsters standing in each other are pushed apart", async () => {
 
   for (let tick = 0; tick < 20; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
 
-  // Their bodies are 35 each, so touching is 70 and a burst gets 8 more on top.
+  // Their bodies are 35 each, so touching is 70: where two bodies rest.
   assert.ok(
-    gap(session, first, second) >= 70,
+    gap(session, first, second) >= 70 - 0.5,
     `bodies should not overlap, gap was ${gap(session, first, second).toFixed(1)}`
   );
 });
@@ -100,7 +100,9 @@ test("a frozen wave is still pushed apart", async () => {
     after > before,
     `MOVEMENT zero stops it walking, not being shoved: ${before.toFixed(1)} -> ${after.toFixed(1)}`
   );
-  assert.ok(after >= 70, `and all the way out: gap was ${after.toFixed(1)}`);
+  // Touching is where two bodies rest; the push closes the last of an overlap
+  // by halves, so they settle a fraction of a unit short of it.
+  assert.ok(after >= 70 - 0.5, `and all the way out: gap was ${after.toFixed(1)}`);
 
   // It is shoved, not walking: neither of them closed on the hero.
   for (const doid of [first, second]) {
@@ -221,26 +223,38 @@ test("a monster wider than its own reach bites without standing inside the hero"
   );
 });
 
-test("a chasing crowd spreads around the hero instead of piling on him", async () => {
+/**
+ * Two coming for one hero, the second a little behind and to the side of the
+ * first: the first walks in to touch him, and the second, once the first is
+ * in its way, waits at the first's body. It neither walks into the first nor
+ * slides round it to the hero — the official's chaser held behind another,
+ * the hero still, waits out the second 56.8% of the time and walks round 9.1%
+ * (npc-move.js `heldByBodies`). Side by side, neither holds the other.
+ */
+test("a chasing crowd does not pile on the hero: the one behind waits at the other's body", async () => {
   const { session, first, second } = makeSession();
-  // Off the line between them and the hero. Exactly collinear there is no
-  // sideways at all and queueing is the honest answer; any asymmetry and they
-  // should come around rather than stack up behind one another.
   session.actors.get(second).position = { x: 300, y: 40 };
 
-  for (let tick = 0; tick < 30; tick++) await tickNpcAi(session, 1000 + tick * 100, 0.1);
-
-  for (const doid of [first, second]) {
-    const { x, y } = session.actors.get(doid).position;
-    assert.ok(
-      Math.hypot(x, y) <= 130,
-      `both get to swing at him (${Math.round(x)},${Math.round(y)})`
-    );
+  const rests = new Map([[first, []], [second, []]]);
+  for (let tick = 0; tick < 40; tick++) {
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    if (tick < 30) continue;
+    for (const [doid, at] of rests) at.push({ ...session.actors.get(doid).position });
   }
+
+  const reach = [first, second].map((doid) => {
+    const { x, y } = session.actors.get(doid).position;
+    return Math.hypot(x, y);
+  });
+  assert.ok(Math.min(...reach) <= 76, `one of them gets to the hero: ${reach.map(Math.round)}`);
   assert.ok(
-    gap(session, first, second) >= 70,
+    gap(session, first, second) >= 70 - 0.5,
     `and neither stands in the other: ${gap(session, first, second).toFixed(1)}`
   );
+  const behind = rests.get(reach[0] <= reach[1] ? second : first);
+  const waiting = behind.map((at) => Math.hypot(at.x - behind[0].x, at.y - behind[0].y));
+  assert.ok(Math.max(...waiting) < 0.5, "the other stands where the first stopped it");
+  assert.ok(Math.max(...reach) <= 70 + 70 + 6, `at the first one's body: ${reach.map(Math.round)}`);
 });
 
 /**

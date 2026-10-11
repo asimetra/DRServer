@@ -103,10 +103,12 @@ export const swingIntent = (ai, { mobility, attackLocked }, now, deltaSeconds) =
     // Not before its frame: a lunge waiting on its wind-up holds the body
     // where the swing left it, as the lock below does.
     if (now >= (ai.lunge.from ?? 0)) {
+      // The attack moves it, not a walk: a lunge goes through the crowd (npc-move.js).
       return {
         ...STILL,
         x: ai.lunge.x * mobility * deltaSeconds,
         y: ai.lunge.y * mobility * deltaSeconds,
+        throughBodies: true,
       };
     }
     return STILL;

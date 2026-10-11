@@ -10,14 +10,16 @@ import { standoff } from "../body.js";
  * wants before the crowd and the scenery have their say (`stepNpc`,
  * npc-move.js), `walking` when that step is the ramped walk (the ramp starts
  * again from standing on any tick it is not), `steering` when it is a walk
- * straight at a target it cannot see, and `away` when it is a kiter's
- * back-off. `STILL` asks for nothing.
+ * straight at a target it cannot see, `away` when it is a kiter's
+ * back-off, and `throughBodies` when the other monsters do not hold the
+ * step (npc-move.js): its attack's own move (behaviours/overrides.js
+ * `swingIntent`), or its way out of the scenery. `STILL` asks for nothing.
  */
 
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 const NPC_WALK_ACCELERATION_SECONDS = 0.9;
 
-export const STILL = Object.freeze({ x: 0, y: 0, walking: false, steering: false, away: null });
+export const STILL = Object.freeze({ x: 0, y: 0, walking: false, steering: false, away: null, throughBodies: false });
 
 /**
  * Ramps an NPC's ordinary walk up to its authored movement speed.
@@ -86,6 +88,9 @@ export const walkTowards = (turn, ramped) => {
     // scenery: see `stepNpc`.
     steering: route.steers,
     away: null,
+    // A body in the scenery stands nowhere it may stand: the way out comes
+    // before the crowd (routing.js `escaping`), as it comes before a swing.
+    throughBodies: Boolean(route.escaping),
   };
 };
 

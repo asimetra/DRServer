@@ -130,12 +130,6 @@ export const generatorBeatWait = (lastAt, now, periodMs) => {
 export const generatorRefillWait = (lastAt, now, periodMs) =>
   GENERATOR_TICK_MS + generatorBeatWait(lastAt, now + GENERATOR_TICK_MS, periodMs);
 
-/** Nearby spawns are one burst; a five-second jail spawn is intentionally not. */
-const WAVE_JOIN_WINDOW_MS = 500;
-
-/** A burst keeps its compact separation only through its initial approach. */
-const WAVE_COORDINATION_MS = 8000;
-
 /**
  * Builds a dungeon for a player: the objects the client expects the server to
  * own (see docs/private-server.md §4.3).
@@ -161,27 +155,6 @@ export const nearestPartyHeroPosition = (session, origin = { x: 0, y: 0 }) => {
   }
   candidates.sort((a, b) => a.distance - b.distance || Number(a.doid) - Number(b.doid));
   return candidates[0]?.position ?? null;
-};
-
-/**
- * Reuses one tiny, in-memory group for the enemies emitted by a generator
- * burst. This is deliberately scoped to a single session and never reaches
- * the client; it lets local separation recognize nearby burst members without
- * creating a new global simulation system.
- */
-const nextGeneratorWave = (runtime, now) => {
-  if (!runtime.wave || now - runtime.wave.lastSpawnAt > WAVE_JOIN_WINDOW_MS) {
-    runtime.waveSequence = (runtime.waveSequence ?? 0) + 1;
-    runtime.wave = {
-      id: `${runtime.placement.id}:${runtime.waveSequence}`,
-      lastSpawnAt: now,
-      nextMemberIndex: 0,
-      expiresAt: now + WAVE_COORDINATION_MS,
-    };
-  }
-
-  runtime.wave.lastSpawnAt = now;
-  return { group: runtime.wave, index: runtime.wave.nextMemberIndex++ };
 };
 
 /**
@@ -255,7 +228,6 @@ export const generatorSpawn = (session, runtime, npc) => {
     return { position: clear, ignoredColliders: null };
   }
 
-  const wave = nextGeneratorWave(runtime, Date.now());
   let releaseState = null;
   let spawnPosition = placement;
   if (release) {
@@ -297,7 +269,6 @@ export const generatorSpawn = (session, runtime, npc) => {
   return {
     position: spawnPosition,
     release: releaseState,
-    wave,
   };
 };
 

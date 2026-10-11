@@ -249,14 +249,21 @@ test("a dragon ignores distant rooms and opens with its fireball from range", as
 
   session.actors.get(enemyDoid).position = { x: 1500, y: 889 };
   await tickNpcAi(session, 2000, 0.25);
-  assert.equal(Math.round(pet.position.x), 1100);
+  /**
+   * One step at it, and the fireball from there. The hero stands 111 below
+   * the dragon, inside the standoff a pet keeps from its player
+   * (`separationDisplacement`), so the step also takes it off him and comes
+   * to 91 along rather than 100; the crowd used to miss him in a cell the
+   * size of one walking step.
+   */
+  assert.ok(pet.position.x > 1080 && pet.position.x <= 1100, `walked at the enemy: ${pet.position.x}`);
+  assert.ok(pet.position.y < 889, "and off its player");
   assert.equal(pet.ai.state, "attack");
-  assert.equal(
-    Math.round(Math.hypot(
+  assert.ok(
+    Math.hypot(
       pet.position.x - session.actors.get(enemyDoid).position.x,
       pet.position.y - session.actors.get(enemyDoid).position.y
-    )),
-    400
+    ) <= 420
   );
   const choreography = session.sent.find(
     (frame) => frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD &&

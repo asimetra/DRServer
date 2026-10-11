@@ -45,9 +45,6 @@ const endRelease = (actor, mouth = null) => {
  */
 export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spatialIndex, heroes = []) => {
   const { ai } = actor;
-  // A burst let out together stands shoulder to shoulder (`sameWave`,
-  // npc-crowd.js) until its group expires, released or not.
-  if (ai.wave && now >= ai.wave.group.expiresAt) ai.wave = null;
   const release = ai.release;
   if (!release) return null;
   if (now < (release.startsAt ?? 0)) return "walking";
