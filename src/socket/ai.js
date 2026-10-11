@@ -158,8 +158,9 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   const release = advanceNpcRelease(session, doid, actor, now, deltaSeconds, crowd.spatialIndex, crowd.heroes);
   if (release === "walking") return "release";
   if (release) {
-    // Out of its cage, an ordinary monster from here.
-    said = letGo(actor);
+    // Out of its cage, an ordinary monster from here: it has let go of what
+    // it was released at (npc-release.js `endRelease`), and shows as idle.
+    said = "idle";
     if (release === "out") return said;
   }
 

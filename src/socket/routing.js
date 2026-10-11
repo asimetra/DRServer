@@ -30,6 +30,8 @@ import { searchRoute } from "./route-memo.js";
  * body is, when and for what it was searched — is this module's and kept on
  * `ai.routing`, which nothing else reads or writes: `forgetRoute` and
  * `searchAgain` are how the rest of the AI says the route no longer holds.
+ * The way out of the scenery is kept on `ai.escape`, written here alone:
+ * `wayOut` finds it, `escapeBy` hands one in.
  */
 
 /** How long a route is followed before it is searched again from where the body stands. */
@@ -55,9 +57,26 @@ const route = (waypoint, { sees = false, blocked = false, steers = false, exhaus
 /** The route of one that does not route: a stationary boss neither searches nor looks. */
 export const NO_ROUTE_ASKED = Object.freeze(route(null));
 
-/** The target is gone or changed hands: nothing of the old route carries over. */
+/**
+ * The target is gone or changed hands: nothing of the old route carries over,
+ * the way out of the scenery included. That was found from where the body
+ * stood then and towards what it went for then; kept, a body put back into
+ * the scenery somewhere else would head for it again (`wayOut` keeps any
+ * point that is clear and that its first step makes headway towards).
+ */
 export const forgetRoute = (ai) => {
   ai.routing = null;
+  ai.escape = null;
+};
+
+/**
+ * The body is to leave the scenery by `point` — a cage's mouth, when the walk
+ * out through it was given up on (npc-release.js). Held as any way out is:
+ * until the body is out, it no longer leads anywhere, or the route is
+ * forgotten.
+ */
+export const escapeBy = (ai, point) => {
+  ai.escape = point;
 };
 
 /**

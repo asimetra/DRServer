@@ -4,6 +4,8 @@ import { heroMembersOf } from "./match-world.js";
 import { isPositionBlocked } from "./navigation.js";
 import { boundedPush, separationDisplacement } from "./npc-crowd.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
+import { clearNpcTarget } from "./npc-targeting.js";
+import { escapeBy } from "./routing.js";
 
 /**
  * A prisoner let out of a cage by a generator (floor-generators.js) walks out
@@ -16,6 +18,18 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 const RELEASE_STALL_MS = 1000;
 
 /**
+ * The release is over: an ordinary monster from here, it lets go of whatever
+ * it was released at (`clearNpcTarget`), and with that of any way out of the
+ * scenery it had. One that gave up on the walk is handed the cage's mouth as
+ * its way out afterwards, so that letting go does not forget it.
+ */
+const endRelease = (actor, mouth = null) => {
+  actor.ai.release = null;
+  clearNpcTarget(actor);
+  if (mouth) escapeBy(actor.ai, mouth);
+};
+
+/**
  * Moves a freshly generated prisoner through its own cage before normal AI
  * starts, and says how that went:
  *
@@ -26,8 +40,8 @@ const RELEASE_STALL_MS = 1000;
  *              ordinary AI's;
  *   null       there is no release.
  *
- * Out or over, it is an ordinary monster from here and lets go of whatever it
- * was released at (`clearNpcTarget`), which is the caller's to do.
+ * Out or over, it is an ordinary monster from here and has let go of whatever
+ * it was released at (`endRelease`); the caller shows it idle.
  */
 export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spatialIndex, heroes = []) => {
   const { ai } = actor;
@@ -57,7 +71,7 @@ export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spati
    * moved again.
    */
   if (!isPositionBlocked(session.navigation, actor.position, radius)) {
-    ai.release = null;
+    endRelease(actor);
     return "over";
   }
 
@@ -121,15 +135,14 @@ export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spati
     if (now - release.stalledSince >= RELEASE_STALL_MS) {
       info(`[${session.id}] npc ${doid} gave up on its cage exit — chasing instead`);
       // Still out through the mouth, if it is still in the cage; see routeToTarget.
-      ai.escape = release.target;
-      ai.release = null;
+      endRelease(actor, release.target);
       return "over";
     }
   }
 
   placeNpc(session, doid, actor, step, release.target);
   if (!isPositionBlocked(session.navigation, actor.position, radius)) {
-    ai.release = null;
+    endRelease(actor);
     return "out";
   }
   return "walking";

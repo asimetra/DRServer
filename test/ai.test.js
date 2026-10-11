@@ -636,6 +636,70 @@ test("a monster buried in scenery chooses an exit the hero does not block", asyn
   );
 });
 
+test("a monster that let go and is buried again gets out where it is now, not by its old way out", async () => {
+  // Two boxes: the way out of the first, kept past letting go, is no way out of the second.
+  const { session, heroDoid, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  const hero = session.actors.get(heroDoid);
+  knight.position = { x: 100, y: 150 };
+  knight.ai.collisionRadius = 20;
+  knight.ai.moveSpeed = 180;
+  session.heroPosition = { x: 100, y: 330 };
+  hero.position = session.heroPosition;
+  session.navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 700, maxY: 400 },
+    staticColliders: [
+      { type: "rectangle", x: 100, y: 150, halfWidth: 50, halfHeight: 50, angle: 0 },
+      { type: "rectangle", x: 500, y: 150, halfWidth: 50, halfHeight: 50, angle: 0 },
+    ],
+  });
+
+  // In the first box, it finds its way out towards the player.
+  await tickNpcAi(session, 1000, 0.1);
+  assert.equal(knight.ai.state, "escape");
+  const first = { ...knight.ai.escape };
+
+  // The player walks off beyond its disengage distance: it lets go.
+  session.heroPosition = { x: 100, y: 3000 };
+  hero.position = session.heroPosition;
+  await tickNpcAi(session, 1100, 0.1);
+  assert.equal(knight.ai.state, "idle");
+
+  // Put into the second box (a teleport, a shove, a gate), the player back in reach.
+  knight.position = { x: 470, y: 150 };
+  session.heroPosition = { x: 600, y: 330 };
+  hero.position = session.heroPosition;
+  await tickNpcAi(session, 1200, 0.1);
+  assert.equal(knight.ai.state, "escape");
+  assert.notDeepEqual(knight.ai.escape, first, "it headed for the way out of the box it was in before");
+  const away = Math.hypot(knight.ai.escape.x - knight.position.x, knight.ai.escape.y - knight.position.y);
+  assert.ok(away < 100, `its way out is ${Math.round(away)} away at ${JSON.stringify(knight.ai.escape)}`);
+});
+
+test("a cage exit given up on still leaves by the cage's mouth", async () => {
+  // Too slow to make headway, so the walk stalls with the knight in the bars.
+  // The mouth is to the front and right; the nearest clear ground towards the
+  // player, off to the left, is somewhere else.
+  const { session, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  knight.position = { x: 804, y: 150 };
+  knight.ai.collisionRadius = 42;
+  knight.ai.moveSpeed = 5;
+  session.heroPosition = { x: 560, y: 108 };
+  session.actors.get(session.heroDoid).position = session.heroPosition;
+  session.navigation = bridgeJail();
+  const jail = session.navigation.triggerGroups.get("jail").onColliders[0];
+  const mouth = { x: 850, y: 250 };
+  knight.ai.release = { target: mouth, ignoredColliders: new Set([jail]), startsAt: 0 };
+
+  for (let tick = 0; tick < 15 && knight.ai.release; tick++) {
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+  }
+  assert.equal(knight.ai.release, null, "the walk was never given up on");
+  assert.equal(knight.ai.state, "escape");
+  assert.deepEqual(knight.ai.escape, mouth);
+});
+
 test("an overlapping cage wave stays on release AI until every member is outside", async () => {
   const { session, knightDoid } = makeSession();
   const first = session.actors.get(knightDoid);
