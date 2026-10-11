@@ -1,22 +1,16 @@
 import { config } from "../config.js";
 import { info, warn } from "../log.js";
-import { OP } from "./opcodes.js";
-import { PacketWriter } from "./packet.js";
 import { attackStopped, buffMultiplierFor } from "./buffs.js";
 import { matchStateOf, worldOf } from "./match-world.js";
-import {
-  hasLineOfSight,
-  moveWithNavigation,
-  nearestClearPosition,
-} from "./navigation.js";
-import { objectDisable } from "./objects.js";
+import { moveWithNavigation } from "./navigation.js";
 import { bodyRadius, contact, reach, standoff } from "./body.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
-import { describeRoute, NO_ROUTE_ASKED, routeToTarget, searchAgain } from "./routing.js";
+import { describeRoute, NO_ROUTE_ASKED, routeToTarget } from "./routing.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { clearNpcTarget, LET_GO, pickTarget } from "./npc-targeting.js";
 import { advanceNpcRelease } from "./npc-release.js";
 import { act, ATTACK_RANGE_EPSILON } from "./npc-act.js";
+import { comeBack, teleportsOnCycle, teleportSwung, teleportTurn } from "./behaviours/teleport.js";
 import {
   boundedPush,
   nobodyToFight,
@@ -24,13 +18,6 @@ import {
   separateIdleNpc,
   separationDisplacement,
 } from "./npc-crowd.js";
-
-const npcTimelineAction = (doid, timeline) =>
-  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
-    .u32(doid)
-    .u16(145) // DistributedNPCGameObject.ReceiveTimelineAction
-    .utf(timeline)
-    .frame();
 
 export { MAX_PET_AGGRESSORS } from "./npc-targeting.js";
 export { attackIntervalMs, chooseNpcAttack } from "./npc-act.js";
@@ -60,35 +47,6 @@ export const npcWalkingSpeed = (ai, targetSpeed, deltaSeconds) => {
     NPC_WALK_ACCELERATION_SECONDS;
   ai.walkSpeed = Math.min(target, current + step);
   return ai.walkSpeed;
-};
-
-/** A clear authored-range point around the target for one teleport cycle; `bodies` is `contact` with the victim. */
-const teleportDestinationFor = (session, actor, target, bodies, random) => {
-  const maximum = standoff(actor, bodies, Number(actor.ai.teleportRange ?? 0));
-  const minimum = Math.min(maximum, Math.max(bodies, maximum * 0.5));
-  const radius = bodyRadius(actor);
-
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const angle = random() * Math.PI * 2;
-    const distance = minimum + (maximum - minimum) * random();
-    const desired = {
-      x: target.x + Math.cos(angle) * distance,
-      y: target.y + Math.sin(angle) * distance,
-    };
-    if (!session.navigation) return desired;
-    const clear = nearestClearPosition(
-      session.navigation,
-      desired,
-      radius,
-      {
-        reach: Math.max(60, maximum * 0.5),
-        towards: target,
-        accept: (candidate) => hasLineOfSight(session.navigation, candidate, target, radius),
-      }
-    );
-    if (clear) return clear;
-  }
-  return { ...actor.position };
 };
 
 /**
@@ -262,30 +220,11 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     // Its body and the victim's, asked once: neither changes in the tick.
     const radius = bodyRadius(actor);
     const bodies = contact(actor, victim.actor);
-    const recurringTeleport =
-      ai.behavior === "TELEPORT_AI" &&
-      (ai.teleportRecurMs ?? 0) > 0 &&
-      typeof actor.teleportRegenerate === "function";
+    const cycle = teleportsOnCycle(actor);
 
+    // Off the floor between teleports: nothing else of the tick is its own.
     if (actor.teleportHidden) {
-      if (!recurringTeleport || now < (ai.teleportReturnAt ?? Infinity)) continue;
-      const random = session.random ?? Math.random;
-      const destination = teleportDestinationFor(session, actor, target, bodies, random);
-      actor.position.x = destination.x;
-      actor.position.y = destination.y;
-      actor.heading =
-        (Math.atan2(target.y - destination.y, target.x - destination.x) * 180) / Math.PI;
-      actor.teleportHidden = false;
-      ai.teleportPhase = "visible";
-      ai.teleportHideAt = 0;
-      ai.teleportReturnAt = 0;
-      ai.teleportCycleStarted = true;
-      ai.nextAttackAt = now + (ai.preTeleportAttackMs ?? 0);
-      searchAgain(ai);
-      ai.walkSpeed = 0;
-      actor.teleportRegenerate(destination, actor.heading);
-      session.send(npcTimelineAction(doid, ai.teleportInTimeline ?? "TELEPORT_IN"));
-      ai.state = "teleport-in";
+      if (cycle && comeBack(session, doid, actor, target, bodies, now)) ai.state = "teleport-in";
       continue;
     }
 
@@ -326,37 +265,12 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       }
     }
 
-    if (recurringTeleport && !ai.teleportCycleStarted) {
-      ai.teleportCycleStarted = true;
-      ai.nextAttackAt = Math.max(
-        ai.nextAttackAt ?? 0,
-        now + (ai.preTeleportAttackMs ?? 0)
-      );
-    }
-    if (recurringTeleport && ai.teleportPhase === "post-attack") {
-      if (now < (ai.teleportHideAt ?? 0)) {
-        ai.state = "teleport-wait";
+    if (cycle) {
+      const phase = teleportTurn(session, doid, actor, now);
+      if (phase) {
+        if (phase.said) ai.state = phase.said;
         continue;
       }
-      ai.teleportPhase = "teleport-out";
-      ai.teleportDisableAt = now + Math.max(0, Number(ai.teleportOutDelayMs ?? 1000));
-      ai.state = "teleport-out";
-      session.send(npcTimelineAction(doid, ai.teleportOutTimeline ?? "TELEPORT_OUT"));
-      continue;
-    }
-    if (recurringTeleport && ai.teleportPhase === "teleport-out") {
-      if (now < (ai.teleportDisableAt ?? Infinity)) continue;
-      const random = session.random ?? Math.random;
-      actor.teleportHidden = true;
-      ai.teleportPhase = "hidden";
-      ai.teleportDisableAt = 0;
-      ai.teleportReturnAt =
-        now +
-        (ai.teleportRecurMs ?? 0) +
-        random() * (ai.teleportRecurRandMs ?? 0);
-      ai.state = "teleport-hidden";
-      session.send(objectDisable(doid));
-      continue;
     }
 
     /**
@@ -592,10 +506,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       heroDoids,
     });
     ai.state = stateAfterAct(reason, fleeing, route);
-    if (reason === "swung" && recurringTeleport) {
-      ai.teleportPhase = "post-attack";
-      ai.teleportHideAt = now + (ai.postTeleportAttackMs ?? 0);
-    }
+    if (reason === "swung" && cycle) teleportSwung(ai, now);
   }
 };
 
