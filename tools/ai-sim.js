@@ -30,6 +30,13 @@
  * Each library runs on the first map node of its own theme, so its tiles
  * hold the theme's monsters (tools/ai-sim-lib.js, THEME_NODES).
  *
+ * The libraries hold chasers and kiters only, so both presets also run the
+ * scenarios (tools/ai-sim-lib.js, SCENARIOS): a hero with a pet, specters,
+ * beasts and an ally, a stationary boss, the tutorial's cages, each with
+ * `walker`, `walls` and `brawler` — the last stuns, shoves, staggers and
+ * slows what it hits. `--scenarios a,b` names some; naming a library, a
+ * floor or a node runs that alone.
+ *
  * Each root runs in a process of its own: a server loaded twice in one
  * process would share the pinned globals and the module caches, and the
  * second copy's timers would land in the first copy's queue. `--jobs` splits
@@ -43,7 +50,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { argument, flag, listArgument, realNow, resolveRoot, TOOL_ROOT } from "./equivalence-lib.js";
-import { HERO_SCRIPTS, LIBRARIES, runWorker } from "./ai-sim-lib.js";
+import { HERO_SCRIPTS, LIBRARIES, runWorker, SCENARIO_HEROES, SCENARIOS } from "./ai-sim-lib.js";
 
 const self = fileURLToPath(import.meta.url);
 
@@ -51,12 +58,14 @@ const PRESETS = {
   quick: { libraries: LIBRARIES, seeds: [1], ticks: 800, heroes: ["loadsim", "walls", "walker"] },
   full: { libraries: LIBRARIES, seeds: [1, 2, 3], ticks: 4000, heroes: ["loadsim", "walls", "walker"] },
 };
+const ALL_SCENARIOS = Object.keys(SCENARIOS);
 
 const usage = () => {
   console.error(
     [
       "usage: node tools/ai-sim.js --base <dir|git-ref> [--candidate <dir>] [--quick|--full]",
-      "         [--libraries a/b,c/d] [--seeds 1,2] [--ticks N] [--hero loadsim|walls|walker|still|script]",
+      "         [--libraries a/b,c/d] [--scenarios a,b] [--seeds 1,2] [--ticks N]",
+      "         [--hero loadsim|walls|walker|brawler|still|script]",
       "         [--floor <authored file>] [--node <map node> [--catalogue <floors.json>]] [--script <file>]",
       "         [--tile-count N] [--jobs N] [--explain N]",
       "       node tools/ai-sim.js --digest-out <file> [same selection]      one root, written down",
@@ -79,15 +88,29 @@ const expandRuns = () => {
   if (heroes.includes("script") && !script) usage();
   if (!Number.isInteger(ticks) || ticks <= 0 || seeds.some((seed) => !Number.isInteger(seed))) usage();
 
+  const named = floor || node !== null || argument("libraries") || argument("scenarios");
   const worlds = floor
     ? [{ floor, node, name: path.basename(floor, ".json") }]
     : node !== null
       ? [{ node, name: `node${node}` }]
-      : listArgument("libraries", preset.libraries).map((library) => ({ library, tileCount, name: library }));
+      : !named || argument("libraries")
+        ? listArgument("libraries", preset.libraries).map((library) => ({ library, tileCount, name: library }))
+        : [];
+  const scenarios = named ? listArgument("scenarios", []) : ALL_SCENARIOS;
+  for (const scenario of scenarios) {
+    if (!SCENARIOS[scenario]) usage();
+    const { library, floor: authored } = SCENARIOS[scenario];
+    worlds.push({
+      ...(library ? { library, tileCount } : { floor: authored }),
+      scenario,
+      heroes: argument("hero") ? heroes : SCENARIO_HEROES,
+      name: `scenario/${scenario}`,
+    });
+  }
   const runs = [];
-  for (const world of worlds) {
+  for (const { heroes: worldHeroes, ...world } of worlds) {
     for (const seed of seeds) {
-      for (const hero of heroes) {
+      for (const hero of worldHeroes ?? heroes) {
         const id = `${world.name.replace(/\//g, "-")}~s${seed}~${hero}`;
         runs.push({ ...world, seed, hero, ticks, script, id, label: `${world.name} seed ${seed} ${hero}` });
       }

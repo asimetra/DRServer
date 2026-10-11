@@ -56,7 +56,53 @@ const THEME_NODES = {
   "nordic/village": 50033,
 };
 
-export const HERO_SCRIPTS = ["loadsim", "walls", "walker", "still", "script"];
+export const HERO_SCRIPTS = ["loadsim", "walls", "walker", "brawler", "still", "script"];
+
+/**
+ * Worlds the library matrix does not reach, each a library floor (or an
+ * authored one) with something added to it.
+ *
+ * The libraries on their theme nodes place chasers and kiters and nothing
+ * else: counted over the whole --full matrix, not one tick ran a pet, a
+ * teleporting specter, a stationary boss, a wild beast, an ally, a cage
+ * release, a summon, a shove, a stagger or a stun. Each of those is a branch
+ * of the loop a refactor can break without the digest noticing, so each is
+ * put on a floor here:
+ *
+ *   pet          the hero's equipped pet, built by the floor as a player's is
+ *                (`session.petSpawn`): DRAGON_PET is the ranged one that backs
+ *                out to its fireball's MinRange, SHADOW_WOLF_PET a pet that
+ *                teleports, WOLF_PET one the monsters may pick over the hero;
+ *   cast         monsters spawned through the root's own `spawnNpc` on clear
+ *                ground in a ring round the hero's spawn — specters, which
+ *                teleport, and SHADOW_SPECTER, whose skeletons are summons;
+ *                LION_WILD and RAPTOR_WILD, beasts that fight everyone; the
+ *                battle chef, an ally that fights the monsters;
+ *   wake         BOSS_GOLEM is built asleep (`nextAttackAt` infinite) until
+ *                its arena's intro timeline wakes it, which a ring on a
+ *                library floor has none of: the scenario wakes it instead;
+ *   generators   every generator on the floor is started at the build, as
+ *                its trigger would, so the tutorial's cages let their
+ *                prisoners out through the release walk.
+ *
+ * `brawler` is the hero for the overrides: it walks and hits as `loadsim`
+ * does, and every two seconds does one more thing to the monster it hits —
+ * stuns it, shoves it, staggers it, slows it, in turn.
+ */
+export const SCENARIOS = {
+  "pet-dragon": { library: "castle/catacombs", pet: "DRAGON_PET" },
+  "pet-shadow-wolf": { library: "nordic/caves", pet: "SHADOW_WOLF_PET" },
+  specters: {
+    library: "castle/prison",
+    cast: ["PURPLE_SPECTER", "PURPLE_SPECTER", "RED_SPECTER", "SHADOW_SPECTER"],
+  },
+  wild: { library: "jungle/dino", pet: "WOLF_PET", cast: ["LION_WILD", "RAPTOR_WILD", "RIVAL_BATTLE_CHEF"] },
+  golem: { library: "castle/arena", cast: ["BOSS_GOLEM"], wake: true },
+  cages: { floor: "tutorial", generators: true },
+};
+
+/** The heroes a scenario runs with: one that leaves monsters alive, one that keeps to the floor, the brawler. */
+export const SCENARIO_HEROES = ["walker", "walls", "brawler"];
 
 /** The server's own AI cadence. */
 export const TICK_MS = 250;
@@ -80,6 +126,14 @@ const HERO_HIT_DAMAGE = 25;
 const HERO_RADIUS = 26;
 /** Never downed: a run is about the monsters, not about the revive screen. */
 const HERO_HIT_POINTS = 60000;
+/** The brawler's extra blow: every this many ticks, the next of these on its victim. */
+const BRAWL_EVERY = 8;
+const BRAWLS = ["stun", "shove", "stagger", "slow"];
+/** A shove the size and duration of a strong knockback (impact.js). */
+const BRAWL_SHOVE = { distance: 150, durationMs: 400 };
+/** How far round the hero's spawn a scenario's cast is put. */
+const CAST_RING = 350;
+const PET_LEVEL = 10;
 
 const FLOOR_DOID = 1002;
 const HERO_DOID = 1003;
@@ -87,18 +141,23 @@ const DEFAULT_MAP_NODE = 50002;
 
 /** The modules a run needs, from one root. */
 export const loadRoot = async (root) => {
-  const [gamemaster, floors, navigation, dungeon, opcodes, ai, combat] = await Promise.all([
-    importFrom(root, "src/gamemaster.js"),
-    importFrom(root, "src/socket/floors.js"),
-    importFrom(root, "src/socket/navigation.js"),
-    importFrom(root, "src/socket/dungeon.js"),
-    importFrom(root, "src/socket/opcodes.js"),
-    importFrom(root, "src/socket/ai.js"),
-    importFrom(root, "src/socket/combat.js"),
-  ]);
+  const [gamemaster, floors, navigation, dungeon, opcodes, ai, combat, npcSpawn, buffs, impact, hitPricing] =
+    await Promise.all([
+      importFrom(root, "src/gamemaster.js"),
+      importFrom(root, "src/socket/floors.js"),
+      importFrom(root, "src/socket/navigation.js"),
+      importFrom(root, "src/socket/dungeon.js"),
+      importFrom(root, "src/socket/opcodes.js"),
+      importFrom(root, "src/socket/ai.js"),
+      importFrom(root, "src/socket/combat.js"),
+      importFrom(root, "src/socket/npc-spawn.js"),
+      importFrom(root, "src/socket/buffs.js"),
+      importFrom(root, "src/socket/impact.js"),
+      importFrom(root, "src/socket/hit-pricing.js"),
+    ]);
   await navigation.loadNavigationLibrary();
   await gamemaster.loadGameMaster();
-  return { root, gamemaster, floors, navigation, dungeon, opcodes, ai, combat };
+  return { root, gamemaster, floors, navigation, dungeon, opcodes, ai, combat, npcSpawn, buffs, impact, hitPricing };
 };
 
 /**
@@ -134,7 +193,7 @@ const floorsOf = async (modules, spec) => {
  * A session the way test/helpers/floor.js makes one, built with the root's
  * own modules so a base that spawns differently spawns differently here.
  */
-const buildWorld = async (modules, { floor, plan, index, mapNodeId }, id) => {
+const buildWorld = async (modules, { floor, plan, index, mapNodeId }, id, scenario = null) => {
   const { CLID } = modules.opcodes;
   const sent = [];
   const session = {
@@ -179,8 +238,12 @@ const buildWorld = async (modules, { floor, plan, index, mapNodeId }, id) => {
       };
     })(),
     send: (frame) => sent.push(frame),
+    ...(scenario?.pet
+      ? { petSpawn: { constant: scenario.pet, level: PET_LEVEL, ownerHeroDoid: HERO_DOID } }
+      : {}),
   };
   await modules.dungeon.buildFloorWorld(session, { floor, floorDoid: FLOOR_DOID, isActive: () => true });
+  if (scenario) await stageScenario(modules, session, scenario);
   /**
    * The AI loop is driven from here, a tick at a time; the player-side
    * timers are a connection's, not the floor's, and a scripted hero has no
@@ -193,6 +256,56 @@ const buildWorld = async (modules, { floor, plan, index, mapNodeId }, id) => {
   session.stopManaRegen?.();
   session.stopManaRegen = null;
   return { session, built: sent };
+};
+
+/**
+ * What a scenario adds once the floor is built: its cast on clear ground in a
+ * ring round the hero's spawn, the golem woken, the generators started.
+ */
+const stageScenario = async (modules, session, scenario) => {
+  const spawn = session.heroPosition;
+  const context = {
+    session,
+    floorDoid: FLOOR_DOID,
+    heroDoid: HERO_DOID,
+    mapNodeId: session.mapNodeId,
+    gm: await modules.gamemaster.loadGameMaster(),
+    isActive: () => true,
+  };
+  const cast = scenario.cast ?? [];
+  for (const [index, constant] of cast.entries()) {
+    const angle = (index / cast.length) * Math.PI * 2;
+    const desired = { x: spawn.x + Math.cos(angle) * CAST_RING, y: spawn.y + Math.sin(angle) * CAST_RING };
+    const at =
+      modules.navigation.nearestClearPosition(session.navigation, desired, 40, { reach: CAST_RING, towards: spawn }) ??
+      desired;
+    const doid = await modules.npcSpawn.spawnNpc(context, constant, at, undefined, { returnDoid: true });
+    if (!doid) throw new Error(`scenario: ${constant} was not spawned`);
+    // Its arena's intro timeline is what wakes a stationary boss; a ring has none.
+    const ai = session.actors.get(doid)?.ai;
+    if (scenario.wake && ai) ai.nextAttackAt = 0;
+  }
+  if (scenario.generators) {
+    for (const start of session.generatorHandlers?.values() ?? []) start();
+  }
+};
+
+/**
+ * The brawler's extra blow on its victim, the next in `BRAWLS`: through the
+ * root's own buffs, `pushVictim` and `holdStaggered`, as a hero's hit would.
+ */
+const brawl = async (modules, session, target, tick) => {
+  const kind = BRAWLS[Math.floor(tick / BRAWL_EVERY) % BRAWLS.length];
+  if (kind === "stun" || kind === "slow") {
+    await modules.buffs.grantBuff(session, kind === "stun" ? "STUN_L4" : "SLOW_L1", {
+      affectedActor: target,
+      attackerActor: HERO_DOID,
+    });
+  } else if (kind === "shove") {
+    modules.impact.pushVictim(session, target, HERO_DOID, BRAWL_SHOVE.distance, BRAWL_SHOVE.durationMs);
+  } else {
+    modules.hitPricing.holdStaggered(session, target, { HitStunDur: 1 });
+  }
 };
 
 /** The header of a frame: enough to say which update it was. */
@@ -233,7 +346,7 @@ const heroStep = (modules, session, hero, kind, script, tick) => {
   let hits = false;
   let onFloor = kind === "walls";
   const { doid: target, distance } = nearestEnemy(session, position);
-  if (kind === "loadsim" || kind === "walls" || kind === "walker") {
+  if (kind === "loadsim" || kind === "walls" || kind === "walker" || kind === "brawler") {
     if (target !== null && distance > HERO_STOP) aim = session.actors.get(target).position;
     hits = kind !== "walker" && target !== null && distance <= HERO_REACH;
   } else if (kind === "script" && script) {
@@ -264,6 +377,7 @@ const heroStep = (modules, session, hero, kind, script, tick) => {
   if (hits && tick % HERO_HIT_EVERY === HERO_HIT_EVERY - 1) {
     modules.combat.applyDamage(session, target, HERO_HIT_DAMAGE);
   }
+  return kind === "brawler" && hits && tick % BRAWL_EVERY === BRAWL_EVERY - 1 ? target : null;
 };
 
 /** What a tick leaves behind, as lines; the hash is of these and the frames. */
@@ -312,7 +426,7 @@ export const runSpec = async (modules, spec, emit, { detail = new Set() } = {}) 
       const run = floors.length > 1 ? `${spec.id}/f${entry.index + 1}` : spec.id;
       const started = realNow();
       const sessionRandom = seededRandom(seedFor("session", run));
-      const { session, built } = await buildWorld(modules, entry, run);
+      const { session, built } = await buildWorld(modules, entry, run, spec.scenario ? SCENARIOS[spec.scenario] : null);
       session.random = sessionRandom;
       emit(`R ${run} ${spec.label}`);
       emit(`B ${run} ${digestOf(stateLines(session), built, [built.length])} ${built.length} ${session.actors.size}`);
@@ -327,7 +441,8 @@ export const runSpec = async (modules, spec, emit, { detail = new Set() } = {}) 
         await clock.advance(clock.now + TICK_MS);
         hero.hitPoints = HERO_HIT_POINTS;
         hero.dead = false;
-        heroStep(modules, session, hero, spec.hero, script, tick);
+        const brawled = heroStep(modules, session, hero, spec.hero, script, tick);
+        if (brawled !== null && session.actors.get(brawled)) await brawl(modules, session, brawled, tick);
         await modules.ai.tickNpcAi(session, clock.now, TICK_MS / 1000);
         await clock.flush();
         const lines = stateLines(session);
