@@ -7,7 +7,7 @@ import { CLID } from "./opcodes.js";
 import { playDeathAttack } from "./triggers.js";
 import { worldColliders } from "./heading.js";
 import { giveVoice } from "./speech.js";
-import { nearestClearPosition } from "./navigation.js";
+import { bodyClearSpot, rowBody } from "./body.js";
 import { warn } from "../log.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { hitPointsUpdate } from "./combat.js";
@@ -60,7 +60,7 @@ async function spawnInfiniteModifierNpc(context, modifier, origin, generation = 
     x: Number(origin?.x ?? 0) + Math.cos(angle) * 45,
     y: Number(origin?.y ?? 0) + Math.sin(angle) * 45,
   };
-  const position = nearestClearPosition(session.navigation, desired, 20, {
+  const position = bodyClearSpot(session.navigation, rowBody(spawnedNpc), desired, 20, {
     reach: 140,
     towards: origin,
   }) ?? desired;
@@ -171,7 +171,7 @@ export const spawnEquippedPet = async (context, member = context?.session?.membe
 
   const desired = petSpawnPosition(ownerPosition);
   const radius = Math.max(12, Number(npc.CollisionSize ?? 25) * Number(npc.Scale ?? 1));
-  const at = nearestClearPosition(context.session.navigation, desired, radius, {
+  const at = bodyClearSpot(context.session.navigation, rowBody(npc), desired, radius, {
     reach: 220,
     towards: ownerPosition,
   }) ?? desired;

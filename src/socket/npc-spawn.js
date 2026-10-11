@@ -533,6 +533,8 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
       onGone: (doid) => options.onGone?.(doid),
       position: { x: at.x, y: at.y },
       collisionRadius,
+      // The scale it is drawn at, and so where its body sits (`bodyOffsetOf`, navigation.js).
+      scale: generatedScale,
       heading: spawnHeading,
       /**
        * `isAlly`: on the players' side without being a player — the chef to be

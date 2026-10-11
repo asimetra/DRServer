@@ -1,7 +1,6 @@
 import { emitGeneratorRelease, emitSignal, initialTargetState } from "./triggers.js";
 import { checkFloorCleared } from "./floorstate.js";
-import { findCageReleasePath, isPositionBlocked, nearestClearPosition } from "./navigation.js";
-import { rowBodyRadius } from "./body.js";
+import { bodyBlocked, bodyCageExit, bodyClearSpot, rowBody, rowBodyRadius } from "./body.js";
 import { info, warn } from "../log.js";
 import { spawnBossReward } from "./drops.js";
 import { spawnNpc } from "./npc-spawn.js";
@@ -206,6 +205,8 @@ export const generatorSpawn = (session, runtime, npc) => {
    */
   const collisionRadius = rowBodyRadius(npc);
   const { placement } = runtime;
+  // Its body, at the scale it will be drawn: what the scenery is asked about.
+  const body = rowBody(npc, placement.scale);
   const { navigation } = session;
   /**
    * The player's whereabouts belong in the key. The exit is chosen as the way
@@ -224,7 +225,7 @@ export const generatorSpawn = (session, runtime, npc) => {
   let release = runtime.releasePlans.get(cacheKey);
 
   if (!release && navigation) {
-    release = findCageReleasePath(navigation, placement, collisionRadius, hero);
+    release = bodyCageExit(navigation, body, placement, collisionRadius, hero);
     if (release) runtime.releasePlans.set(cacheKey, release);
   }
 
@@ -238,11 +239,11 @@ export const generatorSpawn = (session, runtime, npc) => {
    * nothing and the point itself is solid, the way out is simply the nearest
    * clear ground.
    */
-  if (!release && isPositionBlocked(navigation, placement, collisionRadius)) {
+  if (!release && bodyBlocked(navigation, body, placement, collisionRadius)) {
     // Reachable from where the hero is, so nobody is released into a pocket on
     // the wrong side of a wall.
     const hero = nearestPartyHeroPosition(session, placement);
-    const clear = nearestClearPosition(navigation, placement, collisionRadius, {
+    const clear = bodyClearSpot(navigation, body, placement, collisionRadius, {
       // Out of the wall towards the room, wherever the room happens to be.
       towards: hero,
       reachableFrom: hero,
@@ -281,8 +282,8 @@ export const generatorSpawn = (session, runtime, npc) => {
    * walk out of the wall it is in. That is the one left behind at the edge of a
    * room fighting from where it was put.
    */
-  if (isPositionBlocked(navigation, spawnPosition, collisionRadius, releaseState ?? undefined)) {
-    const clear = nearestClearPosition(navigation, spawnPosition, collisionRadius, {
+  if (bodyBlocked(navigation, body, spawnPosition, collisionRadius, releaseState ?? undefined)) {
+    const clear = bodyClearSpot(navigation, body, spawnPosition, collisionRadius, {
       towards: hero,
       reachableFrom: hero,
     });

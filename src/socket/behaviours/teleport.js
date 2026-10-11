@@ -1,5 +1,4 @@
-import { bodyRadius, standoff } from "../body.js";
-import { hasLineOfSight, nearestClearPosition } from "../navigation.js";
+import { bodyClearSpot, bodyRadius, bodyWalkClear, standoff } from "../body.js";
 import { objectDisable } from "../objects.js";
 import { OP } from "../opcodes.js";
 import { PacketWriter } from "../packet.js";
@@ -55,14 +54,15 @@ const teleportDestinationFor = (session, actor, target, bodies, random) => {
       y: target.y + Math.sin(angle) * distance,
     };
     if (!session.navigation) return desired;
-    const clear = nearestClearPosition(
+    const clear = bodyClearSpot(
       session.navigation,
+      actor,
       desired,
       radius,
       {
         reach: Math.max(60, maximum * 0.5),
         towards: target,
-        accept: (candidate) => hasLineOfSight(session.navigation, candidate, target, radius),
+        accept: (candidate) => bodyWalkClear(session.navigation, actor, candidate, target, radius),
       }
     );
     if (clear) return clear;

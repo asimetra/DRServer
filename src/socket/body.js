@@ -1,13 +1,25 @@
-import { collisionPointOf, navigationEntryFor } from "./navigation.js";
+import {
+  bodyOffsetOf,
+  collisionPointOf,
+  findCageReleasePath,
+  hasLineOfSight,
+  isPositionBlocked,
+  moveWithNavigation,
+  navigationEntryFor,
+  nearestClearPosition,
+} from "./navigation.js";
+import { searchRoute } from "./route-memo.js";
 
 /**
  * Where an actor is and how wide it is, asked in one place.
  *
  * The position on the wire is the feet. The body is a circle above them: its
  * radius is the one the actor was built with (`authoredBodyRadius`), its
- * middle the feet moved by the library's offset — 22 up for every hero and 97
- * of the 122 monsters (`collisionPointOf`, navigation.js). The AI, the
- * separation, the swing and the shot used to work these out each for itself.
+ * middle the feet moved by the library's offset at the size the actor is
+ * drawn — 22 up for every hero and 97 of the 122 monsters, times their
+ * `Scale` (`collisionPointOf`, navigation.js). The AI, the separation, the
+ * swing and the shot used to work these out each for itself. The scenery is
+ * met at the body: see "The scenery, asked at the body" below.
  */
 
 /** The library's body circle for a constant, radius and offset from the feet. */
@@ -44,18 +56,118 @@ export const feetOf = (actor) => actor.position;
 export const bodyPointOf = (actor, position) => collisionPointOf(actor, position);
 
 /**
- * Where a monster's sight line starts, and where its swing and its shot start.
+ * Where a monster sees from, swings from and shoots from: its body, one
+ * point. A swing's shape and a shot leave from the body (npc-swings.js
+ * `landNpcSwing`, `launchNpcProjectile`), as the client places its own
+ * colliders at `worldCenter`, and what it sees is what they can reach: the
+ * victim's body (`seesBody`). The sight line used to start at the feet,
+ * which were what this server kept out of the walls, and end at the
+ * victim's feet or, failing that, his body.
  *
- * Open decision: they are not the same point. A sight line is drawn from the
- * feet (npc-act.js `victimInSight`), the point this server's navigation keeps
- * clear of the walls. A swing's shape and a shot leave from the body
- * (npc-swings.js `landNpcSwing`, `launchNpcProjectile`), as the client places
- * its own colliders at `worldCenter`. So a monster sees from 22 below where it
- * hits from. Both answers are kept as they were; which one is right is not
- * decided.
+ * The official decides it body to body. With a hero's feet line from the
+ * monster blocked and the body line clear, its monsters attack 0.224 times a
+ * second, against 0.231 with both clear: the feet line does not hold it back.
  */
-export const sightOrigin = (actor) => feetOf(actor);
 export const swingOrigin = (actor) => bodyPointOf(actor, feetOf(actor)) ?? feetOf(actor);
+export const sightOrigin = swingOrigin;
+
+/**
+ * Whether `actor`, its feet at `from`, sees `victim`, whose feet are at
+ * `at`: a line of no width from its body to the victim's, which is what a
+ * swing is let go on (npc-act.js) and what a route ends in sight of
+ * (routing.js). A victim with no body in the library is seen at its feet.
+ */
+export const seesBody = (navigation, actor, from, victim, at) =>
+  hasLineOfSight(navigation, bodyPointOf(actor, from) ?? from, bodyPointOf(victim, at) ?? at, 0);
+
+/**
+ * The scenery, asked at the body.
+ *
+ * An actor collides with the walls at its body, not its feet. Over about
+ * 472,000 official monster samples the body circle is inside the scenery on
+ * 0-2.3% of a row's samples and the circle drawn at the feet on 3-18%; the
+ * body touches a wall on 13.4% of them and the feet on 4.3%. No row is better
+ * explained by the feet but the placed STATIONARY_KNIGHT turrets, which never
+ * walk. Ours kept the feet out of the walls, so a knight sliding along a wall
+ * above it stood with its body in it (up to 33% of a KNIGHT's samples) and
+ * one along a wall below it kept a body's width off.
+ *
+ * So every question an actor's circle asks of the scenery is asked here of
+ * its body: the feet it is given are moved up to the body, the question put
+ * as navigation.js has it, and an answer that is a place moved back down to
+ * the feet, which is what the wire and the rest of the AI speak. Moving,
+ * routing, finding a way out, placing and releasing all ask through these.
+ * `body` is the actor, or a row about to be one: `{ constant, scale }`
+ * (`rowBody`). One the library has no shape for is asked at its feet.
+ */
+const offsetOf = (body) => {
+  const offset = bodyOffsetOf(body);
+  return offset && (offset.x || offset.y) ? offset : null;
+};
+const up = (offset, point) => (offset && point ? { x: point.x + offset.x, y: point.y + offset.y } : point);
+const down = (offset, point) => (offset && point ? { x: point.x - offset.x, y: point.y - offset.y } : point);
+
+/** The body a row will be spawned with, for placing it before it is an actor. */
+export const rowBody = (npc, scale = null) => ({ constant: npc?.Constant, scale: Number(scale ?? npc?.Scale ?? 1) || 1 });
+
+/** Whether its body, with its feet at `feet`, overlaps the scenery. */
+export const bodyBlocked = (navigation, body, feet, radius = 0, options) =>
+  isPositionBlocked(navigation, up(offsetOf(body), feet), radius, options);
+
+/** Whether its body can go straight from where its feet are at `from` to where they are at `to`. */
+export const bodyWalkClear = (navigation, body, from, to, radius = 0, options) => {
+  const offset = offsetOf(body);
+  return hasLineOfSight(navigation, up(offset, from), up(offset, to), radius, options);
+};
+
+/** Where a step takes its feet, its body slid through the scenery (`moveWithNavigation`). */
+export const moveBody = (navigation, body, from, displacement, radius = 0, options) => {
+  const offset = offsetOf(body);
+  return down(offset, moveWithNavigation(navigation, up(offset, from), displacement, radius, options));
+};
+
+/**
+ * The nearest feet its body stands clear at (`nearestClearPosition`): `towards`
+ * and `reachableFrom` are feet too, and `accept` is handed feet.
+ */
+export const bodyClearSpot = (navigation, body, origin, radius = 0, { towards = null, reachableFrom = null, accept, reach } = {}) => {
+  const offset = offsetOf(body);
+  if (!offset) return nearestClearPosition(navigation, origin, radius, { towards, reachableFrom, accept, reach });
+  const spot = nearestClearPosition(navigation, up(offset, origin), radius, {
+    towards: up(offset, towards),
+    reachableFrom: up(offset, reachableFrom),
+    accept: accept && ((candidate) => accept(down(offset, candidate))),
+    reach,
+  });
+  return down(offset, spot);
+};
+
+/**
+ * Its route from `start` to `goal`, searched for its body (`searchRoute`,
+ * remembered on `owner`) and walked by its feet.
+ */
+export const bodyRoute = (owner, navigation, body, start, goal, radius) => {
+  const offset = offsetOf(body);
+  if (!offset) return searchRoute(owner, navigation, start, goal, radius);
+  const found = searchRoute(owner, navigation, up(offset, start), up(offset, goal), radius);
+  const route = found.map((point) => down(offset, point));
+  if (found.endsShort) route.endsShort = true;
+  return route;
+};
+
+/** The way out of the cage its body is in (`findCageReleasePath`), its `target` for the feet. */
+export const bodyCageExit = (navigation, body, origin, radius, target) => {
+  const offset = offsetOf(body);
+  const exit = findCageReleasePath(navigation, up(offset, origin), radius, up(offset, target));
+  return exit && offset ? { ...exit, target: down(offset, exit.target) } : exit;
+};
+
+/**
+ * Where its feet stand for its body to be on the victim's, whose feet are at
+ * `at`: what a route aims at, so that the place it ends in sight of is the
+ * victim's body (pathfind.js `placeReached`).
+ */
+export const aimAt = (actor, victim, at) => down(offsetOf(actor), bodyPointOf(victim, at) ?? at);
 
 /**
  * How far a swing's shape is pushed out by its own body.

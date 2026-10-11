@@ -1,12 +1,5 @@
-import { bodyRadius } from "./body.js";
-import {
-  hasLineOfSight,
-  isPositionBlocked,
-  moveWithNavigation,
-  nearestClearPosition,
-} from "./navigation.js";
+import { aimAt, bodyBlocked, bodyClearSpot, bodyRadius, bodyRoute, bodyWalkClear, moveBody, seesBody } from "./body.js";
 import { keptOutOfHeroes } from "./npc-move.js";
-import { searchRoute } from "./route-memo.js";
 
 /**
  * Where a monster walks next on its way to a target, as one value.
@@ -25,6 +18,10 @@ import { searchRoute } from "./route-memo.js";
  *              scenery gives nothing back on (`stepNpc`, npc-move.js);
  *   exhausted  the route's points are used up, so there is no waypoint;
  *   escaping   the body is in the scenery and the waypoint is the way out.
+ *
+ * The body is what goes round the scenery and what sees (body.js): the route
+ * is searched for the body, towards the place its body meets the victim's
+ * (`aimAt`), and handed back as the points its feet walk.
  *
  * What it takes to give that answer — the route in hand, how far along it the
  * body is, when and for what it was searched — is this module's and kept on
@@ -112,11 +109,12 @@ const wayOut = (navigation, actor, target, heroes, radius) => {
   const { ai } = actor;
   const escapableWithoutHeroes = (candidate) => {
     const permitted = keptOutOfHeroes(candidate, actor, heroes);
-    if (isPositionBlocked(navigation, permitted, radius)) return false;
+    if (bodyBlocked(navigation, actor, permitted, radius)) return false;
     // Clear ground across the collider is not useful when the first step has
     // to go deeper into it. `moveWithNavigation` permits only progress out.
-    const firstMove = moveWithNavigation(
+    const firstMove = moveBody(
       navigation,
+      actor,
       actor.position,
       {
         x: permitted.x - actor.position.x,
@@ -130,11 +128,11 @@ const wayOut = (navigation, actor, target, heroes, radius) => {
   // is no way out. Re-evaluate an old target as heroes move through the room.
   if (
     ai.escape &&
-    (isPositionBlocked(navigation, ai.escape, radius) || !escapableWithoutHeroes(ai.escape))
+    (bodyBlocked(navigation, actor, ai.escape, radius) || !escapableWithoutHeroes(ai.escape))
   ) {
     ai.escape = null;
   }
-  ai.escape ??= nearestClearPosition(navigation, actor.position, radius, {
+  ai.escape ??= bodyClearSpot(navigation, actor, actor.position, radius, {
     towards: target,
     accept: escapableWithoutHeroes,
   });
@@ -150,7 +148,8 @@ const wayOut = (navigation, actor, target, heroes, radius) => {
  * the body stands at its end or walks straight on from it, and a search from
  * every step of that would find the same end.
  */
-const currentRouting = (ai, navigation, position, target, radius, now) => {
+const currentRouting = (actor, navigation, target, radius, now) => {
+  const { ai } = actor;
   const routing = ai.routing;
   const points = routing?.points;
   const due =
@@ -160,7 +159,7 @@ const currentRouting = (ai, navigation, position, target, radius, now) => {
     squaredDistanceTo(routing.aimedAt, target) >= navigation.cellSize * navigation.cellSize ||
     routing.revision !== navigation.revision;
   if (!due) return routing;
-  const found = searchRoute(ai, navigation, position, target, radius);
+  const found = bodyRoute(ai, navigation, actor, actor.position, target, radius);
   const failed = found.length === 0;
   ai.routing = {
     points: found,
@@ -186,15 +185,16 @@ const passReachedPoints = (routing, position, radius) => {
 };
 
 /**
- * Where `actor` walks next on its way to `target`; see the module comment for
- * the answer. `reach` is how far it may swing at the target from (npc-act.js
+ * Where `actor` walks next on its way to `target`, the feet of `victim` (an
+ * actor, for its body; none for a point); see the module comment for the
+ * answer. `reach` is how far it may swing at the target from (npc-act.js
  * `reachOf`), which decides whether a route that ends short is worth walking.
  */
-export const routeToTarget = (session, actor, target, now, heroes = [], reach = Infinity) => {
+export const routeToTarget = (session, actor, target, now, heroes = [], reach = Infinity, victim = null) => {
   const { ai } = actor;
   const navigation = session.navigation;
   const radius = bodyRadius(actor);
-  if (navigation && isPositionBlocked(navigation, actor.position, radius)) {
+  if (navigation && bodyBlocked(navigation, actor, actor.position, radius)) {
     // Even when there is no exit, a body inside scenery must never attack.
     // `blocked` is still the last search's: escaping does not search.
     return route(wayOut(navigation, actor, target, heroes, radius), {
@@ -203,12 +203,13 @@ export const routeToTarget = (session, actor, target, now, heroes = [], reach = 
     });
   }
   ai.escape = null;
-  if (!navigation || hasLineOfSight(navigation, actor.position, target, radius)) {
+  const aim = aimAt(actor, victim, target);
+  if (!navigation || bodyWalkClear(navigation, actor, actor.position, aim, radius)) {
     forgetRoute(ai);
     return route(target, { sees: true });
   }
 
-  const routing = currentRouting(ai, navigation, actor.position, target, radius, now);
+  const routing = currentRouting(actor, navigation, aim, radius, now);
   passReachedPoints(routing, actor.position, radius);
   /**
    * A route it cannot find is a straight walk at the target.
@@ -232,8 +233,9 @@ export const routeToTarget = (session, actor, target, now, heroes = [], reach = 
    * A route that ends short of the target — a hero in a slot the body does
    * not fit — ends at the nearest place the body can get to with the target
    * in sight (pathfind.js). It is walked, to its very end, when that end is a
-   * place to swing from — the target in sight, by the line of no width a
-   * swing is let go on, and within `reach` — and a better one than where the
+   * place to swing from — the victim's body in sight from its own, by the
+   * line of no width a swing is let go on (`seesBody`), and within `reach` —
+   * and a better one than where the
    * body stands: it cannot swing from there, or it can and the end is nearer.
    * Otherwise the walk is the straight one the official takes when it has no
    * route, and one that has come to the end of its route with the target in
@@ -252,12 +254,12 @@ export const routeToTarget = (session, actor, target, now, heroes = [], reach = 
   if (points.endsShort) {
     const end = points.at(-1);
     const swingsFrom = (place) =>
-      squaredDistanceTo(place, target) <= reach * reach && hasLineOfSight(navigation, place, target, 0);
+      squaredDistanceTo(place, target) <= reach * reach && seesBody(navigation, actor, place, victim, target);
     const endBetter =
       swingsFrom(end) &&
       (!swingsFrom(actor.position) || squaredDistanceTo(end, target) < squaredDistanceTo(actor.position, target));
     if (endBetter) return route(exhausted ? end : waypoint);
-    if (exhausted && hasLineOfSight(navigation, actor.position, target, 0)) return route(null, { exhausted });
+    if (exhausted && seesBody(navigation, actor, actor.position, victim, target)) return route(null, { exhausted });
     return route(target, { steers: true, exhausted });
   }
   return route(waypoint, { exhausted });

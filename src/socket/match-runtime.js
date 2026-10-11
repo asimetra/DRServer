@@ -132,6 +132,8 @@ const installHeroActor = (member, world, position) => {
     maxHitPoints: spawn.effectiveHitPoints,
     collisionRadius: spawn.collisionRadius,
     constant: spawn.constant,
+    // Drawn at, so its body sits at (`bodyOffsetOf`, navigation.js).
+    scale: spawn.scale,
     // Carried on the actor so the floor can price a hit without asking whose
     // connection this is; a monster's come from its constant the same way.
     stats: member.heroStats,

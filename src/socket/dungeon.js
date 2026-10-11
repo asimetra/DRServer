@@ -287,6 +287,8 @@ export const buildPartyHeroes = async (session, floor, floorDoid) => {
       maxHitPoints: spawn.effectiveHitPoints,
       collisionRadius: spawn.collisionRadius,
       constant: spawn.constant,
+      // Drawn at, so its body sits at (`bodyOffsetOf`, navigation.js).
+      scale: spawn.scale,
       // On the actor, so the floor prices a hit on any hero the same way it
       // prices one on a monster: from the actor, not from a connection.
       stats: member.heroStats,

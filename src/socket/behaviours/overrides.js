@@ -1,6 +1,5 @@
 import { attackStopped, buffMultiplierFor } from "../buffs.js";
-import { bodyRadius } from "../body.js";
-import { moveWithNavigation } from "../navigation.js";
+import { bodyRadius, moveBody } from "../body.js";
 import { placeNpc } from "../npc-move.js";
 import { STILL } from "./chase.js";
 
@@ -34,8 +33,9 @@ export const slideShoved = (session, doid, actor, now) => {
   shove.covered = share;
   if (share >= 1) actor.ai.shove = null;
   if (step <= 0) return true;
-  const nextPosition = moveWithNavigation(
+  const nextPosition = moveBody(
     session.navigation,
+    actor,
     actor.position,
     { x: shove.x * step, y: shove.y * step },
     bodyRadius(actor)

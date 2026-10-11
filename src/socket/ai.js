@@ -210,7 +210,7 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   const may = whatItMayDo(session, doid, ai, now);
   const route = isStationary(ai)
     ? NO_ROUTE_ASKED
-    : routeToTarget(session, actor, target, now, crowd.heroes, following ? Infinity : reachOf(ai, bodies));
+    : routeToTarget(session, actor, target, now, crowd.heroes, following ? Infinity : reachOf(ai, bodies), victim.actor);
   if (state.debugAi && route.waypoint) traceRoute(doid, actor, route, target);
   const behaviour = behaviourOf(ai);
   const turn = {
@@ -255,7 +255,6 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     fleeing,
     seesAlways: isStationary(ai),
     navigation: state.navigation,
-    heroDoids: crowd.heroDoids,
   });
   if (reason === "swung" && cycle) teleportSwung(ai, now);
   turnAfter(session, doid, actor, turn, reason, walked);

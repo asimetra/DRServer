@@ -1,5 +1,4 @@
-import { contact } from "./body.js";
-import { moveWithNavigation } from "./navigation.js";
+import { contact, moveBody } from "./body.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 
@@ -147,7 +146,7 @@ const movementWithinBudget = (motion, separation, ai, deltaSeconds) => {
   return { x: (x / requested) * budget, y: (y / requested) * budget };
 };
 
-/** Where a movement takes the body: kept out of the players, then through the scenery. */
+/** Where a movement takes it: kept out of the players, then its body through the scenery. */
 const moved = (navigation, actor, movement, { heroes, radius, navigationOptions, ignoresSmall }) => {
   if (ignoresSmall === "movement" && Math.hypot(movement.x, movement.y) <= 0.001) return null;
   const wanted = keptOutOfHeroes(
@@ -156,8 +155,9 @@ const moved = (navigation, actor, movement, { heroes, radius, navigationOptions,
     heroes
   );
   if (ignoresSmall === "wanted" && distanceTo(actor.position, wanted) <= 0.001) return null;
-  const next = moveWithNavigation(
+  const next = moveBody(
     navigation,
+    actor,
     actor.position,
     { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
     radius,

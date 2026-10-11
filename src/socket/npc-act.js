@@ -1,8 +1,7 @@
 import { FRAMES_PER_SECOND } from "../gamemaster.js";
-import { furthestReach, bodyPointOf, reach, sightOrigin } from "./body.js";
+import { furthestReach, reach, seesBody } from "./body.js";
 import { buffMultiplierFor } from "./buffs.js";
 import { performNpcAttack } from "./combat.js";
-import { hasLineOfSight } from "./navigation.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
 import { face } from "./npc-facing.js";
 import { endBackOff } from "./behaviours/kite.js";
@@ -39,36 +38,20 @@ const attacksOf = (ai) =>
   ]);
 
 /**
- * Whether a swing from here can see its victim: a hero's feet or its body.
+ * Whether a swing from here can see its victim: its body sees the victim's
+ * (`seesBody`, body.js), whoever the victim is.
  *
- * A hero's wire position is its feet and its body is the circle 22 units above
- * them (`collisionPointOf`). The client keeps that body out of the walls, not
- * the feet, so a hero leaning on a wall *below* it has its feet on the wall's
- * edge or a unit or two inside it. A sight line to the feet alone then ends
- * inside the wall and every monster around reads the hero as behind it: they
- * walk up to contact and stand there. In one played floor (nordic caves, seed
- * 169884306) monsters spent 226 monster-seconds within 100 units of a hero
- * leaning on NORDIC_CAVE_WALL_B/D and landed 4 hits, against 0.76 a second
- * when the feet were clear. The official keeps swinging there: across the 96
- * official captures, with the feet inside this server's geometry at a wall
- * below, monsters within 100 units attacked 0.61 times a monster-second,
- * against 0.75 elsewhere.
- *
- * The feet are still asked first, so nothing that could be hit before is safe
- * now; the body only adds the hero whose feet are in the wall. A wall between
- * the monster and the hero hides both: the body is 22 above feet that are at
- * most on the near edge of a wall below, and 22 nearer a wall above them.
- *
- * Only for heroes. A monster's position is the point this server's own
- * navigation keeps clear of the walls, so it is already the right end.
+ * A hero's feet are not what the walls keep out: leaning on a wall below
+ * him, they sit on its edge or a unit or two inside it, and a sight line
+ * that ended at them read him as behind it. In one played floor (nordic
+ * caves, seed 169884306) monsters spent 226 monster-seconds within 100 units
+ * of a hero leaning on NORDIC_CAVE_WALL_B/D and landed 4 hits, against 0.76
+ * a second when the feet were clear; the official kept swinging there (0.61
+ * a monster-second, against 0.75 elsewhere, across 96 captures). A wall
+ * between the two bodies hides him, from above or from below.
  */
-const victimInSight = (navigation, actor, victim, target, heroDoids) => {
-  const origin = sightOrigin(actor);
-  if (hasLineOfSight(navigation, origin, target, 0)) return true;
-  if (!heroDoids.has(victim.doid)) return false;
-  const body = bodyPointOf(victim.actor, target);
-  return Boolean(body) && body !== target && hasLineOfSight(navigation, origin, body, 0);
-};
+const victimInSight = (navigation, actor, victim, target) =>
+  seesBody(navigation, actor, actor.position, victim.actor, target);
 
 /** The farthest it may swing from at all, given the two bodies: the bar `act` holds a swing to. */
 export const reachOf = (ai, bodies) => furthestReach(attacksOf(ai), bodies);
@@ -235,7 +218,7 @@ export const act = async (session, turn) => {
   if (turn.attackLocked) return "locked";
 
   const clearAttack =
-    turn.seesAlways || victimInSight(turn.navigation, actor, victim, target, turn.heroDoids);
+    turn.seesAlways || victimInSight(turn.navigation, actor, victim, target);
   if (distance > reachOf(ai, bodies) || !clearAttack) return "out-of-reach";
   // Backing off, it still shoots when its swing is due: it stands for the
   // swing (the lock above) and carries on after.

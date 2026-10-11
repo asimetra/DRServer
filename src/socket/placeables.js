@@ -35,8 +35,8 @@ import {
   placeableVictims,
   stateUpdate,
 } from "./combat.js";
-import { hasLineOfSight, isPositionBlocked, nearestClearPosition } from "./navigation.js";
-import { furthestAttackRange, rowBodyRadius } from "./body.js";
+import { hasLineOfSight } from "./navigation.js";
+import { bodyBlocked, bodyClearSpot, furthestAttackRange, rowBody, rowBodyRadius } from "./body.js";
 import { inFrontOf, worldColliders } from "./heading.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
@@ -547,10 +547,11 @@ export const spawnPlaceable = async (
         Math.hypot(candidate.x - reserved.x, candidate.y - reserved.y) >=
         collisionRadius + reserved.radius
     );
+  const body = rowBody(npc);
   let position = placeablePosition(origin, heading, action);
-  if (isPositionBlocked(session.navigation, position, collisionRadius) || !clearsGroup(position)) {
+  if (bodyBlocked(session.navigation, body, position, collisionRadius) || !clearsGroup(position)) {
     position =
-      nearestClearPosition(session.navigation, position, collisionRadius, {
+      bodyClearSpot(session.navigation, body, position, collisionRadius, {
         reach: 300,
         reachableFrom: origin,
         towards: origin,
@@ -630,6 +631,8 @@ export const spawnPlaceable = async (
     partyHitPoints,
     partySize,
     constant: npc.Constant,
+    // Drawn at, so its body sits at (`bodyOffsetOf`, navigation.js).
+    scale: npc.Scale ?? 1,
     abilities: new Set(
       [npc.Ability1, npc.Ability2, npc.Ability3, npc.Ability4, npc.Ability5].filter(Boolean)
     ),

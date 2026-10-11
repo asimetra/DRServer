@@ -1,7 +1,6 @@
 import { info } from "../log.js";
-import { bodyRadius } from "./body.js";
+import { bodyBlocked, bodyRadius } from "./body.js";
 import { heroMembersOf } from "./match-world.js";
-import { isPositionBlocked } from "./navigation.js";
 import { boundedPush, separationDisplacement } from "./npc-crowd.js";
 import { face } from "./npc-facing.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
@@ -71,7 +70,7 @@ export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spati
    * into the jail on the bridge tile, facing a player in plain view, never
    * moved again.
    */
-  if (!isPositionBlocked(session.navigation, actor.position, radius)) {
+  if (!bodyBlocked(session.navigation, actor, actor.position, radius)) {
     endRelease(actor);
     return "over";
   }
@@ -144,7 +143,7 @@ export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spati
   placeNpc(session, doid, actor, step);
   // It looks where it walks out, not yet at anybody (npc-facing.js).
   if (step.travel > 0.001) face(session, doid, actor, release.target);
-  if (!isPositionBlocked(session.navigation, actor.position, radius)) {
+  if (!bodyBlocked(session.navigation, actor, actor.position, radius)) {
     endRelease(actor);
     return "out";
   }

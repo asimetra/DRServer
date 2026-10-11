@@ -40,7 +40,7 @@
 import { npcForConstant, spawnNpcActions } from "../gamemaster.js";
 import { warn } from "../log.js";
 import { expireActor } from "./combat.js";
-import { isPositionBlocked, nearestClearPosition } from "./navigation.js";
+import { bodyBlocked, bodyClearSpot, rowBody } from "./body.js";
 import { TEAM } from "./opcodes.js";
 import { placeablePosition, spawnPlaceable, timelineDelayMs } from "./placeables.js";
 
@@ -56,9 +56,10 @@ const later = (session, run, delay) => {
 /** Pushed out of a wall, never out of the caster: that is where the clones stand. */
 const clearOf = (session, npc, desired, origin) => {
   const radius = Math.max(12, Number(npc.CollisionSize ?? 0) * Number(npc.Scale ?? 1));
-  if (!isPositionBlocked(session.navigation, desired, radius)) return desired;
+  const body = rowBody(npc);
+  if (!bodyBlocked(session.navigation, body, desired, radius)) return desired;
   return (
-    nearestClearPosition(session.navigation, desired, radius, {
+    bodyClearSpot(session.navigation, body, desired, radius, {
       reach: 300,
       reachableFrom: origin,
       towards: origin,

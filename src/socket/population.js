@@ -1,5 +1,5 @@
 import { TILE_SIZE } from "./tilegen.js";
-import { isPositionBlocked } from "./navigation.js";
+import { bodyBlocked, rowBody } from "./body.js";
 import { xpWeightOf } from "./run-xp.js";
 
 /**
@@ -228,14 +228,16 @@ const shuffled = (items, random) => {
 };
 
 /**
- * Deals `count` monsters over a role's markers, each marker taking its turn.
- * The first on a marker stands exactly on it, as an eighth of the corpus does;
- * the rest gather round.
+ * Deals a point to each of `bodies` (`rowBody`, body.js) over a role's
+ * markers, each marker taking its turn. The first on a marker stands exactly
+ * on it, as an eighth of the corpus does; the rest gather round.
  */
-const placeAround = (markers, count, navigation, random, radius) => {
+const placeAround = (markers, bodies, navigation, random, radius) => {
+  const count = bodies.length;
   if (!markers.length || count <= 0) return [];
   const points = [];
-  const clear = (position) => !isPositionBlocked(navigation, position, radius);
+  // The body of the one this point is for, clear of the scenery (body.js).
+  const clear = (position) => !bodyBlocked(navigation, bodies[points.length], position, radius);
 
   for (let i = 0; points.length < count; i += 1) {
     const marker = markers[i % markers.length];
@@ -308,7 +310,8 @@ export const stockFloor = (
    */
   const stock = [];
   for (const [role, entries] of byRole) {
-    const points = placeAround(shuffled(markers[role], random), entries.length, navigation, random, 35);
+    const bodies = entries.map((entry) => rowBody(gm?.npcByConstant?.get(entry.constant) ?? { Constant: entry.constant }));
+    const points = placeAround(shuffled(markers[role], random), bodies, navigation, random, 35);
     entries.slice(0, points.length).forEach((entry, index) => {
       stock.push({ ...entry, ...points[index] });
     });

@@ -80,11 +80,28 @@ export const navigationEntryFor = (constant) => navigationShapes?.get(constant) 
  * spike hits, 18 landed with the hero's *position* below the trap origin, and
  * applying this brings 24 of the 25 inside the authored shape to within three
  * units — against 6 of 25 without it.
+ *
+ * At the size the actor is drawn, as its radius is (body.js): the client
+ * builds the circle from the actor's own transform, so the offset scales
+ * with it. `actor.scale` is the scale it was generated at; one that carries
+ * none is taken at 1. Over about 472,000 official monster samples in 39 rows,
+ * the offset that best keeps the body out of the walls, divided by the row's
+ * `Scale`, is -21.5 to -22.1 for every row; KNIGHT_HALBERD (Scale 1.2) is in
+ * the walls on 3.0% of samples at -24, 0.03% at -26 and 4.1% at -30, and on
+ * 5.2% at the unscaled -22. Heroes the same: GHOST_SAMURAI fits best at -26,
+ * which is -22 x 1.176.
  */
-export const collisionPointOf = (actor, position) => {
+export const bodyOffsetOf = (actor) => {
   const shape = navigationEntryFor(actor?.constant)?.navCollisions?.[0];
-  if (!shape || !position) return position;
-  return { x: position.x + Number(shape.x ?? 0), y: position.y + Number(shape.y ?? 0) };
+  if (!shape) return null;
+  const scale = Number(actor.scale) > 0 ? Number(actor.scale) : 1;
+  return { x: Number(shape.x ?? 0) * scale, y: Number(shape.y ?? 0) * scale };
+};
+
+export const collisionPointOf = (actor, position) => {
+  const offset = bodyOffsetOf(actor);
+  if (!offset || !position) return position;
+  return { x: position.x + offset.x, y: position.y + offset.y };
 };
 
 const activeTriggerColliders = (navigation) => {

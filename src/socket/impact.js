@@ -1,7 +1,7 @@
 import { PacketWriter } from "./packet.js";
 import { CLID, OP } from "./opcodes.js";
 import { hasAbility } from "./buffs.js";
-import { moveWithNavigation } from "./navigation.js";
+import { moveBody } from "./body.js";
 
 /**
  * What a blow does to where its victim stands: knockback (`pushVictim` — the
@@ -116,8 +116,9 @@ export const pushVictim = (session, victimDoid, attackerDoid, distance, duration
   if (timed) {
     victim.ai.shove = { ...wanted, startedAt: Date.now(), durationMs, covered: FIRST_FRAME_SHARE };
   }
-  const landed = moveWithNavigation(
+  const landed = moveBody(
     session.navigation,
+    victim,
     victim.position,
     step,
     Math.max(1, Number(victim.collisionRadius) || 1)

@@ -8,10 +8,9 @@ import { loadFloor } from "../src/socket/floors.js";
 import {
   addNavigationObstacle,
   createNavigationState,
-  hasLineOfSight,
-  isPositionBlocked,
   loadNavigationLibrary,
 } from "../src/socket/navigation.js";
+import { bodyBlocked, seesBody } from "../src/socket/body.js";
 import { npcAttackChoices } from "../src/socket/npc-attacks.js";
 import { CLID, TEAM } from "../src/socket/opcodes.js";
 
@@ -267,18 +266,21 @@ test("a halberd at a hero between the prison's barrel racks ends inside its reac
   }
 });
 
-test("with all four racks standing it walks to where it sees him, swings, and stays there", async () => {
-  // No route to the hero for a body of 42, but a strip of floor east of the
-  // racks from which he is in sight, 151 from him: within the reach. From
-  // the east it stood blind against the racks 147-153 away; from farther
-  // east and from the room north of the wall it went to the open cell
-  // nearest him, behind CASTLE_PRISON_WALL_C, 191-196 away. Neither swung.
+test("with all four racks standing it finds nowhere its body sees him from, and stands", async () => {
+  // At the feet, a strip of floor east of the racks had him in sight 151
+  // from him, and a halberd walked there and swung. At the body (body.js) it
+  // does not: with its body 22 above its feet and his 22 above his, the
+  // nearest place where a body of 42 stands with his body in sight within
+  // its reach is south of the racks, 146 from him, and from none of these
+  // starts does the route search reach a place in sight of him. So it walks
+  // straight at him as it does with no route, stands where that stops, and
+  // swings through nothing.
   for (const from of [{ x: 300.9, y: 641.1 }, { x: 346, y: 639 }, { x: 600, y: 640 }, { x: 150, y: 450 }]) {
     const walk = await walkOnPrisonFloor({ x: 167, y: 684 }, from);
-    assert.equal(isPositionBlocked(walk.navigation, walk.knight.position, 42), false);
-    assert.ok(hasLineOfSight(walk.navigation, walk.knight.position, { x: 167, y: 684 }, 0), `from ${JSON.stringify(from)} it ended out of sight`);
-    assert.ok(walk.distance < 208, `from ${JSON.stringify(from)} it ended ${walk.distance.toFixed(1)} away`);
-    assert.ok(walk.swings >= 1, `from ${JSON.stringify(from)} it never swung`);
+    const seen = seesBody(walk.navigation, walk.knight, walk.knight.position, { constant: "RANGER" }, { x: 167, y: 684 });
+    assert.equal(bodyBlocked(walk.navigation, walk.knight, walk.knight.position, 42), false, `from ${JSON.stringify(from)} its body ended in the scenery`);
+    assert.equal(walk.swings, 0, `from ${JSON.stringify(from)} it swung ${walk.swings} times, ${walk.distance.toFixed(1)} away, ${seen ? "in" : "out of"} sight`);
+    assert.equal(seen, false);
     assert.ok(walk.drift < 2, `from ${JSON.stringify(from)} it kept moving: ${walk.drift.toFixed(2)} u`);
   }
 });
