@@ -1,0 +1,163 @@
+/**
+ * What the pets of a run did, counted as the analysis of the captures counts
+ * a played pet (`tools/ai-sim.js --stats`, through tools/ai-sim-census.js):
+ * every quarter second, per pet row, from the row's own TetherDist,
+ * ReturnDist and AggroRadius.
+ *
+ *   staring    the share of its time it stood (under 15 units in 2 s), had
+ *              not swung for 2 s, and had a monster for a target that a
+ *              wall hid from it
+ *   leash      stretches of more than 15 s farther than TetherDist from its
+ *              owner, and the farthest it got
+ *   heading back  of the seconds that began with it between TetherDist and
+ *              1.5 TetherDist from an owner who then stood (under 60) in its
+ *              sight, the share it closed 50 or more on him in. In sight,
+ *              because two of the harness's heroes walk through walls and
+ *              leave it no way back; an official owner does not
+ *   swings     its swings, and the share at a target farther than
+ *              TetherDist from its owner
+ *   rest       where it stands from its owner, as a share of ReturnDist,
+ *              when no monster is within its aggro radius, its owner has
+ *              moved under 20 in the last second and it under 15 in two
+ *
+ * The official, over the solo captures (WOLF_PET, RHINO_PET, DRAGON_PET):
+ * staring 3.8%, 4.4%, 0.0% of the time; no leash stretch over 15 s; heading
+ * back 66%, 87%, 85-95%; swings beyond TetherDist 4%, 8%, 31% (n 401, 117,
+ * 13); rest p50 0.61, 0.68, 0.55 of ReturnDist, in 7, 17 and 5 stands.
+ */
+
+const CHOREOGRAPHY = 143;
+const FIELD_UPDATE = 124;
+const TICKS_PER_SECOND = 4;
+const STARE_TICKS = 2 * TICKS_PER_SECOND;
+const LEASH_TICKS = 15 * TICKS_PER_SECOND;
+
+const emptyRow = () => ({
+  ticks: 0,
+  staring: 0,
+  leashStretches: 0,
+  farthest: 0,
+  backChances: 0,
+  backs: 0,
+  swings: 0,
+  swingsBeyond: 0,
+  rest: [],
+});
+
+const hypot = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+/**
+ * `rowsByConstant` the NPC rows, `sees(navigation, from, to)` the root's
+ * sight line between two points, `bodyOf(actor)` where its body is.
+ */
+export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
+  const rows = new Map();
+  const tracks = new Map();
+  const rowOf = (constant) => {
+    let row = rows.get(constant);
+    if (!row) rows.set(constant, (row = emptyRow()));
+    return row;
+  };
+
+  const tick = (session, frames) => {
+    const swung = new Set();
+    for (const frame of frames) {
+      if (frame.length >= 10 && frame.readUInt16LE(2) === FIELD_UPDATE && frame.readUInt16LE(8) === CHOREOGRAPHY) {
+        swung.add(frame.readUInt32LE(4));
+      }
+    }
+    for (const [doid, actor] of session.actors) {
+      const { ai } = actor;
+      if (ai?.kind !== "pet" || actor.dead || actor.teleportHidden || !actor.position) continue;
+      const source = rowsByConstant.get(actor.constant);
+      const ownerActor = session.actors.get(ai.ownerDoid);
+      const owner = ai.ownerDoid === session.heroDoid ? (session.heroPosition ?? ownerActor?.position) : ownerActor?.position;
+      if (!source || !owner) continue;
+      const tether = Number(source.TetherDist ?? 0) || Infinity;
+      const row = rowOf(actor.constant);
+      row.ticks++;
+      const track = tracks.get(doid) ?? { pet: [], owner: [], swung: [], beyond: 0 };
+      tracks.set(doid, track);
+      track.pet.push({ ...actor.position });
+      track.owner.push({ ...owner });
+      track.swung.push(swung.has(doid));
+      for (const list of [track.pet, track.owner, track.swung]) if (list.length > STARE_TICKS + 1) list.shift();
+      const ownerDistance = hypot(actor.position, owner);
+      const target = session.actors.get(ai.targetDoid);
+      const enemy = target && !target.dead && target.position && target.isEnemy ? target : null;
+
+      if (swung.has(doid)) {
+        row.swings++;
+        if (enemy && hypot(enemy.position, owner) > tether) row.swingsBeyond++;
+      }
+
+      const span = track.pet.length - 1;
+      const stood = span >= STARE_TICKS && hypot(track.pet[0], actor.position) < 15;
+      if (stood && !track.swung.some(Boolean) && enemy && session.navigation &&
+          !sees(session.navigation, bodyOf(actor), bodyOf(enemy))) row.staring++;
+
+      if (ownerDistance > tether) {
+        track.beyond++;
+        if (track.beyond === LEASH_TICKS + 1) row.leashStretches++;
+        row.farthest = Math.max(row.farthest, ownerDistance);
+      } else track.beyond = 0;
+
+      const back = span >= TICKS_PER_SECOND ? TICKS_PER_SECOND : 0;
+      if (back) {
+        const thenPet = track.pet[span - back];
+        const thenOwner = track.owner[span - back];
+        const then = hypot(thenPet, thenOwner);
+        const ownerInSight = !session.navigation || sees(session.navigation, bodyOf(actor), owner);
+        if (then > tether && then <= 1.5 * tether && hypot(thenOwner, owner) < 60 && ownerInSight) {
+          row.backChances++;
+          if (ownerDistance <= then - 50) row.backs++;
+        }
+      }
+
+      const aggro = Number(source.AggroRadius ?? 0);
+      const quiet = ![...session.actors.values()].some(
+        (other) => other.isEnemy && !other.dead && other.hitPoints > 0 && other.position && hypot(other.position, actor.position) <= aggro
+      );
+      const ownerStill = span >= TICKS_PER_SECOND && hypot(track.owner[span - TICKS_PER_SECOND], owner) < 20;
+      if (quiet && stood && ownerStill && Number(source.ReturnDist) > 0) {
+        row.rest.push(Math.round((100 * ownerDistance) / Number(source.ReturnDist)) / 100);
+      }
+    }
+  };
+
+  return { tick, result: () => Object.fromEntries(rows) };
+};
+
+/** Several runs' pets, summed per row. */
+export const mergePets = (results) => {
+  const rows = {};
+  for (const result of results) {
+    for (const [constant, counts] of Object.entries(result ?? {})) {
+      const row = (rows[constant] ??= emptyRow());
+      for (const key of Object.keys(row)) {
+        if (key === "rest") row.rest.push(...(counts.rest ?? []));
+        else if (key === "farthest") row.farthest = Math.max(row.farthest, counts.farthest ?? 0);
+        else row[key] += counts[key] ?? 0;
+      }
+    }
+  }
+  return rows;
+};
+
+const quantile = (values, q) => {
+  if (!values.length) return "-";
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))].toFixed(2);
+};
+const share = (part, whole) => (whole > 0 ? `${((100 * part) / whole).toFixed(1)}%` : "-");
+
+/** The pets as text, a line per row. */
+export const describePets = (rows) =>
+  Object.entries(rows ?? {}).map(
+    ([constant, row]) =>
+      `  pet ${constant.padEnd(22)} ${(row.ticks / TICKS_PER_SECOND).toFixed(0).padStart(6)} s  ` +
+      `staring ${share(row.staring, row.ticks).padStart(6)}  leash >15 s ${row.leashStretches} (farthest ${row.farthest.toFixed(0)})  ` +
+      `heading back ${share(row.backs, row.backChances)} of ${row.backChances}  ` +
+      `swings ${row.swings}, beyond TetherDist ${share(row.swingsBeyond, row.swings)}  ` +
+      `rest/ReturnDist p10/50/90 ${quantile(row.rest, 0.1)}/${quantile(row.rest, 0.5)}/${quantile(row.rest, 0.9)} (n ${row.rest.length})`
+  );

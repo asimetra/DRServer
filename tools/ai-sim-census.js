@@ -24,6 +24,9 @@
  *               worked out here the same way for every root, so it measures
  *               where a root puts its monsters, not how it reckons bodies.
  *
+ *   pets        what the player's pet did: staring at a monster behind a
+ *               wall, its leash, where it rests (tools/pet-metrics.js)
+ *
  *   crowd       how the monsters crowd round the hero, counted by
  *               tools/crowd-metrics.js as tools/crowd-corpus.js counts the
  *               official: bodies overlapping, what a chaser held behind
@@ -39,6 +42,7 @@
  */
 
 import { attackClassOf, createCrowdMetrics, crowdProfile, describeCrowd, mergeCrowd } from "./crowd-metrics.js";
+import { createPetMetrics, describePets, mergePets } from "./pet-metrics.js";
 
 const FIELD_UPDATE = 124;
 /** Every hero's body as the corpus is counted with (tools/crowd-corpus.js): radius 25.87, its middle as far above the feet. */
@@ -77,7 +81,7 @@ const facesRight = (heading) => Math.cos((heading * Math.PI) / 180) >= 0;
 export const createCensus = async (modules) => {
   const gm = await modules.gamemaster.loadGameMaster();
   const scaleOf = new Map((gm.raw.Npc ?? []).map((row) => [row.Constant, Number(row.Scale ?? 1) || 1]));
-  const { navigationEntryFor, isPositionBlocked } = modules.navigation;
+  const { navigationEntryFor, isPositionBlocked, hasLineOfSight } = modules.navigation;
   /** Its body: the library's circle above the feet, at the size it is drawn. */
   const bodyOf = (actor) => {
     const shape = navigationEntryFor(actor.constant)?.navCollisions?.[0];
@@ -96,6 +100,11 @@ export const createCensus = async (modules) => {
     if (isPositionBlocked(navigation, feet, radius + TOUCH)) row.feetTouching++;
   };
   const rows = new Map();
+  const petCensus = createPetMetrics({
+    rowsByConstant: new Map((gm.raw.Npc ?? []).map((row) => [row.Constant, row])),
+    sees: (navigation, from, to) => hasLineOfSight(navigation, from, to, 0),
+    bodyOf,
+  });
   const lastHeading = new Map();
   const attackRows = new Map((gm.raw.Attack ?? []).map((attack) => [attack.Id, attack]));
   const crowd = createCrowdMetrics({ tickMs: 250 });
@@ -243,9 +252,13 @@ export const createCensus = async (modules) => {
       if (headingsThisTick.has(doid)) rowOf(session.actors.get(doid).constant).swingsFaced++;
     }
     sampleCrowd(session, crowdSwings);
+    petCensus.tick(session, frames);
   };
 
-  return { tick, result: () => ({ rows: Object.fromEntries(rows), crowd: crowd.result(), frozen, frozenAt }) };
+  return {
+    tick,
+    result: () => ({ rows: Object.fromEntries(rows), crowd: crowd.result(), frozen, frozenAt, pets: petCensus.result() }),
+  };
 };
 
 /** Several runs' results, summed per row, and their crowds. */
@@ -262,6 +275,7 @@ export const mergeCensus = (results) => {
     crowd: mergeCrowd(results.map((result) => result.crowd).filter(Boolean)),
     frozen: results.reduce((sum, result) => sum + (result.frozen ?? 0), 0),
     frozenAt: results.flatMap((result) => result.frozenAt ?? []).slice(0, 8),
+    pets: mergePets(results.map((result) => result.pets)),
   };
 };
 
@@ -279,7 +293,7 @@ const line = (name, row, tickSeconds) => {
 };
 
 /** The census as text: the total, then the rows with the most engaged time. */
-export const describeCensus = (label, { rows, crowd, frozen = 0, frozenAt = [] }, tickSeconds, { top = 8 } = {}) => {
+export const describeCensus = (label, { rows, crowd, frozen = 0, frozenAt = [], pets = {} }, tickSeconds, { top = 8 } = {}) => {
   const total = rows;
   const sum = Object.values(total).reduce((into, row) => {
     for (const key of Object.keys(into)) into[key] += row[key];
@@ -291,5 +305,6 @@ export const describeCensus = (label, { rows, crowd, frozen = 0, frozenAt = [] }
   if (crowd) lines.push(...describeCrowd(crowd));
   lines.push(`  frozen chasers (engaged, a route, nothing in the way, still 3 s or more): ${frozen}`);
   for (const where of frozenAt) lines.push(`    ${where}`);
+  lines.push(...describePets(pets));
   return lines;
 };
