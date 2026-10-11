@@ -22,7 +22,7 @@ import { isPlausiblePosition } from "./coordinates.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { npcGenerate, objectDisable } from "./objects.js";
 import { variantFor } from "../content-packs.js";
-import { npcHeadingUpdate } from "./ai.js";
+import { npcHeadingUpdate } from "./npc-move.js";
 import { npcAttackChoices, npcAttackSpeed } from "./npc-attacks.js";
 import { isScenery } from "./actor-roles.js";
 import { membersOf } from "./match-world.js";

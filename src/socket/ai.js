@@ -5,7 +5,7 @@ import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
 import { isHuntable } from "./actor-roles.js";
 import { performNpcAttack } from "./combat.js";
-import { buffMultiplierFor, hasAbility } from "./buffs.js";
+import { attackStopped, buffMultiplierFor } from "./buffs.js";
 import { heroMembersOf, matchStateOf, worldOf } from "./match-world.js";
 import { collectNearbyForPet } from "./pickups.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
@@ -17,23 +17,9 @@ import {
 } from "./navigation.js";
 import { objectDisable } from "./objects.js";
 import { bodyPointOf, bodyRadius, contact, furthestReach, reach, sightOrigin, standoff } from "./body.js";
+import { faceTarget, keptOutOfHeroes, placeNpc, stepNpc } from "./npc-move.js";
 import { searchRoute } from "./route-memo.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
-
-const npcPositionUpdate = (doid, position) =>
-  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
-    .u32(doid)
-    .u16(132) // DistributedNPCGameObject.position
-    .f32(position.x)
-    .f32(position.y)
-    .frame();
-
-export const npcHeadingUpdate = (doid, heading) =>
-  new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
-    .u32(doid)
-    .u16(133) // DistributedNPCGameObject.heading
-    .f32(heading)
-    .frame();
 
 const npcTimelineAction = (doid, timeline) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
@@ -165,78 +151,6 @@ const teleportDestinationFor = (session, actor, target, bodies, random) => {
 };
 
 /**
- * The one position this server must never send: a body inside the player's.
- *
- * On the client the local hero is the only dynamic Box2D body in the room. Every
- * monster collider is static — `CircleNavCollider.buildBody` takes a plain
- * `B2BodyDef`, which is static by default, and `HeroGameObjectOwner` is the only
- * thing that ever assigns `b2_dynamicBody`. That asymmetry is the whole story of
- * the shoving:
- *
- *   a static body a player walks into does nothing. The player is blocked and
- *   stops, which is ordinary collision and how it should feel;
- *
- *   a static body *moved into* the player is resolved by Box2D's position
- *   correction, and since only one of the two can move, the player is what
- *   moves. That is the slide.
- *
- * So the question is not how close a monster stands, it is how often we send it
- * somewhere overlapping. Measured on six knights round one player, before this:
- * 7.3% of emitted positions overlapped while the player stood still, and 14.9%
- * while the player walked — one in seven, a median of 6.3 units deep and up to
- * 43. Walking is worse for the obvious reason, that the chase aims at where the
- * player was last heard from and the player is no longer there.
- *
- * The whole step is swept, not merely its destination. A fast attack lunge can
- * begin on one side of the hero and end outside the body on the other side; an
- * endpoint-only check called both ends safe and sent a 100-200 unit apparent
- * teleport straight through the player. The first circle intersection is the
- * furthest legal destination on that step. This still runs before navigation,
- * so a wall wins the argument afterward.
- */
-const keptOutOfHeroes = (target, actor, heroes) => {
-  const start = actor.position;
-  let { x, y } = target;
-  for (const hero of heroes) {
-    if (!hero.position || !hero.actor) continue;
-    const bodies = contact(actor, hero.actor);
-    const fromX = start.x - hero.position.x;
-    const fromY = start.y - hero.position.y;
-    const fromDistance = Math.hypot(fromX, fromY);
-    const stepX = x - start.x;
-    const stepY = y - start.y;
-    const stepLengthSquared = stepX * stepX + stepY * stepY;
-    if (stepLengthSquared < 1e-9) continue;
-
-    const towards = fromX * stepX + fromY * stepY;
-    if (fromDistance < bodies - 0.001) {
-      const targetX = x - hero.position.x;
-      const targetY = y - hero.position.y;
-      const targetDistance = Math.hypot(targetX, targetY);
-      if (targetDistance >= bodies) continue;
-      // Separation and backwards attack movement must still be able to lift an
-      // already-overlapping spawn out. An inward/crossing step, however, keeps
-      // the existing visible position instead of choosing the opposite side.
-      if (towards <= 0 || targetDistance < 0.001) return { ...start };
-      x = hero.position.x + (targetX / targetDistance) * bodies;
-      y = hero.position.y + (targetY / targetDistance) * bodies;
-      continue;
-    }
-
-    if (fromDistance <= bodies + 0.001 && towards >= 0) continue;
-
-    const c = fromX * fromX + fromY * fromY - bodies * bodies;
-    const discriminant = 4 * towards * towards - 4 * stepLengthSquared * c;
-    if (discriminant < 0) continue;
-    const root = (-2 * towards - Math.sqrt(discriminant)) / (2 * stepLengthSquared);
-    if (root < 0 || root > 1) continue;
-    x = start.x + stepX * root;
-    y = start.y + stepY * root;
-  }
-  return { x, y };
-};
-
-/**
  * How a kiter backs off: measured, not authored.
  *
  * Every official capture, every KITE_AI monster with a keep distance, the
@@ -339,6 +253,13 @@ export const chooseNpcAttack = (
   const roll = Math.min(1 - Number.EPSILON, Math.max(0, Number(random()) || 0));
   return choices[Math.floor(roll * choices.length)];
 };
+
+/**
+ * When it next picks a target: `ChangeTargetT` and a fresh roll of up to
+ * `ChangeTargetRand` on top, a quarter of a second at least.
+ */
+const nextTargetPick = (ai, now) =>
+  now + Math.max(250, (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0));
 
 const clearNpcTarget = (actor) => {
   const { ai } = actor;
@@ -515,24 +436,6 @@ const separationDisplacement = (
 };
 
 /**
- * Takes out of a step whatever part of it runs into a body already touched.
- *
- * The rest is kept, so an actor slides around what it cannot pass through. Only
- * the walking half is filtered: the push is what resolves the contact and must
- * survive, and it points out of every contact it was computed from anyway.
- */
-const withoutDrivingIntoContacts = (move, contacts) => {
-  let { x, y } = move;
-  for (const contact of contacts) {
-    const into = x * contact.x + y * contact.y;
-    if (into >= 0) continue;
-    x -= into * contact.x;
-    y -= into * contact.y;
-  }
-  return { x, y };
-};
-
-/**
  * How far a body may be shoved in one tick.
  *
  * At most as fast as it could walk, undebuffed. A crowd moves a body, it does
@@ -548,31 +451,6 @@ const boundedPush = (separation, ai, deltaSeconds) => {
   if (push <= 0.001) return { x: 0, y: 0 };
   const travel = Math.min((ai?.moveSpeed ?? 0) * deltaSeconds, push);
   return { x: (separation.x / push) * travel, y: (separation.y / push) * travel };
-};
-
-/**
- * Shares one movement budget between intentional motion and crowd correction.
- *
- * The separation vector used to be added after a complete walking step, so a
- * crowded chaser could move at nearly twice BaseMove. The official p90 sits on
- * BaseMove. The normal budget therefore caps the sum; an authored attack lunge
- * that is already longer remains authoritative, but separation cannot make it
- * longer still. With movement disabled the walk is zero while the undebuffed
- * body-push budget remains, so a stunned actor can still be displaced out of a
- * collision without walking under its own power.
- */
-const movementWithinBudget = (motion, separation, ai, deltaSeconds) => {
-  const x = motion.x + separation.x;
-  const y = motion.y + separation.y;
-  const requested = Math.hypot(x, y);
-  if (requested <= 0.001) return { x: 0, y: 0 };
-
-  const authoredMotion = Math.hypot(motion.x, motion.y);
-  const walkingBudget = Math.max(0, Number(ai?.moveSpeed) || 0) *
-    Math.max(0, Number(deltaSeconds) || 0);
-  const budget = Math.max(walkingBudget, authoredMotion);
-  if (requested <= budget || budget <= 0) return budget > 0 ? { x, y } : { x: 0, y: 0 };
-  return { x: (x / requested) * budget, y: (y / requested) * budget };
 };
 
 /**
@@ -604,27 +482,16 @@ const separateIdleNpc = (
       correctionShare: 1,
     }
   );
-  const separation = boundedPush(crowding, actor.ai, deltaSeconds);
-  const movement = movementWithinBudget({ x: 0, y: 0 }, separation, actor.ai, deltaSeconds);
-  if (Math.hypot(movement.x, movement.y) <= 0.001) return false;
-
-  const wanted = keptOutOfHeroes(
-    { x: actor.position.x + movement.x, y: actor.position.y + movement.y },
-    actor,
-    heroes
-  );
-  const nextPosition = moveWithNavigation(
-    session.navigation,
-    actor.position,
-    { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
-    bodyRadius(actor)
-  );
-  const actualTravel = distanceTo(actor.position, nextPosition);
-  if (actualTravel <= 0.001) return false;
-
-  actor.position.x = nextPosition.x;
-  actor.position.y = nextPosition.y;
-  session.send(npcPositionUpdate(doid, actor.position));
+  const step = stepNpc(session.navigation, actor, {
+    walk: { x: 0, y: 0 },
+    separation: boundedPush(crowding, actor.ai, deltaSeconds),
+    heroes,
+    radius: bodyRadius(actor),
+    deltaSeconds,
+    ignoresSmall: "movement",
+  });
+  if (!step || step.travel <= 0.001) return false;
+  placeNpc(session, doid, actor, step);
   return true;
 };
 
@@ -733,14 +600,6 @@ const routeToTarget = (session, actor, target, now, heroes = []) => {
   return { waypoint: ai.path?.[ai.pathIndex] ?? null, direct: false };
 };
 
-const faceTarget = (session, doid, actor, target) => {
-  if (actor.ai?.lockRotation) return;
-  const heading = (Math.atan2(target.y - actor.position.y, target.x - actor.position.x) * 180) / Math.PI;
-  if (Math.abs(heading - actor.heading) < 0.5) return;
-  actor.heading = heading;
-  session.send(npcHeadingUpdate(doid, heading));
-};
-
 /**
  * The gap before this NPC may swing again, rolled fresh each time.
  *
@@ -838,36 +697,24 @@ const advanceNpcRelease = (
   const separation = spatialIndex
     ? boundedPush(separationDisplacement(doid, actor, spatialIndex, heroDoids), ai, deltaSeconds)
     : { x: 0, y: 0 };
-  const movement = movementWithinBudget(
-    distance > 0.001
-      ? {
-          x: ((release.target.x - actor.position.x) / distance) * travel,
-          y: ((release.target.y - actor.position.y) / distance) * travel,
-        }
-      : { x: 0, y: 0 },
-    separation,
-    ai,
-    deltaSeconds
-  );
   // A cage exit may not run through the player either; see `keptOutOfHeroes`.
   // The release point is a doorway, not a destination, and walking a body into
   // the one dynamic body on the client shoves the player whatever the reason.
-  const wanted = keptOutOfHeroes(
-    {
-      x: actor.position.x + movement.x,
-      y: actor.position.y + movement.y,
-    },
-    actor,
-    heroes
-  );
-  const nextPosition = moveWithNavigation(
-    session.navigation,
-    actor.position,
-    { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
+  const step = stepNpc(session.navigation, actor, {
+    walk:
+      distance > 0.001
+        ? {
+            x: ((release.target.x - actor.position.x) / distance) * travel,
+            y: ((release.target.y - actor.position.y) / distance) * travel,
+          }
+        : { x: 0, y: 0 },
+    separation,
+    heroes,
     radius,
-    { ignoredColliders: release.ignoredColliders }
-  );
-  const actualTravel = distanceTo(actor.position, nextPosition);
+    deltaSeconds,
+    navigationOptions: { ignoredColliders: release.ignoredColliders },
+  });
+  const actualTravel = step.travel;
 
   /**
    * A release has to be able to fail.
@@ -895,12 +742,7 @@ const advanceNpcRelease = (
     }
   }
 
-  actor.position.x = nextPosition.x;
-  actor.position.y = nextPosition.y;
-  if (actualTravel > 0.001) {
-    faceTarget(session, doid, actor, release.target);
-    session.send(npcPositionUpdate(doid, actor.position));
-  }
+  placeNpc(session, doid, actor, step, release.target);
   if (!isPositionBlocked(session.navigation, actor.position, radius)) {
     ai.release = null;
     clearNpcTarget(actor);
@@ -933,13 +775,12 @@ export const slideShoved = (session, doid, actor, now) => {
     { x: shove.x * step, y: shove.y * step },
     bodyRadius(actor)
   );
-  if (distanceTo(actor.position, nextPosition) < 0.5) {
+  const travel = distanceTo(actor.position, nextPosition);
+  if (travel < 0.5) {
     actor.ai.shove = null;
     return true;
   }
-  actor.position.x = nextPosition.x;
-  actor.position.y = nextPosition.y;
-  session.send(npcPositionUpdate(doid, actor.position));
+  placeNpc(session, doid, actor, { next: nextPosition, travel });
   return true;
 };
 
@@ -1013,10 +854,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       petAggressors.set(nextPet, (petAggressors.get(nextPet) ?? 0) + 1);
     }
     ai.targetDoid = target?.doid ?? null;
-    ai.nextTargetAt = now + Math.max(
-      250,
-      (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0)
-    );
+    ai.nextTargetAt = nextTargetPick(ai, now);
     return target;
   };
 
@@ -1074,10 +912,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     if (locked && now < (ai.nextTargetAt ?? 0)) return locked;
     const victim = nearestTo(actor.position, beastTargets);
     ai.targetDoid = victim?.doid ?? null;
-    ai.nextTargetAt = now + Math.max(
-      250,
-      (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0)
-    );
+    ai.nextTargetAt = nextTargetPick(ai, now);
     return victim;
   };
 
@@ -1139,7 +974,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       } else {
         victim = nearestTo(actor.position, huntable);
         ai.targetDoid = victim?.doid ?? null;
-        ai.nextTargetAt = now + Math.max(250, (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0));
+        ai.nextTargetAt = nextTargetPick(ai, now);
       }
       if (!victim) {
         clearNpcTarget(actor);
@@ -1273,8 +1108,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
      * split through `PARALYZED` and `DISABLE_CONTROLS` respectively.
      */
     const mobility = buffMultiplierFor(session, doid, "MOVEMENT");
-    const cannotAttack = ["STUN", "SHOCK", "PARALYZED", "DISABLE_CONTROLS"]
-      .some((ability) => hasAbility(session, doid, ability));
+    const cannotAttack = attackStopped(session, doid);
     const topSpeed = ai.moveSpeed * mobility;
     const attackLocked = now < (ai.attackLockedUntil ?? 0);
 
@@ -1453,29 +1287,18 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     }
     if (ai.kind !== "pet" && !usedOrdinaryWalk) ai.walkSpeed = 0;
 
-    const walk = withoutDrivingIntoContacts({ x: chaseX, y: chaseY }, crowding.contacts);
-    const movement = movementWithinBudget(walk, separation, ai, deltaSeconds);
-    const wanted = keptOutOfHeroes(
-      { x: actor.position.x + movement.x, y: actor.position.y + movement.y },
-      actor,
-      heroes
-    );
-    const requestedTravel = distanceTo(actor.position, wanted);
     const before = { x: actor.position.x, y: actor.position.y };
-    if (requestedTravel > 0.001) {
-      const nextPosition = moveWithNavigation(
-        state.navigation,
-        actor.position,
-        { x: wanted.x - actor.position.x, y: wanted.y - actor.position.y },
-        radius
-      );
-      const actualTravel = distanceTo(actor.position, nextPosition);
-      actor.position.x = nextPosition.x;
-      actor.position.y = nextPosition.y;
-      if (actualTravel > 0.001) {
-        faceTarget(session, doid, actor, route.waypoint ?? target);
-        session.send(npcPositionUpdate(doid, actor.position));
-      }
+    const step = stepNpc(state.navigation, actor, {
+      walk: { x: chaseX, y: chaseY },
+      contacts: crowding.contacts,
+      separation,
+      heroes,
+      radius,
+      deltaSeconds,
+      ignoresSmall: "wanted",
+    });
+    if (step) {
+      placeNpc(session, doid, actor, step, route.waypoint ?? target);
       distance = distanceTo(actor.position, target);
     }
     // A wall, a crowd or a player in the way: it fights from where it stands.

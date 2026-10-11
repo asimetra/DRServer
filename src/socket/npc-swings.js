@@ -1,5 +1,5 @@
 import { attackById, FRAMES_PER_SECOND, invulnerableForMs, suicideDelayMs } from "../gamemaster.js";
-import { buffMultiplierFor, grantBuff, hasAbility } from "./buffs.js";
+import { attackStopped, buffMultiplierFor, grantBuff } from "./buffs.js";
 import { swingBodyRadius, swingOrigin } from "./body.js";
 import { floorAttackSpeedScale, npcAttackSpeed, npcAttackSpeedStat } from "./npc-attacks.js";
 import { worldColliders } from "./heading.js";
@@ -105,10 +105,6 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
   return true;
 };
 
-const npcAttackDisabled = (session, doid) =>
-  ["STUN", "SHOCK", "PARALYZED", "DISABLE_CONTROLS"]
-    .some((ability) => hasAbility(session, doid, ability));
-
 const landNpcSwing = async (
   session,
   attackerDoid,
@@ -121,7 +117,7 @@ const landNpcSwing = async (
   const attacker = session.actors?.get(attackerDoid);
   const victim = session.actors?.get(victimDoid);
   if (!attacker || attacker.dead || !victim || victim.dead) return false;
-  if (npcAttackDisabled(session, attackerDoid)) return false;
+  if (attackStopped(session, attackerDoid)) return false;
 
   if (shape?.length) {
     /**
@@ -214,7 +210,7 @@ const launchNpcProjectile = (session, attackerDoid, ai, attack, launch = {}) => 
   const attacker = session.actors?.get(attackerDoid);
   const projectile = ai.projectile;
   if (!attacker || attacker.dead || !projectile || !attacker.position) return false;
-  if (npcAttackDisabled(session, attackerDoid)) return false;
+  if (attackStopped(session, attackerDoid)) return false;
 
   /**
    * The client's own transform, which keeps four things apart:

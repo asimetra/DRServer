@@ -391,6 +391,17 @@ export const hasBuff = (session, actorDoid, constant) => {
 };
 
 /**
+ * The abilities that stop a monster swinging: a stun, and shock, paralysis
+ * and disabled controls, which stop the moving too (ai.js, where `MOVEMENT`
+ * is read). A root is not one of them; a rooted monster still swings.
+ */
+export const ATTACK_STOPPING_ABILITIES = ["STUN", "SHOCK", "PARALYZED", "DISABLE_CONTROLS"];
+
+/** Whether something on this actor stops it swinging; see `ATTACK_STOPPING_ABILITIES`. */
+export const attackStopped = (session, actorDoid) =>
+  ATTACK_STOPPING_ABILITIES.some((ability) => hasAbility(session, actorDoid, ability));
+
+/**
  * Whether any buff on this actor carries a given `Ability1`.
  *
  * The kind is named there rather than implied by the numbers: STUN and ROOT

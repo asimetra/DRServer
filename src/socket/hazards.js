@@ -1,5 +1,5 @@
 import { FRAMES_PER_SECOND } from "../gamemaster.js";
-import { npcHeadingUpdate } from "./ai.js";
+import { npcHeadingUpdate } from "./npc-move.js";
 import {
   isPartyHero,
   dealTrapHit,
