@@ -130,6 +130,12 @@ const inTheWay = (from, way, body) => {
   return distance < 0.001 || (dx * way.x + dy * way.y) / distance >= AHEAD;
 };
 
+/** How far off a body still counts as touching it: what a sweep to its edge leaves of rounding. */
+const TOUCH_SLACK = 0.01;
+
+/** How little a walk may run into a body it touches, as a cosine, and still be along it. */
+const TANGENT = 0.01;
+
 /**
  * The first of `bodies` a walk from `from` would touch, and the share of the
  * walk (0 to 1) it gets before it does; null when it touches none. A body it
@@ -144,7 +150,11 @@ const firstMet = (from, walk, bodies) => {
     const towards = dx * walk.x + dy * walk.y;
     if (towards >= 0) continue;
     const gap = dx * dx + dy * dy - body.touching * body.touching;
-    if (gap <= 0) return { share: 0, body };
+    // A walk along a body it touches, slid onto its tangent, is not into it.
+    if (gap <= 0) {
+      if (towards > -TANGENT * Math.sqrt(lengthSquared * (dx * dx + dy * dy))) continue;
+      return { share: 0, body };
+    }
     const discriminant = towards * towards - lengthSquared * gap;
     if (discriminant < 0) continue;
     const root = (-towards - Math.sqrt(discriminant)) / lengthSquared;
@@ -163,41 +173,98 @@ const firstMet = (from, walk, bodies) => {
  * chaser held behind another with the hero up and standing still, 49.2%
  * waited out the next second, 10.8% walked round it and 0.8% ended inside
  * it; with the hero moving (n 20,148) it waited 11.1% and went on as the
- * crowd moved — the wait ends when the hero moves. A body beside it,
- * touched, keeps whatever part of the walk runs along it, so two walking
- * side by side to one hero do not hold each other. A walk cut to less than a tenth of itself is not taken
- * (`blocked`): a waiting body stands rather than creeping up a unit a tick,
- * and sets off from standing when it goes.
+ * crowd moved. A body beside it, touched, keeps whatever part of the walk
+ * runs along it, so two walking side by side to one hero do not hold each
+ * other. A walk cut to less than a tenth of itself is not taken (`blocked`):
+ * a waiting body stands rather than creeping up a unit a tick, and sets off
+ * from standing when it goes.
+ *
+ * A wait ends (`passing`, decided by the move stage, ai.js): then a body in
+ * its way is gone round as one beside it is — the part of the walk into it
+ * dropped, or, met head on, the walk turned to the side it leans to — and
+ * the walk still stops where it would touch the next body.
  *
  * Touching or inside another body, nothing walks it deeper: a lunge, a
  * knockback or a burst spawned on one spot leaves bodies inside one another,
  * and the crowd's push lifts them apart.
  */
-const heldByBodies = (actor, walk, bodies) => {
+const heldByBodies = (actor, walk, bodies, passing = false) => {
+  const held = heldOnSide(actor, walk, bodies, passing, 1);
+  // Going round, a side the crowd closes is tried the other way round.
+  return passing && held.blocked ? heldOnSide(actor, walk, bodies, passing, -1) : held;
+};
+
+const heldOnSide = (actor, walk, bodies, passing, flip) => {
   const length = Math.hypot(walk.x, walk.y);
   if (!bodies?.length || length < 1e-6) return { walk, blocked: false };
   const from = bodyPointOf(actor, actor.position);
   const way = { x: walk.x / length, y: walk.y / length };
   let along = walk;
-  // Bodies already touched: one in the way holds it, one beside it is walked along.
+  // Bodies already touched: one in the way holds it, one beside it is walked
+  // along. Going round, so is one in its way that this step would reach.
   for (const body of bodies) {
     const dx = from.x - body.x;
     const dy = from.y - body.y;
     const distance = Math.hypot(dx, dy);
-    if (distance > body.touching) continue;
+    // A body a sweep left at its touching distance is touched, a rounding error or not.
+    if (distance > body.touching + TOUCH_SLACK + (passing && inTheWay(from, way, body) ? length : 0)) continue;
     const into = along.x * dx + along.y * dy;
     if (into >= 0) continue;
-    if (inTheWay(from, way, body)) return { walk: { x: 0, y: 0 }, blocked: true };
+    const inWay = inTheWay(from, way, body);
+    if (inWay && !passing) return { walk: { x: 0, y: 0 }, blocked: true };
     const normal = distance < 0.001 ? way : { x: dx / distance, y: dy / distance };
     const inward = along.x * normal.x + along.y * normal.y;
     along = { x: along.x - inward * normal.x, y: along.y - inward * normal.y };
+    // Passing one met head on, there is no along to keep: it goes round on
+    // the side of the body it already stands out to (`flip` -1: the other),
+    // at the walk's own length.
+    if (inWay && Math.hypot(along.x, along.y) < PASS_HEADWAY * length) {
+      const out = dx * -way.y + dy * way.x;
+      const side = (out >= 0 ? 1 : -1) * flip;
+      const tangent = { x: -normal.y, y: normal.x };
+      const sign = (tangent.x * -way.y + tangent.y * way.x) * side >= 0 ? 1 : -1;
+      along = { x: tangent.x * sign * length, y: tangent.y * sign * length };
+    }
   }
-  const met = firstMet(from, along, bodies);
-  const share = met ? met.share : 1;
-  const taken = { x: along.x * share, y: along.y * share };
+  const taken = sweptAlong(from, way, along, bodies, passing);
   if (Math.hypot(taken.x, taken.y) < HEADWAY * length) return { walk: { x: 0, y: 0 }, blocked: true };
   return { walk: taken, blocked: false };
 };
+
+/**
+ * Where a walk from `from` gets to among `bodies`: up to the first body it
+ * meets. One in its way (`way`, `AHEAD`) stops it there, unless it is going
+ * round (`passing`); one beside it is slid along from the point they meet,
+ * as one already touched is — wherever the sweep first meets it, a step's
+ * length off or at a rounding error from touching. Two bodies side by side
+ * that each walk a little into the other therefore slide past each other;
+ * neither holds the other.
+ */
+const SLIDES = 3;
+const sweptAlong = (from, way, walk, bodies, passing) => {
+  let at = from;
+  let rest = walk;
+  const taken = { x: 0, y: 0 };
+  for (let slide = 0; slide <= SLIDES; slide++) {
+    const met = firstMet(at, rest, bodies);
+    const share = met ? met.share : 1;
+    taken.x += rest.x * share;
+    taken.y += rest.y * share;
+    if (!met || slide === SLIDES || (!passing && inTheWay(from, way, met.body))) break;
+    at = { x: from.x + taken.x, y: from.y + taken.y };
+    const dx = at.x - met.body.x;
+    const dy = at.y - met.body.y;
+    const distance = Math.hypot(dx, dy) || 1;
+    const left = { x: rest.x * (1 - share), y: rest.y * (1 - share) };
+    const inward = (left.x * dx + left.y * dy) / distance;
+    rest = inward < 0 ? { x: left.x - (inward * dx) / distance, y: left.y - (inward * dy) / distance } : left;
+    if (Math.hypot(rest.x, rest.y) < 1e-6) break;
+  }
+  return taken;
+};
+
+/** Less of its walk than this left by sliding, a monster going round a body turns to the body's side. */
+const PASS_HEADWAY = 0.3;
 
 /**
  * Takes out of a step whatever part of it runs into a player already touched.
@@ -284,7 +351,8 @@ const sceneryRefused = (actor, walk, { wanted, next }) => {
  *
  * `contacts` are the players it touches and `bodies` the monsters it may not
  * walk into, as `separationDisplacement` gives them; `blocked` is a walk the
- * monsters in its way did not let it take (`heldByBodies`). A caller whose
+ * monsters in its way did not let it take (`heldByBodies`), and `passing`
+ * a walk whose wait is over and goes round them. A caller whose
  * step is carried rather than walked — a lunge, a cage's burst walking out —
  * gives no `bodies`. `separation` is the crowd's push, already bounded. `ignoresSmall` is
  * where a step of a thousandth or less is dropped without asking navigation:
@@ -302,8 +370,8 @@ const sceneryRefused = (actor, walk, { wanted, next }) => {
  * with a crowd pushing.
  */
 export const stepNpc = (navigation, actor, options) => {
-  const { walk, contacts = [], bodies, separation, deltaSeconds, steering = false } = options;
-  const held = heldByBodies(actor, withoutDrivingIntoContacts(walk, contacts), bodies);
+  const { walk, contacts = [], bodies, passing = false, separation, deltaSeconds, steering = false } = options;
+  const held = heldByBodies(actor, withoutDrivingIntoContacts(walk, contacts), bodies, passing);
   const movement = movementWithinBudget(
     held.walk,
     separation,

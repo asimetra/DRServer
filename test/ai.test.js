@@ -364,6 +364,8 @@ const knightBehind = (at) => {
 
 test("a monster held behind another waits at its body, and goes on when the hero moves", async () => {
   const { session, front, behind } = knightBehind({ x: 200, y: 20 });
+  // A wait that does not run out in this test (`waitFor`, ai.js): ~33 s.
+  session.random = () => 0.999999;
   let nearest = Infinity;
   for (let tick = 0; tick < 20; tick++) {
     await tickNpcAi(session, 1000 + tick * 250, 0.25);
@@ -373,7 +375,7 @@ test("a monster held behind another waits at its body, and goes on when the hero
    * The official: of 11,958 samples of a chaser held behind another with the
    * hero still, 49.2% waited out the second and 10.8% walked round it. Ours
    * used to keep the part of its walk that ran along the other body and slide
-   * round it to the hero.
+   * round it to the hero at once.
    */
   assert.ok(nearest >= 70 - 0.5, `walked into the knight in front: ${nearest}`);
   const fromHero = Math.hypot(behind.position.x, behind.position.y);
@@ -393,6 +395,43 @@ test("a monster held behind another waits at its body, and goes on when the hero
   );
 });
 
+/**
+ * A queue does not stand for good behind a monster going nowhere.
+ *
+ * On 838788c a shaman imp, a freeze imp and a suicide yeti stood 94 s behind
+ * an ice imp shooting from range, 380-560 from the hero. The official's waits
+ * end, about 0.42 a second (ai.js `WAIT_ENDS_PER_SECOND`), and it goes round.
+ */
+test("a shooter standing in range does not freeze the chasers queued behind it", async () => {
+  const { session, knightDoid, front, behind } = knightBehind({ x: 420, y: 0 });
+  // The head: a shooter whose walk ended 300 from the hero, its shot due never.
+  front.position = { x: 300, y: 0 };
+  front.ai.keepDistance = 300;
+  front.ai.attackRange = 600;
+  front.ai.behavior = "KITE_AI";
+  front.ai.attacks = [{ attackType: 920050, range: 600, minRange: 0, rechargeMs: 0, readyAt: 0, projectile: { Constant: "ARROW" } }];
+  const thirdDoid = knightDoid + 2;
+  const third = structuredClone(behind);
+  third.position = { x: 500, y: 0 };
+  session.objects.set(thirdDoid, CLID.DistributedNPCGameObject);
+  session.actors.set(thirdDoid, third);
+  session.random = () => 0.5; // waits of 1.65 s
+  let deepest = 0;
+  for (let tick = 0; tick < 60; tick++) {
+    await tickNpcAi(session, 1000 + tick * 250, 0.25);
+    for (const [a, b] of [[front, behind], [front, third], [behind, third]]) {
+      deepest = Math.max(deepest, 70 - Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y));
+    }
+  }
+  for (const chaser of [behind, third]) {
+    const fromHero = Math.hypot(chaser.position.x, chaser.position.y);
+    // Past the shooter, a body nearer the hero than it; the second may be waiting behind the first at him.
+    assert.ok(fromHero <= 300 - 70, `a chaser stood behind the shooter, ${Math.round(fromHero)} from the hero`);
+  }
+  assert.ok(Math.hypot(front.position.x, front.position.y) >= 290, "and the shooter kept its range");
+  assert.ok(deepest <= 1, `going round, nobody walked into anybody: ${deepest.toFixed(1)} deep`);
+});
+
 /** The swings `doid` makes, as `session.send` sees them. */
 const swingsOf = (session, doid) => {
   const swings = [];
@@ -407,8 +446,9 @@ const swingsOf = (session, doid) => {
 };
 
 test("a monster held behind another does not swing past it, and swings once it walks in", async () => {
-  // Standing touching the knight in front: it has nowhere to walk.
+  // Standing touching the knight in front: it has nowhere to walk, and a wait that does not run out here.
   const { session, knightDoid, front, behind } = knightBehind({ x: 140, y: 0 });
+  session.random = () => 0.999999;
   behind.ai.nextAttackAt = 0;
   behind.ai.attacks = [{ attackType: 920050, range: 80, minRange: 0, rechargeMs: 0, readyAt: 0, attackColliders: contactShape, impactFrame: 0 }];
   const swings = swingsOf(session, knightDoid + 1);

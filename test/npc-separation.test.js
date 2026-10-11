@@ -234,6 +234,8 @@ test("a monster wider than its own reach bites without standing inside the hero"
 test("a chasing crowd does not pile on the hero: the one behind waits at the other's body", async () => {
   const { session, first, second } = makeSession();
   session.actors.get(second).position = { x: 300, y: 40 };
+  // A wait that does not run out within the test (ai.js `waitFor`).
+  session.random = () => 0.999999;
 
   const rests = new Map([[first, []], [second, []]]);
   for (let tick = 0; tick < 40; tick++) {
