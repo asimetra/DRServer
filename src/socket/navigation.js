@@ -1591,49 +1591,12 @@ const forgetAround = (navigation, cache, box) => {
 };
 
 /**
- * Where a straight walk from `from` at `goal` takes a body: the points it
- * passes, in `moveWithNavigation`'s own steps, each aimed at the goal from
- * where the last one ended, sliding along whatever it meets, until it stands
- * at the goal or a step gives back less than a tenth of itself — the tick an
- * NPC's walk is not taken on (see `tickNpcAi`). A slide along a wall shortens
- * each step by the angle it makes, so the walk is given four times the steps
- * the straight line would take, after which it is as good as stopped.
- */
-const walkStraightAt = (navigation, from, goal, radius) => {
-  const passed = [];
-  const stepLength = Math.max(8, radius > 0 ? radius * 0.4 : 12);
-  let position = from;
-  let distance = Math.hypot(goal.x - position.x, goal.y - position.y);
-  const limit = Math.ceil(distance / stepLength) * 4 + 1;
-  for (let count = 0; count < limit && distance > 0.001; count++) {
-    const travel = Math.min(stepLength, distance);
-    const stepX = ((goal.x - position.x) / distance) * travel;
-    const stepY = ((goal.y - position.y) / distance) * travel;
-    const next = moveWithNavigation(navigation, position, { x: stepX, y: stepY }, radius);
-    const headway = ((next.x - position.x) * stepX + (next.y - position.y) * stepY) / travel;
-    if (headway < 0.1 * travel) {
-      // The step that stops it is cut down to what fits, to within two units,
-      // so the walk ends against what stops it rather than up to a step short.
-      let fits = 0;
-      let fails = 1;
-      while ((fails - fits) * travel > 2) {
-        const middle = (fits + fails) / 2;
-        if (blockedAt(navigation, position.x + stepX * middle, position.y + stepY * middle, radius, undefined)) fails = middle;
-        else fits = middle;
-      }
-      if (fits > 0) passed.push({ x: position.x + stepX * fits, y: position.y + stepY * fits });
-      break;
-    }
-    distance = Math.hypot(goal.x - next.x, goal.y - next.y);
-    // The last step lands on the goal itself, not a rounding of it.
-    position = distance < 1e-6 ? { ...goal } : next;
-    passed.push(position);
-  }
-  return passed;
-};
-
-/**
  * A* over the authored floor collision geometry, returning compressed world waypoints.
+ *
+ * The route ends at the goal, or, where the body cannot get there, at the
+ * nearest place the search could bring it to; such a route carries
+ * `endsShort: true`, and what the body does from its end is the AI's (see
+ * routing.js). An empty route is no route at all.
  *
  * A cell is open when a body fits somewhere in it, not only at its centre, and
  * the route runs through that spot — the cell's anchor. Asking the centre alone
@@ -1764,13 +1727,9 @@ export const findPath = (navigation, start, goal, radius = 0) => {
    * the nine cells round it whose anchor can, judged as the start's step is,
    * since a goal just past the end of the wall that shuts its cell has no
    * anchor of its own. Where it cannot stand — a hero in a slot a knight does
-   * not fit — the search ends at the nearest open cell, as before, and the
-   * route then carries on from that anchor as far as a straight walk at the
-   * goal gets (`walkStraightAt`). A knight whose route ended at that anchor
-   * stood there, 134 units from a hero in a slot between three barrel racks,
-   * for 45 seconds; the straight walk from it ends 47 units from the hero,
-   * well inside its reach. The walk depends on the goal point, so it is not
-   * cached per cell.
+   * not fit — the search ends at the nearest open cell, and the route at its
+   * anchor, short of the goal. The rest is a straight walk at the goal, which
+   * the AI takes from there as it does when there is no route at all.
    */
   const stands = !blockedAt(navigation, goal.x, goal.y, radius, undefined);
   const ownAnchor = stands ? anchorOf(goalCell.x, goalCell.y) : null;
@@ -1875,7 +1834,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     if (target !== GOAL) return [];
     // No cell round the goal that can walk to it was reached. The search has
     // been everywhere the body can go, so if the nearest open cell is among
-    // that, its route is on record; the walk from it is what is left.
+    // that, its route is on record, and the route ends there, short.
     const landing = nearestOpenCell(goalCell, columns, rows, blocked);
     if (!landing) return [];
     end = keyFor(landing.x, landing.y);
@@ -1907,8 +1866,8 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     if (squaredDistance(anchor, goal) > 0.001) compressed.push({ ...goal });
   } else if (hasLineOfSight(navigation, anchor, goal, radius)) {
     if (squaredDistance(anchor, goal) > 0.001) compressed.push({ ...goal });
-  } else if (!compressInto(navigation, radius, compressed, walkStraightAt(navigation, anchor, goal, radius), anchor)) {
-    return [];
+  } else {
+    compressed.endsShort = true;
   }
   return compressed;
 };

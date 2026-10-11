@@ -146,3 +146,20 @@ test("no collider is shared between trigger groups or with the static geometry",
     }
   }
 });
+
+test("a remembered route that ends short still says so", () => {
+  // A target in a slot two boxes leave, too narrow for the body: the route ends short of it.
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    cellSize: 60,
+    staticColliders: [rectangle(300, 450, 10, 250), rectangle(480, 400, 60, 30), rectangle(480, 500, 60, 30)],
+  });
+  const owner = {};
+  const slot = { x: 480, y: 450 };
+  const first = searchRoute(owner, navigation, { x: 150, y: 450 }, slot, 26);
+  assert.equal(first.endsShort, true);
+  const again = searchRoute(owner, navigation, { x: 150, y: 450 }, slot, 26);
+  assert.equal(owner.routeMemo.routes.size, 1, "answered from the memo");
+  assert.deepEqual(again, first);
+  assert.equal(again.endsShort, true);
+});

@@ -57,7 +57,12 @@ export const colliderSetKey = (navigation) => {
   return parts.join("");
 };
 
-const copyOf = (path) => path.map((point) => ({ ...point }));
+/** A route as findPath gave it: its points, and whether it ends short of the goal. */
+const copyOf = (path) => {
+  const copy = path.map((point) => ({ ...point }));
+  if (path.endsShort) copy.endsShort = true;
+  return copy;
+};
 
 /**
  * `findPath(navigation, start, goal, radius)`, answered from `owner.routeMemo`

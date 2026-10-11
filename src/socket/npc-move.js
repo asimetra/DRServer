@@ -155,28 +155,8 @@ const movementWithinBudget = (motion, separation, ai, deltaSeconds) => {
   return { x: (x / requested) * budget, y: (y / requested) * budget };
 };
 
-/**
- * The step a body takes, from the walk it chose to where navigation lets it
- * end: `{ next, travel }`, or null when the step is too small to ask about.
- *
- * `contacts` are the bodies it touches, as `separationDisplacement` gives
- * them; `separation` is the crowd's push, already bounded. `ignoresSmall` is
- * where a step of a thousandth or less is dropped without asking navigation:
- * `"movement"` before the players are kept out of it, `"wanted"` after, unset
- * never. Each caller keeps what it did before the three shared this stage —
- * an idle body the first, the chase the second, a cage exit the third.
- */
-export const stepNpc = (
-  navigation,
-  actor,
-  { walk, contacts = [], separation, heroes, radius, deltaSeconds, navigationOptions, ignoresSmall = null }
-) => {
-  const movement = movementWithinBudget(
-    withoutDrivingIntoContacts(walk, contacts),
-    separation,
-    actor.ai,
-    deltaSeconds
-  );
+/** Where a movement takes the body: kept out of the players, then through the scenery. */
+const moved = (navigation, actor, movement, { heroes, radius, navigationOptions, ignoresSmall }) => {
   if (ignoresSmall === "movement" && Math.hypot(movement.x, movement.y) <= 0.001) return null;
   const wanted = keptOutOfHeroes(
     { x: actor.position.x + movement.x, y: actor.position.y + movement.y },
@@ -191,7 +171,69 @@ export const stepNpc = (
     radius,
     navigationOptions
   );
-  return { next, travel: distanceTo(actor.position, next) };
+  return { wanted, next };
+};
+
+/**
+ * The share of its headway the scenery has to give back for a straight walk
+ * at a target out of sight to be taken.
+ */
+const STEERING_HEADWAY = 0.1;
+
+/**
+ * Whether the scenery gave a step less than a tenth of the headway it asked
+ * for along `walk`. Measured against what was asked once the crowd and the
+ * players had their say, so a crowd cancelling the walk on open ground is not
+ * a wall; what is left is what the scenery took.
+ */
+const sceneryRefused = (actor, walk, { wanted, next }) => {
+  const length = Math.hypot(walk.x, walk.y);
+  if (length <= 0.001) return false;
+  const along = (point) =>
+    ((point.x - actor.position.x) * walk.x + (point.y - actor.position.y) * walk.y) / length;
+  const asked = along(wanted);
+  return asked > 0.001 && along(next) < STEERING_HEADWAY * asked;
+};
+
+/**
+ * The step a body takes, from the walk it chose to where navigation lets it
+ * end: `{ next, travel, refused }`, or null when the step is too small to ask
+ * about.
+ *
+ * `contacts` are the bodies it touches, as `separationDisplacement` gives
+ * them; `separation` is the crowd's push, already bounded. `ignoresSmall` is
+ * where a step of a thousandth or less is dropped without asking navigation:
+ * `"movement"` before the players are kept out of it, `"wanted"` after, unset
+ * never. Each caller keeps what it did before the three shared this stage —
+ * an idle body the first, the chase the second, a cage exit the third.
+ *
+ * `steering` is a walk straight at a target the body cannot see (routing.js):
+ * it slides along whatever it meets, and on a tick the scenery gives back
+ * less than a tenth of the headway the step asked for, not even a slide, the
+ * walk is not taken (`refused`): the body stands at the wall rather than
+ * grinding into it or pacing along it, as the official does, and only the
+ * crowd's push moves it. That is decided on the step itself, so navigation is
+ * asked once a tick, and a second time only for the push on a tick refused
+ * with a crowd pushing.
+ */
+export const stepNpc = (navigation, actor, options) => {
+  const { walk, contacts = [], separation, deltaSeconds, steering = false } = options;
+  const movement = movementWithinBudget(
+    withoutDrivingIntoContacts(walk, contacts),
+    separation,
+    actor.ai,
+    deltaSeconds
+  );
+  let step = moved(navigation, actor, movement, options);
+  if (!step) return null;
+  const refused = steering && sceneryRefused(actor, walk, step);
+  if (refused) {
+    const push = movementWithinBudget({ x: 0, y: 0 }, separation, actor.ai, deltaSeconds);
+    step = moved(navigation, actor, push, { ...options, ignoresSmall: "wanted" }) ?? {
+      next: { ...actor.position },
+    };
+  }
+  return { next: step.next, travel: distanceTo(actor.position, step.next), refused };
 };
 
 /**

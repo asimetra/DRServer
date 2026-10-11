@@ -17,10 +17,10 @@ import { CLID } from "../src/socket/opcodes.js";
  * engaged episodes with no route (96 captures) it walks straight at the hero,
  * slides along what it hits and stands where the straight line is blocked,
  * shooting from there if it can. Ours stood where the search failed. These
- * are the four things that walk has to get right: it goes at BaseMove and
- * stops at the wall without grinding, a ranged one still shoots through a gap
- * its body does not fit, a gate opening gives it a real route, and a kiter
- * keeps its distance.
+ * are the things that walk has to get right: it goes at BaseMove and stops at
+ * the wall without grinding, a ranged one still shoots through a gap its body
+ * does not fit, a gate opening gives it a real route, a kiter keeps its
+ * distance, and a route that ends short of the hero ends in the same walk.
  */
 
 const rectangle = (x, y, halfWidth, halfHeight) => ({
@@ -214,4 +214,42 @@ test("a kiter with no route keeps its distance rather than walking to the wall",
   await run(12);
   assert.ok(actor.position.x > held.x + 50, `inside its keep distance it should back away: ${actor.position.x.toFixed(0)}`);
   assert.ok(distance() >= 290, `and get back out to it: ${distance().toFixed(0)}`);
+});
+
+test("a route that ends short is walked to its end, and on from there straight at the hero", async () => {
+  /**
+   * The hero in a slot between two boxes that a body of 26 does not fit, a
+   * wall between them: the route ends short, at the anchor of the open cell
+   * nearest the hero, above the upper box (navigation.test.js). From there
+   * the walk is the straight one: down the box's side to the slot's mouth,
+   * where it stands and swings. A route searched again from the mouth ends
+   * at the same anchor, behind it, and is not walked back to.
+   */
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    cellSize: 60,
+    staticColliders: [rectangle(300, 450, 10, 250), rectangle(480, 400, 60, 30), rectangle(480, 500, 60, 30)],
+  });
+  const hero = { x: 480, y: 450 };
+  const start = { x: 150, y: 450 };
+  const route = findPath(navigation, start, hero, 26);
+  assert.equal(route.endsShort, true, "the fixture's route must end short");
+  const { actor, run, distance, swings } = makeSession({
+    navigation,
+    hero,
+    monster: start,
+    ai: { collisionRadius: 26 },
+  });
+
+  await run(60);
+  const end = { ...actor.position };
+  assert.ok(distance() < 100, `it should end at the slot's mouth, not ${distance().toFixed(1)} from the hero`);
+  assert.ok(Math.abs(end.x - hero.x) >= 60 + 26 - 1, `against a box's end, not at ${JSON.stringify(end)}`);
+  assert.ok(Math.abs(end.y - hero.y) <= 30, `level with the slot, not at ${JSON.stringify(end)}`);
+  assert.equal(actor.ai.state, "attack");
+  assert.ok(swings() >= 1, "from the mouth the hero is in reach and in sight");
+
+  const later = await run(80);
+  const drift = Math.max(...later.map((at) => Math.hypot(at.x - end.x, at.y - end.y)));
+  assert.ok(drift < 2, `it should stay at the mouth, not move ${drift.toFixed(2)} u`);
 });

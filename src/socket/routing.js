@@ -18,9 +18,11 @@ import { searchRoute } from "./route-memo.js";
  *              so the waypoint is the target;
  *   blocked    the latest route search to this target found no route. Kept
  *              while the body escapes the scenery, which does not search;
- *   steers     it walks straight at the target without seeing it: the
- *              waypoint is the target, and the walk slides along what it meets
- *              (see the blocked tick in `tickNpcAi`);
+ *   steers     it walks straight at the target without seeing it — there is
+ *              no route, or the route ends short of the target and has nothing
+ *              nearer left to give: the waypoint is the target, and the walk
+ *              slides along what it meets and is not taken on a tick the
+ *              scenery gives nothing back on (`stepNpc`, npc-move.js);
  *   exhausted  the route's points are used up, so there is no waypoint;
  *   escaping   the body is in the scenery and the waypoint is the way out.
  *
@@ -68,9 +70,10 @@ export const searchAgain = (ai) => {
 };
 
 /** For DR_DEBUG_AI: how the waypoint was come by. */
-export const describeRoute = (ai, { sees, blocked }) => {
+export const describeRoute = (ai, { sees, blocked, steers }) => {
   if (blocked) return "no route";
   if (sees) return "direct";
+  if (steers) return "route ends short, straight at it";
   return `via path ${ai.routing?.next ?? 0}/${ai.routing?.points?.length ?? 0}`;
 };
 
@@ -120,17 +123,20 @@ const wayOut = (navigation, actor, target, heroes, radius) => {
 };
 
 /**
- * The route in hand, searched again when there is none, it is used up, it is
- * due, the target has moved a cell or the scenery has changed. A closed route
- * should not make every NPC redo a full map search five times per second; a
- * changed target or navigation revision retries early.
+ * The route in hand, searched again when there is none, it is due, the target
+ * has moved a cell or the scenery has changed, and when a route to the target
+ * is used up. A closed route should not make every NPC redo a full map search
+ * five times per second; a changed target or navigation revision retries
+ * early. A route that ends short is not searched again for being used up:
+ * the body walks straight on from its end, and a search from every step of
+ * that walk would find the same end behind it.
  */
 const currentRouting = (ai, navigation, position, target, radius, now) => {
   const routing = ai.routing;
   const points = routing?.points;
   const due =
     !Array.isArray(points) ||
-    (points.length && routing.next >= points.length) ||
+    (points.length && !points.endsShort && routing.next >= points.length) ||
     now >= routing.searchAt ||
     squaredDistanceTo(routing.aimedAt, target) >= navigation.cellSize * navigation.cellSize ||
     routing.revision !== navigation.revision;
@@ -192,10 +198,23 @@ export const routeToTarget = (session, actor, target, now, heroes = []) => {
    * there, kiters keep their distance. Ours stood where the search failed,
    * which was most often a whole room away. The waypoint is the target, so the
    * walk ends at the standoff; the search still retries on its own cadence,
-   * so a gate opening gives it a real route. Where the walk stops, see the
-   * blocked tick in `tickNpcAi`.
+   * so a gate opening gives it a real route. Where the walk stops, see
+   * `stepNpc`.
    */
   if (routing.failed) return route(target, { blocked: true, steers: true });
-  const waypoint = routing.points[routing.next] ?? null;
-  return route(waypoint, { exhausted: waypoint === null });
+  const { points } = routing;
+  const waypoint = points[routing.next] ?? null;
+  const exhausted = waypoint === null;
+  /**
+   * A route that ends short of the target — a hero in a slot the body does
+   * not fit — is followed while its end is nearer the target than the body
+   * is; from there on the walk is the same straight walk as with no route at
+   * all. Its end is the anchor of the open cell nearest the target, which a
+   * body that has walked on from it is past: a route searched again from
+   * there ends at the same anchor, behind it, and is not walked back to.
+   */
+  const endNearer = () =>
+    squaredDistanceTo(points.at(-1), target) < squaredDistanceTo(actor.position, target);
+  if (points.endsShort && (exhausted || !endNearer())) return route(target, { steers: true, exhausted });
+  return route(waypoint, { exhausted });
 };

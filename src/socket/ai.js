@@ -1099,6 +1099,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     let chaseX = 0;
     let chaseY = 0;
     let usedOrdinaryWalk = false;
+    let steering = false;
     let backingOff = false;
     /**
      * A lunge overrides the walk for as long as it lasts.
@@ -1171,28 +1172,9 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
         chaseX = ((route.waypoint.x - actor.position.x) / waypointDistance) * chaseTravel;
         chaseY = ((route.waypoint.y - actor.position.y) / waypointDistance) * chaseTravel;
       }
-      // The blocked tick of a straight walk with no route (see routeToTarget):
-      // a step the scenery gives nothing back on, not even a slide, is not
-      // taken. It stands at the wall rather than grinding into it, and does
-      // not pace along it as the official does. Asked of `blocked`, which an
-      // escaping body still carries from its last search, so the walk out of
-      // the scenery is held to it too when that search failed.
-      if (route.blocked && chaseTravel > 0.001) {
-        const tried = moveWithNavigation(
-          state.navigation,
-          actor.position,
-          { x: chaseX, y: chaseY },
-          radius
-        );
-        const headway =
-          ((tried.x - actor.position.x) * chaseX + (tried.y - actor.position.y) * chaseY) /
-          chaseTravel;
-        if (headway < 0.1 * chaseTravel) {
-          chaseX = 0;
-          chaseY = 0;
-          usedOrdinaryWalk = false;
-        }
-      }
+      // Walking straight at a target it cannot see, the step is held to the
+      // scenery: see `stepNpc`.
+      steering = route.steers;
     }
     if (ai.kind !== "pet" && !usedOrdinaryWalk) ai.walkSpeed = 0;
 
@@ -1205,7 +1187,15 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
       radius,
       deltaSeconds,
       ignoresSmall: "wanted",
+      steering,
     });
+    /**
+     * A walk the scenery would not take is not taken, and a body that did not
+     * walk is at rest: the next walk sets off from standing, as any walk from
+     * standing does (`npcWalkingSpeed`). Kept up instead, a body held at a wall
+     * would set off at full speed the moment the wall let it slide.
+     */
+    if (step?.refused && ai.kind !== "pet") ai.walkSpeed = 0;
     if (step) {
       placeNpc(session, doid, actor, step, route.waypoint ?? target);
       distance = distanceTo(actor.position, target);
@@ -1241,9 +1231,10 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     const clearAttack =
       stationary || victimInSight(state.navigation, actor, victim, target, heroDoids);
     if (distance > furthestReach(attacksOf(ai), bodies) || !clearAttack) {
-      // Walking straight at a hero it has no route to is still "blocked":
-      // that is what the floor command and the debug line want to know.
-      ai.state = fleeing ? "flee" : route.waypoint && !route.blocked ? "chase" : "blocked";
+      // Walking straight at a hero it has no route to, or none to the hero
+      // itself, is still "blocked": that is what the floor command and the
+      // debug line want to know.
+      ai.state = fleeing ? "flee" : route.waypoint && !route.steers ? "chase" : "blocked";
       continue;
     }
     // Backing off, it still shoots when its swing is due: it stands for the

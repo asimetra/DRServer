@@ -4,7 +4,13 @@ import test from "node:test";
 import { loadGameMaster, weaponForConstant } from "../src/gamemaster.js";
 import { chooseNpcAttack, tickNpcAi } from "../src/socket/ai.js";
 import { performNpcAttack } from "../src/socket/combat.js";
-import { loadNavigationLibrary } from "../src/socket/navigation.js";
+import { loadFloor } from "../src/socket/floors.js";
+import {
+  addNavigationObstacle,
+  createNavigationState,
+  isPositionBlocked,
+  loadNavigationLibrary,
+} from "../src/socket/navigation.js";
 import { npcAttackChoices } from "../src/socket/npc-attacks.js";
 import { CLID, TEAM } from "../src/socket/opcodes.js";
 
@@ -211,4 +217,73 @@ test("a shape authored at the middle stays at the middle", async () => {
   await performNpcAttack(world.session, NPC, stomp, HERO);
   await world.runTimers();
   assert.equal(world.hits(), 1);
+});
+
+/**
+ * A halberd walking at a hero who stands still on the scenario prison floor
+ * (local-data/Resources/Levels/scenario-test/README.md), its props standing
+ * but for those `smashed` names; where it is after `seconds`, and its swings.
+ */
+const prisonFloor = await loadFloor("scenario-test/db_floor_GAPS_CASTLE_PRISON.json");
+const walkOnPrisonFloor = async (heroAt, from, { smashed = () => false, seconds = 45 } = {}) => {
+  const navigation = createNavigationState(prisonFloor.navigation);
+  for (const [index, placement] of prisonFloor.placements.npc.entries()) {
+    if (!placement.navigationColliders?.length || smashed(placement)) continue;
+    addNavigationObstacle(navigation, `prop-${index}`, placement.navigationColliders);
+  }
+  const world = await makeSession("KNIGHT_HALBERD", heroAt);
+  const knight = world.session.actors.get(NPC);
+  world.session.navigation = navigation;
+  knight.position = { ...from };
+  knight.ai.engaged = true;
+  knight.ai.moveSpeed = Number(world.row.npc.BaseMove);
+  const trail = [];
+  for (let tick = 0; tick < seconds * 4; tick++) {
+    await tickNpcAi(world.session, 1000 + tick * 250, 0.25);
+    trail.push({ ...knight.position });
+  }
+  const end = trail.at(-1);
+  return {
+    knight,
+    navigation,
+    distance: Math.hypot(end.x - heroAt.x, end.y - heroAt.y),
+    /** How far it strayed from where it ended over the last twenty seconds. */
+    drift: Math.max(...trail.slice(-80).map((at) => Math.hypot(at.x - end.x, at.y - end.y))),
+    swings: world.choreographies(),
+  };
+};
+
+const NORTH_EAST_RACK = (placement) =>
+  placement.constant === "CASTLE_PRISON_SMASH_BARRELRACK" && Math.hypot(placement.x - 217, placement.y - 671) < 10;
+
+test("a halberd at a hero between the prison's barrel racks ends inside its reach and swings", async () => {
+  // The capture of 2026-10-10: the hero at (167,684) in the slot three racks
+  // leave once the north-east one is smashed, the knight coming from the east.
+  for (const from of [{ x: 300.9, y: 641.1 }, { x: 346, y: 639 }]) {
+    const walk = await walkOnPrisonFloor({ x: 167, y: 684 }, from, { smashed: NORTH_EAST_RACK });
+    assert.ok(walk.distance <= 200, `from ${JSON.stringify(from)} it ended ${walk.distance.toFixed(1)} away`);
+    assert.ok(walk.swings >= 1, `from ${JSON.stringify(from)} it never swung`);
+  }
+});
+
+test("with all four racks standing it stands at them, and stays there", async () => {
+  // No route to the hero at all for a body of 42: the straight walk from the
+  // east ends against the racks, short of its reach, and does not pace there.
+  for (const from of [{ x: 300.9, y: 641.1 }, { x: 346, y: 639 }]) {
+    const walk = await walkOnPrisonFloor({ x: 167, y: 684 }, from);
+    assert.equal(isPositionBlocked(walk.navigation, walk.knight.position, 42), false);
+    assert.ok(walk.distance < 210, `from ${JSON.stringify(from)} it ended ${walk.distance.toFixed(1)} away`);
+    assert.ok(walk.drift < 2, `from ${JSON.stringify(from)} it kept moving: ${walk.drift.toFixed(2)} u`);
+    assert.equal(walk.knight.ai.state, "blocked");
+  }
+});
+
+test("a halberd at a hero in the slot above the shut exit gate swings from within 140", async () => {
+  // Spot B of the scenario floor: (750,2380), between WALL_C and the gate.
+  for (const from of [{ x: 612, y: 2053 }, { x: 378, y: 2053 }]) {
+    const walk = await walkOnPrisonFloor({ x: 750, y: 2380 }, from);
+    assert.ok(walk.distance <= 140, `from ${JSON.stringify(from)} it ended ${walk.distance.toFixed(1)} away`);
+    assert.ok(walk.swings >= 1, `from ${JSON.stringify(from)} it never swung`);
+    assert.ok(walk.drift < 2, `from ${JSON.stringify(from)} it kept moving: ${walk.drift.toFixed(2)} u`);
+  }
 });
