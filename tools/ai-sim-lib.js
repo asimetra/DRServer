@@ -57,7 +57,7 @@ const THEME_NODES = {
   "nordic/village": 50033,
 };
 
-export const HERO_SCRIPTS = ["loadsim", "walls", "walker", "brawler", "still", "script"];
+export const HERO_SCRIPTS = ["loadsim", "walls", "walker", "brawler", "smasher", "still", "script"];
 
 /**
  * Worlds the library matrix does not reach, each a library floor (or an
@@ -84,7 +84,17 @@ export const HERO_SCRIPTS = ["loadsim", "walls", "walker", "brawler", "still", "
  *                library floor has none of: the scenario wakes it instead;
  *   generators   every generator on the floor is started at the build, as
  *                its trigger would, so the tutorial's cages let their
- *                prisoners out through the release walk.
+ *                prisoners out through the release walk, and the princess's
+ *                defence sends its waves at her barricades and orbs.
+ *
+ * And the scenery that dies. `smasher` walks to the nearest thing with a
+ * shape in the floor that can be broken — a barrel, a crate, a killable
+ * trap, a secret wall, a gate, a barricade, an orb — and breaks it with one
+ * blow: secret walls are left standing as their broken halves, the rest
+ * leave the floor (navigation.js, "Every object's colliders"). It runs on
+ * the catacombs, which are full of secret walls, and in the princess's
+ * defence, whose monsters go for her barricades and orbs and now and then
+ * break one themselves.
  *
  * `brawler` is the hero for the overrides: it walks and hits as `loadsim`
  * does, and every two seconds does one more thing to the monster it hits —
@@ -100,9 +110,15 @@ export const SCENARIOS = {
   wild: { library: "jungle/dino", pet: "WOLF_PET", cast: ["LION_WILD", "RAPTOR_WILD", "RIVAL_BATTLE_CHEF"] },
   golem: { library: "castle/arena", cast: ["BOSS_GOLEM"], wake: true },
   cages: { floor: "tutorial", generators: true },
+  defense: {
+    floor: "nordic/village/db_floor_VILLAGE_PRINCESS_DEFENSE.json",
+    generators: true,
+    heroes: ["walker", "walls", "brawler", "smasher"],
+  },
+  smashing: { library: "castle/catacombs", heroes: ["smasher", "walls"] },
 };
 
-/** The heroes a scenario runs with: one that leaves monsters alive, one that keeps to the floor, the brawler. */
+/** The heroes a scenario runs with, unless it names its own: one that leaves monsters alive, one that keeps to the floor, the brawler. */
 export const SCENARIO_HEROES = ["walker", "walls", "brawler"];
 
 /** The server's own AI cadence. */
@@ -157,8 +173,9 @@ export const loadRoot = async (root) => {
       importFrom(root, "src/socket/hit-pricing.js"),
     ]);
   await navigation.loadNavigationLibrary();
-  await gamemaster.loadGameMaster();
-  return { root, gamemaster, floors, navigation, dungeon, opcodes, ai, combat, npcSpawn, buffs, impact, hitPricing };
+  const gm = await gamemaster.loadGameMaster();
+  const rows = new Map((gm.raw.Npc ?? []).map((row) => [row.Constant, row]));
+  return { root, gamemaster, floors, navigation, dungeon, opcodes, ai, combat, npcSpawn, buffs, impact, hitPricing, rows };
 };
 
 /**
@@ -321,6 +338,28 @@ const describeFrame = (frame) => {
   return `op${op} len${frame.length}`;
 };
 
+/**
+ * The nearest thing `smasher` breaks: no AI, alive, its row attackable and
+ * not a monster's, with a shape in the floor (the library's navCollisions).
+ * Read from the rows and the library, so every root picks the same one.
+ */
+const nearestBreakable = (modules, session, from) => {
+  let nearest = null;
+  let distance = Infinity;
+  for (const [doid, actor] of session.actors) {
+    if (actor.ai || actor.dead || !(actor.hitPoints > 0) || !actor.position || !actor.constant) continue;
+    const row = modules.rows.get(actor.constant);
+    if (!row?.IsAttackable || row.CharType === "ENEMY") continue;
+    if (!modules.navigation.navigationEntryFor(actor.constant)?.navCollisions?.length) continue;
+    const d = Math.hypot(actor.position.x - from.x, actor.position.y - from.y);
+    if (d < distance) {
+      distance = d;
+      nearest = doid;
+    }
+  }
+  return { doid: nearest, distance };
+};
+
 const nearestEnemy = (session, from) => {
   let nearest = null;
   let distance = Infinity;
@@ -350,6 +389,14 @@ const heroStep = (modules, session, hero, kind, script, tick) => {
   if (kind === "loadsim" || kind === "walls" || kind === "walker" || kind === "brawler") {
     if (target !== null && distance > HERO_STOP) aim = session.actors.get(target).position;
     hits = kind !== "walker" && target !== null && distance <= HERO_REACH;
+  } else if (kind === "smasher") {
+    const prop = nearestBreakable(modules, session, position);
+    if (prop.doid !== null) {
+      if (prop.distance > HERO_STOP) aim = session.actors.get(prop.doid).position;
+      if (prop.distance <= HERO_REACH && tick % HERO_HIT_EVERY === HERO_HIT_EVERY - 1) {
+        modules.combat.applyDamage(session, prop.doid, 1e9);
+      }
+    }
   } else if (kind === "script" && script) {
     const leg = script.waypoints.filter((point) => point.at <= tick).at(-1);
     if (leg) {

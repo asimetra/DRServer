@@ -67,7 +67,7 @@ const usage = () => {
     [
       "usage: node tools/ai-sim.js --base <dir|git-ref> [--candidate <dir>] [--quick|--full]",
       "         [--libraries a/b,c/d] [--scenarios a,b] [--seeds 1,2] [--ticks N]",
-      "         [--hero loadsim|walls|walker|brawler|still|script]",
+      "         [--hero loadsim|walls|walker|brawler|smasher|still|script]",
       "         [--floor <authored file>] [--node <map node> [--catalogue <floors.json>]] [--script <file>]",
       "         [--tile-count N] [--jobs N] [--explain N] [--stats]",
       "       node tools/ai-sim.js --digest-out <file> [same selection]      one root, written down",
@@ -105,7 +105,7 @@ const expandRuns = () => {
     worlds.push({
       ...(library ? { library, tileCount } : { floor: authored }),
       scenario,
-      heroes: argument("hero") ? heroes : SCENARIO_HEROES,
+      heroes: argument("hero") ? heroes : (SCENARIOS[scenario].heroes ?? SCENARIO_HEROES),
       name: `scenario/${scenario}`,
     });
   }
