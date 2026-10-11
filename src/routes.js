@@ -87,13 +87,7 @@ const sessionForRequest = (accountId, req) => {
   return session.token === req.headers?.["x-validation-token"] ? session : null;
 };
 
-/**
- * Where the game socket is. A client started with `--use-fallback-socket-port`
- * (the DRH launcher's default) connects to gameSocketFallbackPort instead, and
- * a zero there is fatal before it connects (DBFacade.hx). The server listens on
- * one game port, so unless the operator names a second one the fallback is
- * that same port.
- */
+/** Where the game socket is. A zero fallback port stops a client started with `--use-fallback-socket-port`. */
 const socketAnswer = (host, port, fallback = port) => ({
   webServicesUrl: publicBaseUrl(),
   gameSocketAddress: host,

@@ -195,12 +195,7 @@ export const loadServerConfig = (environment = process.env) => {
       asInt(setting(environment, "SOCKET_PORT"), defaults.gameSocketPort)
     ),
 
-    /**
-     * The port a desktop client started with `--use-fallback-socket-port` is
-     * sent to instead, for networks that let only common ports out. Advertising
-     * only: forwarding it to the game port is the operator's. Unset, the client
-     * is sent the desktop's own port (routes.js).
-     */
+    /** The desktop's port for `--use-fallback-socket-port`. Advertising only; unset, the desktop's own port. */
     socketFallbackPort: asInt(setting(environment, "SOCKET_FALLBACK_PORT"), null),
 
     /**
