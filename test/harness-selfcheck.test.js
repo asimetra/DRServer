@@ -23,8 +23,9 @@ const run = promisify(execFile);
  * a copy of the tree with one deliberate edit that a refactor could plausibly
  * make by mistake: the heap's tie-break flipped, so cells of equal cost pop
  * in the other order; the walk's acceleration ramp changed; monsters' bodies
- * no longer holding a walk (npc-move.js), so a crowd walks into itself again.
- * Each must be reported. The quick presets are what a developer runs between steps, so
+ * no longer holding a walk (npc-move.js), so a crowd walks into itself again;
+ * a monster held short swinging its contact swings again (npc-act.js). Each
+ * must be reported. The quick presets are what a developer runs between steps, so
  * they are what is checked here.
  */
 
@@ -67,19 +68,28 @@ test("both harnesses pass a tree against itself and fail it against a changed on
       to: "bodies: null,",
     },
   ]);
+  const swingMutant = mutantRoot(TOOL_ROOT, [
+    {
+      file: "src/socket/npc-act.js",
+      from: "const swingable = heldShort(turn) ? usable.filter((attack) => !isContactAttack(attack)) : usable;",
+      to: "const swingable = usable;",
+    },
+  ]);
   t.after(() => {
     routeMutant.cleanup();
     aiMutant.cleanup();
     crowdMutant.cleanup();
+    swingMutant.cleanup();
   });
 
   // Independent processes, so they run side by side; each ai-sim keeps to one worker per root.
-  const [routesSame, routesChanged, aiSame, aiChanged, crowdChanged] = await Promise.all([
+  const [routesSame, routesChanged, aiSame, aiChanged, crowdChanged, swingChanged] = await Promise.all([
     invoke("route-lockstep.js", ["--base", TOOL_ROOT, "--quick"]),
     invoke("route-lockstep.js", ["--base", routeMutant.dir, "--quick"]),
     invoke("ai-sim.js", ["--base", TOOL_ROOT, "--quick", "--jobs", "1", "--explain", "0"]),
     invoke("ai-sim.js", ["--base", aiMutant.dir, "--quick", "--jobs", "1", "--explain", "1"]),
     invoke("ai-sim.js", ["--base", crowdMutant.dir, "--quick", "--jobs", "1", "--explain", "0"]),
+    invoke("ai-sim.js", ["--base", swingMutant.dir, "--quick", "--jobs", "1", "--explain", "0"]),
   ]);
 
   assert.equal(routesSame.code, 0, `route-lockstep against itself:\n${routesSame.stdout}${routesSame.stderr ?? ""}`);
@@ -100,4 +110,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
 
   assert.equal(crowdChanged.code, 1, `ai-sim against the crowd mutant:\n${crowdChanged.stdout}${crowdChanged.stderr ?? ""}`);
   assert.match(crowdChanged.stdout, /differs at tick \d+/);
+
+  assert.equal(swingChanged.code, 1, `ai-sim against the swing mutant:\n${swingChanged.stdout}${swingChanged.stderr ?? ""}`);
+  assert.match(swingChanged.stdout, /differs at tick \d+/);
 });

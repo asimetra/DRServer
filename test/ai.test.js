@@ -370,8 +370,8 @@ test("a monster held behind another waits at its body, and goes on when the hero
     nearest = Math.min(nearest, Math.hypot(behind.position.x - front.position.x, behind.position.y - front.position.y));
   }
   /**
-   * The official: of 14,989 samples of a chaser held behind another with the
-   * hero still, 56.8% waited out the second and 9.1% walked round it. Ours
+   * The official: of 11,958 samples of a chaser held behind another with the
+   * hero still, 49.2% waited out the second and 10.8% walked round it. Ours
    * used to keep the part of its walk that ran along the other body and slide
    * round it to the hero.
    */
@@ -391,6 +391,53 @@ test("a monster held behind another waits at its body, and goes on when the hero
     Math.hypot(behind.position.x - resting.x, behind.position.y - resting.y) > 40,
     "it goes on once the hero has moved"
   );
+});
+
+/** The swings `doid` makes, as `session.send` sees them. */
+const swingsOf = (session, doid) => {
+  const swings = [];
+  const send = session.send;
+  session.send = (frame) => {
+    if (frame.readUInt16LE(2) === OP.CLIENT_OBJECT_UPDATE_FIELD && frame.readUInt32LE(4) === doid && frame.readUInt16LE(8) === 143) {
+      swings.push(frame.readUInt32LE(12));
+    }
+    send(frame);
+  };
+  return swings;
+};
+
+test("a monster held behind another does not swing past it, and swings once it walks in", async () => {
+  // Standing touching the knight in front: it has nowhere to walk.
+  const { session, knightDoid, front, behind } = knightBehind({ x: 140, y: 0 });
+  behind.ai.nextAttackAt = 0;
+  behind.ai.attacks = [{ attackType: 920050, range: 80, minRange: 0, rechargeMs: 0, readyAt: 0, attackColliders: contactShape, impactFrame: 0 }];
+  const swings = swingsOf(session, knightDoid + 1);
+  for (let tick = 0; tick < 12; tick++) await tickNpcAi(session, 1000 + tick * 250, 0.25);
+  /**
+   * It stands touching the knight in front, 140 from the hero and within its
+   * reach (80 and both bodies, 150), and does not swing: 84.7% of the
+   * official chasers' contact swings come at the walk's end or on the way in,
+   * and one held short of both swings on 9.4% of its due samples against
+   * 36.4% (npc-act.js `heldShort`).
+   */
+  assert.ok(Math.hypot(behind.position.x, behind.position.y) <= 150, "in reach of the hero");
+  assert.deepEqual(swings, [], "and swung from behind the knight in front");
+  assert.equal(behind.ai.state, "blocked");
+
+  session.actors.delete(knightDoid);
+  session.objects.delete(knightDoid);
+  front.dead = true;
+  for (let tick = 12; tick < 20; tick++) await tickNpcAi(session, 1000 + tick * 250, 0.25);
+  assert.ok(swings.length > 0, "once the way is open it walks in and swings");
+});
+
+test("a monster held behind another still throws its shot", async () => {
+  const { session, knightDoid, behind } = knightBehind({ x: 200, y: 0 });
+  behind.ai.nextAttackAt = 0;
+  behind.ai.attacks = [{ attackType: 920050, range: 400, minRange: 0, rechargeMs: 0, readyAt: 0, projectile: { Constant: "ARROW" }, impactFrame: 0 }];
+  const swings = swingsOf(session, knightDoid + 1);
+  for (let tick = 0; tick < 12; tick++) await tickNpcAi(session, 1000 + tick * 250, 0.25);
+  assert.ok(swings.length > 0, "a shot is thrown from where it stands");
 });
 
 test("a lunge goes through the monster in its way", async () => {

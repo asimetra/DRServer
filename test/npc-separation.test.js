@@ -228,7 +228,7 @@ test("a monster wider than its own reach bites without standing inside the hero"
  * first: the first walks in to touch him, and the second, once the first is
  * in its way, waits at the first's body. It neither walks into the first nor
  * slides round it to the hero — the official's chaser held behind another,
- * the hero still, waits out the second 56.8% of the time and walks round 9.1%
+ * the hero still, waits out the second 49.2% of the time and walks round 10.8%
  * (npc-move.js `heldByBodies`). Side by side, neither holds the other.
  */
 test("a chasing crowd does not pile on the hero: the one behind waits at the other's body", async () => {

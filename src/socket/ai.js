@@ -47,6 +47,12 @@ export { slideShoved } from "./behaviours/overrides.js";
 
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 
+/** How far a step from `from` goes towards `target`, along the line to it. */
+const towards = (step, from, target) => {
+  const length = distanceTo(from, target);
+  return length > 0.001 ? (step.x * (target.x - from.x) + step.y * (target.y - from.y)) / length : 0;
+};
+
 /** Its behaviour: a pet is a pet whatever its row says; then by `Aggro_AI_Type`. */
 const behaviourOf = (ai) =>
   ai.kind === "pet"
@@ -80,6 +86,9 @@ const stateAfterAct = (reason, fleeing, route) => {
       return fleeing ? "flee" : route.waypoint && !route.steers ? "chase" : "blocked";
     case "backing-off":
       return "flee";
+    case "held-short":
+      // In reach, but held behind a monster or a wall short of where its walk ends.
+      return "blocked";
     default:
       // Locked in a swing, stunned, waiting on its cadence, nothing to throw
       // from here, or swung: it is attacking.
@@ -243,13 +252,20 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   behaviour.moved?.(turn, intent, before);
 
   const fleeing = backingOff(ai, turn.away, now);
+  const distance = distanceTo(actor.position, target);
   const reason = await act(session, {
     doid,
     actor,
     victim,
     target,
     bodies,
-    distance: distanceTo(actor.position, target),
+    distance,
+    // Where its walk ends, how far it asked to go at its victim, and how much
+    // nearer the tick brought it: a contact swing is made at the walk's end or
+    // on the way in.
+    stopAt: turn.stopAt,
+    pressed: towards(intent, before, target),
+    advanced: turn.distance - distance,
     route,
     now,
     following,

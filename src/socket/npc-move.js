@@ -114,11 +114,11 @@ const HEADWAY = 0.1;
  * How far off the way it walks a body still stands in its way: 70 degrees.
  *
  * Over 57 solo captures, a chaser touching another monster on its side of the
- * hero, the hero standing still, waits out the next second 58.8% of the time
- * with the other body 0-20 degrees off its way to him, 58.8% at 20-40, 56.0%
- * at 40-55 and 57.7% at 55-70 (n 5464, 4684, 2051, 1388), and 47.4% at
- * 70-90 (n 1093). Ahead of it, however glancing, the other body holds it; one
- * beside it, it walks along.
+ * hero, the hero up and standing still, waits out the next second 54.2% of
+ * the time with the other body 0-20 degrees off its way to him, 50.7% at
+ * 20-40, 49.3% at 40-55 and 49.1% at 55-70 (n 4584, 3717, 1648, 1061), and
+ * 35.6% at 70-90 (n 845), where it advances 44.1%. Ahead of it, however
+ * glancing, the other body holds it; one beside it, it walks along.
  */
 const AHEAD = Math.cos((70 * Math.PI) / 180);
 
@@ -159,13 +159,13 @@ const firstMet = (from, walk, bodies) => {
  * Monster bodies are hard (npc-crowd.js). A walk goes as far as the first
  * body it would touch. If that body is in its way (`AHEAD`) it goes no
  * further and does not turn to slide round it: the official monster held
- * behind another one waits. Over 57 solo captures, of 14,989 samples of a
- * chaser held behind another with the hero standing still, 56.8% waited out
- * the next second, 9.1% walked round it and 0.8% ended inside it; with the
- * hero moving it waited 12.1% and went on as the crowd moved — the wait ends
- * when the hero moves. A body beside it, touched, keeps whatever part of the
- * walk runs along it, so two walking side by side to one hero do not hold
- * each other. A walk cut to less than a tenth of itself is not taken
+ * behind another one waits. Over 57 solo captures, of 11,958 samples of a
+ * chaser held behind another with the hero up and standing still, 49.2%
+ * waited out the next second, 10.8% walked round it and 0.8% ended inside
+ * it; with the hero moving (n 20,148) it waited 11.1% and went on as the
+ * crowd moved — the wait ends when the hero moves. A body beside it,
+ * touched, keeps whatever part of the walk runs along it, so two walking
+ * side by side to one hero do not hold each other. A walk cut to less than a tenth of itself is not taken
  * (`blocked`): a waiting body stands rather than creeping up a unit a tick,
  * and sets off from standing when it goes.
  *

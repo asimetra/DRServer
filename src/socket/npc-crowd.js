@@ -67,8 +67,8 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
  * Monster bodies are hard. On the client every actor but the local hero is a
  * static Box2D body, so two monsters never push each other apart there, and
  * the official server does not walk one into another: over 57 solo captures
- * (144,244 engaged monster samples) a body is more than 10 units inside
- * another's on 3.3% of them, where ours, pushing apart half the shortfall a
+ * (135,406 engaged monster samples, the hero up) a body is more than 10
+ * units inside another's on 3.4% of them, where ours, pushing apart half the shortfall a
  * tick against a whole step of chase, sat at 18-38%. So a walk stops where it
  * would touch another monster's body (`bodies`, swept by `stepNpc`,
  * npc-move.js), and the push below only lifts a body out of one it is already

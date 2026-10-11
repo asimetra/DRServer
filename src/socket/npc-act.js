@@ -12,7 +12,8 @@ import { endBackOff } from "./behaviours/kite.js";
  * `act` asks, in order, what keeps it from swinging — following its owner,
  * being in the scenery, a swing of its own still under way, the victim out
  * of reach or out of sight, a back-off with no swing due, a stun, the
- * cadence, nothing to throw from here — and swings when nothing does. It
+ * cadence, nothing to throw from here, or only contact swings while it is
+ * held short of its walk's end — and swings when nothing does. It
  * answers with the reason, which is what the state the floor command shows
  * is read from (ai.js).
  */
@@ -90,19 +91,27 @@ const usableAttacks = (ai, distance, bodies, now) => {
   return attacksOf(ai).filter((attack) => inBand(attack, distance, bodies, now, honoursMinRange));
 };
 
-/** Chooses uniformly from the authored attacks usable in this range/cooldown band. */
-export const chooseNpcAttack = (
-  ai,
-  distance,
-  bodies,
-  now,
-  random = Math.random
-) => {
-  const choices = usableAttacks(ai, distance, bodies, now);
+/**
+ * The longest `Range` a contact swing has: the reach of a body meeting a body.
+ * Every attack that throws nothing, moves the monster nowhere and reaches no
+ * further than the halberd's thrust is one (see `heldShort`).
+ */
+const CONTACT_RANGE = 140;
+
+/** A swing that meets the victim's body with its own: no projectile, no lunge, a contact's reach. */
+export const isContactAttack = (attack) =>
+  !attack.projectile && !(attack.moveAmount > 0) && Number(attack.range ?? 0) <= CONTACT_RANGE;
+
+/** One of `choices`, uniformly; null when there are none. */
+const pickOf = (choices, random) => {
   if (!choices.length) return null;
   const roll = Math.min(1 - Number.EPSILON, Math.max(0, Number(random()) || 0));
   return choices[Math.floor(roll * choices.length)];
 };
+
+/** Chooses uniformly from the authored attacks usable in this range/cooldown band. */
+export const chooseNpcAttack = (ai, distance, bodies, now, random = Math.random) =>
+  pickOf(usableAttacks(ai, distance, bodies, now), random);
 
 /**
  * The gap before this NPC may swing again, rolled fresh each time.
@@ -202,12 +211,40 @@ const swing = async (session, doid, actor, victim, target, chosen, now) => {
   );
 };
 
+/** Nearer its victim by this much in a tick, a walk went somewhere: a walk from standing covers more on its first tick. */
+const ADVANCING = 0.5;
+
+/**
+ * Whether it is held short of where its walk ends: short of its standoff
+ * (`stopAt`, touching its victim for a chaser), its walk asked to go on
+ * towards him this tick (`pressed`) and the tick did not bring it nearer
+ * (`advanced`) — another monster in its way, a wall it is held at. One whose
+ * walk has ended asks for nothing: at the end of a route that cannot reach
+ * him, it stands there and swings.
+ *
+ * A contact swing is made at the walk's end or on the way in, not from
+ * behind another monster or a wall. Over 57 solo official captures, 84.7%
+ * of 2,634 chasers' contact swings at the hero came with the bodies touching
+ * or the monster still advancing on him (72.4% of 660 kiters', mostly the
+ * halberd's thrust); a chaser whose every attack is a contact swing, in
+ * reach and past its `AttackTimer`, swings on 36.4% of the 250 ms samples it
+ * is at its walk's end or advancing (n 5,141) and on 9.4% held short
+ * (n 3,110). Shots, lunges and long auras are thrown from where it stands:
+ * 48.4% of 1,402 chasers' shots and 47.4% of 1,409 of their lunges and long
+ * swings are made held short, so they are not held to it.
+ */
+const heldShort = (turn) =>
+  turn.distance > turn.stopAt + ATTACK_RANGE_EPSILON && turn.pressed > ADVANCING && !(turn.advanced > ADVANCING);
+
 /**
  * Whether it swings, given where the tick has left it: `turn` is the actor,
  * its victim and the victim's position, the two bodies, the distance it now
  * stands at, the route, and what the tick has found out — `following` its
  * owner, `attackLocked`, `cannotAttack`, `fleeing`, `seesAlways` for one that
- * does not ask the scenery. Answers with why it did not swing, or "swung".
+ * does not ask the scenery, `stopAt` where its walk ends, `pressed` how far
+ * its walk asked to go towards its victim this tick and `advanced` how much
+ * nearer the tick brought it.
+ * Answers with why it did not swing, or "swung".
  */
 export const act = async (session, turn) => {
   const { doid, actor, victim, target, bodies, distance, route, now } = turn;
@@ -239,9 +276,11 @@ export const act = async (session, turn) => {
    * the next tick rather than burning the interval on a swing it could not
    * make.
    */
-  const random = session.random ?? Math.random;
-  const chosen = chooseNpcAttack(ai, distance, bodies, now, random);
-  if (!chosen) return "no-attack";
+  const usable = usableAttacks(ai, distance, bodies, now);
+  if (!usable.length) return "no-attack";
+  const swingable = heldShort(turn) ? usable.filter((attack) => !isContactAttack(attack)) : usable;
+  if (!swingable.length) return "held-short";
+  const chosen = pickOf(swingable, session.random ?? Math.random);
   await swing(session, doid, actor, victim, target, chosen, now);
   return "swung";
 };
