@@ -81,3 +81,17 @@ test("a swing is a shot, a contact swing, or something else", () => {
   assert.equal(attackClassOf({ Range: 250 }), "other");
   assert.equal(attackClassOf({ Range: 100, MoveAmount: 40 }), "other");
 });
+
+test("a chaser is counted in its distance band, moving or standing behind a body", () => {
+  const metrics = createCrowdMetrics();
+  // One walks in at 400 from the hero, one stands at 200 with another touching it on the way.
+  for (let t = 0; t <= 500; t += 250) {
+    metrics.sample(t, hero, [knight(1, 400 - t / 5, 0), knight(2, 0, 200), knight(3, 0, 132)]);
+  }
+  const [near, middle, far] = metrics.result().bands;
+  assert.equal(far.n, 3);
+  assert.equal(far.moving, 2, "the first sample has nothing to have moved from");
+  assert.equal(middle.inWay, 3, "the one at 200 stands with a body in its way");
+  assert.equal(near.n, 3, "the one at 132 stands with nothing near on its way to the hero");
+  assert.equal(near.inWay, 0);
+});

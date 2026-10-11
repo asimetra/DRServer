@@ -28,6 +28,13 @@
  *   waits       a chaser standing still behind another monster's body
  *               within 300 of the hero, a second or more at a time:
  *               how many and how long per chaser-minute in that range
+ *   bands       chasers with the hero within 700 and not in contact (15 of
+ *               slack), by distance band (`BANDS`): the share moving (feet
+ *               more than 4 since the sample before), standing with a
+ *               monster's body in its way (70 degrees, touching plus 12),
+ *               standing touching one beside it, standing with nothing near;
+ *               overlap above 10; and stands of 3 s or more, ended by
+ *               moving, per 1000 samples, touched at some point or free
  *   due         monster samples in reach of the hero, its cadence floor
  *               (`AttackTimer`) past since its last swing: how often a swing
  *               starts on the sample when it is at its walk's end or
@@ -79,6 +86,14 @@ const KINDS = { CHASE_AI: "chase", KITE_AI: "kite", TELEPORT_AI: "teleport" };
 export const attackClassOf = (attack) =>
   attack?.Projectile ? "shot" : Number(attack?.MoveAmount) > 0 || Number(attack?.Range ?? 0) > 140 ? "other" : "contact";
 
+/** The distance bands chasers are told apart by, body to body from the hero. */
+export const BANDS = [
+  [0, 150],
+  [150, 300],
+  [300, 450],
+  [450, 700],
+];
+
 const emptyKind = () => ({ swings: 0, arrived: 0, advancing: 0, allowed: 0 });
 const emptyOutcomes = () => ({ n: 0, waits: 0, slides: 0, pushes: 0, aside: 0, backs: 0, jitters: 0, overlapping: 0 });
 
@@ -95,6 +110,7 @@ export const emptyCrowd = () => ({
   ),
   due: { allowed: 0, allowedSwung: 0, held: 0, heldSwung: 0 },
   waits: { chaserSamples: 0, episodes: 0, waitedMs: 0, over5: 0, over10: 0, lengths: {} },
+  bands: BANDS.map(() => ({ n: 0, moving: 0, inWay: 0, beside: 0, free: 0, overlap: 0, standsTouched: 0, standsFree: 0 })),
 });
 
 const hypot = (x, y) => Math.hypot(x, y);
@@ -169,6 +185,59 @@ export const createCrowdMetrics = ({ tickMs = 250, onSwing = null, onDue = null,
    * what the monster, the one in its way and the hero did.
    */
   const waiting = new Map();
+  const banded = new Map();
+  const sampleBands = (hero, monsters, t) => {
+    const seen = new Set();
+    for (const a of monsters) {
+      if (a.kind !== "chase" || !a.mover) continue;
+      seen.add(a.id);
+      const last = banded.get(a.id) ?? { x: a.x, y: a.y, still: null };
+      const moved = hypot(a.x - last.x, a.y - last.y) > 4;
+      last.x = a.x;
+      last.y = a.y;
+      banded.set(a.id, last);
+      const toHero = hypot(hero.bx - a.bx, hero.by - a.by);
+      const band = BANDS.findIndex(([low, high]) => toHero >= low && toHero < high);
+      if (band < 0 || toHero < a.r + hero.r + 15) {
+        last.still = null;
+        continue;
+      }
+      const into = counts.bands[band];
+      into.n++;
+      const ux = (hero.bx - a.bx) / toHero;
+      const uy = (hero.by - a.by) / toHero;
+      let inWay = false;
+      let beside = false;
+      let overlapping = false;
+      for (const b of monsters) {
+        if (b === a) continue;
+        const ox = b.bx - a.bx;
+        const oy = b.by - a.by;
+        const d = hypot(ox, oy);
+        if (d < a.r + b.r - OVERLAP_DEPTH) overlapping = true;
+        if (d > a.r + b.r + 12) continue;
+        if ((ox * ux + oy * uy) / (d || 1) > 0.34) inWay = true;
+        else beside = true;
+      }
+      if (overlapping) into.overlap++;
+      if (moved) {
+        into.moving++;
+        if (last.still && t - last.still.t >= 3000) {
+          const ended = counts.bands[last.still.band];
+          if (last.still.touched) ended.standsTouched++;
+          else ended.standsFree++;
+        }
+        last.still = null;
+        continue;
+      }
+      if (inWay) into.inWay++;
+      else if (beside) into.beside++;
+      else into.free++;
+      if (!last.still) last.still = { t, band, touched: inWay || beside };
+      else if (inWay || beside) last.still.touched = true;
+    }
+    for (const id of banded.keys()) if (!seen.has(id)) banded.delete(id);
+  };
   const closeWait = (id, entry, t, a, hero, how) => {
     waiting.delete(id);
     const length = t - entry.t0;
@@ -307,6 +376,7 @@ export const createCrowdMetrics = ({ tickMs = 250, onSwing = null, onDue = null,
       }
     }
     if (hero) sampleWaits(t, hero, monsters);
+    if (hero) sampleBands(hero, monsters, t);
     for (const { id } of swung) lastSwing.set(id, t);
     for (const monster of monsters) {
       const past = history.get(monster.id) ?? [];
@@ -358,6 +428,16 @@ export const describeCrowd = (crowd) => {
   lines.push(
     `  due in reach: allowed ${d.allowed} swung ${share(d.allowedSwung, d.allowed)}  held ${d.held} swung ${share(d.heldSwung, d.held)}`
   );
+  for (const [index, [low, high]] of BANDS.entries()) {
+    const b = crowd.bands?.[index];
+    if (!b?.n) continue;
+    const per = (part) => `${((100 * part) / b.n).toFixed(1)}%`;
+    lines.push(
+      `  band ${String(low).padStart(3)}-${String(high).padEnd(3)} n ${String(b.n).padStart(7)}  moving ${per(b.moving).padStart(6)}  ` +
+        `standing: body in the way ${per(b.inWay).padStart(6)}, touching beside ${per(b.beside).padStart(6)}, nothing near ${per(b.free).padStart(6)}  ` +
+        `overlap >10 ${per(b.overlap).padStart(5)}  stands 3 s+ per 1000: touched ${((1000 * b.standsTouched) / b.n).toFixed(2)} free ${((1000 * b.standsFree) / b.n).toFixed(2)}`
+    );
+  }
   const w = crowd.waits;
   if (w) {
     const minutes = (w.chaserSamples * 0.25) / 60;
