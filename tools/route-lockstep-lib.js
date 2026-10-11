@@ -365,10 +365,54 @@ const ANCHOR_OFFSETS = (() => {
 })();
 const DIRECTIONS = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
 
+/**
+ * The search between a cell's lattice points that a root with `cellAnchorAt`
+ * (pathfind.js `anchorBetween`) makes when none of them has room, asked
+ * afresh point by point: each lattice point's square, kept where a body
+ * smaller by half its diagonal stands clear, halved down to a square a unit
+ * and a half across, inside the lattice's reach.
+ */
+const QUARTERS = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+const anchorBetween = (navigation, nav, centreX, centreY, cellSize, probe) => {
+  const reach = 0.4 * cellSize;
+  const clear = (x, y, r) =>
+    Math.abs(x - centreX) <= reach && Math.abs(y - centreY) <= reach && !navigation.isPositionBlocked(nav, { x, y }, r);
+  const search = (x, y, half) => {
+    if (clear(x, y, probe)) return { x, y };
+    const quarter = half / 2;
+    if (half * 2 < 1.5) return null;
+    for (const [sx, sy] of QUARTERS) {
+      const qx = x + sx * quarter;
+      const qy = y + sy * quarter;
+      if (!clear(qx, qy, Math.max(0, probe - quarter * Math.SQRT2))) continue;
+      const found = search(qx, qy, quarter);
+      if (found) return found;
+    }
+    return null;
+  };
+  const xs = ANCHOR_OFFSETS.map(([dx]) => dx);
+  const step = Math.min(...xs.flatMap((x, at) => xs.slice(at + 1).map((other) => Math.abs(other - x))).filter((gap) => gap > 1e-9));
+  const half = (step * cellSize) / 2;
+  for (const [dx, dy] of ANCHOR_OFFSETS) {
+    const x = centreX + dx * cellSize;
+    const y = centreY + dy * cellSize;
+    if (!clear(x, y, Math.max(0, probe - half * Math.SQRT2))) continue;
+    for (const [sx, sy] of QUARTERS) {
+      const qx = x + (sx * half) / 2;
+      const qy = y + (sy * half) / 2;
+      if (!clear(qx, qy, Math.max(0, probe - (half / 2) * Math.SQRT2))) continue;
+      const found = search(qx, qy, half / 2);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
 export const auditCaches = (module, nav) => {
   const caches = nav.pathfinding?.byRadius;
   if (!(caches instanceof Map)) return null;
   const { navigation } = module;
+  const refines = typeof navigation.cellAnchorAt === "function";
   const { bounds, cellSize } = nav;
   const result = { cells: 0, links: 0, stale: 0, skipped: 0 };
   for (const cache of caches.values()) {
@@ -385,7 +429,8 @@ export const auditCaches = (module, nav) => {
         if (navigation.isPositionBlocked(nav, point, radius + 2)) continue;
         return dx === 0 && dy === 0 ? { state: 2, anchor: { x: centreX, y: centreY } } : { state: 3, anchor: point };
       }
-      return { state: 1, anchor: null };
+      const between = refines ? anchorBetween(navigation, nav, centreX, centreY, cellSize, radius + 2) : null;
+      return between ? { state: 3, anchor: between } : { state: 1, anchor: null };
     };
     for (let key = 0; key < columns * rows; key++) {
       const x = key % columns;

@@ -25,8 +25,9 @@ const run = promisify(execFile);
  * in the other order; the walk's acceleration ramp changed; monsters' bodies
  * no longer holding a walk (npc-move.js), so a crowd walks into itself again;
  * a monster held short swinging its contact swings again (npc-act.js); a
- * broken secret wall leaving nothing instead of its broken half (npc-spawn.js).
- * Each must be reported. The quick presets are what a developer runs between steps, so
+ * broken secret wall leaving nothing instead of its broken half (npc-spawn.js);
+ * a cell whose lattice misses no longer searched between its points
+ * (pathfind.js). Each must be reported. The quick presets are what a developer runs between steps, so
  * they are what is checked here.
  */
 
@@ -83,7 +84,15 @@ test("both harnesses pass a tree against itself and fail it against a changed on
       to: "retireNavigationObject(session.navigation, recordId, { broken: false });",
     },
   ]);
+  const anchorMutant = mutantRoot(TOOL_ROOT, [
+    {
+      file: "src/socket/pathfind.js",
+      from: "const found = anchorBetween(navigation, centreX, centreY, cellSize, probeRadius, gathered);",
+      to: "const found = null;",
+    },
+  ]);
   t.after(() => {
+    anchorMutant.cleanup();
     routeMutant.cleanup();
     aiMutant.cleanup();
     crowdMutant.cleanup();
@@ -92,7 +101,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
   });
 
   // Independent processes, so they run side by side; each ai-sim keeps to one worker per root.
-  const [routesSame, routesChanged, aiSame, aiChanged, crowdChanged, swingChanged, corpseChanged] = await Promise.all([
+  const [routesSame, routesChanged, aiSame, aiChanged, crowdChanged, swingChanged, corpseChanged, anchorChanged] = await Promise.all([
     invoke("route-lockstep.js", ["--base", TOOL_ROOT, "--quick"]),
     invoke("route-lockstep.js", ["--base", routeMutant.dir, "--quick"]),
     invoke("ai-sim.js", ["--base", TOOL_ROOT, "--quick", "--jobs", "1", "--explain", "0"]),
@@ -100,6 +109,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
     invoke("ai-sim.js", ["--base", crowdMutant.dir, "--quick", "--jobs", "1", "--explain", "0"]),
     invoke("ai-sim.js", ["--base", swingMutant.dir, "--quick", "--jobs", "1", "--explain", "0"]),
     invoke("ai-sim.js", ["--base", corpseMutant.dir, "--quick", "--scenarios", "smashing", "--jobs", "1", "--explain", "0"]),
+    invoke("route-lockstep.js", ["--base", anchorMutant.dir, "--quick"]),
   ]);
 
   assert.equal(routesSame.code, 0, `route-lockstep against itself:\n${routesSame.stdout}${routesSame.stderr ?? ""}`);
@@ -126,4 +136,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
 
   assert.equal(corpseChanged.code, 1, `ai-sim against the corpse mutant:\n${corpseChanged.stdout}${corpseChanged.stderr ?? ""}`);
   assert.match(corpseChanged.stdout, /scenario\/smashing seed 1 smasher +differs at tick \d+/);
+
+  assert.equal(anchorChanged.code, 1, `route-lockstep against the anchor mutant:\n${anchorChanged.stdout}${anchorChanged.stderr ?? ""}`);
+  assert.match(anchorChanged.stdout, /^MISMATCH .*"op":"findPath"/m);
 });

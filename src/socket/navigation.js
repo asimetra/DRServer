@@ -229,5 +229,5 @@ export { activeCollidersOf } from "./navigation-objects.js";
 export { findCageReleasePath } from "./cage-release.js";
 export { hasLineOfSight, isPositionBlocked } from "./clearance.js";
 export { moveWithNavigation, nearestClearPosition } from "./movement.js";
-export { findPath } from "./pathfind.js";
+export { cellAnchorAt, findPath } from "./pathfind.js";
 export { isOnAuthoredTile, segmentStaysOnAuthoredTiles } from "./tiles.js";

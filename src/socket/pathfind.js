@@ -137,6 +137,76 @@ const gatherProbes = (navigation, centreX, centreY, cellSize, probeRadius) => {
 };
 
 /**
+ * Where a body stands in a cell none of whose lattice points it stands at:
+ * the first point found, nearest the centre's lattice first, or null.
+ *
+ * The lattice is 12 units apart on a 60-unit cell, and a gap between two
+ * shapes that a body fits with a few units to spare can run between its
+ * points: a cell along it reads shut, and so does the way through. A KNIGHT
+ * drawn at 1.2 (radius 42) stood 12 s and then 20 s at a corridor between a
+ * prison's barrels its body fitted along with 9 units of play (5 after the
+ * margin), where one of radius 40 or less went through.
+ *
+ * So the space between the lattice points is searched, and only where a body
+ * could stand: every point of the lattice's square is within half a
+ * diagonal of a lattice point, so a point the body stands clear at has one
+ * that near it that a body that much smaller stands clear at. Each such
+ * lattice point's square is halved, and halved again, each half kept only
+ * when the same holds for it, down to a square a unit and a half across. A
+ * cell deep in a wall asks its lattice once more at the smaller radius and
+ * stops. Every point it asks is inside the lattice's square, so the cell
+ * answers for no more ground than it did (`forgetAround`, route-cache.js).
+ */
+const SMALLEST_SQUARE = 1.5;
+const anchorBetween = (navigation, centreX, centreY, cellSize, probeRadius, gathered) => {
+  const reach = LATTICE_REACH * cellSize;
+  const clearAt = (x, y, radius) =>
+    Math.abs(x - centreX) <= reach &&
+    Math.abs(y - centreY) <= reach &&
+    (gathered >= 0
+      ? withinFloorAt(navigation, x, y, radius) && clearOfGathered(x, y, radius, gathered)
+      : !blockedAt(navigation, x, y, radius, undefined));
+  const search = (x, y, half) => {
+    if (clearAt(x, y, probeRadius)) return { x, y };
+    const quarter = half / 2;
+    if (half * 2 < SMALLEST_SQUARE) return null;
+    for (const [sx, sy] of QUARTERS) {
+      const qx = x + sx * quarter;
+      const qy = y + sy * quarter;
+      if (!clearAt(qx, qy, Math.max(0, probeRadius - quarter * Math.SQRT2))) continue;
+      const found = search(qx, qy, quarter);
+      if (found) return found;
+    }
+    return null;
+  };
+  const half = (LATTICE_STEP * cellSize) / 2;
+  for (let at = 0; at < ANCHOR_X.length; at++) {
+    const x = centreX + ANCHOR_X[at] * cellSize;
+    const y = centreY + ANCHOR_Y[at] * cellSize;
+    if (!clearAt(x, y, Math.max(0, probeRadius - half * Math.SQRT2))) continue;
+    // Its own point was asked at the full radius by the lattice; its quarters were not.
+    for (const [sx, sy] of QUARTERS) {
+      const qx = x + (sx * half) / 2;
+      const qy = y + (sy * half) / 2;
+      if (!clearAt(qx, qy, Math.max(0, probeRadius - (half / 2) * Math.SQRT2))) continue;
+      const found = search(qx, qy, half / 2);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+const QUARTERS = [
+  [-1, -1],
+  [1, -1],
+  [-1, 1],
+  [1, 1],
+];
+/** The lattice's spacing, in cells. */
+const LATTICE_STEP = Math.min(
+  ...ANCHOR_X.flatMap((x, at) => ANCHOR_X.slice(at + 1).map((other) => Math.abs(other - x))).filter((gap) => gap > 1e-9)
+);
+
+/**
  * The eight steps out of a cell: x, y and cost, in the order they are tried.
  * A link is cached under its cell and its index here.
  */
@@ -259,6 +329,84 @@ const LINK_NONE = 1;
 const LINK_DIRECT = 2;
 const LINK_VIA = 3;
 
+/** A cell's cached answer: where in it a body stands (route-cache.js). */
+const SHUT = 1;
+const CENTRED = 2;
+const OFF_CENTRE = 3;
+
+/**
+ * The answer for cell (x, y) of one radius's cache, asked the first time:
+ * shut, open at its centre, or open at an anchor off it. The lattice first,
+ * nearest the centre first; where none of its points has room, the space
+ * between them (`anchorBetween`).
+ */
+const cellStateOf = (navigation, cells, x, y) => {
+  const { cellSize, columns } = cells;
+  const key = y * columns + x;
+  if (cells.state[key] !== 0) return cells.state[key];
+  const centreX = cells.minX + x * cellSize + cellSize / 2;
+  const centreY = cells.minY + y * cellSize + cellSize / 2;
+  cells.state[key] = SHUT;
+  const probeRadius = cells.radius + ANCHOR_MARGIN;
+  // -2 until the centre has been refused; then the gathered count, or -1.
+  let gathered = -2;
+  for (let at = 0; at < ANCHOR_X.length; at++) {
+    const dx = ANCHOR_X[at];
+    const dy = ANCHOR_Y[at];
+    const pointX = centreX + dx * cellSize;
+    const pointY = centreY + dy * cellSize;
+    if (at === 1) gathered = gatherProbes(navigation, centreX, centreY, cellSize, probeRadius);
+    if (
+      gathered >= 0
+        ? !withinFloorAt(navigation, pointX, pointY, probeRadius) ||
+          !clearOfGathered(pointX, pointY, probeRadius, gathered)
+        : blockedAt(navigation, pointX, pointY, probeRadius, undefined)
+    ) {
+      continue;
+    }
+    if (dx === 0 && dy === 0) {
+      cells.state[key] = CENTRED;
+    } else {
+      cells.state[key] = OFF_CENTRE;
+      cells.anchors.set(key, { x: pointX, y: pointY });
+    }
+    return cells.state[key];
+  }
+  const found = anchorBetween(navigation, centreX, centreY, cellSize, probeRadius, gathered);
+  if (found) {
+    cells.state[key] = OFF_CENTRE;
+    cells.anchors.set(key, found);
+  }
+  return cells.state[key];
+};
+
+/** The grid a search of `navigation` runs on. */
+const gridOf = (navigation) => {
+  const { bounds, cellSize } = navigation;
+  return {
+    columns: Math.max(1, Math.ceil((bounds.maxX - bounds.minX) / cellSize)),
+    rows: Math.max(1, Math.ceil((bounds.maxY - bounds.minY) / cellSize)),
+  };
+};
+
+/**
+ * Where a body of `radius` stands in the cell holding (x, y), as the route
+ * search enters it, or null when the search reads the cell shut. The same
+ * answer, from the same cache (tools/anchor-census.js asks it).
+ */
+export const cellAnchorAt = (navigation, radius, x, y) => {
+  const { bounds, cellSize } = navigation;
+  const { columns, rows } = gridOf(navigation);
+  const cellX = Math.floor((x - bounds.minX) / cellSize);
+  const cellY = Math.floor((y - bounds.minY) / cellSize);
+  if (cellX < 0 || cellY < 0 || cellX >= columns || cellY >= rows) return null;
+  const cells = routeCacheFor(navigation, radius, columns, rows);
+  const state = cellStateOf(navigation, cells, cellX, cellY);
+  if (state === SHUT) return null;
+  if (state === CENTRED) return { x: bounds.minX + (cellX + 0.5) * cellSize, y: bounds.minY + (cellY + 0.5) * cellSize };
+  return { ...cells.anchors.get(cellY * columns + cellX) };
+};
+
 /**
  * A* over the authored floor collision geometry, returning compressed world waypoints.
  *
@@ -281,8 +429,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   if (hasLineOfSight(navigation, start, goal, radius)) return [{ ...goal }];
 
   const { bounds, cellSize } = navigation;
-  const columns = Math.max(1, Math.ceil((bounds.maxX - bounds.minX) / cellSize));
-  const rows = Math.max(1, Math.ceil((bounds.maxY - bounds.minY) / cellSize));
+  const { columns, rows } = gridOf(navigation);
   const clamp = (value, max) => Math.max(0, Math.min(max - 1, value));
   const toCell = (point) => ({
     x: clamp(Math.floor((point.x - bounds.minX) / cellSize), columns),
@@ -294,42 +441,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   });
   const keyFor = (x, y) => y * columns + x;
   const cells = routeCacheFor(navigation, radius, columns, rows);
-  const SHUT = 1;
-  const CENTRED = 2;
-  const stateOf = (x, y) => {
-    const key = keyFor(x, y);
-    if (cells.state[key] === 0) {
-      const centreX = bounds.minX + x * cellSize + cellSize / 2;
-      const centreY = bounds.minY + y * cellSize + cellSize / 2;
-      cells.state[key] = SHUT;
-      const probeRadius = radius + ANCHOR_MARGIN;
-      // -2 until the centre has been refused; then the gathered count, or -1.
-      let gathered = -2;
-      for (let at = 0; at < ANCHOR_X.length; at++) {
-        const dx = ANCHOR_X[at];
-        const dy = ANCHOR_Y[at];
-        const pointX = centreX + dx * cellSize;
-        const pointY = centreY + dy * cellSize;
-        if (at === 1) gathered = gatherProbes(navigation, centreX, centreY, cellSize, probeRadius);
-        if (
-          gathered >= 0
-            ? !withinFloorAt(navigation, pointX, pointY, probeRadius) ||
-              !clearOfGathered(pointX, pointY, probeRadius, gathered)
-            : blockedAt(navigation, pointX, pointY, probeRadius, undefined)
-        ) {
-          continue;
-        }
-        if (dx === 0 && dy === 0) {
-          cells.state[key] = CENTRED;
-        } else {
-          cells.state[key] = 3;
-          cells.anchors.set(key, { x: pointX, y: pointY });
-        }
-        break;
-      }
-    }
-    return cells.state[key];
-  };
+  const stateOf = (x, y) => cellStateOf(navigation, cells, x, y);
   /** Where a body can stand in this cell, or null when nowhere in it. */
   const anchorOf = (x, y) => {
     const state = stateOf(x, y);
