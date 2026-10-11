@@ -436,7 +436,7 @@ export const runSpec = async (modules, spec, emit, { detail = new Set() } = {}) 
       if (!hero) throw new Error(`${run}: the build put no hero on the floor`);
       const frames = [];
       session.send = (frame) => frames.push(frame);
-      const census = spec.stats ? createCensus() : null;
+      const census = spec.stats ? await createCensus(modules) : null;
       for (let tick = 0; tick < spec.ticks; tick++) {
         frames.length = 0;
         const randomBefore = mathRandom.calls;
