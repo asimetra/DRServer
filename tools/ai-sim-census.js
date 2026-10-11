@@ -38,7 +38,7 @@
  * 3-18%.
  */
 
-import { createCrowdMetrics, crowdProfile, describeCrowd, mergeCrowd } from "./crowd-metrics.js";
+import { attackClassOf, createCrowdMetrics, crowdProfile, describeCrowd, mergeCrowd } from "./crowd-metrics.js";
 
 const FIELD_UPDATE = 124;
 /** Every hero's body as the corpus is counted with (tools/crowd-corpus.js): radius 25.87, its middle as far above the feet. */
@@ -166,7 +166,7 @@ export const createCensus = async (modules) => {
         swungThisTick.add(update.doid);
         // After the field: i8 weapon slot, u8 consumable, u32 attack (combat-wire.js).
         const attack = frame.length >= 16 ? attackRows.get(frame.readUInt32LE(12)) : null;
-        crowdSwings.push({ id: update.doid, shot: Boolean(attack?.Projectile) });
+        crowdSwings.push({ id: update.doid, what: attackClassOf(attack) });
       } else if (update.field === HEADING && frame.length >= 14) {
         const heading = frame.readFloatLE(10);
         row.headings++;

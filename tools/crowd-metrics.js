@@ -19,8 +19,8 @@
  *               `slides` round it, `pushes` it ahead, `backs` off, the other
  *               stepped `aside`, or `jitters`; split by whether the hero moved
  *               15 or more in that second
- *   swings      every swing at the hero (no pet nearer), a shot apart
- *               from a contact attack, with whether its
+ *   swings      every swing at the hero (no pet nearer), by what the
+ *               attack is (`attackClassOf`), with whether its
  *               body was where its walk ends — touching the hero for a
  *               chaser, at its standoff for a kiter, 15 of slack — and
  *               whether it was still advancing: 10 or more nearer the hero
@@ -67,6 +67,15 @@ export const crowdProfile = ({ behavior, moveSpeed, radius, attacks = [], keepDi
 };
 const KINDS = { CHASE_AI: "chase", KITE_AI: "kite", TELEPORT_AI: "teleport" };
 
+/**
+ * What an attack row is to the swing counts: a `shot` throws a projectile, a
+ * `contact` swing neither throws nor moves the monster and reaches 140 or
+ * less (npc-act.js `isContactAttack`), and anything else — a lunge, a long
+ * aura — is `other`.
+ */
+export const attackClassOf = (attack) =>
+  attack?.Projectile ? "shot" : Number(attack?.MoveAmount) > 0 || Number(attack?.Range ?? 0) > 140 ? "other" : "contact";
+
 const emptyKind = () => ({ swings: 0, arrived: 0, advancing: 0, allowed: 0 });
 const emptyOutcomes = () => ({ n: 0, waits: 0, slides: 0, pushes: 0, aside: 0, backs: 0, jitters: 0, overlapping: 0 });
 
@@ -78,14 +87,9 @@ export const emptyCrowd = () => ({
   blocked: emptyOutcomes(),
   blockedHeroStill: emptyOutcomes(),
   blockedHeroMoved: emptyOutcomes(),
-  swings: {
-    chase: emptyKind(),
-    "chase shot": emptyKind(),
-    kite: emptyKind(),
-    "kite shot": emptyKind(),
-    teleport: emptyKind(),
-    "teleport shot": emptyKind(),
-  },
+  swings: Object.fromEntries(
+    ["chase", "kite", "teleport"].flatMap((kind) => ["contact", "other", "shot"].map((what) => [`${kind} ${what}`, emptyKind()]))
+  ),
   due: { allowed: 0, allowedSwung: 0, held: 0, heldSwung: 0 },
 });
 
@@ -220,7 +224,7 @@ export const createCrowdMetrics = ({ tickMs = 250, onSwing = null, onDue = null 
         const allowed = arrived || advancing;
         const swings = swungNow.has(a.id);
         if (swings && !nearerPet) {
-          const kind = counts.swings[`${a.kind}${swungNow.get(a.id).shot ? " shot" : ""}`];
+          const kind = counts.swings[`${a.kind} ${swungNow.get(a.id).what ?? "contact"}`];
           kind.swings++;
           if (arrived) kind.arrived++;
           if (advancing) kind.advancing++;
@@ -229,7 +233,7 @@ export const createCrowdMetrics = ({ tickMs = 250, onSwing = null, onDue = null 
         }
         const inReach = toHero <= a.reach + REACH_SLACK;
         const due = t - (lastSwing.get(a.id) ?? -Infinity) >= (a.cadenceMs ?? 0);
-        if (inReach && due && !nearerPet) onDue?.({ monster: a, gap, advance, toHero, allowed, swings, since: t - (lastSwing.get(a.id) ?? -Infinity) });
+        if (inReach && due && !nearerPet) onDue?.({ t, monster: a, gap, advance, toHero, allowed, swings, since: t - (lastSwing.get(a.id) ?? -Infinity) });
         if (inReach && due && !nearerPet && a.kind !== "teleport") {
           if (allowed) {
             counts.due.allowed++;

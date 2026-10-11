@@ -8,7 +8,8 @@
  *
  * Solo runs only, unless `--all-runs`: a solo run is one distinct
  * `playerID` among the heroes generated, whatever the number of floors. The
- * hero is where the client proposed it (its own field 147 going out); a
+ * hero is where the client proposed it (its own field 147 going out), and
+ * out of the counts while his hit points (151) are at zero; a
  * monster is where the server last placed it (field 132), sampled every
  * 250 ms, which is the AI's tick on ours. A swing is a choreography (143),
  * a shot when its attack (the u32 after the weapon slot) throws a
@@ -28,7 +29,7 @@ import { loadNavigationLibrary, navigationEntryFor } from "../src/socket/navigat
 import { npcAttackChoices } from "../src/socket/npc-attacks.js";
 import { CLID } from "../src/socket/opcodes.js";
 import { captureFiles } from "./capture-lib.js";
-import { createCrowdMetrics, crowdProfile, describeCrowd, mergeCrowd } from "./crowd-metrics.js";
+import { attackClassOf, createCrowdMetrics, crowdProfile, describeCrowd, mergeCrowd } from "./crowd-metrics.js";
 import { classForClid, classForName, decodeFieldUpdate, decodeGenerate, framesOf, GENERATE_OPS } from "./wire.js";
 
 const TICK_MS = 250;
@@ -88,6 +89,9 @@ export const readTimeline = async (file, rows) => {
   const npcs = new Map();
   const hero = [];
   const heroDoids = new Set();
+  /** Each hero's hit points over time: a downed hero is no one's victim. */
+  const heroHp = new Map();
+  const hpOf = (doid) => heroHp.get(doid) ?? heroHp.set(doid, []).get(doid);
   for await (const { body, out, at } of framesOf(file)) {
     const op = body.readUInt16LE(0);
     if (GENERATE_OPS.has(op)) {
@@ -96,6 +100,7 @@ export const readTimeline = async (file, rows) => {
       if (decoded.error) continue;
       if (/^HeroGameObject/.test(decoded.class ?? "")) {
         if (decoded.fields.playerID !== undefined) players.add(decoded.fields.playerID);
+        if (decoded.fields.hitPoints !== undefined) hpOf(decoded.doid).push([at, Number(decoded.fields.hitPoints)]);
         continue;
       }
       if (decoded.class !== "DistributedNPCGameObject") continue;
@@ -126,8 +131,13 @@ export const readTimeline = async (file, rows) => {
     if (out) {
       if (field !== 147) continue;
       const update = decodeFieldUpdate(body, heroClass);
-      if (!update.error) hero.push([at, update.value[0], update.value[1]]);
+      if (!update.error) hero.push([at, update.value[0], update.value[1], doid]);
       heroDoids.add(doid);
+      continue;
+    }
+    if (field === 151 && heroHp.has(doid)) {
+      const update = decodeFieldUpdate(body, heroClass);
+      if (!update.error) hpOf(doid).push([at, Number(update.value)]);
       continue;
     }
     const npc = npcs.get(doid);
@@ -149,7 +159,7 @@ export const readTimeline = async (file, rows) => {
     }
     else if (update.name === "state" && update.value === "dead") npc.to = Math.min(npc.to, at);
   }
-  return { players, npcs, hero, heroDoids };
+  return { players, npcs, hero, heroDoids, heroHp };
 };
 
 /** The samples of one timeline, fed to `metrics`. */
@@ -171,7 +181,9 @@ export const sampleTimeline = async (timeline, metrics, attacks) => {
   const swingIndex = new Map(monsters.map(({ doid }) => [doid, 0]));
   for (let t = start; t <= end; t += TICK_MS) {
     const h = lastAtOrBefore(hero, t);
-    const heroSample = h ? { x: h[1], y: h[2], bx: h[1], by: h[2] + HERO_BODY_DY, r: HERO_RADIUS } : null;
+    const hp = h ? lastAtOrBefore(timeline.heroHp?.get(h[3]) ?? [], t) : null;
+    const down = hp ? hp[1] <= 0 : false;
+    const heroSample = h && !down ? { x: h[1], y: h[2], bx: h[1], by: h[2] + HERO_BODY_DY, r: HERO_RADIUS } : null;
     const living = [];
     const swung = [];
     for (const { doid, npc, profile } of monsters) {
@@ -183,7 +195,7 @@ export const sampleTimeline = async (timeline, metrics, attacks) => {
       if (t < npc.from || t >= npc.to) continue;
       if (index < swings.length && swings[index] < t + TICK_MS) {
         const detail = npc.swingDetails.find(([at]) => at >= t && at < t + TICK_MS);
-        swung.push({ id: doid, shot: Boolean(attacks.get(detail?.[1])?.Projectile) });
+        swung.push({ id: doid, what: attackClassOf(attacks.get(detail?.[1])) });
       }
       const p = lastAtOrBefore(npc.pos, t);
       if (!p) continue;

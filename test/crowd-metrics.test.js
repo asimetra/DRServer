@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCrowdMetrics, crowdProfile, mergeCrowd } from "../tools/crowd-metrics.js";
+import { attackClassOf, createCrowdMetrics, crowdProfile, mergeCrowd } from "../tools/crowd-metrics.js";
 
 /**
  * The crowd counts the official corpus and the AI harness are both measured
@@ -50,13 +50,13 @@ test("a swing is at its walk's end, on the way in, or held short of both", () =>
   const metrics = createCrowdMetrics();
   // Monster 1 walks in 30 a tick and swings at 100; monster 2 stands at 140 and swings.
   for (let t = 0; t <= 500; t += 250) {
-    const swung = t === 500 ? [{ id: 1, shot: false }, { id: 2, shot: false }] : [];
+    const swung = t === 500 ? [{ id: 1, what: "contact" }, { id: 2, what: "contact" }] : [];
     metrics.sample(t, hero, [knight(1, 160 - (t / 250) * 30, 30), knight(2, 0, 140)], swung);
   }
   const { swings, due } = metrics.result();
-  assert.equal(swings.chase.swings, 2);
-  assert.equal(swings.chase.advancing, 1);
-  assert.equal(swings.chase.allowed, 1);
+  assert.equal(swings["chase contact"].swings, 2);
+  assert.equal(swings["chase contact"].advancing, 1);
+  assert.equal(swings["chase contact"].allowed, 1);
   assert.equal(due.heldSwung, 1);
   assert.equal(due.allowedSwung, 1);
 });
@@ -72,4 +72,12 @@ test("a kiter's walk ends at its standoff, and two results add up", () => {
   const one = createCrowdMetrics();
   one.sample(0, hero, [knight(1, 100, 0)]);
   assert.equal(mergeCrowd([one.result(), one.result()]).engaged, 2);
+});
+
+test("a swing is a shot, a contact swing, or something else", () => {
+  assert.equal(attackClassOf({ Projectile: "ARROW", Range: 600 }), "shot");
+  assert.equal(attackClassOf({ Range: 80 }), "contact");
+  assert.equal(attackClassOf({ Range: 140 }), "contact");
+  assert.equal(attackClassOf({ Range: 250 }), "other");
+  assert.equal(attackClassOf({ Range: 100, MoveAmount: 40 }), "other");
 });
