@@ -26,8 +26,7 @@
  * could stand at. Asked of each case:
  *
  *   opportunity  some flooded point is within the row's reach of him
- *                (body.js furthestReach) and passes the swing's sight test
- *                (npc-act.js victimInSight: his feet or his body point);
+ *                (body.js furthestReach) and passes the swing's sight test;
  *   straight     where the official's no-route walk ends (routing.js): at
  *                him in 10-unit steps along the scenery, stopping at the
  *                first step given back less than a tenth of itself;
@@ -37,11 +36,19 @@
  *                forth in the last 10 s (walked more than twice its net
  *                displacement plus 30).
  *
+ * The cases are chosen the same way for every root, at the feet. What is
+ * asked of a case is each root's own: a root whose body.js meets the
+ * scenery at the body (`seesBody`, `bodyBlocked`, `moveBody`) floods, walks
+ * and routes the monster's body and asks the swing's sight test body to
+ * body; one before that asks it at the feet, and sees his feet or his body
+ * point, as its npc-act.js did.
+ *
  * Nothing in choosing the cases asks the route search, and everything is
  * seeded, so the base and the candidate meet the same cases; each root runs
  * in a process of its own (tools/ai-sim.js says why). The report is a table
- * per row and the cases that got worse; the exit status is 0 unless a root
- * failed to run.
+ * per row — each root's attack rate over the cases it had an opportunity in
+ * by its own rule — and the cases that got worse; the exit status is 0
+ * unless a root failed to run.
  */
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -140,8 +147,32 @@ const buildWorld = async (modules, floor, mapNodeId, label) => {
   return session;
 };
 
+/**
+ * How a root's monster `probe` meets the scenery: at its body where the root
+ * has body.js's wrappers, else at its feet.
+ */
+const sceneryOf = ({ nav, body }, navigation, probe, heroActor) =>
+  typeof body.seesBody === "function"
+    ? {
+        blocked: (point, radius) => body.bodyBlocked(navigation, probe, point, radius),
+        clear: (from, to, radius) => body.bodyWalkClear(navigation, probe, from, to, radius),
+        move: (from, step, radius) => body.moveBody(navigation, probe, from, step, radius),
+        route: (start, hero, radius) => body.bodyRoute({}, navigation, probe, start, body.aimAt(probe, heroActor, hero), radius),
+        sees: (point, hero) => body.seesBody(navigation, probe, point, heroActor, hero),
+      }
+    : {
+        blocked: (point, radius) => nav.isPositionBlocked(navigation, point, radius),
+        clear: (from, to, radius) => nav.hasLineOfSight(navigation, from, to, radius),
+        move: (from, step, radius) => nav.moveWithNavigation(navigation, from, step, radius),
+        route: (start, hero, radius) => nav.findPath(navigation, start, hero, radius),
+        sees: (point, hero) => {
+          const bodyPoint = body.bodyPointOf(heroActor, hero);
+          return nav.hasLineOfSight(navigation, point, hero, 0) || (bodyPoint && bodyPoint !== hero && nav.hasLineOfSight(navigation, point, bodyPoint, 0));
+        },
+      };
+
 /** The points a body of `radius` can walk to from `start`, near the hero. */
-const flood = (nav, navigation, start, hero, radius) => {
+const flood = (scenery, start, hero, radius) => {
   const seen = new Set(["0,0"]);
   const queue = [[0, 0, { ...start }]];
   for (let head = 0; head < queue.length; head++) {
@@ -153,7 +184,7 @@ const flood = (nav, navigation, start, hero, radius) => {
         const to = { x: start.x + (i + di) * FLOOD_STEP, y: start.y + (j + dj) * FLOOD_STEP };
         if (distance(to, hero) > FLOOD_LIMIT) continue;
         seen.add(key);
-        if (nav.isPositionBlocked(navigation, to, radius) || !nav.hasLineOfSight(navigation, from, to, radius)) continue;
+        if (scenery.blocked(to, radius) || !scenery.clear(from, to, radius)) continue;
         queue.push([i + di, j + dj, to]);
       }
     }
@@ -162,13 +193,13 @@ const flood = (nav, navigation, start, hero, radius) => {
 };
 
 /** The official's walk with no route: straight at the hero, sliding, until a step is given back less than a tenth. */
-const straightWalk = (nav, navigation, start, hero, radius) => {
+const straightWalk = (scenery, start, hero, radius) => {
   let at = { ...start };
   for (let step = 0; step < 500; step++) {
     const left = distance(at, hero);
     if (left < 1) break;
     const length = Math.min(FLOOD_STEP, left);
-    const next = nav.moveWithNavigation(navigation, at, { x: ((hero.x - at.x) / left) * length, y: ((hero.y - at.y) / left) * length }, radius);
+    const next = scenery.move(at, { x: ((hero.x - at.x) / left) * length, y: ((hero.y - at.y) / left) * length }, radius);
     if (left - distance(next, hero) < length * 0.1) break;
     at = next;
   }
@@ -243,18 +274,20 @@ const censusFloor = async (modules, floor, mapNodeId, label, seed, per) => {
       const start = { x: hero.x + Math.cos(angle) * away, y: hero.y + Math.sin(angle) * away };
       if (nav.isPositionBlocked(navigation, hero, HERO_RADIUS) || nav.isPositionBlocked(navigation, start, radius)) continue;
       if (nav.hasLineOfSight(navigation, start, hero, radius)) continue;
-      const region = flood(nav, navigation, start, hero, radius);
-      if (region.length < 20) continue;
+      const atFeet = sceneryOf({ nav, body: {} }, navigation, probe, heroActor);
+      const chosenFrom = flood(atFeet, start, hero, radius);
+      if (chosenFrom.length < 20) continue;
       const heroStands = !nav.isPositionBlocked(navigation, hero, radius);
-      if (heroStands && region.some((p) => nav.hasLineOfSight(navigation, p, hero, radius))) continue;
+      if (heroStands && chosenFrom.some((p) => nav.hasLineOfSight(navigation, p, hero, radius))) continue;
       kept++;
-      const bodyPoint = body.bodyPointOf(heroActor, hero);
-      const sees = (p) =>
-        nav.hasLineOfSight(navigation, p, hero, 0) || (bodyPoint && bodyPoint !== hero && nav.hasLineOfSight(navigation, p, bodyPoint, 0));
+      // From here on, the root's own: its body's region, sight, walk and route.
+      const scenery = sceneryOf(modules, navigation, probe, heroActor);
+      const region = typeof body.seesBody === "function" ? flood(scenery, start, hero, radius) : chosenFrom;
+      const sees = (p) => scenery.sees(p, hero);
       const opportunities = region.filter((p) => distance(p, hero) <= reach && sees(p));
-      const straight = straightWalk(nav, navigation, start, hero, radius);
+      const straight = straightWalk(scenery, start, hero, radius);
       // The route the root's own search gives from the start: its length, and whether it ends short.
-      const route = nav.findPath(navigation, start, hero, radius);
+      const route = scenery.route(start, hero, radius);
       let routeLength = 0;
       for (let i = 0; i < route.length; i++) routeLength += distance(i ? route[i - 1] : start, route[i]);
       const run = await runCase(modules, session, context, constant, start, hero, seed * 131 + records.length);
@@ -338,9 +371,11 @@ const report = (base, candidate) => {
   const rows = [...new Set(base.map((record) => record.row)), "all"];
   const table = rows.map((row) => {
     const all = indices.filter((i) => row === "all" || base[i].row === row);
-    const opportunity = all.filter((i) => base[i].opportunity);
-    const line = { row, cases: all.length, "with an opportunity": opportunity.length };
+    const line = { row, cases: all.length };
     for (const [name, set] of [["base", base], ["candidate", candidate]]) {
+      // Each root's own: what it can swing from is its own rule's (sceneryOf).
+      const opportunity = all.filter((i) => set[i].opportunity);
+      line[`opportunity ${name}`] = opportunity.length;
       const attacked = opportunity.filter((i) => set[i].swings > 0);
       line[`attacked ${name}`] = percent(attacked.length, opportunity.length);
       line[`1st swing p50 ${name}`] = shown(quantile(attacked.map((i) => set[i].firstSwing), 0.5));
@@ -348,7 +383,8 @@ const report = (base, candidate) => {
       line[`back and forth ${name}`] = all.filter((i) => backAndForth(set[i])).length;
       line[`walk/straight p90 ${name}`] = shown(quantile(all.map((i) => ratio(set[i])), 0.9));
     }
-    line["straight walk attacks"] = percent(opportunity.filter((i) => base[i].straightAttacks).length, opportunity.length);
+    const opportunity = all.filter((i) => base[i].opportunity);
+    line["straight walk attacks base"] = percent(opportunity.filter((i) => base[i].straightAttacks).length, opportunity.length);
     return line;
   });
   console.table(table);
