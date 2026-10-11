@@ -6,7 +6,6 @@ import { PacketWriter } from "./packet.js";
 import { performNpcAttack } from "./combat.js";
 import { attackStopped, buffMultiplierFor } from "./buffs.js";
 import { heroMembersOf, matchStateOf, worldOf } from "./match-world.js";
-import { collectNearbyForPet } from "./pickups.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
 import {
   hasLineOfSight,
@@ -17,16 +16,15 @@ import {
 import { objectDisable } from "./objects.js";
 import { bodyPointOf, bodyRadius, contact, furthestReach, reach, sightOrigin, standoff } from "./body.js";
 import { faceTarget, placeNpc, stepNpc } from "./npc-move.js";
-import { describeRoute, forgetRoute, NO_ROUTE_ASKED, routeToTarget, searchAgain } from "./routing.js";
+import { describeRoute, NO_ROUTE_ASKED, routeToTarget, searchAgain } from "./routing.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
+import { clearNpcTarget, LET_GO, pickTarget } from "./npc-targeting.js";
 import {
   boundedPush,
-  nearestTo,
   nobodyToFight,
   senseCrowd,
   separateIdleNpc,
   separationDisplacement,
-  squaredDistanceTo,
 } from "./npc-crowd.js";
 
 const npcTimelineAction = (doid, timeline) =>
@@ -36,13 +34,11 @@ const npcTimelineAction = (doid, timeline) =>
     .utf(timeline)
     .frame();
 
+export { MAX_PET_AGGRESSORS } from "./npc-targeting.js";
+
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 const ATTACK_RANGE_EPSILON = 2;
 const NPC_WALK_ACCELERATION_SECONDS = 0.9;
-/** Only this many enemies may deliberately choose one pet over a live hero. */
-export const MAX_PET_AGGRESSORS = 2;
-/** A pet must be materially ahead of the hero before it is an aggro candidate. */
-const PET_AGGRO_DISTANCE_ADVANTAGE = 100;
 
 /**
  * Ramps an NPC's ordinary walk up to its authored movement speed.
@@ -272,27 +268,6 @@ export const chooseNpcAttack = (
 };
 
 /**
- * When it next picks a target: `ChangeTargetT` and a fresh roll of up to
- * `ChangeTargetRand` on top, a quarter of a second at least.
- */
-const nextTargetPick = (ai, now) =>
-  now + Math.max(250, (ai.targetTimerMs ?? 2000) + Math.random() * (ai.targetRandMs ?? 0));
-
-const clearNpcTarget = (actor) => {
-  const { ai } = actor;
-  if (!ai) return;
-  ai.engaged = false;
-  ai.state = "idle";
-  forgetRoute(ai);
-  ai.targetDoid = null;
-  ai.nextTargetAt = 0;
-  ai.walkSpeed = 0;
-  ai.attackLockedUntil = 0;
-  ai.fleeUntil = 0;
-  ai.targetSeen = null;
-};
-
-/**
  * The gap before this NPC may swing again, rolled fresh each time.
  *
  * `AttackTimer` is the floor and `AttackTimeRand` the spread above it; see the
@@ -488,94 +463,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     for (const actor of actors.values()) clearNpcTarget(actor);
     return;
   }
-  const {
-    heroes,
-    heroDoids,
-    spatialIndex,
-    pets,
-    beasts,
-    allies,
-    huntable,
-    heroByDoid,
-    petByDoid,
-    beastByDoid,
-    allyByDoid,
-    petTargets,
-    beastTargets,
-    petAggressors,
-  } = crowd;
-
-  const rememberEnemyTarget = (ai, target) => {
-    const previousPet = petByDoid.has(ai.targetDoid) ? ai.targetDoid : null;
-    const nextPet = petByDoid.has(target?.doid) ? target.doid : null;
-    if (previousPet && previousPet !== nextPet) {
-      petAggressors.set(previousPet, Math.max(0, (petAggressors.get(previousPet) ?? 1) - 1));
-    }
-    if (nextPet && previousPet !== nextPet) {
-      petAggressors.set(nextPet, (petAggressors.get(nextPet) ?? 0) + 1);
-    }
-    ai.targetDoid = target?.doid ?? null;
-    ai.nextTargetAt = nextTargetPick(ai, now);
-    return target;
-  };
-
-  /**
-   * Heroes own aggro; pets only peel a small number of enemies when they are
-   * clearly screening ahead. Official pet floors put just 3.4% of enemy damage
-   * on pets, and heading analysis shows most of even that was collateral from
-   * a swing aimed at the hero. Nearest-body targeting inverted that ratio.
-   */
-  const enemyVictim = (actor, ai) => {
-    const lockedHero = heroByDoid.get(ai.targetDoid);
-    if (lockedHero && now < (ai.nextTargetAt ?? 0)) return lockedHero;
-    const lockedPet = petByDoid.get(ai.targetDoid);
-    if (
-      lockedPet &&
-      now < (ai.nextTargetAt ?? 0) &&
-      (petAggressors.get(lockedPet.doid) ?? 0) <= MAX_PET_AGGRESSORS
-    ) return lockedPet;
-    const lockedBeast = beastByDoid.get(ai.targetDoid);
-    if (lockedBeast && now < (ai.nextTargetAt ?? 0)) return lockedBeast;
-    const lockedAlly = allyByDoid.get(ai.targetDoid);
-    if (lockedAlly && now < (ai.nextTargetAt ?? 0)) return lockedAlly;
-
-    const hero = nearestTo(actor.position, heroes);
-    const pet = nearestTo(actor.position, pets);
-    // An ally stands in for a hero as a target, by distance alone: the
-    // official's monsters hit the barricade in their way as readily as the
-    // player behind it.
-    const ally = nearestTo(actor.position, allies);
-    let player = hero;
-    if (
-      ally &&
-      (!player ||
-        squaredDistanceTo(actor.position, ally.position) < squaredDistanceTo(actor.position, player.position))
-    ) player = ally;
-    if (pet && (petAggressors.get(pet.doid) ?? 0) < MAX_PET_AGGRESSORS) {
-      const heroDistance = hero ? distanceTo(actor.position, hero.position) : Infinity;
-      const petDistance = distanceTo(actor.position, pet.position);
-      if (petDistance + PET_AGGRO_DISTANCE_ADVANTAGE < heroDistance) {
-        player = pet;
-      }
-    }
-    const beast = nearestTo(actor.position, beasts);
-    const victim =
-      beast && (!player || squaredDistanceTo(actor.position, beast.position) <
-        squaredDistanceTo(actor.position, player.position))
-        ? beast
-        : player;
-    return rememberEnemyTarget(ai, victim);
-  };
-
-  /** Team 7 fights every living combatant outside team 7, whichever is near. */
-  const beastVictim = (actor, ai) => {
-    const locked = beastTargets.find(({ doid }) => doid === ai.targetDoid);
-    if (locked && now < (ai.nextTargetAt ?? 0)) return locked;
-    const victim = nearestTo(actor.position, beastTargets);
-    ai.targetDoid = victim?.doid ?? null;
-    ai.nextTargetAt = nextTargetPick(ai, now);
-    return victim;
-  };
+  const { heroes, heroDoids, spatialIndex } = crowd;
 
   for (const [doid, actor] of actors) {
     const ai = actor.ai;
@@ -585,66 +473,13 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
     // Reeling from a hit that staggered it — see holdStaggered in combat.js.
     // It neither walks nor swings until the stun is over.
     if (now < (ai.staggeredUntil ?? 0)) continue;
-    let followingOwner = false;
-    let victim;
-    if (ai.kind === "pet") {
-      const owner = heroes.find(({ doid: heroDoid }) => heroDoid === ai.ownerDoid);
-      if (!owner) {
-        clearNpcTarget(actor);
-        continue;
-      }
-      if (now >= (ai.nextPickupAt ?? 0)) {
-        ai.nextPickupAt = now + 250;
-        const ownerSession = owner.member.world?.contextFor(owner.member) ?? owner.member;
-        collectNearbyForPet(ownerSession, actor.position, ai.collects);
-      }
-      const enemy = nearestTo(actor.position, petTargets);
-      const ownerDistance = distanceTo(actor.position, owner.position);
-      const enemyDistance = enemy ? distanceTo(actor.position, enemy.position) : Infinity;
-      if (ai.tetherDistance > 0 && ownerDistance > ai.tetherDistance) {
-        ai.outsideTetherAt ??= now;
-      } else {
-        ai.outsideTetherAt = null;
-      }
-      const mustReturn =
-        ai.outsideTetherAt != null && now - ai.outsideTetherAt >= (ai.tetherTimerMs ?? 0);
-      if (mustReturn || !enemy || (!ai.engaged && enemyDistance > ai.aggroRadius)) {
-        if (ownerDistance <= Math.max(contact(actor, owner.actor), ai.returnDistance ?? 0)) {
-          clearNpcTarget(actor);
-          continue;
-        }
-        victim = owner;
-        followingOwner = true;
-        ai.engaged = false;
-        ai.state = "return";
-        ai.targetDoid = owner.doid;
-      } else {
-        victim = enemy;
-        ai.targetDoid = enemy.doid;
-      }
-    } else if (ai.kind === "beast") {
-      victim = beastVictim(actor, ai);
-    } else if (ai.kind === "ally") {
-      // A walking ally fights what the player fights, nearest first — the
-      // official's chef walks to the nearer sorcerer and swings every two
-      // seconds; it does not follow the hero (stood 9 s at spawn, 150-600
-      // away, until an enemy appeared).
-      const locked = huntable.find(({ doid: enemyDoid }) => enemyDoid === ai.targetDoid);
-      if (locked && now < (ai.nextTargetAt ?? 0)) {
-        victim = locked;
-      } else {
-        victim = nearestTo(actor.position, huntable);
-        ai.targetDoid = victim?.doid ?? null;
-        ai.nextTargetAt = nextTargetPick(ai, now);
-      }
-      if (!victim) {
-        clearNpcTarget(actor);
-        continue;
-      }
-    } else {
-      victim = enemyVictim(actor, ai);
+    const picked = pickTarget(crowd, actor, now);
+    if (picked === LET_GO) {
+      clearNpcTarget(actor);
+      continue;
     }
-    if (!victim) continue;
+    if (!picked) continue;
+    const { victim, following: followingOwner } = picked;
     const target = victim.position;
     // Its body and the victim's, asked once: neither changes in the tick.
     const radius = bodyRadius(actor);
