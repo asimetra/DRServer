@@ -1,5 +1,5 @@
-import { anyColliderAt, canGather, clearOfGathered, gatherNear } from "./collider-index.js";
-import { onAuthoredTile, tileAt } from "./tiles.js";
+import { anyColliderAt, anyColliderOnSegment, canGather, clearOfGathered, gatherNear } from "./collider-index.js";
+import { onAuthoredTile, segmentOnLaidTiles, tileAt } from "./tiles.js";
 
 /**
  * Whether a body circle is clear of the floor: at a point
@@ -7,10 +7,13 @@ import { onAuthoredTile, tileAt } from "./tiles.js";
  * inside the floor's bounds, on a laid tile, and overlapping no active
  * collider.
  *
- * The line is sampled and each sample put to the point test; `sweepIsClear`
- * is the same samples and the same tests, with the colliders near a run of
- * them gathered once. Each public test has a twin past its guards, on bare
- * coordinates, for the hot loops of the route search.
+ * A line of no width — radius 0: whether a monster can see what it swings at,
+ * whether a route's end shows its goal, whether a claimed move or throw went
+ * through a wall — is asked exactly (`segmentIsClear`). A body's line is
+ * sampled and each sample put to the point test; `sweepIsClear` is the same
+ * samples and the same tests, with the colliders near a run of them gathered
+ * once. Each public test has a twin past its guards, on bare coordinates, for
+ * the hot loops of the route search.
  */
 
 /** Whether a body circle at (x, y) lies wholly inside the floor's bounds. */
@@ -41,7 +44,11 @@ export const blockedAt = (navigation, x, y, radius, ignoredColliders) => {
   return anyColliderAt(navigation, x, y, radius, ignoredColliders);
 };
 
-/** Samples a swept actor circle so a fast tick cannot tunnel through a thin wall. */
+/**
+ * Whether a body circle can go straight from `from` to `to`; with radius 0,
+ * whether a line of no width meets nothing on the way, exactly. A body's line
+ * is sampled so a fast tick cannot tunnel through a thin wall.
+ */
 export const hasLineOfSight = (
   navigation,
   from,
@@ -55,6 +62,9 @@ export const hasLineOfSight = (
 
 /** `hasLineOfSight` past its guard, between bare coordinate pairs. */
 export const lineIsClear = (navigation, fromX, fromY, toX, toY, radius, options) => {
+  if (radius === 0 && typeof fromX === "number" && typeof fromY === "number" && typeof toX === "number" && typeof toY === "number") {
+    return segmentIsClear(navigation, fromX, fromY, toX, toY, ignoredCollidersOf(options));
+  }
   const distanceX = fromX - toX;
   const distanceY = fromY - toY;
   const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
@@ -80,6 +90,32 @@ export const lineIsClear = (navigation, fromX, fromY, toX, toY, radius, options)
 };
 
 const ignoredCollidersOf = ({ ignoredColliders } = {}) => ignoredColliders;
+
+/**
+ * A line of no width, every point of it but the first: inside the floor's
+ * bounds, on a laid tile and in no active collider, the point test at radius
+ * 0 asked of all of them rather than of one every 16 units.
+ *
+ * Asked every 16 units, the line saw through anything thinner: the tile
+ * libraries hold 13 colliders under 16 across — twelve 14-unit boards in the
+ * castle's prison and catacombs and the 6.6-unit altar slab of the jungle's
+ * aztec temple (JURASSIC_AZTEC_GROUND_ALTAR) — and a halberd knight swung
+ * through the slab. The route's end (pathfind.js) asked again every 4 units
+ * for that reason, which made two answers to whether a monster sees a point.
+ *
+ * The bounds are a box, which holds the whole line when it holds both ends;
+ * a line that starts outside them leaves out only its first point, and the
+ * points after it are outside too. A line with no length is its last point,
+ * as the sampled line was; one whose coordinates are not numbers is clear,
+ * as the sampled line was.
+ */
+const segmentIsClear = (navigation, fromX, fromY, toX, toY, ignoredColliders) => {
+  if (Number.isNaN(fromX - toX) || Number.isNaN(fromY - toY)) return true;
+  const { bounds } = navigation;
+  if (!insideBounds(bounds, fromX, fromY, 0) || !insideBounds(bounds, toX, toY, 0)) return false;
+  if (!segmentOnLaidTiles(navigation, fromX, fromY, toX, toY)) return false;
+  return !anyColliderOnSegment(navigation, fromX, fromY, toX, toY, ignoredColliders);
+};
 
 /** How many samples of a sight line share one gathering of nearby colliders. */
 const SWEEP_CHUNK = 8;

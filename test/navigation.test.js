@@ -194,6 +194,75 @@ test("swept movement cannot tunnel through a thin wall", () => {
   assert.ok(result.x >= 175, `actor crossed the wall and reached x=${result.x}`);
 });
 
+/**
+ * A line of no width — what a monster asks before it swings — was asked every
+ * 16 units, and a board thinner than that, or the corner of a thicker one,
+ * fell between two samples. It is asked of every point now.
+ */
+test("a line of no width does not pass a board thinner than 16 units, or clip a corner", () => {
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 400, maxY: 500 },
+    staticColliders: [
+      // A castle prison board, 14 across.
+      rectangle(200, 200, 200, 7),
+      // A crate, 70 to 130 by 290 to 350, and a round post, for lines that only graze them.
+      rectangle(100, 320, 30, 30),
+      { type: "circle", x: 300, y: 320, radius: 20 },
+    ],
+  });
+  /** Whether every 16 units of the line, as it used to be asked, is clear. */
+  const samplesClear = (from, to) => {
+    const samples = Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / 16);
+    for (let at = 1; at <= samples; at++) {
+      const point = { x: from.x + ((to.x - from.x) * at) / samples, y: from.y + ((to.y - from.y) * at) / samples };
+      if (isPositionBlocked(navigation, point, 0)) return false;
+    }
+    return true;
+  };
+  const crossings = [
+    // Through the board: samples at 207.1 and 192.8, either side of it.
+    [{ x: 200, y: 250 }, { x: 200, y: 178.5 }],
+    // 8.5 units off the crate's corner (130, 350): samples at x 123.0 and 133.6.
+    [{ x: 70, y: 404 }, { x: 176, y: 298 }],
+    // 1 unit inside the post, a chord of 12.5: samples at y 312 and 328.
+    [{ x: 281, y: 232 }, { x: 281, y: 392 }],
+  ];
+  for (const [from, to] of crossings) {
+    assert.equal(samplesClear(from, to), true, `the samples of ${JSON.stringify([from, to])} find it`);
+    assert.equal(hasLineOfSight(navigation, from, to, 0), false, `seen through, ${JSON.stringify([from, to])}`);
+    assert.equal(hasLineOfSight(navigation, to, from, 0), false, `seen through the other way, ${JSON.stringify([from, to])}`);
+  }
+  // Past the post's edge by a unit, and past the crate's corner, it sees.
+  assert.equal(hasLineOfSight(navigation, { x: 279, y: 232 }, { x: 279, y: 392 }, 0), true);
+  assert.equal(hasLineOfSight(navigation, { x: 70, y: 412 }, { x: 184, y: 298 }, 0), true);
+
+  // The board left out is no board; a narrowed set of colliders without the index says the same.
+  const [monster, feet] = crossings[0];
+  const board = navigation.staticColliders[0];
+  assert.equal(hasLineOfSight(navigation, monster, feet, 0, { ignoredColliders: new Set([board]) }), true);
+  assert.equal(hasLineOfSight({ ...navigation, colliders: [board] }, monster, feet, 0), false);
+  assert.equal(hasLineOfSight({ ...navigation, colliders: [] }, monster, feet, 0), true);
+});
+
+test("a line of no width meets a rectangle's edge at its end, not at its start, and keeps to laid tiles", () => {
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 300, maxY: 100 },
+    tileSize: 100,
+    tiles: [{ x: 0, y: 0 }, { x: 200, y: 0 }],
+    staticColliders: [rectangle(50, 50, 10, 10)],
+  });
+  // Ending on the edge is ending in it, as the point test says; starting on it and leaving is not.
+  assert.equal(isPositionBlocked(navigation, { x: 40, y: 80 }, 0), false);
+  assert.equal(hasLineOfSight(navigation, { x: 20, y: 50 }, { x: 40, y: 50 }, 0), false);
+  assert.equal(hasLineOfSight(navigation, { x: 40, y: 50 }, { x: 20, y: 50 }, 0), true);
+  // The tile between the two laid ones is not laid; a line no longer than a sample step still crosses it.
+  assert.equal(hasLineOfSight(navigation, { x: 95, y: 90 }, { x: 205, y: 90 }, 0), false);
+  assert.equal(hasLineOfSight(navigation, { x: 5, y: 90 }, { x: 95, y: 90 }, 0), true);
+  // A line with no length is its one point.
+  assert.equal(hasLineOfSight(navigation, { x: 50, y: 50 }, { x: 50, y: 50 }, 0), false);
+  assert.equal(hasLineOfSight(navigation, { x: 5, y: 5 }, { x: 5, y: 5 }, 0), true);
+});
+
 test("opening a triggerable swaps its closed and open navigation shapes", () => {
   const navigation = createNavigationState({
     bounds: { minX: 0, minY: 0, maxX: 300, maxY: 300 },

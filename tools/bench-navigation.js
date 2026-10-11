@@ -89,6 +89,24 @@ const main = async () => {
     },
     50000
   );
+  /**
+   * A line of no width between two standable points up to 600 apart: what a
+   * monster asks before it swings, and the route asks of where it ends.
+   */
+  const pairs = [];
+  for (let i = 0; pairs.length < 500 && i < points.length * points.length; i++) {
+    const from = points[i % points.length];
+    const to = points[(i * 7 + 3) % points.length];
+    if (Math.hypot(to.x - from.x, to.y - from.y) <= 600) pairs.push([from, to]);
+  }
+  time(
+    "hasLineOfSight r=0, up to 600u",
+    (i) => {
+      const [from, to] = pairs[i % pairs.length];
+      hasLineOfSight(navigation, from, to, 0);
+    },
+    200000
+  );
   time(
     "findPath (full-floor A*)",
     (i) => findPath(navigation, at(i), at(i * 7 + 3), HERO_RADIUS),

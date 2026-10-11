@@ -89,6 +89,45 @@ export const tileAt = (navigation, column, row) => {
 };
 
 /**
+ * Whether every point of a line of no width from (fromX, fromY) to (toX, toY),
+ * its first point left out, is on a laid tile, as `onAuthoredTile` asks of
+ * one point. The tile boundaries the line crosses cut it into stretches, each
+ * on one tile, asked of the point halfway along it; the last point is asked
+ * on its own, as it may lie on a boundary. A line through a corner of four
+ * tiles is on the two it passes between, not the one it touches at a point.
+ */
+export const segmentOnLaidTiles = (navigation, fromX, fromY, toX, toY) => {
+  if (!navigation.tileKeys.size) return true;
+  const size = navigation.tileSize;
+  const spanX = toX - fromX;
+  const spanY = toY - fromY;
+  // The next tile line each coordinate crosses, and how far along it crosses.
+  let lineX = spanX > 0 ? Math.floor(fromX / size) + 1 : Math.ceil(fromX / size) - 1;
+  let lineY = spanY > 0 ? Math.floor(fromY / size) + 1 : Math.ceil(fromY / size) - 1;
+  let crossX = spanX ? (lineX * size - fromX) / spanX : Infinity;
+  let crossY = spanY ? (lineY * size - fromY) / spanY : Infinity;
+  let at = 0;
+  for (;;) {
+    const next = Math.min(crossX, crossY, 1);
+    if (next > at) {
+      const half = (at + next) / 2;
+      if (!onAuthoredTile(navigation, fromX + spanX * half, fromY + spanY * half)) return false;
+    }
+    if (next >= 1) break;
+    if (crossX === next) {
+      lineX += Math.sign(spanX);
+      crossX = (lineX * size - fromX) / spanX;
+    }
+    if (crossY === next) {
+      lineY += Math.sign(spanY);
+      crossY = (lineY * size - fromY) / spanY;
+    }
+    at = next;
+  }
+  return onAuthoredTile(navigation, toX, toY);
+};
+
+/**
  * Whether a straight movement claim stays on authored floor tiles.
  *
  * This deliberately asks only about tile topology, not wall colliders. The

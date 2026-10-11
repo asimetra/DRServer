@@ -157,29 +157,14 @@ let landingBounds = new Float64Array(0);
 const LATTICE_REACH = Math.max(...ANCHOR_X.map(Math.abs), ...ANCHOR_Y.map(Math.abs));
 /** How much farther from the goal than the nearest anchor a place in sight is looked for, in cells. */
 const LOOK_CELLS = 3;
-/** How far apart a landing's sight line is asked: under the thinnest board of the nine tile libraries, 6.6 units. */
-const SIGHT_STEP = 4;
-
 /**
- * Whether the goal is in sight from (x, y) by a line of no width.
- *
- * `lineIsClear` asks such a line every 16 units, and a swing is let go on
- * that; it is asked first, as it is the cheaper. But a line asked that
- * seldom passes through a board thinner than 16, and a landing is looked for
- * among many places: a knight in a test with a 10-unit wall between it and
- * the hero was sent to the one point of its lattice whose samples fell
- * either side of the wall, and swung through it. So the line is asked again,
- * every `SIGHT_STEP`.
+ * Whether the goal is in sight from (x, y): the line of no width a swing is
+ * let go on (npc-act.js `victimInSight`), which clearance.js asks exactly.
+ * Asked only every 16 units, as it once was, it let a landing be found among
+ * the many places looked at whose samples fell either side of a 10-unit wall,
+ * and a knight in test/ai.test.js was sent there and swung through it.
  */
-const inSight = (navigation, x, y, goal) => {
-  if (!lineIsClear(navigation, x, y, goal.x, goal.y, 0, undefined)) return false;
-  const samples = Math.ceil(Math.hypot(goal.x - x, goal.y - y) / SIGHT_STEP);
-  for (let at = 1; at < samples; at++) {
-    const along = at / samples;
-    if (blockedAt(navigation, x + (goal.x - x) * along, y + (goal.y - y) * along, 0, undefined)) return false;
-  }
-  return true;
-};
+const inSight = (navigation, x, y, goal) => lineIsClear(navigation, x, y, goal.x, goal.y, 0, undefined);
 
 /**
  * Where a route that cannot reach its goal ends, once the search has run out

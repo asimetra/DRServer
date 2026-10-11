@@ -151,3 +151,72 @@ test("the long swing does land on the hero's own side of that wall", async () =>
   const session = makeSession(wallAcrossTheRoom(), LEANING_ON_TOP, { x: 3206.8, y: 5200 }, { attackRange: 250 });
   assert.ok(await runTicks(session, 10) < 200);
 });
+
+/**
+ * The swing's sight line was asked every 16 units, so a board thinner than
+ * that hid nothing whenever two samples fell either side of it. The tile
+ * libraries hold thirteen such colliders: twelve 14-unit boards in the
+ * castle's prison and catacombs, and the jungle aztec temple's altar slab,
+ * 6.6 across, which a halberd knight swung through.
+ */
+test("a hero behind a board thinner than 16 units is not hit through it", async () => {
+  await loadNavigationLibrary();
+  // A castle board, 14 across, the whole width of the room: no way round.
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 400, maxY: 500 },
+    cellSize: 30,
+    staticColliders: [{ type: "rectangle", x: 200, y: 200, halfWidth: 200, halfHeight: 7, angle: 0 }],
+  });
+  const monster = { x: 200, y: 250 };
+  // It stands off at 253.5, from where the samples of the line to his body
+  // lay at 207.5 and 192.2, and swung.
+  const hero = { x: 200, y: 183.5 };
+  assert.equal(isPositionBlocked(navigation, monster, 35), false);
+  assert.equal(isPositionBlocked(navigation, collisionPointOf({ constant: "BERSERKER" }, hero), 22), false);
+  const session = makeSession(navigation, hero, monster, { attackRange: 250 });
+
+  assert.equal(await runTicks(session, 20), 200, "a swing went through the board");
+  assert.equal(session.actors.get(MONSTER).ai.state, "blocked");
+});
+
+test("a hero on the aztec altar is not hit through its slab", async () => {
+  await loadNavigationLibrary();
+  const floor = await buildFloor("Resources/Levels/jungle/aztec/tiles.json", { tileCount: 14, seed: 42 });
+  const navigation = createNavigationState(floor.navigation);
+  const altar = navigation.colliders.find((collider) => collider.sourceConstant === "JURASSIC_AZTEC_GROUND_ALTAR" && collider.x === 2250 && collider.y === 1099);
+  assert.ok(altar, "the altar is where the floor laid it");
+  assert.equal(altar.halfHeight * 2 < 7, true, `the slab is ${altar.halfHeight * 2} across`);
+
+  // The hero's feet at its north edge, his body north of it; a halberd knight's body south.
+  const hero = { x: 2250, y: 1096.7 };
+  const monster = { x: 2250, y: 1144.7 };
+  const body = collisionPointOf({ constant: "BERSERKER" }, hero);
+  assert.equal(isPositionBlocked(navigation, monster, 35), false);
+  assert.equal(isPositionBlocked(navigation, hero, 0), true, "the feet are on the slab");
+  // Every 16 units, the line to the body lies either side of the slab.
+  const samples = Math.ceil(Math.hypot(body.x - monster.x, body.y - monster.y) / 16);
+  for (let at = 1; at <= samples; at++) {
+    const point = { x: monster.x + ((body.x - monster.x) * at) / samples, y: monster.y + ((body.y - monster.y) * at) / samples };
+    assert.equal(isPositionBlocked(navigation, point, 0), false, `sample ${at} is in the slab`);
+  }
+  assert.equal(hasLineOfSight(navigation, monster, body, 0), false, "seen through the slab");
+
+  // It may walk round the slab and swing from the hero's side, never through it.
+  const session = makeSession(navigation, hero, monster);
+  const knight = session.actors.get(MONSTER);
+  const crossesSlab = (from, to) => {
+    const along = (altar.y - from.y) / (to.y - from.y);
+    const x = from.x + (to.x - from.x) * along;
+    return along > 0 && along < 1 && Math.abs(x - altar.x) <= altar.halfWidth;
+  };
+  let hitPoints = 200;
+  for (let tick = 0; tick < 40; tick++) {
+    const from = { ...knight.position };
+    await tickNpcAi(session, 1000 + tick * 100, 0.1);
+    const now = session.actors.get(HERO).hitPoints;
+    if (now < hitPoints) {
+      assert.equal(crossesSlab(from, hero) && crossesSlab(from, body), false, `hit through the slab from ${JSON.stringify(from)} at tick ${tick}`);
+    }
+    hitPoints = now;
+  }
+});

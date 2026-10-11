@@ -288,9 +288,10 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
      * that data reaches zero, while the exact tile rule above contains the outer
      * edge exploit now.
      *
-     * A distance cap is part of the security boundary. `hasLineOfSight` samples
-     * along the segment; a client-chosen million-unit claim must not buy a
-     * million-unit server loop. All authored hero auto-moves fit below 1000.
+     * A distance cap is part of the security boundary. `hasLineOfSight` walks
+     * the tiles and collider cells along the segment; a client-chosen
+     * million-unit claim must not buy a million-unit server loop. All
+     * authored hero auto-moves fit below 1000.
      */
     if (session.navigation && acceptedBody) {
       if (isPositionBlocked(session.navigation, reportedBody, 0)) {

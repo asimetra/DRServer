@@ -1,4 +1,4 @@
-import { boundsOf, entryOverlapsAt, overlapsAt } from "./geometry.js";
+import { boundsOf, entryOverlapsAt, overlapsAt, segmentMeetsEntry } from "./geometry.js";
 
 /**
  * The active colliders of one navigation, laid out so a query near a point
@@ -469,6 +469,122 @@ export const clearOfGathered = (x, y, radius, count) => {
     if (entryOverlapsAt(x, y, radius, entry)) return false;
   }
   return true;
+};
+
+/**
+ * Whether a line of no width from (fromX, fromY) to (toX, toY), its first
+ * point left out, meets any active collider (geometry.js
+ * `segmentMeetsEntry`). The floor's bounds and tiles are the caller's
+ * (`segmentIsClear`, clearance.js).
+ *
+ * Through the point-test grid, the cells the line crosses one after another,
+ * each entry tried once: a collider the line meets at some point is listed in
+ * the cell holding that point, since its box holds it. With no grid to
+ * answer, or a line that leaves it, every collider.
+ */
+export const anyColliderOnSegment = (navigation, fromX, fromY, toX, toY, ignoredColliders) => {
+  const index = navigation.colliderIndex;
+  const fine = index?.fine;
+  if (canGather(navigation)) {
+    const fromCellX = Math.floor(fromX / FINE_CELL);
+    const fromCellY = Math.floor(fromY / FINE_CELL);
+    const toCellX = Math.floor(toX / FINE_CELL);
+    const toCellY = Math.floor(toY / FINE_CELL);
+    if (
+      Math.min(fromCellX, toCellX) >= fine.minX &&
+      Math.max(fromCellX, toCellX) <= fine.maxX &&
+      Math.min(fromCellY, toCellY) >= fine.minY &&
+      Math.max(fromCellY, toCellY) <= fine.maxY
+    ) {
+      return segmentMeetsGrid(index, fromX, fromY, toX, toY, ignoredColliders);
+    }
+  }
+  for (const collider of navigation.colliders) {
+    if (ignoredColliders?.has(collider)) continue;
+    const entry = index?.entriesByCollider.get(collider) ?? {
+      collider,
+      cosine: Math.cos(-(collider.angle ?? 0)),
+      sine: Math.sin(-(collider.angle ?? 0)),
+    };
+    if (segmentMeetsEntry(fromX, fromY, toX, toY, entry)) return true;
+  }
+  return false;
+};
+
+/** Crossings this close together, as fractions of the line, are taken for one through a corner. */
+const CORNER_SLACK = 1e-9;
+
+/**
+ * The cell lines the line crosses cut it into stretches, each in one cell,
+ * found from the point halfway along it, so a crossing computed a hair off
+ * cannot lose a cell; through a corner, the four cells round it.
+ */
+const segmentMeetsGrid = (index, fromX, fromY, toX, toY, ignoredColliders) => {
+  if (index.sweepStamp === 0x3fffffff) clearSweepStamps(index);
+  const stamp = ++index.sweepStamp;
+  const box = segmentBox;
+  box.left = Math.min(fromX, toX);
+  box.right = Math.max(fromX, toX);
+  box.top = Math.min(fromY, toY);
+  box.bottom = Math.max(fromY, toY);
+  const spanX = toX - fromX;
+  const spanY = toY - fromY;
+  let lineX = spanX > 0 ? Math.floor(fromX / FINE_CELL) + 1 : Math.ceil(fromX / FINE_CELL) - 1;
+  let lineY = spanY > 0 ? Math.floor(fromY / FINE_CELL) + 1 : Math.ceil(fromY / FINE_CELL) - 1;
+  let crossX = spanX ? (lineX * FINE_CELL - fromX) / spanX : Infinity;
+  let crossY = spanY ? (lineY * FINE_CELL - fromY) / spanY : Infinity;
+  let at = 0;
+  for (;;) {
+    const next = Math.min(crossX, crossY, 1);
+    if (next > at) {
+      const half = (at + next) / 2;
+      const cellX = Math.floor((fromX + spanX * half) / FINE_CELL);
+      const cellY = Math.floor((fromY + spanY * half) / FINE_CELL);
+      if (cellMeetsSegment(index, cellX, cellY, stamp, fromX, fromY, toX, toY, ignoredColliders)) return true;
+    }
+    if (next >= 1) break;
+    const corner = Math.abs(crossX - crossY) <= CORNER_SLACK;
+    if (corner) {
+      for (let cellX = lineX - 1; cellX <= lineX; cellX++) {
+        for (let cellY = lineY - 1; cellY <= lineY; cellY++) {
+          if (cellMeetsSegment(index, cellX, cellY, stamp, fromX, fromY, toX, toY, ignoredColliders)) return true;
+        }
+      }
+    }
+    if (corner || crossX === next) {
+      lineX += Math.sign(spanX);
+      crossX = (lineX * FINE_CELL - fromX) / spanX;
+    }
+    if (corner || crossY === next) {
+      lineY += Math.sign(spanY);
+      crossY = (lineY * FINE_CELL - fromY) / spanY;
+    }
+    at = next;
+  }
+  const lastX = Math.floor(toX / FINE_CELL);
+  const lastY = Math.floor(toY / FINE_CELL);
+  return cellMeetsSegment(index, lastX, lastY, stamp, fromX, fromY, toX, toY, ignoredColliders);
+};
+
+/** The box round the line being tested; reused, never held. */
+const segmentBox = { left: 0, right: 0, top: 0, bottom: 0 };
+
+/** Whether an entry of one point-test cell, not yet tried for this line, meets it. */
+const cellMeetsSegment = (index, cellX, cellY, stamp, fromX, fromY, toX, toY, ignoredColliders) => {
+  const { fine } = index;
+  const { left, right, top, bottom } = segmentBox;
+  if (cellX < fine.minX || cellX > fine.maxX || cellY < fine.minY || cellY > fine.maxY) return false;
+  const cell = fine.cells[(cellX - fine.minX) * fine.rows + (cellY - fine.minY)];
+  if (!cell) return false;
+  for (let at = 0; at < cell.length; at++) {
+    const entry = cell[at];
+    if (entry.gathered === stamp) continue;
+    entry.gathered = stamp;
+    if (ignoredColliders?.has(entry.collider)) continue;
+    if (right < entry.minX || left > entry.maxX || bottom < entry.minY || top > entry.maxY) continue;
+    if (segmentMeetsEntry(fromX, fromY, toX, toY, entry)) return true;
+  }
+  return false;
 };
 
 /** After the stamp wraps, so an entry stamped long ago is not taken as gathered. */
