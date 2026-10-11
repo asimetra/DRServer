@@ -35,8 +35,8 @@ export const npcAttackChoices = async (
    * `Weapon1..4` order, of the first weapon whose own `Attack1..8` names it.
    * The official sends that index as the choreography's weapon slot — a rival
    * sorcerer's LIGHTNING_SHOT on 0 (the staff), CHAIN_LIGHTNING on 1, BALL
-   * on 2, THUNDERBOLT on 3 (its three books), 41 of 41 in the Cretaceous
-   * Park recording — and the client draws the weapon of that slot. Anything
+   * on 2, THUNDERBOLT on 3 (its three books), 41 of 41 in an observed
+   * Cretaceous Park run — and the client draws the weapon of that slot. Anything
    * no weapon names is slot 0, which is every single-weapon monster.
    */
   const slotOf = (constant) => {

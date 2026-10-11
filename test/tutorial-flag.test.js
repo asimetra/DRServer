@@ -7,18 +7,13 @@ import path from "node:path";
 /**
  * Where a session begins, and the one bit that decides it.
  *
- * `MainStateMachine.start` sends a player into the tutorial dungeon whenever
- * their hero holds a weapon and `account_flags` bit 5 is clear:
+ * At start the client sends a player into the tutorial dungeon whenever their
+ * hero holds a weapon and `account_flags` bit 5 is clear, and to town
+ * otherwise.
  *
- *     if (equipped && !dbAccountParams.hasMovementTutorialParam())
- *         enterLoadingScreenState(TUTORIAL_MAP_NODE_ID, ...)
- *     else
- *         enterTownState();
- *
- * `hasParam(5)` is `account_flags & 32`, and the client is the only thing that
- * ever sets it — through `addAccountBits`, which this server did not answer. So
- * the field stayed zero and every launch was a first launch. The captured
- * official account carries 1050622, bits 1 through 10 and one more.
+ * Bit 5 is `account_flags & 32`, and the client is the only thing that ever
+ * sets it — through `addAccountBits`, which this server did not answer. So the
+ * field stayed zero and every launch was a first launch.
  */
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "tutorial-flag-"));

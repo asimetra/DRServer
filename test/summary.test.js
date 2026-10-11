@@ -44,7 +44,7 @@ const readReport = (reader) => {
   return report;
 };
 
-test("dungeon summary generate follows the four-slot production contract", () => {
+test("dungeon summary generate follows the client's four-slot contract", () => {
   const frame = dungeonSummaryGenerate({
     doid: 5001,
     parent: 4001,
@@ -86,7 +86,7 @@ test("dungeon summary generate follows the four-slot production contract", () =>
   assert.equal(reader.u32(), 50002);
 
   // Four empty reports occupy 4 * 212 bytes. The first slot's seven-byte name
-  // is the only variable-sized content in this fixture, matching production.
+  // is the only variable-sized content in this fixture.
   assert.equal(reader.u16(), 855);
   const report = readReport(reader);
   assert.deepEqual(
@@ -203,8 +203,7 @@ test("summary report is built from authoritative dungeon state", () => {
       skinType: 152,
       kills: 1,
       // Where the bar starts: what the avatar holds now, which already contains
-      // the 25 the run earned — the captured defeat reported 366773 against an
-      // account that went 366408 -> 366773.
+      // the 25 the run earned, not the total from before it.
       xp: 124,
       xpEarned: 25,
       goldEarned: 50,
@@ -350,9 +349,8 @@ test("summary object is emitted at most once per dungeon", () => {
 });
 
 /**
- * A captured report from the official server puts real numbers in these:
- * weaponLevel 73/63/73, power 381/387/2350, rarity 3/4/4. Everything here read
- * level 1 instead, because the mapping invented `required_level` for a column
+ * A real report carries real numbers in these: a weapon's level, power and
+ * rarity as its account row holds them. Everything here read level 1 instead, because the mapping invented `required_level` for a column
  * the account payload spells `requiredlevel` — and a level-1 weapon also picks
  * the wrong model, since GMWeaponItem.getWeaponAesthetic keys off it.
  */
@@ -365,8 +363,8 @@ test("an equipped weapon keeps the level and legendary its account row carries",
         item_id: 11001,
         avatar_id: 4,
         avatar_slot: 0,
-        power: 381,
-        requiredlevel: 73,
+        power: 402,
+        requiredlevel: 68,
         rarity: 3,
         modifier1: 70114,
         modifier2: 70154,
@@ -376,9 +374,9 @@ test("an equipped weapon keeps the level and legendary its account row carries",
   };
 
   const [first] = weaponsForAvatar(account, { id: 4 });
-  assert.equal(first.requiredlevel, 73, "not 1, which is what a missed column gives");
+  assert.equal(first.requiredlevel, 68, "not 1, which is what a missed column gives");
   assert.equal(first.legendarymodifier, 12);
-  assert.equal(first.power, 381);
+  assert.equal(first.power, 402);
   assert.equal(first.rarity, 3);
 });
 
@@ -386,18 +384,18 @@ test("the report carries the weapon level the hero went in with", () => {
   const report = buildDungeonReport({
     dungeonAccount: {},
     dungeonAvatar: {},
-    heroWeapons: [{ type: 11001, power: 381, requiredlevel: 73, rarity: 3, legendarymodifier: 12 }],
+    heroWeapons: [{ type: 11001, power: 402, requiredlevel: 68, rarity: 3, legendarymodifier: 12 }],
   });
 
-  assert.equal(report.weaponLevel1, 73);
-  assert.equal(report.weaponPower1, 381);
+  assert.equal(report.weaponLevel1, 68);
+  assert.equal(report.weaponPower1, 402);
   assert.equal(report.legendaryModifierType1, 12);
 });
 
 /**
- * The teardown, from the captured defeat in `socket-20260816-210034.jsonl`:
- * five seconds after dungeonEnding the report is generated and 341 objects go
- * with it — 203 NPCs, 137 doobers and the floor. The area survives, because the
+ * The teardown on a defeat: five seconds after dungeonEnding the report is
+ * generated and the floor goes with it — its NPCs, its doobers and the floor
+ * itself. The area survives, because the
  * report is its child, and so does the player object.
  */
 test("the report takes the floor down with it", () => {
@@ -473,9 +471,9 @@ test("the run stops simulating once the report is up", () => {
 });
 
 /**
- * Completing a node is what pays its bonus. The captured defeat reported
- * xp_bonus and team_xp_bonus as zero on a node that authors a CompletionXPBonus,
- * while still reporting the 365 experience the run itself collected.
+ * Completing a node is what pays its bonus. A defeat reports xp_bonus and
+ * team_xp_bonus as zero on a node that authors a CompletionXPBonus, while still
+ * reporting the experience the run itself collected.
  */
 test("the completion bonus is only paid for completing it", () => {
   const session = () => ({

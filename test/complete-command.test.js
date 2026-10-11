@@ -27,7 +27,7 @@ const onFloor = (rank, overrides = {}) => {
   const session = {
     id: 7,
     accountId: 900,
-    dungeonAccount: { id: 900, name: "Simetra", admin_flags: String(withRole(0, rank)) },
+    dungeonAccount: { id: 900, name: "Rowan", admin_flags: String(withRole(0, rank)) },
     heroDoid: HERO,
     floorDoid: 400,
     areaDoid: 300,

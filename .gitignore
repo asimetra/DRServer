@@ -22,17 +22,15 @@ logs/
 logs-fresh/
 *.jsonl
 
-# User-supplied compatibility data and private reverse-engineering evidence.
+# User-supplied local compatibility data.
 /local-data/
 /game-data/Resources/
 
-# Everything derived from reading the client stays local. The exceptions are
-# named one by one, so a new private note cannot reach the public tree by
+# Local notes stay local. The public documents are
+# named one by one, so a new local note cannot reach the public tree by
 # forgetting a rule, only by deliberately overriding one. The cost of that trade
 # is that a genuinely public document is invisible until it is listed here.
 /docs/*
-# Local official-server capture analysis; never publish the evidence report.
-/docs/official-vs-local-behavior-diff.md
 !/docs/chat-commands.md
 !/docs/client-setup.md
 !/docs/combat-conformance.md
@@ -41,16 +39,15 @@ logs-fresh/
 !/docs/known-limitations.md
 !/docs/modes.md
 !/docs/operations.md
-# Public README artwork, listed explicitly so capture-derived images remain local.
+# Public README artwork, listed explicitly so other local images stay local.
 !/docs/images/
 !/docs/images/the-knight-custom-skin.webp
 !/docs/images/dr-server-banner.webp
 
-# Local audit reports are built from private capture evidence.
+# Local audit reports.
 /reports/
 
-# Client patch material, whole. The directory only ever holds work derived from
-# a decompiled binary.
+# Local client-side experiments, whole; never published.
 /tools/client-patches/
 
 # Floor catalogues a developer is trying out, including the ones the tools write
@@ -58,7 +55,7 @@ logs-fresh/
 /config/floors.*.json
 !/config/floors.json
 
-# Reads fixtures that are not redistributable.
+# Needs local compatibility data that is not part of the repository.
 /test/floor-build.test.js
 
 # Assets this server hands to clients; local to a deployment, not to the repo.

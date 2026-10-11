@@ -137,7 +137,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
     : [];
   /**
    * A ranged attack authors a projectile instead of a collider, and its flight
-   * is the server's to simulate: across 54 official captures the client
+   * is the server's to simulate: across 54 observed sessions the client
    * proposes 4646 combat results and every one is the hero hitting something —
    * it never proposes a monster hitting the hero, and the 4469 that do are all
    * sent by the server, several hundred milliseconds after the animation.
@@ -478,7 +478,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
        * close a cycle.
        *
        * Latched to the first hit. What the official does on the second is not
-       * settled by anything measured — the capture shows a statue struck and
+       * settled by anything measured — what is observed is a statue struck and
        * its generators waking 183 to 666ms later, which a pulse and a latch
        * both explain. A latch is the safe reading of the two: it cannot hold a
        * downstream NOT gate low and then release it on a later swing, and the

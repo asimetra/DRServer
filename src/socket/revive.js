@@ -196,7 +196,7 @@ export const handleProposeRevive = (session, reader, now = Date.now()) => {
  * That is also why running out has to be refused here. The client asks and
  * keeps its own count, so nothing else can say no, and a hero with an empty
  * stock could otherwise get back up for free as often as it liked. What the
- * official server answers in that case is not in any capture — the recorded
+ * game answers in that case has not been observed — the observed
  * account had thirty-seven — so refusing is this server's own reading of who
  * owns the inventory.
  */

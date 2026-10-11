@@ -468,12 +468,12 @@ test("a crack performs as it lands, and runs along the ground", async () => {
   const doid = await spawnPlaceable(session, {
     action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
     // It lives as long as it animates — 19 frames, 792ms — not the 30ms
-    // `timetolive` asks for. The official's three lived 907, 919 and 920.
+    // `timetolive` asks for, which comes to a little over 900ms.
     origin: { x: 1000, y: 1000 },
     heading: 0,
   });
-  // The official starts the death choreography on the next simulation turn,
-  // 84-91ms after generate, rather than in the same packet burst.
+  // The death choreography starts on the next simulation turn, under a tenth
+  // of a second after the generate, rather than in the same packet burst.
   const immediate = session.sent.filter(
     (packet) => packet.length >= 10 && packet.readUInt16LE(8) === 143
   ).length;
@@ -510,9 +510,9 @@ test("the crack is drawn the way it is dealt", async () => {
   });
 
   /**
-   * The aim is a field update behind the generate, not a value in it: every one
-   * of the 158 captured hero-placed generates says heading 0, and the official
-   * corrects it 0 to 1ms later. Ours sent the generate and nothing after, so
+   * The aim is a field update behind the generate, not a value in it: a
+   * hero-placed generate says heading 0, and the heading follows within a
+   * millisecond. Ours sent the generate and nothing after, so
    * the damage ran the way the hero swung while the picture always pointed
    * east.
    */
@@ -529,10 +529,10 @@ test("the crack is drawn the way it is dealt", async () => {
 
 /**
  * The hammers' cracks name one attack twice, as Attack1 and as DeathAttack, and
- * the official plays them exactly as it plays the axe's, which names it once.
- * Every captured FISSURE_SMASH and FISSURE_SLOW_SMASH (13) says: hit points 0
- * and the choreography together 56-85ms after the generate, once, whoever is
- * standing there; then "dead" and removal at 1057-1093ms and 1414-1450ms. Read
+ * they play exactly as the axe's does, which names it once. FISSURE_SMASH and
+ * FISSURE_SLOW_SMASH send hit points 0 and the choreography together, under a
+ * tenth of a second after the generate, once, whoever is standing there; then
+ * "dead" and removal when the animation has run. Read
  * as a trap, ours played nothing when the crack landed on empty floor, played
  * it again as the crack was removed, and stood at 10 hit points for monsters to
  * hit meanwhile.
@@ -561,8 +561,8 @@ for (const [constant, frames] of [["FISSURE_SMASH", 22], ["FISSURE_SLOW_SMASH", 
 }
 
 /**
- * Once its hit points are gone a crack is not there to be hit. The official
- * never sends a combat result to one; ours took a monster's swing on the axe's
+ * Once its hit points are gone a crack is not there to be hit, and no combat
+ * result belongs to one; ours took a monster's swing on the axe's
  * crack (7 in 100 swings) and on the slow one, whose field 144 showed it
  * losing 6 of its 10.
  */
@@ -582,9 +582,8 @@ test("a crack that has gone off cannot be hit", async () => {
 /**
  * What a hero puts down carries the hero's weapon. Its type stays the row's own
  * — EN_FISSURE_SMASH_WEAPON, EN_PLACABLE_TRAPS_WEAPON — but the power, level,
- * rarity and modifiers are the weapon that placed it: 88 of 105 official
- * hero-placed generates match one of the hero's own slots exactly, and the
- * rest are garlic whose power alone differs. Ours sent the row's bare weapon,
+ * rarity and modifiers are the weapon that placed it, one of the hero's own
+ * slots (garlic aside, whose power alone can differ). Ours sent the row's bare weapon,
  * power 1 at level 1 with nothing on it.
  */
 test("a hero's crack carries the weapon that made it", async () => {
@@ -610,7 +609,7 @@ test("a hero's crack carries the weapon that made it", async () => {
 
 /**
  * A hero is generated facing 0 and the client only reports a heading when it
- * turns — 51 of 417 official floors, and 140 of ours, swing before any. With
+ * turns, and a hero can swing before it ever has. With
  * no heading on record the crack went out facing NaN and its colliders with
  * it, so it was drawn askew and hit nobody.
  */
@@ -850,11 +849,10 @@ test("scenery does not spring a trap", async () => {
   clearDungeonPlaceables(session);
 });
 
-test("but a charge that goes off breaks the scenery in its way, as the official's does", async () => {
+test("but a charge that goes off breaks the scenery in its way", async () => {
   /**
-   * The official's hero placeables land on props as a matter of course — the
-   * axe's fissure 25 times against 54 on monsters — and every such attack
-   * authors `AffectsProps`. A Berserker's charge through a barrel rack left
+   * Hero placeables land on props as a matter of course — the axe's fissure
+   * among them — and every such attack authors `AffectsProps`. A Berserker's charge through a barrel rack left
    * it standing here while a Samurai's slash, proposed by the client, broke it.
    */
   const session = sessionWith();
@@ -901,8 +899,8 @@ test("an aura stacks only to its authored burn limit", async () => {
     origin: { x: 1000, y: 1000 },
     heading: 0,
   });
-  // FLAME_BURN authors AttackSpd 0.5. Official captures play it at 0.5 and its
-  // one-second AttackTimer therefore produces one beat every two seconds.
+  // FLAME_BURN authors AttackSpd 0.5. It plays at 0.5, and its one-second
+  // AttackTimer therefore produces one beat every two seconds.
   await new Promise((resolve) => setTimeout(resolve, 1200));
   const choreographies = session.sent.filter((packet) => {
     const body = packet.subarray(2);

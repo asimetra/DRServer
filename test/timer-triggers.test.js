@@ -148,17 +148,14 @@ test("a reset gate holds its pulse back by its start delay", (t) => {
  * one is up when the floor is built — and a trap that is up hurts whatever
  * walks into it, triggered or not.
  *
- * The captures settle it twice over. The official damages from 98 traps that
- * never received a single state change, 65 of those hits from one catacomb
- * spike bed. And of the traps fed by nothing but an AUTO_TIMER it generates 76
- * raised against 18 retracted — the unanimous cases being
- * CASTLE_ARENA_TRAP_SPIKES_I at 17 of 17 and NORDIC_CAVE_GARGOYLE_EMITTER_C at
- * 18 of 18.
+ * A trap can hurt without ever receiving a state change — a catacomb spike bed
+ * does exactly that. And most traps fed by nothing but an AUTO_TIMER start
+ * raised: CASTLE_ARENA_TRAP_SPIKES_I and NORDIC_CAVE_GARGOYLE_EMITTER_C always.
  *
- * `startDelay` is what separates the 76 from the 18, and both unanimous cases
- * are fed by timers that carry none. Replaying an ARENA_C floor of the
- * official's own layout reads the rest: delay 0 opens on, and 0.3, 0.5, 1.0 and
- * 1.5 all open off. A timer that has not ticked yet has not switched anything.
+ * `startDelay` is what separates the raised from the retracted, and both of
+ * those are fed by timers that carry none. An ARENA_C floor reads the rest:
+ * delay 0 opens on, and 0.3, 0.5, 1.0 and 1.5 all open off. A timer that has
+ * not ticked yet has not switched anything.
  */
 test("a trap wired to a running timer starts the floor switched on", async () => {
   const { trackTriggers, initialTargetState } = await import("../src/socket/triggers.js");
@@ -226,9 +223,8 @@ test("a trap wired to a running timer starts the floor switched on", async () =>
  * a spike bed the client is told about and never has time to draw — the
  * reported "the spikes come up and vanish instantly".
  *
- * The official never sends one that short. Not one of its 3737 recorded spike
- * pulses is under twenty milliseconds, and its sub-400ms pulses cluster at a
- * tenth of a second: 30 of 52 between 60 and 149, median 117.
+ * A spike pulse is never that short: it lasts at least twenty milliseconds,
+ * and the short ones cluster at about a tenth of a second.
  */
 test("a reset gate with no authored duration still holds for one tick", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });

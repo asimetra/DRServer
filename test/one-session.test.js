@@ -306,10 +306,9 @@ test("friends are told about without being asked", async (t) => {
   await saveAccount(them);
 
   /**
-   * Nothing here sends field 189. The client barely does either — 46 of 61
-   * official recordings carry the server's 188 and two carry the client's 189 —
-   * and a session of our own sent neither, which is why every friend read as
-   * offline.
+   * Nothing here sends field 189. The client barely does either — presence is
+   * the server's 188, pushed — and a session of our own sent neither, which is
+   * why every friend read as offline.
    */
   const first = await connect(1000000005);
   first.socket.written.length = 0;

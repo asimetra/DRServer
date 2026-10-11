@@ -21,7 +21,7 @@ const { GIFT_COOLDOWN_MS, giftableOfferIds, pendingGiftsFor } = await import("..
 const ME = 1000000005;
 const THEM = 1000000006;
 
-/** Health Bomb. Eight of the nine gifts in the recordings are this one. */
+/** Health Bomb, the gift players send most. */
 const HEALTH_BOMB = 51301;
 /** A weapon offer, which is the thing a gift must never be able to become. */
 const A_WEAPON_OFFER = 20001;
@@ -209,8 +209,7 @@ test("accepting all takes every gift in one call", async () => {
 test("GiftOffer answers with the exclude list, which is what the client reads", async () => {
   await reset();
   const answer = await send(HEALTH_BOMB, [THEM]);
-  // The recording shows the real server returning a growing, sorted array of
-  // recipient id strings.
+  // The client expects a growing, sorted array of recipient id strings.
   assert.deepEqual(answer, [String(THEM)]);
 });
 

@@ -2,51 +2,43 @@
  * How much health an NPC brings to a floor.
  *
  * Until now this server gave every NPC the flat `HP` from its GameMaster row
- * and told the client its level was 1. Both halves of that were wrong, and the
- * official's own recordings say so plainly. Take BRUTE, which appears at six
- * different levels across the corpus:
- *
- *   level    1     3     43    45    53
- *   hp      33    45   875   935  1187
- *
- * Its row is `HP` 30 and `LV_HP_BOOST` 0.3, and `Stats.HP_BOOST.Bonus` is 10.
- * Every one of those five numbers is
+ * and told the client its level was 1. Both halves of that were wrong. Take
+ * BRUTE: its row is `HP` 30 and `LV_HP_BOOST` 0.3, and `Stats.HP_BOOST.Bonus`
+ * is 10. Its health at a level is
  *
  *   HP + (HP_BOOST + LV_HP_BOOST * level^1.5) * 10
  *
- * to the unit. The exponent is not a guess either — it is written down in the
- * client, `ActorGameObject.refreshStatVector`:
+ * which is 33 at level 1, 45 at level 3 and 875 at level 43. The exponent is
+ * the client's own: `ActorGameObject.refreshStatVector` scales a level by
+ * itself for the player team and by its power of one and a half for everybody
+ * else.
  *
- *   var scale = mTeam == 5 ? mLevel : Math.pow(mLevel, 1.5);
- *   stats = baseValues + levelValues * scale;
- *
- * so a hero's stats grow with its level and everything else's with the power of
+ * So a hero's stats grow with its level and everything else's with the power of
  * one and a half. Sending level 1 did not merely mislabel the enemy; it made
  * the client derive stats for it that were hundreds of times too small, while
  * this server handed it an unscaled `HP` that agreed with nothing.
  *
  * The party multiplier is the client's too — `NPCGameObject.get_maxHitPoints`
- * multiplies by `GMPlayerScale.HPBoostByPlayers[numHeroes]` — and it is what
- * closes the last gap in the fit: REWARD_CHEST_A reads 1 / 5 / 40 at levels
- * 1 / 8 / 25, which is 1.1 / 3.3 / 13.5 before the multiplier and lands on the
- * observed values once one, two and four heroes are accounted for.
+ * multiplies by `GMPlayerScale.HPBoostByPlayers[numHeroes]`: REWARD_CHEST_A is
+ * 1.1 / 3.3 / 13.5 at levels 1 / 8 / 25 before the multiplier, and 1 / 5 / 40
+ * once one, two and four heroes are accounted for.
  */
 
 /** The client's own exponent, for everything that is not on the player team. */
 const ENEMY_LEVEL_EXPONENT = 1.5;
 
 /**
- * The exception the line above already contains: `mTeam == 5 ? mLevel : ...`.
+ * The exception the client's rule already contains: the player team (team 5)
+ * scales by the level itself.
  *
  * Team 5 is the player team, and it is not only the hero standing on it — the
  * CharType map that decides an NPC's team puts `PET` there too. So a pet's
  * health grows with its level and a monster's with the power of one and a half,
  * from the same line of client code.
  *
- * The corpus has no dissenter. Sixty pet generates across WOLF_PET, DRAGON_PET,
- * RHINO_PET and GHOST_SAMURAI_CLONE are all the linear price and none is the
- * exponent, and the gap is not something a rounding argument could cover: a
- * level 74 wolf reads 840 where the exponent asks for 6465.
+ * So WOLF_PET, DRAGON_PET, RHINO_PET and GHOST_SAMURAI_CLONE all take the
+ * linear price, and the gap is large: a level 74 wolf is 840 where the
+ * exponent would ask for 6465.
  *
  * Read from CharType rather than taken as an argument because every caller
  * already has the row and none of them has the team.
@@ -83,28 +75,16 @@ export const partyStatMultiplier = (gm, heroes = 1, stat) => {
  * Every infinite tier sends its NPCs at level 100 — the level column stops
  * there — so a run that goes fifty-five floors down would otherwise put the
  * same monster on every one of them. `InfiniteDungeons` is where the depth
- * goes instead: one row, `HealthGrowth` 0.65, and the corpus is unambiguous
- * about how it is applied. BRUTE at level 100 appears at
+ * goes instead: one row, `HealthGrowth` 0.65, applied to what the level
+ * contributed and not to the flat HP. BRUTE at level 100 — `HP` 30,
+ * `LV_HP_BOOST` 0.3, so a level term of 3000 — is `30 + 3000 × (1 + 0.65n)`
+ * on the nth floor down: 4980 on the first, 22530 on the tenth.
  *
- *   4980  6930  8879  10830  12780  14729  16680  18630  20580  22530
+ * Returned as the surcharge (`term + term × 0.65n`) rather than the multiplier
+ * (`term × (1 + 0.65n)`); the two differ only in floating-point rounding.
  *
- * and its row is `HP` 30, `LV_HP_BOOST` 0.3, so its level term is 3000 flat.
- * Every one of those is `30 + 3000 × (1 + 0.65n)` for n = 1…10 — the flat HP
- * is left alone and the growth multiplies only what the level contributed.
- * The populations fall away with depth exactly as players do: 125 sightings at
- * n=1, 52 at n=2, 55 at n=3, down to 10 at n=10.
- *
- * Eight of those ten land to the unit. Floors three and six come out one point
- * of health high, and no association of the multiply reproduces it — the
- * official's own arithmetic loses a unit somewhere this cannot see from
- * outside. Returned as the surcharge rather than the multiplier because
- * `term + term × 0.65n` matches the recordings at floor two where
- * `term × (1 + 0.65n)` does not, and that is the only place the two differ.
- *
- * `HealthMax` is read as a ceiling. Nothing in 54 captures reaches floor
- * eleven, so the corpus cannot say whether it caps the growth or the depth
- * feeding it; this is the reading the column name pairs with, and it only
- * starts to matter past floor 152.
+ * `HealthMax` is read as a ceiling on the growth, which is the reading the
+ * column name pairs with; it only starts to matter past floor 152.
  */
 const infiniteGrowthBonus = (gm, tier, depth, growthField, maximumField) => {
   if (!/_INFINITE$/.test(String(tier?.Constant ?? ""))) return 0;
@@ -123,7 +103,7 @@ export const infiniteDamageBonus = (gm, tier, depth = 1) =>
   infiniteGrowthBonus(gm, tier, depth, "DamageGrowth", "DamageMax");
 
 /**
- * The health the official would have sent for this NPC at this level.
+ * The health the client expects for this NPC at this level.
  *
  * Rows with no `LV_HP_BOOST` do not scale at all — the smash statues read 60
  * and 80 at every level from 1 to 100 — and they fall out of the same formula

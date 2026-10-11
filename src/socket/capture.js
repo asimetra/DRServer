@@ -11,7 +11,7 @@ import { info, warn } from "../log.js";
  * scripted scenario and no use at all for the thing that actually finds bugs:
  * playing. An arrow that never appears, a trap that damages without being
  * drawn — those turn up in a real session, and the only recording of a real
- * session was the client's own, which needs the capture build. That is a
+ * session was the client's own, which needs a logging build. That is a
  * rebuild away every time, so in practice ours went unrecorded and every
  * comparison had one side missing.
  *
@@ -21,7 +21,7 @@ import { info, warn } from "../log.js";
  *
  * The format is the client's, deliberately and exactly: `{ts, dir, op, len,
  * hex}`, one JSON object per line, the frame's length prefix stripped so `hex`
- * starts at the opcode. Every tool written against the official's recordings —
+ * starts at the opcode. Every tool that reads the client's log format —
  * capture-index, capture-diff, trap-census, trap-conformance — reads this
  * without knowing which side produced it.
  *
@@ -45,8 +45,8 @@ const stampOf = (date) => {
  * The login packet, with its credential replaced.
  *
  * `BuildPacketLogin` puts a utf string first and that string is the session
- * token — in the official recordings it is plainly readable on the first line
- * of every file, next to the account id. A capture is a debugging artefact that
+ * token — plainly readable on the first line of every log, next to the
+ * account id. A capture is a debugging artefact that
  * gets copied into scratch directories, attached to reports and read by
  * whoever is chasing a bug, and none of that is a place for a bearer
  * credential.
@@ -86,7 +86,7 @@ export const createCaptureRecorder = ({
     try {
       fs.mkdirSync(directory, { recursive: true });
       const id = session?.id ?? "global";
-      // One official-shaped log per client perspective. A single global file
+      // One client-format log per client perspective. A single global file
       // interleaves owner and remote packets from every socket and cannot be
       // replayed as a multiplayer run.
       const file = path.join(directory, `socket-${stampOf(clock())}-s${id}.jsonl`);
@@ -128,7 +128,7 @@ export const createCaptureRecorder = ({
         op: safe.length >= 2 ? safe.readUInt16LE(0) : -1,
         len: safe.length,
         hex: safe.toString("hex").toUpperCase(),
-        // Extra metadata is ignored by official-log readers and is what lets a
+        // Extra metadata is ignored by client-format log readers and is what lets a
         // directory of local captures be correlated back into one match.
         session: session?.id ?? null,
         account: session?.accountId ?? null,

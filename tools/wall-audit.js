@@ -11,9 +11,9 @@
  * that rests on one assumption nobody had checked: that our navigation agrees
  * with the collision the game actually enforces.
  *
- * It is checkable. The recordings were made by the official client on the
- * official server, so every position in them is legal by construction. Rebuild
- * the floor the official laid — the tile layout is in the generate, and in field
+ * It is checkable. The recordings are reference recordings of unmodified
+ * play, so every position in them is legal by construction. Rebuild the floor
+ * the recording laid — the tile layout is in the generate, and in field
  * 195 for the floors after the first — and ask `isPositionBlocked` about each
  * one. Whatever it calls blocked is a false positive, because there is no true
  * positive in this corpus.
@@ -27,7 +27,7 @@
  * the body sits a full radius above it — an error the same size as the thing
  * being measured.
  *
- * And it queried every floor at its generated defaults, so a spike the official
+ * And it queried every floor at its generated defaults, so a spike the reference
  * had lowered was still up here. Trigger state is replayed now, in the order it
  * arrived, which is why this reads the capture twice: the floor has to exist
  * before its gates can be opened, and the layout only arrives with the floor.
@@ -130,7 +130,7 @@ const bump = (counts, key) => counts.set(key, (counts.get(key) ?? 0) + 1);
  * Builds one of those floors here, with the map that lets the recording's own
  * trigger updates be applied to it.
  *
- * The recording's doids are the official server's and mean nothing here, so a
+ * The recording's doids belong to another session and mean nothing here, so a
  * trap is matched by where it stands: a triggerable is authored at a tile
  * position and generated there, and this server does not move it.
  */
@@ -209,7 +209,7 @@ const classify = (navigation, at, radius, total) => {
 
 /**
  * Second pass: walk the recording in order, keeping the floor's gates in the
- * state the official had them in, and ask about each claimed position as it
+ * state the reference had them in, and ask about each claimed position as it
  * arrives.
  */
 const replay = async (file, built, radius, total) => {
@@ -240,7 +240,7 @@ const replay = async (file, built, radius, total) => {
       }
 
       /**
-       * The official may generate the owner beside a friend rather than at the
+       * The reference may generate the owner beside a friend rather than at the
        * tile's default hero spawn. That server-authored position is the real
        * movement baseline; comparing it with the floor file invents a teleport.
        */
@@ -256,7 +256,7 @@ const replay = async (file, built, radius, total) => {
       }
 
       // A trap generated where one of ours stands is that one, whatever the
-      // official called it.
+      // reference called it.
       if (decoded.class === "DistributedNPCGameObject" && active) {
         const [x, y] = decoded.fields?.position ?? [];
         const id = active.triggerAt.get(positionKey(x, y));
@@ -437,7 +437,7 @@ const main = async () => {
   console.log(`  body overlapping       : ${total.body} (${share(total.body)})`);
   printSources("endpoint sources", total.endpointSources);
   console.log(
-    `\nEvery one of these is a false positive: the official client made them all.\n` +
+    `\nEvery one of these is a false positive: every position in the reference recordings is legal.\n` +
       `A rule is deployable only where that count is zero.`
   );
 };

@@ -17,7 +17,7 @@
  *   ./Resources/Art2D/FX/db_fx_library.swf while looking for class:
  *   db_fx_FireBombExplosion_fire_off. rootType=null
  *
- * Thirty-nine of those in one run of ours, none in a recording of the official's.
+ * Thirty-nine of those in one run of ours, none in observed play of the game.
  * The objects behind them are `BURNING_FIRE_PLACEABLE_ALL` and
  * `MINE_PLACEABLE_ALL` — the traps reported as dealing damage while drawing
  * nothing. They were generated correctly the whole time; the art was simply not
@@ -45,8 +45,8 @@ const scanned = new Map();
  * Whole-library rather than per-tile on purpose: a laid-out floor has not
  * chosen its tiles when the area generate goes out, and a preload that covers
  * more than the floor uses costs a little memory, while one that covers less
- * costs a missing sprite. The official's own lists are supersets of what it
- * placed in three of the recordings, so this is the side it errs on too.
+ * costs a missing sprite. The game's own lists are supersets of what it
+ * placed in three observed sessions, so this is the side it errs on too.
  */
 const constantsIn = (tileLibrary) => {
   const cached = scanned.get(tileLibrary);

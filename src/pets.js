@@ -1,11 +1,11 @@
 import { heroLevel } from "./progression.js";
 
-/** The offset used by every initial equipped-pet generate in the capture corpus. */
+/** The offset every equipped pet is first generated at. */
 export const PET_SPAWN_OFFSET = Object.freeze({ x: 0, y: -111 });
 
 /**
- * Monster weapons are levelled by the original server even though their
- * GameMaster rows carry only the level-one base power.
+ * Monster weapons are levelled here, since their GameMaster rows carry only
+ * the level-one base power.
  */
 export const scaledNpcWeaponPower = (weapon, level) => {
   const base = Math.max(0, Number(weapon?.Power ?? 0));
@@ -15,8 +15,8 @@ export const scaledNpcWeaponPower = (weapon, level) => {
 };
 
 /**
- * Pet health is linear on the player team, but the authoritative server prices
- * pet offence with the same level^1.5 curve used by hostile NPC attacks.
+ * Pet health is linear on the player team, but pet offence is priced with the
+ * same level^1.5 curve used by hostile NPC attacks.
  */
 export const petCombatLevel = (level) => Math.pow(Math.max(1, Number(level ?? 1)), 1.5);
 

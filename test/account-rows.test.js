@@ -20,7 +20,7 @@ import { SOLD_LISTINGS, planWrite, snapshotOf } from "../src/storage/account-row
 
 const account = (overrides = {}) => ({
   id: 500,
-  name: "Simetra",
+  name: "Rowan",
   basic_currency: 1000,
   premium_currency: 5,
   friend_requests: [],

@@ -121,7 +121,7 @@ const desktopServiceDiscovery = () =>
 /** GET /game-status — how busy each dungeon is, for the world map (game-status.js). */
 const gameStatus = async () => json(await gameStatusFor());
 
-/** Midnight UTC today, which is all of a login the official keeps. */
+/** Midnight UTC today: a login is kept by the day. */
 const today = () => {
   const now = new Date();
   return new Date(
@@ -134,11 +134,11 @@ const today = () => {
  * launch.
  *
  * Nothing in the client reads the field, which is how it came to be written at
- * creation and never again. The official moves it to the current date, and it
- * is what whoever looks after a server reaches for to tell an account that left
- * months ago from one that was on last night.
+ * creation and never again. Moved to the current date, it is what whoever
+ * looks after a server reaches for to tell an account that left months ago
+ * from one that was on last night.
  *
- * By the day, as the official's is, so a launch is a write once and a read
+ * By the day, so a launch is a write once and a read
  * every other time. The write takes the account's lock like any other change —
  * a launch that lands while a purchase is settling must not save a copy read
  * from before it. An account in a dungeon on a match worker cannot be locked

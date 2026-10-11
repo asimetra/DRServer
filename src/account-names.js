@@ -4,7 +4,7 @@ import { config } from "./config.js";
  * What a player may be called, and the promise that it is theirs.
  *
  * A name is the only thing other players see of somebody. It used to be
- * `Player1000000005` — the account id with a word in front of it — which is
+ * `Player<account id>` — the account id with a word in front of it — which is
  * both unreadable and a leak: an account id is the number the client
  * authenticates with, and printing it next to everybody's score put it on
  * every page of the site.

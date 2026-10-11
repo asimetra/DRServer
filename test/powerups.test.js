@@ -212,14 +212,9 @@ test("each pot keeps its own cooldown, by attack and by slot", async () => {
   /**
    * And the same pot in the other slot is a different pot.
    *
-   * The official's own recording, on a five second cooldown:
-   *
-   *   13:30:01.187  propose THROW_FIREBOMB from slot 1
-   *   13:30:01.919    FIREBOMB_PLACEABLE_L3 spawned
-   *   13:30:02.309  propose THROW_FIREBOMB from slot 2
-   *   13:30:03.051    FIREBOMB_PLACEABLE_L3 spawned
-   *
-   * A second bomb a second and a half into a five second wait, and it landed.
+   * Two firebomb pots on a five second cooldown, one in slot 1 and one in
+   * slot 2: the second can be thrown a second and a half after the first, well
+   * inside the first one's wait, and it lands.
    */
   assert.equal(isOffCooldown(session, buff, 1), true, "the same pot in the other slot is ready");
   await noteCooldown(session, buff, 1);
@@ -236,10 +231,9 @@ test("each pot keeps its own cooldown, by attack and by slot", async () => {
 });
 
 /**
- * The authored seconds are not the wait. `WeaponController.startCooldown`:
- *
- *   mCoolDownTime = L*1000 * weapon.cooldownReduction()
- *                 - L*1000 * hero.attackCooldownMultiplier
+ * The authored seconds are not the wait. The client starts a cooldown at the
+ * authored length scaled by the weapon's cooldown reduction, less the same
+ * length scaled by the hero's attack-cooldown multiplier.
  *
  * Enforcing the authored number instead is stricter than the game for anybody
  * who bought the reduction, and with DR_REQUIRE_CAST on a cast refused for a

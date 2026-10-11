@@ -6,9 +6,9 @@
  *   node tools/movement-audit.js logs/*.jsonl --top-speed 500
  *
  * A speed rule needs a threshold, and a threshold picked by reasoning is a
- * threshold that punishes lag. The recordings settle it instead: they were made
- * by the official client on the official server, so every displacement in them
- * is legitimate, and the highest number this prints is the lowest threshold that
+ * threshold that punishes lag. The recordings settle it instead: they are
+ * reference recordings of unmodified play, so every displacement in them is
+ * legitimate, and the highest number this prints is the lowest threshold that
  * would not have accused somebody innocent.
  *
  * It reports the same quantity at several window lengths because that is the

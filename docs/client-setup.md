@@ -17,7 +17,7 @@ Four keys decide which server it talks to and who it logs in as:
 | Key | Set it to | Why |
 |---|---|---|
 | `ServiceDiscoveryUrl` | the server's address | Where the client looks for services |
-| `UseSteamLogin` | `false` | Otherwise Steam replaces `AccountId` |
+| `UseSteamLogin` | `false` | Makes the client use the configured `AccountId` |
 | `AccountId` | the number the server gave you | Which account you log in as |
 | `API_ValidationToken` | the token the server gave you | Proves that account is yours |
 
@@ -32,7 +32,7 @@ A minimal working file keeps the client's other existing keys and changes these:
   "ServiceDiscoveryUrl": "http://127.0.0.1:8080",
   "UseSteamLogin": false,
   "AccountId": 1000000005,
-  "API_ValidationToken": "1788698313:ab83c85d6bad9…"
+  "API_ValidationToken": "<expiry>:<signature>"
 }
 ```
 
@@ -67,12 +67,10 @@ an address the players can reach, or it will advertise `127.0.0.1` and every
 client will try to connect to itself. See "Hosting multiplayer" in the README
 for the three variables that matter.
 
-**`UseSteamLogin` has to be set, not left out.** The client reads it as
-`getConfigBoolean("UseSteamLogin", true)` — the default is `true`, so an absent
-key means Steam wins. When the Steam login succeeds the client overwrites the
-account with whichever Steam account is signed in, and the `AccountId` you set
-is silently ignored. Setting it to `false` is a switch the client already has;
-it skips the login and leaves the rest of the Steamworks integration running.
+**`UseSteamLogin` has to be set, not left out.** It is an existing client
+option and defaults to `true`, in which case the account comes from Steam
+rather than from the `AccountId` you set. Set to `false`, the client uses the
+configured `AccountId`.
 
 **`AccountId` does not have to exist first.** The server creates an account for
 any id it is given a valid token for, with a fresh hero and an empty inventory.
@@ -110,8 +108,7 @@ npm start
 Whatever the server advertises is the address that belongs in `gameMasterPath`.
 
 **Why `download_root` must be empty.** The client builds every asset path by
-plain concatenation — `buildFullDownloadPath(p)` returns `download_root + p` —
-and the shipped default is `"./"`. Leave it at the default and an absolute
+putting `download_root` in front of it, and the shipped default is `"./"`. Leave it at the default and an absolute
 `gameMasterPath` becomes `./http://127.0.0.1:8080/...`, which resolves to
 nothing. Emptying it makes the client use each path exactly as given.
 
@@ -121,8 +118,7 @@ three loads: the game-master table, `library_server.json` and
 emptying `download_root` leaves the other two loading from the player's disk as
 before. That is the point — overriding one path is how a floor gets a tile
 library the player does not have, while everything else keeps coming off their
-own copy. Pointing this at a full mirror of the game would turn joining a server
-into downloading it again.
+own copy.
 
 ## The map-node shortcut
 
@@ -208,7 +204,7 @@ else your configuration already has:
   "ServiceDiscoveryUrl": "http://127.0.0.1:8080",
   "UseSteamLogin": false,
   "AccountId": 1000000005,
-  "API_ValidationToken": "1788698313:ab83c85d6bad9…",
+  "API_ValidationToken": "<expiry>:<signature>",
   "download_root": "",
   "gameMasterPath": "http://127.0.0.1:8080/content/Resources/Levels/DB_GameMaster.json",
   "ALLOW_HACKS_TO_PLAY_MAP_NODE": true
@@ -223,7 +219,7 @@ places, and usually without the debug switch:
   "ServiceDiscoveryUrl": "http://192.168.1.10:8080",
   "UseSteamLogin": false,
   "AccountId": 1000000005,
-  "API_ValidationToken": "1788698313:ab83c85d6bad9…",
+  "API_ValidationToken": "<expiry>:<signature>",
   "download_root": "",
   "gameMasterPath": "http://192.168.1.10:8080/content/Resources/Levels/DB_GameMaster.json"
 }

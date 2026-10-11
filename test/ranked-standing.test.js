@@ -64,7 +64,7 @@ test("/rank is a player's command of the ranked mode: unknown with the mode off"
   const lines = [];
   const reply = (text) => lines.push(text);
   reply.warn = (text) => lines.push(`! ${text}`);
-  const session = { id: 1, accountId: 500, dungeonAccount: { id: 500, name: "Simetra" } };
+  const session = { id: 1, accountId: 500, dungeonAccount: { id: 500, name: "Wren" } };
 
   // Off: the core defines no /rank, so it is what any unknown command is.
   await runCommand(session, `${COMMAND_PREFIX}rank`, reply);

@@ -8,13 +8,12 @@ import { CLID } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
 
 /**
- * Which hits a weapon's crit modifier reaches, against the official corpus.
+ * Which hits a weapon's crit modifier reaches, as the original game decides it.
  *
- * The health and party bombs are proposed as slot 0 and not consumable — 461 of
- * 461 of the official's — and priced from that slot's weapon, so a crit
- * modifier on it reached them: a katana's CRIT_DAMAGE_4 turned a health bomb
- * into 8946. The official's 628 SUPPORT hits carry no crit; its melee,
- * shooting and magic hits do.
+ * The health and party bombs are proposed as slot 0 and not consumable, and
+ * priced from that slot's weapon, so a crit modifier on it reached them: a
+ * katana's CRIT_DAMAGE_4 turned a health bomb into 8946. In the original game
+ * SUPPORT hits carry no crit; melee, shooting and magic hits do.
  */
 
 const HERO = 500;
@@ -58,7 +57,7 @@ const hit = async (attackConstant) => {
 test("a health bomb never crits, whatever the weapon in slot 0 carries", async () => {
   const bomb = await hit("HEALTH_BOMB_ATTACK");
   assert.equal(bomb.critical, 0);
-  assert.equal(bomb.damage, 150, "slot 0's power times the bomb's 1.5, as the official's 116 × 1.5 = 174");
+  assert.equal(bomb.damage, 150, "slot 0's power times the bomb's 1.5, as 116 × 1.5 = 174 in the original game");
 });
 
 test("the same weapon's swing still crits", async () => {

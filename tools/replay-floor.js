@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Builds the official's own floor on this server, and diffs the two streams.
+ * Builds a recorded floor on this server, and diffs the two streams.
  *
  *   node tools/replay-floor.js <capture.jsonl>
  *   node tools/replay-floor.js <capture.jsonl> --floor 2
@@ -13,7 +13,7 @@
  * differs.
  *
  * It does not have to be that way. A floor generate carries its whole tile
- * layout as `DungeonTileUsage` records, so the official tells us exactly which
+ * layout as `DungeonTileUsage` records, so the reference tells us exactly which
  * rooms it laid and where. Writing those back out as an authored floor and
  * building it here puts both servers on the same ground, and then every object
  * can be matched by position and constant and compared field by field.
@@ -60,7 +60,7 @@ const HERO_DOID = 1003;
  *
  * The readers this replaces were correct, but three of their siblings written
  * elsewhere in the same style were not, and every one of them looked just as
- * convincing — an official capture sends most objects under op 135, which
+ * convincing — a reference capture sends most objects under op 135, which
  * carries two bytes more than op 134, and a field counted from the end of the
  * frame therefore reads one thing here and another there. `decodeGenerate`
  * reports whether it consumed the frame exactly, so a misread announces itself
@@ -88,7 +88,7 @@ const npcFrom = ({ fields }) => ({
   masterId: fields.masterId,
 });
 
-/** Every floor in a capture, with the objects the official parented to it. */
+/** Every floor in a capture, with the objects the reference parented to it. */
 const readCapture = async (file) => {
   const floors = new Map();
   let unreadable = 0;
@@ -152,7 +152,7 @@ const readCapture = async (file) => {
   };
 };
 
-/** Writes the official's layout as an authored floor this server can load. */
+/** Writes the recorded layout as an authored floor this server can load. */
 const writeFloorFile = async (floor, name) => {
   const file = path.join("replay", `${name}.json`);
   await fs.promises.mkdir(path.join(levels, "replay"), { recursive: true });
@@ -240,7 +240,7 @@ const buildHere = async (file, { tier, npcLevel, partySize = 1 }) => {
     throw error;
   }
 
-  // Read back through the same decoder the official's side goes through, so a
+  // Read back through the same decoder the reference's side goes through, so a
   // difference is a difference in what was sent and never in how it was read.
   const npcs = [];
   for (const frame of sent) {
@@ -259,7 +259,7 @@ const buildHere = async (file, { tier, npcLevel, partySize = 1 }) => {
    *
    * A rate on its own says a rule is wrong somewhere; this says where. The
    * catacombs turned up `SPIKES_SKELETONSTATUE` generated on twelve times of
-   * 191 where the official generates it off, and the useful half of that
+   * 191 where the reference generates it off, and the useful half of that
    * sentence — which of its five wiring shapes the twelve are — took a separate
    * script to get at. It belongs in the report.
    */
@@ -299,7 +299,7 @@ const buildHere = async (file, { tier, npcLevel, partySize = 1 }) => {
  *
  * `weaponDetails` was the third. The comment above this list used to say it was
  * "compared as a whole" and it was not compared at all — which is how a
- * difference found by hand, the official filling its empty weapon slots with
+ * difference found by hand, the reference filling its empty weapon slots with
  * `requiredlevel` and `rarity` of 1 where this server leaves zeroes, went
  * through every replay report untouched.
  */
@@ -311,7 +311,7 @@ const COMPARED = [
 /** Four slots of numbers; compared by value, not by identity. */
 const valueOf = (field) => (Array.isArray(field) ? JSON.stringify(field) : field);
 
-/** One official floor, rebuilt here, matched object for object. */
+/** One reference floor, rebuilt here, matched object for object. */
 const replay = async (floor, { gm, nameOf, label, into, partySize }) => {
   const file = await writeFloorFile(floor, `replay_${label}`);
   const tier = gm.raw.ColiseumTiers.find((row) => row.Constant === floor.tier) ?? null;
@@ -348,7 +348,7 @@ const replay = async (floor, { gm, nameOf, label, into, partySize }) => {
   const mine = group(ours);
 
   /**
-   * Counted per constant as well as per place, because "the official put one
+   * Counted per constant as well as per place, because "the reference put one
    * here and we did not" and "we put ours somewhere else" are different faults
    * and the position key alone cannot tell them apart. Sixty-two ice
    * stalagmites read as missing until this was split; every one of them was
@@ -376,7 +376,7 @@ const replay = async (floor, { gm, nameOf, label, into, partySize }) => {
       /**
        * Counted against how often the same pair agreed, because a raw tally
        * cannot tell a rule from a rounding. Three leads were chased and dropped
-       * on this list before it kept a denominator: the official puts
+       * on this list before it kept a denominator: the reference puts
        * CASTLE_SPIKES_SOUNDOBJ on layer 10 a hundred and sixty-seven times and
        * on 20 four times, and only the four reached the report.
        */
@@ -386,7 +386,7 @@ const replay = async (floor, { gm, nameOf, label, into, partySize }) => {
         if (valueOf(official[field]) === valueOf(local[field])) { seen.same += 1; continue; }
         seen.differ += 1;
         const example =
-          `at ${at.split("|")[0]}: official ${JSON.stringify(official[field])}, ` +
+          `at ${at.split("|")[0]}: reference ${JSON.stringify(official[field])}, ` +
           `ours ${JSON.stringify(local[field])}` +
           (local.wiring ? `  — wired to ${local.wiring}` : "");
         seen.examples.set(example, (seen.examples.get(example) ?? 0) + 1);
@@ -406,7 +406,7 @@ const replay = async (floor, { gm, nameOf, label, into, partySize }) => {
 };
 
 /**
- * A constant only the official placed is either something we drop or something
+ * A constant only the reference placed is either something we drop or something
  * it populates from a quota; one only we placed is the reverse. Enemies
  * dominate both lists and mean nothing — neither server puts them in the same
  * square — so they are counted rather than named.
@@ -478,12 +478,12 @@ const main = async () => {
   }
 
   if (!into.floors) {
-    console.log("no floor in this capture carries a tile layout — the official sends one per run");
+    console.log("no floor in this capture carries a tile layout — the reference sends one per run");
     return;
   }
 
   console.log(
-    `replayed ${into.floors} official floor(s) from ${captures.length} capture(s): ` +
+    `replayed ${into.floors} reference floor(s) from ${captures.length} capture(s): ` +
       `${into.theirs} objects there, ${into.ours} here, ${into.matched} standing in the same place.`
   );
   if (into.unreadable) console.log(`${into.unreadable} generate(s) skipped as unreadable.`);
@@ -498,7 +498,7 @@ const main = async () => {
    * Ranked by how *consistently* a pair disagrees rather than how often, and
    * only where there is enough of it to mean something. A field that differs
    * every single time is a rule we have wrong; one that differs twice in a
-   * hundred is the official disagreeing with itself.
+   * hundred is the reference disagreeing with itself.
    */
   // A focused exact-floor replay is already the requested sample; hiding a
   // one-off difference there defeats the purpose. Corpus mode keeps the noise
@@ -542,8 +542,8 @@ const main = async () => {
     }
   }
 
-  await say("placed by the official and not by us:", into.onlyTheirs);
-  await say("placed by us and not by the official:", into.onlyOurs);
+  await say("placed by the reference and not by us:", into.onlyTheirs);
+  await say("placed by us and not by the reference:", into.onlyOurs);
 };
 
 main().catch((error) => {

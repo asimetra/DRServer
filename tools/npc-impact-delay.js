@@ -3,7 +3,7 @@
  * Measures the server-owned delay from NPC choreography to CombatResult.
  *
  *   node tools/npc-impact-delay.js <capture-dir>
- *   node tools/npc-impact-delay.js <official-client-log-dir> --official
+ *   node tools/npc-impact-delay.js <reference-log-dir> --official
  *
  * Both endpoints are inbound to the capturing client, so the result does not
  * mix client/server clock directions. Repeated casts are paired FIFO by

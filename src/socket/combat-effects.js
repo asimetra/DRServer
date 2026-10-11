@@ -24,7 +24,7 @@ import { tellHit } from "./combat-events.js";
  * running, a median 973ms apart — and here it was a picture on the health bar.
  *
  * It stops with the buff, and it does not take the last point. Whether the
- * official's can finish a hero is not something its one recording settles: that
+ * official's can finish a hero is not something the one observed run settles: that
  * hero was killed by a skeleton with the gas still on him. Wearing him down and
  * leaving the killing to the monsters is the reading that cannot be unfair.
  */

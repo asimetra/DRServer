@@ -74,7 +74,7 @@ test("a friend code typed into the invite box creates an approval request", asyn
   const answer = await addFriend(friendCodeOf(THEM));
 
   assert.equal(answer.to_account_id, THEM, "the panel is told who it reached");
-  assert.equal(answer.account_id, ME, "the request itself, as the live server answered");
+  assert.equal(answer.account_id, ME, "the request itself, which the panel reads");
   assert.deepEqual(friendIdsOf(await loadAccount(ME)), []);
   assert.deepEqual(friendIdsOf(await loadAccount(THEM)), [], "a request is not a friendship");
   const [pending] = pendingFriendRequestsOf(await loadAccount(THEM));
@@ -232,11 +232,11 @@ const clientReadsFriendRows = (answer, what) => {
   }
 };
 
-/** The official friend row, as `getFriendData` recorded it. */
-const OFFICIAL_FRIEND_ROW = ["account_id", "name", "trophies", "active_skin", "is_ingame_friend", "identifier"];
+/** The friend row the client reads from `getFriendData`. */
+const CLIENT_FRIEND_ROW = ["account_id", "name", "trophies", "active_skin", "is_ingame_friend", "identifier"];
 
-/** The official request row, as `DRFriendRequestPending` recorded it. */
-const OFFICIAL_REQUEST_ROW = [
+/** The request row the client reads from `DRFriendRequestPending`. */
+const CLIENT_REQUEST_ROW = [
   "id", "name", "trophies", "active_skin", "facebook_id", "account_id", "to_account_id", "curr_state", "created",
 ];
 
@@ -253,7 +253,7 @@ test("accepting answers with the new friends as friend rows, which UIPending han
   assert.equal(answer.length, 1);
   assert.equal(answer[0].account_id, ME);
   assert.equal(answer[0].is_ingame_friend, true);
-  hasFields(answer[0], OFFICIAL_FRIEND_ROW, "the accepted friend");
+  hasFields(answer[0], CLIENT_FRIEND_ROW, "the accepted friend");
 });
 
 test("declining answers with nothing to add", async () => {
@@ -294,15 +294,15 @@ test("blocking answers with the block list as text, which the summary screen sli
   assert.equal(await dispatch("friendrequests", "IgnoreFriend", [ME, ME, "token"]), null, "nothing blocked");
 });
 
-test("a request answers with the request itself, in the recorded shape", async () => {
+test("a request answers with the request itself, in the shape the client reads", async () => {
   await reset();
   const answer = await addFriend(THEM);
-  hasFields(answer, OFFICIAL_REQUEST_ROW, "the request");
+  hasFields(answer, CLIENT_REQUEST_ROW, "the request");
   assert.equal(answer.account_id, ME);
   assert.equal(answer.to_account_id, THEM);
   assert.equal(answer.curr_state, 0);
   const [pending] = await dispatch("friendrequests", "DRFriendRequestPending", [THEM, "token"]);
-  hasFields(pending, OFFICIAL_REQUEST_ROW, "the pending request");
+  hasFields(pending, CLIENT_REQUEST_ROW, "the pending request");
 });
 
 test("a request to somebody who has not asked you is only a request", async () => {
@@ -321,14 +321,14 @@ test("asking somebody who already asked you makes the friendship at once", async
   assert.equal(theirs.account_id, THEM);
 
   const answer = await addFriend(THEM);
-  // [[the new friend's row], the request that was waiting]. The live server put
-  // the asker's own row first, which `addFriendCallback` then files under the
-  // asker's own id: the new friend never reached the panel until a refetch.
+  // [[the new friend's row], the request that was waiting]. Putting the
+  // asker's own row first would have `addFriendCallback` file it under the
+  // asker's own id: the new friend would not reach the panel until a refetch.
   assert.ok(Array.isArray(answer) && answer.length === 2, "the two-part answer UIInvite.parseJson recognises");
   clientReadsFriendRows(answer[0], "the friendship's rows");
   assert.deepEqual(answer[0].map((row) => row.account_id), [THEM], "the friend the panel gains");
-  hasFields(answer[0][0], OFFICIAL_FRIEND_ROW, "the friend row");
-  hasFields(answer[1], OFFICIAL_REQUEST_ROW, "the request");
+  hasFields(answer[0][0], CLIENT_FRIEND_ROW, "the friend row");
+  hasFields(answer[1], CLIENT_REQUEST_ROW, "the request");
   assert.equal(answer[1].id, theirs.id);
   assert.equal(answer[1].account_id, THEM);
   assert.equal(answer[1].to_account_id, ME);
@@ -453,7 +453,7 @@ test("a blocked player's request reaches nobody, and looks sent", async () => {
   await reset();
   await block(ME, THEM);
   const answer = await requestFrom(THEM, ME);
-  hasFields(answer, OFFICIAL_REQUEST_ROW, "what the blocked player sees");
+  hasFields(answer, CLIENT_REQUEST_ROW, "what the blocked player sees");
   assert.equal(answer.to_account_id, ME);
   assert.deepEqual(pendingFriendRequestsOf(await loadAccount(ME)), [], "nothing waits for the blocker");
   await strangers();

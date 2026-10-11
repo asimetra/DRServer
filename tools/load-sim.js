@@ -87,7 +87,7 @@ const basicAttackFor = async (weaponDetails = []) => {
 
 /**
  * What the real client calls over HTTP, and how often, per player-minute —
- * measured on the official server's recordings (4.6 calls a minute in all).
+ * measured on reference recordings (4.6 calls a minute in all).
  * Only reads: a load test has no business buying things.
  */
 export const RPC_MIX = [

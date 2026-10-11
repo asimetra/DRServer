@@ -5,15 +5,15 @@
  * I am about to reason about even in the logs? Absence of a trap from a capture
  * is not evidence about the trap — it is evidence about where the session went.
  *
- *   node tools/capture-inventory.js ~/Documents/logs/socket-*.jsonl
- *   node tools/capture-inventory.js --traps ~/Documents/logs/socket-*.jsonl
+ *   node tools/capture-inventory.js <client-log-dir>/socket-*.jsonl
+ *   node tools/capture-inventory.js --traps <client-log-dir>/socket-*.jsonl
  *
  * Its neighbour tools/capture-index.js answers the other half — which file to
  * open, by map node, by party, by what happened in it.
  *
  * Reads the capture in place and prints a summary. Nothing is written, and
- * nothing from a capture belongs in this repository — they carry live session
- * tokens and other players' accounts.
+ * nothing from a capture belongs in this repository — they may contain session
+ * tokens and account data.
  */
 import fs from "node:fs";
 import readline from "node:readline";

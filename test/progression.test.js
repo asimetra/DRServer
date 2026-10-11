@@ -9,19 +9,15 @@ import { experienceForLevel, heroLevel, maxLevel } from "../src/progression.js";
  * total to reach it, and the difference is not academic: read as a threshold it
  * calls a level-30 hero level 100.
  *
- * The client settles it. `GameMaster.hx` walks the same table accumulating —
- *
- *     TotalExperience += levelValue;
- *     LoadingOnly_addExpRecord(levelId, TotalExperience - 1, TotalStats);
- *
- * — and files the running sum against the level, which is what `levelTable`
- * does here. This file exists because a second reading of the table once lived
+ * The client settles it. It walks the same table adding each level's cost to
+ * a running total, and files that total, less one, against the level — which
+ * is what `levelTable` does here. This file exists because a second reading of the table once lived
  * in chests.js and quietly disagreed with this one for every hero below the cap.
  */
 
 const HEROES = [101, 102, 103, 104, 105, 106];
 
-/** The client's own loop, transcribed, as the thing to agree with. */
+/** The client's rule, restated, as the thing to agree with. */
 const clientLevelFor = (gm, hero, experience) => {
   let total = 0;
   let level = 1;

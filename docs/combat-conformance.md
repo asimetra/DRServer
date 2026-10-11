@@ -66,5 +66,5 @@ logic. Useful tools would be:
 - `probe_run(scenario)`
 
 Keep those tools on a disposable account and test database. The existing live
-protocol probe defaults to a real account id and is not an appropriate mutation
+protocol probe defaults to a fixed account id and is not an appropriate mutation
 surface for an unattended model until its setup is isolated.

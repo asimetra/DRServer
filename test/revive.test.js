@@ -232,24 +232,23 @@ test("a bomb inside the window calls the defeat off", async () => {
 });
 
 /**
- * The stock, from `socket-20260816-210034.jsonl` and the two accountdetails
- * fetches around it: one run with a party revive and a health revive left the
- * account at HEALTH_BOMB 37 → 36 and PARTY_BOMB 3 → 2, with nothing on the wire
- * saying so and no RPC made between entering and returning to town.
+ * The stock: one run with a party revive and a health revive takes one of each
+ * off the account, with nothing on the wire saying so and no RPC made between
+ * entering and returning to town.
  */
 test("each bomb is charged to the account, and only the one that was used", async () => {
-  const { session, saves, stock } = makeSession({ healthBombs: 37, partyBombs: 3 });
+  const { session, saves, stock } = makeSession({ healthBombs: 12, partyBombs: 4 });
   const hero = session.actors.get(10);
 
   hero.hitPoints = 0;
   hero.dead = true;
   await handleProposeSelfRevive(session, new PacketReader(Buffer.from([1])));
-  assert.deepEqual([stock(60001), stock(60018)], [37, 2], "the party bomb went");
+  assert.deepEqual([stock(60001), stock(60018)], [12, 3], "the party bomb went");
 
   hero.hitPoints = 0;
   hero.dead = true;
   await handleProposeSelfRevive(session, new PacketReader(Buffer.from([0])));
-  assert.deepEqual([stock(60001), stock(60018)], [36, 2], "and then the health bomb");
+  assert.deepEqual([stock(60001), stock(60018)], [11, 3], "and then the health bomb");
 
   assert.deepEqual(saves, [7, 7], "both writes are queued to the account");
 });
@@ -304,8 +303,7 @@ test("Infinite bomb usage is capped across regenerated floors, not reset per flo
 });
 
 /**
- * The explosion, from the two revives in `socket-20260816-210034.jsonl`. Field
- * 178 carries an empty state and the bomb's own attack — 910703 for the party
+ * The explosion. Field 178 carries an empty state and the bomb's own attack — 910703 for the party
  * bomb, 950101 for the health bomb — with no combat results at all, and the
  * buff that follows is the INVULNERBILITY both attacks author as their
  * SelfBuff.

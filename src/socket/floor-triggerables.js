@@ -93,7 +93,7 @@ export const restingTriggerState = ({ npc, attack, projectile, inert, wired, has
    * generates its two mines and two firebombs at 0, raises them to 1 when the
    * hero crosses the pad in front of the troll (an AND of the pad and the
    * troll's life), and lowers the one still lying there when the troll dies
-   * (socket-20261005-172249: +53.44 generated, +58.98 raised, +85.62 lowered).
+   * (+53.44 generated, +58.98 raised, +85.62 lowered).
    * One without a wire is armed on arrival, as every bomb was.
    */
   if (contactBomb && hasInput) return wired ? 1 : 0;

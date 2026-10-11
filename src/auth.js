@@ -15,8 +15,8 @@ import { info, warn } from "./log.js";
  * credential is a bearer token in a file, and the only question this module
  * answers is whether a given token was issued by whoever holds the secret.
  *
- * The shape follows the captured one: a number, a colon, and a SHA-256-sized
- * hex string. The account id is deliberately absent from the text and present
+ * The shape is a number, a colon, and a SHA-256-sized hex string, which the
+ * client keeps in its configuration and presents as it is. The account id is deliberately absent from the text and present
  * in the signature — the client sends it separately, and signing it is what
  * stops a token issued for one account from opening another.
  */

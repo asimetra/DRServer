@@ -292,7 +292,7 @@ export const leaveDungeon = (session, { notifyClient = false } = {}) => {
   clearDungeonPlaceables(session);
   clearSecurityState(session);
 
-  // Production disables every dungeon object before ClientExitComplete. Merely
+  // Every dungeon object is disabled before ClientExitComplete. Merely
   // forgetting them server-side leaves native client views and inventory/HUD
   // references alive while ReloadTownState rebuilds the account, which can
   // segfault. Children go before floor/area; owner hero/player objects use 126.

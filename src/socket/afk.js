@@ -1,10 +1,10 @@
 /**
  * A hero nobody is playing.
  *
- * The official server marked it: 30 seconds after a hero last moved, turned or
+ * The game marks it: 30 seconds after a hero last moved, turned or
  * attacked, HeroGameObject field 167 went to 1 for the whole party and the
  * client wrote "Zzz..." over the name; the first move afterwards put it back
- * to 0. Across the official socket captures the marker came 29.5 to 34.9
+ * to 0. Observed, the marker came 29.5 to 34.9
  * seconds after the last such packet, which is a 30-second limit read on a
  * five-second clock, and chat never cleared it.
  *

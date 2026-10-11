@@ -10,10 +10,10 @@ import { DungeonMatchRegistry } from "../src/socket/matches.js";
 /**
  * GET /game-status, which the world map polls every 59 seconds
  * (uI/map/PlayerActivityCount.hx) and draws as a glow on each node and a
- * "POPULATION:" line in its popup. The official answer, read live:
+ * "POPULATION:" line in its popup. The client reads this shape:
  *
- *   {"environmentName":"blue","statsAvailable":true,"currentHeroesInDungeons":122,
- *    "publicDungeonActivityLevel":{"50002":"Quiet","50003":"Active",…,"50158":"Bustling"}}
+ *   {"environmentName":"…","statsAvailable":true,"currentHeroesInDungeons":0,
+ *    "publicDungeonActivityLevel":{"50002":"Quiet","50003":"Active",…}}
  *
  * Every node is listed, empty ones as Quiet. The thresholds are this server's
  * own: the answer names levels, never the counts behind them.
@@ -37,7 +37,7 @@ test("the levels follow a party of four: one Active, two Popular, then Bustling 
   ]);
 });
 
-test("an empty server answers every node, Quiet, in the official shape", async () => {
+test("an empty server answers every node, Quiet, in the shape the client reads", async () => {
   const gameMaster = await loadGameMaster();
   const status = await gameStatusFor({ registry: new DungeonMatchRegistry() });
   assert.equal(status.environmentName, config.serverName);

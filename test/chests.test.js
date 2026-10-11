@@ -180,7 +180,7 @@ test("modifiers stay within the types the weapon accepts", async () => {
 
   /**
    * And that the roll reaches past the seven types it used to be stuck on.
-   * Twelve of the nineteen types the official puts on real items were
+   * Twelve of the nineteen types seen on real items in the original game were
    * unreachable here, and they are forty-two per cent of its modifier slots.
    */
   assert.ok(seen.size > 7, `only ${seen.size} distinct types came up in 150 chests`);
@@ -355,8 +355,8 @@ test("a weapon roll is untouched by the offer path", async () => {
  * table stops at 100. Unclamped, the +2 handed a level-100 player a legendary
  * they could never hold — the roll's best outcomes were the ones it wasted.
  *
- * The official server does not produce them. Across 509 item rows on a captured
- * account the levels run 98, 99 and 100 and stop; not one is above.
+ * The original game does not produce them either: observed item levels run
+ * 98, 99 and 100 and stop; not one is above.
  */
 test("an award is never rolled past a level the hero can reach", async () => {
   const gm = await loadGameMaster();

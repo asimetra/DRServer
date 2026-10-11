@@ -10,12 +10,11 @@ import {
 } from "../src/npc-stats.js";
 
 /**
- * Every expectation here is a number the official server actually sent, read
- * out of the capture corpus rather than derived from the formula it checks.
- * BRUTE alone pins the shape: five levels, five exact hits, and a wrong
+ * Every expectation here is a fixed reference value rather than one derived
+ * from the formula it checks. BRUTE alone pins the shape: five levels, five exact hits, and a wrong
  * exponent or a missing `Stats.HP_BOOST.Bonus` breaks all but the first.
  */
-test("an enemy's health matches what the official sent at that level", async () => {
+test("an enemy's health matches the reference at that level", async () => {
   const gm = await loadGameMaster();
   const brute = await npcForConstant("BRUTE");
 
@@ -32,7 +31,7 @@ test("an enemy's health matches what the official sent at that level", async () 
 
 test("a row with no per-level boost is flat at every level", async () => {
   const gm = await loadGameMaster();
-  // CASTLE_ARENA_SMASH_STATUE_LION read 60 at levels 1, 43, 45, 53 and 100.
+  // CASTLE_ARENA_SMASH_STATUE_LION is 60 at levels 1, 43, 45, 53 and 100.
   const statue = await npcForConstant("CASTLE_ARENA_SMASH_STATUE_LION");
   for (const level of [1, 43, 45, 53, 100]) {
     assert.equal(npcMaxHitPoints(gm, statue, level, 1), 60, `level ${level}`);
@@ -42,7 +41,7 @@ test("a row with no per-level boost is flat at every level", async () => {
 test("indestructible scenery stays at zero rather than gaining a health bar", async () => {
   const gm = await loadGameMaster();
   const gargoyle = await npcForConstant("NORDIC_CAVE_GARGOYLE_EMITTER_C");
-  // The official sent hitPoints 0 for this prop at levels 5, 59 and 61.
+  // This prop has hitPoints 0 at every level.
   assert.equal(gargoyle.HP ?? 0, 0);
   for (const level of [5, 59, 61]) {
     assert.equal(npcMaxHitPoints(gm, gargoyle, level, 1), 0);
@@ -50,16 +49,12 @@ test("indestructible scenery stays at zero rather than gaining a health bar", as
 });
 
 /**
- * `ActorGameObject.refreshStatVector` is quoted at the top of npc-stats and the
- * quote contains the exception:
+ * The level scale has an exception: an actor on team 5 scales linearly with its
+ * level, and everybody else by the level to the power one and a half.
  *
- *   var scale = mTeam == 5 ? mLevel : Math.pow(mLevel, 1.5);
- *
- * Team 5 is the player team, and a pet is on it. The corpus agrees without a
- * single dissenter: across 60 pet generates — WOLF_PET, DRAGON_PET, RHINO_PET,
- * GHOST_SAMURAI_CLONE — every health the official sent is the linear price, and
- * not one is the power of one and a half. It is not a near miss either. A level
- * 74 wolf reads 840 against 6465.
+ * Team 5 is the player team, and a pet is on it. WOLF_PET, DRAGON_PET,
+ * RHINO_PET and GHOST_SAMURAI_CLONE are all priced linearly, and it is not a
+ * near miss: a level 74 wolf reads 840 against 6465.
  */
 test("a pet is priced by its level, not by the power of one and a half", async () => {
   const gm = await loadGameMaster();
@@ -98,15 +93,10 @@ test("party attack scaling keeps each authored damage type separate", async () =
 });
 
 /**
- * A prison floor settles this on its own. Forty-two props stream in at exactly
- * 1.8x their authored health, two heroes generate 20ms later, and 56 seconds on
- * the same floor sends props at 2.2x — the 2_PLAYER and 3_PLAYER HP_BOOST, in
- * the order the party grew.
- *
- * Across the corpus every unlevelled actor lands on some PlayerScale multiple
- * of its authored health: 2635 of 2636, the one exception being a statue
- * generated at 70 of 80 because it had already been hit. And the multiplier is
- * never mixed — of 330 floor-seconds, 329 carry a single one.
+ * Props are priced by the party as well: a prison prop comes in at 1.8x its
+ * authored health for a pair and 2.2x for a trio — the 2_PLAYER and 3_PLAYER
+ * HP_BOOST, in the order the party grew. Every unlevelled actor lands on a
+ * PlayerScale multiple of its authored health, one multiplier at a time.
  *
  * The rule this replaces said props keep their authored health in a party, and
  * it survived because the evidence for it was counted per floor rather than per
@@ -131,7 +121,7 @@ test("party health scales props and traps as well as enemies", async () => {
 
 test("a prison prop is priced by the party that walked in", async () => {
   const gm = await loadGameMaster();
-  // Authored 80. The capture sends 144 to a pair and 176 to a trio.
+  // Authored 80: 144 for a pair and 176 for a trio.
   const statue = await npcForConstant("CASTLE_PRISON_SMASH_KINGSTATUE");
   assert.equal(npcMaxHitPoints(gm, statue, 21, 1), 80);
   assert.equal(npcMaxHitPoints(gm, statue, 21, 2), 144);
@@ -142,13 +132,11 @@ test("an infinite run's monsters grow with the depth, not with the level", async
   /**
    * Level stops at 100 and the infinite tiers all start there, so without this
    * the fifty-fifth floor of Infinite Castle held exactly the monsters of the
-   * first. The corpus prices the depth instead: BRUTE at level 100 arrives at
+   * first. The depth is priced instead: BRUTE at level 100 arrives at
    *
    *   4980  6930  8879  10830  12780  14729  16680  18630  20580  22530
    *
-   * and its level term is 3000 flat, so each is 30 + 3000 × (1 + 0.65n). The
-   * counts fall off with depth the way players do — 125 sightings at n=1, 10 at
-   * n=10 — which is what says these are floors and not variants.
+   * and its level term is 3000 flat, so each is 30 + 3000 × (1 + 0.65n).
    */
   const gm = await loadGameMaster();
   const brute = await npcForConstant("BRUTE");
@@ -163,7 +151,7 @@ test("an infinite run's monsters grow with the depth, not with the level", async
      * shrug: no formula of this shape can produce the series at all.
      *
      * A floored linear price `floor(A + B*d)` is pinned by consecutive
-     * observations. From 6930 and 8879 the step B lies in (1948, 1950); from
+     * values. From 6930 and 8879 the step B lies in (1948, 1950); from
      * 8879 and 10830 it lies in (1950, 1952). The two intervals do not meet, so
      * depth does not enter linearly however the arithmetic is arranged.
      *
@@ -179,7 +167,7 @@ test("an infinite run's monsters grow with the depth, not with the level", async
      */
     assert.ok(
       Math.abs(got - expected) <= 1,
-      `floor ${depth} of an infinite run: official ${expected}, ours ${got}`
+      `floor ${depth} of an infinite run: expected ${expected}, got ${got}`
     );
     if (depth !== 3 && depth !== 6) {
       assert.equal(got, expected, `floor ${depth} of an infinite run`);
@@ -204,7 +192,7 @@ test("an infinite run's monsters grow with the depth, not with the level", async
 
 test("an ordinary run is untouched by the infinite growth", async () => {
   /**
-   * The same BRUTE the corpus shows at 33, 45, 875, 935, 1187 and 2591 on
+   * The same BRUTE at 33, 45, 875, 935, 1187 and 2591 on
    * finite floors, which is the fit this server already had and must keep.
    */
   const gm = await loadGameMaster();

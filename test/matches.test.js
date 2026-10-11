@@ -316,10 +316,9 @@ test("completion is read from the active avatar only", () => {
 });
 
 /**
- * The client's own answer to "can this hero go there", ported line for line
- * from DBInventoryInfo.get_mapnodes1 (NODE_RULES 0) and
- * GameMaster.fixupMapNodeParents, so the server's rule is checked against the
- * screen the player is looking at rather than against itself.
+ * The map screen's answer to "can this hero go there" (NODE_RULES 0, with each
+ * node's parents filled in), restated here so the server's rule is checked
+ * against the screen the player is looking at rather than against itself.
  */
 const clientAccessibleNodeIds = (gameMaster, account) => {
   const avatar = account.account_avatars.find((row) => row.id === account.active_avatar);

@@ -51,9 +51,9 @@ test("stacked reductions leave a remainder", async () => {
 
 /**
  * A whole number in those columns is not a share. `BERSERK_DB` authors 100 and
- * was read as "all of it"; on the official a raging Berserker is untouchable
- * only for the three seconds his buster's own timeline says so, and after that
- * every recorded blow lands, marked resisted — fifteen of fifteen. It is a
+ * was read as "all of it"; in the original game a raging Berserker is
+ * untouchable only for the three seconds his buster's own timeline says so,
+ * and after that every blow lands, marked resisted. It is a
  * rating, the same +1 a monster's row carries, and `buffRatingFor` reads it.
  */
 test("a whole number is a rating, not a share of the hit", async () => {

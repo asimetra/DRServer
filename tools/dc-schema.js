@@ -1,12 +1,13 @@
 /**
- * The wire protocol, read out of the client instead of out of captures.
+ * The wire protocol, from the client port's generated network layer rather
+ * than from captures.
  *
  * This is not a bespoke socket. It is a generated distributed-class layer —
  * doids, zones, generates, interest contexts, and a `dcHash` in the login
- * packet that both ends compare so they agree on the schema. The client ships
- * the generated half of it in `src/generatedCode/`: one NetworkComponent per
- * distributed class, each declaring its field ids and the exact read and write
- * sequence for every payload.
+ * packet that both ends compare so they agree on the schema. The client port's
+ * source carries the generated half of it in `src/generatedCode/`: one
+ * NetworkComponent per distributed class, each declaring its field ids and the
+ * exact read and write sequence for every payload.
  *
  * So every layout this server discovered a byte at a time is *declared*, and
  * can be extracted:

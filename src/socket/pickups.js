@@ -40,7 +40,7 @@ const tooFullForDoober = (heroDoid, isHealthDoober) =>
     .frame();
 
 /**
- * The original pickup radius is not in the game data — it lived on the server —
+ * The pickup radius is not in the game data — it is the server's to decide —
  * so `pickupRadius` is a judgement call, and the recordings only narrow it:
  * the hero's position arrives late, which blurs every distance measured at the
  * moment of collection. The cleanest reading is a hero standing still while
@@ -202,7 +202,7 @@ const collectTracked = (
     // object on every peer.
     session.send(collectedBy(doid, collectorDoid));
     // `collectedBy` plays the fly-to-collector effect but does not retire the
-    // distributed wrapper. Production disables it immediately afterwards;
+    // distributed wrapper. It has to be disabled immediately afterwards;
     // without this, the client and late-join snapshot retain every pickup for
     // the rest of the floor.
     session.send(objectDisable(doid));

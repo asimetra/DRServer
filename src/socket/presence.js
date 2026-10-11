@@ -132,8 +132,8 @@ const sessions = new Set();
  *
  * Presence here was purely change-driven: something moves, everybody watching
  * is told once, and if that once goes missing the friend panel is wrong until
- * the next time that person happens to move. The official server does not rely
- * on it either — across the recordings, 665 of its `friendState` updates repeat
+ * the next time that person happens to move. The game does not rely
+ * on it either — in observed sessions, 665 of its `friendState` updates repeat
  * a value it had already sent against 532 that actually changed, so more than
  * half of what it says is a restatement.
  *
@@ -363,20 +363,20 @@ const admitWatched = (session, wanted) => {
  * The friends a session is told about without having asked.
  *
  * Waiting to be asked is why nobody was ever online. The client barely asks:
- * across 61 official recordings the server sends field 188 in 46 of them and
+ * across 61 observed sessions the server sends field 188 in 46 of them and
  * the client sends 189 in two, and in a session of our own neither field
  * crossed the wire at all. `FriendInfo.isOnline` reads `PresenceManager`
  * directly, so a friend nothing has spoken about is a friend who is offline by
  * default, for ever.
  *
- * What the official server does instead is push the whole list the moment the
+ * What the game does instead is push the whole list the moment the
  * object exists — six of them inside the same millisecond as the generate, in
- * the recording this was read from. So the friend list is the watch list, and
+ * the session this was read from. So the friend list is the watch list, and
  * login is when it is sent.
  *
  * Only the ones actually here. Absence is already the client's default, and the
- * official burst is almost entirely `online` flags: 1349 against 29 across the
- * recordings. Anyone who arrives later is covered by `tellWatchers`, because
+ * game's burst is almost entirely `online` flags: 1349 against 29 across
+ * observed sessions. Anyone who arrives later is covered by `tellWatchers`, because
  * they are on the list either way.
  */
 export const watchFriends = (session, accountIds) => {

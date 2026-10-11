@@ -15,9 +15,8 @@ import { CLID } from "../src/socket/opcodes.js";
  * victims into the tail of the choreography rather than proposing them a moment
  * later, and the handler read the header and stopped.
  *
- * Measured on the wire: field 172 carries a non-empty result list on 1521 casts
- * across the recordings, 7620 of those hits belonging to `KATANA_SOUL_BANG` and
- * as many as 22 to a single swing.
+ * Observed: field 172 carries a non-empty result list on charge releases,
+ * most of them `KATANA_SOUL_BANG`, with as many as 22 hits to a single swing.
  */
 
 const SOUL_BANG = 902509; // KATANA_SOUL_BANG, the katana's ChargeAttack

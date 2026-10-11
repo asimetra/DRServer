@@ -25,13 +25,12 @@ const fileOnly = process.env.ODS_STORAGE === "postgres" && "file storage only";
  *
  * The client reads nothing from `last_login`, which is how it came to be
  * written once at creation and never again: four days of launches answered the
- * same stale value. The official moves it to the current day — nineteen
- * distinct dates on one account across its recordings — and whoever looks after
- * a server wants the same thing, to tell an account that left in the spring
+ * same stale value. The original game moves it to the current day, and
+ * whoever looks after a server wants the same thing, to tell an account that left in the spring
  * from one that was on last night.
  *
  * It moves on the question every launch opens with, and by the day, as the
- * official's does: the first launch of a day writes, the rest only read.
+ * original game's does: the first launch of a day writes, the rest only read.
  */
 
 const ME = 1000400001;

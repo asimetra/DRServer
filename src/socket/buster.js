@@ -274,9 +274,9 @@ const spawnSelfBuff = async (session, attack) => {
  * The official does it one generate per affected actor. Measured, a party
  * mushroom in a three-player floor:
  *
- *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on 50386075
- *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on 1100183818  <- the drinker
- *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on 1100379173
+ *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on hero A
+ *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on hero B  <- the drinker
+ *   150ms  DistributedBuffGameObject CONSUMABLE_SMALL_MUSHROOM_BUFF on hero C
  *
  * The scrolls have no SelfBuff at all, so their caster *is* the target, which
  * is the case this originally existed for and still covers.
@@ -351,7 +351,7 @@ const grantToParty = (session, attack, grant) => {
  * without them the buster is effectively unreachable, which is how it looked in
  * play: the meter crept to 2, then 4, and never went anywhere.
  *
- * Read off the official wire rather than guessed. Twice in one recorded fight:
+ * Observed rather than guessed. Twice in one fight:
  *
  *   21:57:54.808  CONSUMABLE_STAT_BUSTER_POTION_ATTACK
  *   21:57:54.947  buster points = 120        (full, 139ms later)

@@ -110,8 +110,8 @@ const expireBuff = (session, doid) => {
  * that was no longer there, and `buffMultiplierFor` went on walking entries for
  * a doid nothing could look up.
  *
- * The official takes them together. Of 3048 poison and fire buffs whose victim
- * was disabled in the recordings, 2176 are disabled within 250ms of it and only
+ * The game takes them together. Of 3048 observed poison and fire buffs whose
+ * victim was disabled, 2176 are disabled within 250ms of it and only
  * 8 outlive their host at all.
  */
 export const clearBuffsOn = (session, actorDoid) => {
@@ -248,9 +248,9 @@ const startBuffTimer = (session, doid, durationMs) => {
  * The number that floats off whoever a buff just burned or poisoned.
  *
  * A damage-over-time tick is the one kind of damage that carries no
- * CombatResult — the captures show hit points changing and nothing else on the
- * victim — so without this the mob silently melts and the player is told
- * nothing. `ReportBuffEffect` is what the official server sends instead, and it
+ * CombatResult — only hit points change on the victim — so without this the
+ * mob silently melts and the player is told nothing. `ReportBuffEffect` is
+ * what the game sends instead, and it
  * goes on the *hero owner* rather than the victim: the arithmetic is the
  * server's, but only the player whose buff is doing the damage is shown it.
  *

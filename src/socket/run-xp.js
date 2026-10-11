@@ -23,7 +23,7 @@
  * of a point: each monster's share is rounded to a whole number, up or down by
  * chance in proportion to the fraction. At 0.6 a knight is worth 1 six times in
  * ten and nothing the other four — and a monster worth nothing drops no star.
- * 242 recorded tutorial kills dropped one, 168 did not, mixed together from the
+ * 242 observed tutorial kills dropped one, 168 did not, mixed together from the
  * first kill to the last; every star that dropped paid exactly 1 and the
  * minotaur's, weighing ten, paid 6. The same rounding is on every other node:
  * at 9.16 a unit the small stars paid 9 thirty-nine times and 10 seven, at
@@ -50,7 +50,7 @@
  * `Exp` is the last of those and it is not decoration. The princess, her
  * barricades and her orbs carry `XP` 1 and a star's name with `Exp` 0 — they
  * are what a party defends, and without this a defence map was priced by its
- * own furniture. Every monster the official was recorded dropping a star for
+ * own furniture. Every monster observed dropping a star
  * has all three.
  */
 export const xpWeightOf = (npc) => {

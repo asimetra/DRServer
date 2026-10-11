@@ -38,7 +38,7 @@ const isTreasureDoober = (id) =>
  * economy by ten.
  *
  * `MapPage.MaxTreasure` is the allowance, and it belongs to the run rather than
- * the floor: of 93 official runs on treasure-bearing nodes — 60 of one floor
+ * the floor: of 93 observed runs on treasure-bearing nodes — 60 of one floor
  * and 33 of two — not one exceeded it, and a second floor bought nothing extra.
  *
  * Chests are placed with the floor rather than dropped by it. `CategoryProb`
@@ -66,12 +66,12 @@ export const isRewardPlaceholder = (constant) => REWARD_PLACEHOLDERS.has(constan
  * chest rarities and the two item boxes, which answers both halves at once:
  * which rarity, and whether a chest arrives instead of a box. Reading only the
  * chest half is what left the boxes — the powerup drops — never spawning at
- * all, while 46 SMALL_ITEM_BOX and 26 ROYAL_ITEM_BOX appear across the official
- * recordings, more than any single chest.
+ * all, while 46 SMALL_ITEM_BOX and 26 ROYAL_ITEM_BOX appear across observed
+ * runs, more than any single chest.
  *
  * It also explains the shape of the run. ARENA_B is COMMON 0.5 / SMALL_ITEM_BOX
  * 0.5 against MaxTreasure 2, so chests per run come out binomial(2, 0.5) —
- * which is what 93 official runs measured:
+ * which is what 93 observed runs measured:
  *
  *      0 chests   24%        binomial(2, 0.5) says 25%
  *      1 chest    51%                             50%
@@ -81,7 +81,7 @@ export const isRewardPlaceholder = (constant) => REWARD_PLACEHOLDERS.has(constan
  * spreads 0.1/0.25/0.25 across three rarities and 0.4 across the two boxes.
  *
  * `LEGENDARY_CHEST` is zero on all 55 rows, so a tier roll can never pay one —
- * and no dragon chest appears in 70 official recordings. The only legendary in
+ * and no dragon chest appears in 70 observed sessions. The only legendary in
  * the game is node 50083's `BossRewardTreasureId`, which is why that is asked
  * first.
  */

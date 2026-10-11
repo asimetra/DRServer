@@ -125,7 +125,7 @@ test("floor wire numbers carry both the room and the 55-room run length", () => 
   assert.equal(dungeonFloorNumber(55, 54), 55054);
 });
 
-test("Infinite reward data follows the captured avatar/score/gold/reward layout", async () => {
+test("Infinite reward data follows the avatar/score/gold/reward layout the client reads", async () => {
   const gm = await loadGameMaster();
   const definition = gm.raw.InfiniteDungeons[0];
   const rewards = infiniteRewards(definition, 3);
@@ -133,7 +133,7 @@ test("Infinite reward data follows the captured avatar/score/gold/reward layout"
   assert.deepEqual(rewards.map((row) => row.status), [3, 0, 0, 0]);
 
   const frame = infiniteRewardDataUpdate(700, {
-    avatarDoid: 1_100_334_245,
+    avatarDoid: 1_100_000_001,
     startScore: 0,
     goldReward: 1200,
     rewards,
@@ -142,7 +142,7 @@ test("Infinite reward data follows the captured avatar/score/gold/reward layout"
   assert.equal(reader.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
   assert.equal(reader.u32(), 700);
   assert.equal(reader.u16(), 218);
-  assert.equal(reader.u32(), 1_100_334_245);
+  assert.equal(reader.u32(), 1_100_000_001);
   assert.equal(reader.u16(), 0);
   assert.equal(reader.u32(), 1200);
   assert.equal(reader.u16(), 28);
@@ -342,7 +342,7 @@ test("the Infinite reward floors are settings, and zero hands one back to the ta
 
 /**
  * The client is told when a week turns — a week of seven days, offset by forty
- * hours, as the official's clock was recorded — and counts weeks by it. This
+ * hours (GameClock.getEpoch) — and counts weeks by it. This
  * server counted its own from the Unix epoch with no offset, so for forty hours
  * of every week the two were in different weeks: the map's countdown reached
  * zero on Tuesday morning and the scores it promised to reset stayed until

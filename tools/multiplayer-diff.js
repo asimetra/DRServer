@@ -2,8 +2,8 @@
 /**
  * Ordered, DOID-independent comparison for one multiplayer client perspective.
  *
- *   node tools/multiplayer-diff.js official.jsonl local-session.jsonl
- *   node tools/multiplayer-diff.js official.jsonl logs/run-directory
+ *   node tools/multiplayer-diff.js reference.jsonl local-session.jsonl
+ *   node tools/multiplayer-diff.js reference.jsonl logs/run-directory
  *
  * Raw bytes cannot compare two runs: object ids, timestamps and account ids are
  * expected to differ. Aggregate rates cannot compare multiplayer either: owner
@@ -254,7 +254,7 @@ const main = async () => {
   const positional = process.argv.slice(2).filter((item) => !item.startsWith("--"));
   const [officialFile, localTarget] = positional;
   if (!officialFile || !localTarget) {
-    console.error("usage: node tools/multiplayer-diff.js <official.jsonl> <local.jsonl|capture-dir> [--both] [--noisy] [--limit N]");
+    console.error("usage: node tools/multiplayer-diff.js <reference.jsonl> <local.jsonl|capture-dir> [--both] [--noisy] [--limit N]");
     process.exit(2);
   }
 
@@ -272,7 +272,7 @@ const main = async () => {
   const limit = Number(argument("limit") ?? 30);
 
   console.log(
-    `official ${path.basename(officialFile)}: ${expected.events.length} events, ` +
+    `reference ${path.basename(officialFile)}: ${expected.events.length} events, ` +
       `party=${expected.peakHeroes}, nodes=${expected.nodes.join(",") || "?"}`
   );
   for (const { trace, diff } of locals) {

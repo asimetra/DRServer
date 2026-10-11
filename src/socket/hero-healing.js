@@ -15,10 +15,8 @@ import { statsFor, generationFalloff } from "./hit-pricing.js";
 /**
  * Whether an attack gives hit points back rather than taking them.
  *
- * The client's whole test, from `ActorGameObject.ReceiveCombatResult`:
- *
- *     if(gmAttack.DamageMod > 0) actorView.receiveHeal(...)
- *     else if(blocked == 0)      actorView.receiveDamage(...)
+ * The client's whole test (`ActorGameObject.ReceiveCombatResult`): a positive
+ * `DamageMod` draws a heal, otherwise an unblocked result draws damage.
  *
  * `DamageMod` is signed and the table is unanimous about which way: all 452
  * HOSTILE rows that carry one are negative, 280 of them exactly -1, and none is
@@ -103,10 +101,10 @@ const applyHealing = (session, doid, healing, announce) => {
 /**
  * The `when` byte on a heal the server originated.
  *
- * Every one of the 25 healing results in the recordings carries 255, where an
+ * Every one of 25 observed healing results carries 255, where an
  * ordinary hit carries the timeline frame it landed on — 0 or 4. Nothing was
  * proposed for these, so there is no frame to name, and 255 is what the
- * official writes in its place.
+ * game writes in its place.
  */
 const SERVER_ORIGINATED = 255;
 
@@ -120,7 +118,7 @@ const SERVER_ORIGINATED = 255;
  * server decides the rest, which is why fixing `handleProposeCombatResults`
  * changed nothing a player could feel.
  *
- * One cast, read off `socket-20260816-145437`:
+ * One observed cast:
  *
  *     14:55:56.874  out  choreography      HEALING_PULSE_COOLDOWN, slot 2
  *     14:55:57.048  in   hit points        304 -> 420
@@ -134,7 +132,7 @@ const SERVER_ORIGINATED = 255;
  *
  * Who it reaches is the attack's own business: `AffectsSelf` and
  * `AffectsOthers`, both set on every Healing Wave. A four-hero cast in
- * `socket-20260822-015753` lands 146 on the caster and on each of the three
+ * another session lands 146 on the caster and on each of the three
  * others. Range is not consulted, which follows `buffFriendlyTarget` — the
  * same fan-out for the same family of attacks — rather than inventing a
  * distance rule from a single recording.

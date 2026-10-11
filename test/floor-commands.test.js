@@ -25,7 +25,7 @@ const BERSERKER = 101;
 const onFloor = (overrides = {}) => ({
   id: 7,
   accountId: 900,
-  dungeonAccount: { id: 900, name: "Simetra" },
+  dungeonAccount: { id: 900, name: "Rowan" },
   dungeonAvatar: { avatar_id: BERSERKER, experience: 0 },
   heroDoid: HERO,
   floorDoid: 400,
@@ -293,7 +293,7 @@ test("near says so when nothing is around", async () => {
 test("party lists who is on the run, with the hero each one brought", async () => {
   const text = await run(onFloor(), "party");
 
-  assert.match(text, /Simetra \(you\) — BERSERKER lv \d+ · 640\/880/);
+  assert.match(text, /Rowan \(you\) — BERSERKER lv \d+ · 640\/880/);
 });
 
 test("party lists every member, and says who is down", async () => {
@@ -310,7 +310,7 @@ test("party lists every member, and says who is down", async () => {
     send: () => {},
     allocateDoid: () => 100,
   });
-  const host = member(41, 501, "Simetra", 640);
+  const host = member(41, 501, "Rowan", 640);
   const guest = member(42, 502, "Orhan", 0);
   const world = createMatchWorld({ id: 1, members: new Set([host, guest]) }, host);
   world.contextFor(guest);
@@ -319,7 +319,7 @@ test("party lists every member, and says who is down", async () => {
 
   const text = await run(world.contextFor(host), "party");
 
-  assert.match(text, /Simetra \(you\) — BERSERKER lv \d+ · 640\/880/);
+  assert.match(text, /Rowan \(you\) — BERSERKER lv \d+ · 640\/880/);
   assert.match(text, /Orhan — BERSERKER lv \d+ · down/);
 });
 

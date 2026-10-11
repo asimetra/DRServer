@@ -70,9 +70,9 @@ const partyFrames = ({ ownerPlayer, remotePlayer, ownerHero, remoteHero, include
 test("semantic multiplayer traces ignore raw doids but preserve owner/remote roles", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dr-semantic-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
-  const official = path.join(directory, "official.jsonl");
+  const reference = path.join(directory, "reference.jsonl");
   const local = path.join(directory, "local.jsonl");
-  await writeCapture(official, partyFrames({
+  await writeCapture(reference, partyFrames({
     ownerPlayer: 1001,
     remotePlayer: 1002,
     ownerHero: 1101,
@@ -85,7 +85,7 @@ test("semantic multiplayer traces ignore raw doids but preserve owner/remote rol
     remoteHero: 7102,
   }));
 
-  const expected = await semanticTrace(official);
+  const expected = await semanticTrace(reference);
   const actual = await semanticTrace(local);
   assert.equal(expected.peakHeroes, 2);
   assert.deepEqual(actual.events.map(({ key }) => key), expected.events.map(({ key }) => key));
@@ -97,9 +97,9 @@ test("semantic multiplayer traces ignore raw doids but preserve owner/remote rol
 test("semantic diff names a missing multiplayer state transition", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dr-semantic-missing-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
-  const official = path.join(directory, "official.jsonl");
+  const reference = path.join(directory, "reference.jsonl");
   const local = path.join(directory, "local.jsonl");
-  await writeCapture(official, partyFrames({
+  await writeCapture(reference, partyFrames({
     ownerPlayer: 1001,
     remotePlayer: 1002,
     ownerHero: 1101,
@@ -113,7 +113,7 @@ test("semantic diff names a missing multiplayer state transition", async (t) => 
     includeDown: false,
   }));
 
-  const diff = diffSemanticTraces(await semanticTrace(official), await semanticTrace(local));
+  const diff = diffSemanticTraces(await semanticTrace(reference), await semanticTrace(local));
   assert.ok(
     diff.some(({ type, expected }) =>
       type === "missing" && expected.includes("remote:hero#1.state=\"down\"")

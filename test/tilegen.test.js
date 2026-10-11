@@ -53,8 +53,8 @@ test("tiles land on the grid the client draws on", async () => {
     /**
      * Inside the world, not merely on the grid. Floor.buildWalls runs the
      * client's edges from the origin out to twelve tiles, so a negative
-     * coordinate puts a room outside the walls and the player cannot reach it.
-     * Every captured layout from the real server is non-negative.
+     * coordinate puts a room outside the walls and the player cannot reach it,
+     * so every layout has to be non-negative.
      */
     assert.ok(tile.x >= 0 && tile.y >= 0, `(${tile.x},${tile.y}) is outside the world`);
     assert.ok(tile.x < 12 * TILE_SIZE && tile.y < 12 * TILE_SIZE);
@@ -145,7 +145,7 @@ test("a node is authored or generated according to its own data", async () => {
     "Icewater Caverns 1-3 names no map, so every floor is laid out"
   );
   assert.match(iceCaves.floors[0].generated.tileLibrary, /nordic\/caves/);
-  // Its tier says two floors, and a captured run of it was two floors long.
+  // Its tier says two floors.
   assert.equal(iceCaves.floors.length, 2);
 });
 
@@ -174,20 +174,15 @@ test("a generated node comes out the size its tier asks for", async () => {
  * collectables, several times what an ordinary room carries — could not appear
  * on any floor. Not hidden: absent.
  *
- * The rate is measured off the wire, per tile and never per floor: the official
- * builds small floors — 9.4 tiles on average, 10 median, 15 at the largest —
- * and a floor grown to a different size is not comparable to one of them. The
- * tiers agree, asking for 2 to 18 with a median of 7.
+ * The rate is counted per tile and never per floor: the game's floors are
+ * small — the tiers ask for 2 to 18 tiles, with a median of 7 — and a floor
+ * grown to a different size is not comparable to one of them.
  *
- * Accumulating each floor object's tile list across 118 floor births gives 22
- * secret rooms in 1110 tiles, 1.98%. Ours sits just under it at 1.69%, because
+ * About one tile in fifty is a secret room. Ours sits just under that, because
  * a room is only placed where something shuts it — see the tests below, which
  * are the property that matters more than the count.
- *
- * Every one of the 478 distinct tile ids the official placed is in a library we
- * hold, so nothing here is measured against a partial view.
  */
-test("secret rooms are placed, at something like the rate the official does", async () => {
+test("secret rooms are placed, at something like one tile in fifty", async () => {
   const themes = [
     "castle/arena", "castle/catacombs", "castle/prison",
     "jungle/aztec", "jungle/dino", "jungle/tribal",
@@ -212,7 +207,7 @@ test("secret rooms are placed, at something like the rate the official does", as
 
   assert.ok(tiles > 3000, "enough floors to measure a rate on");
   const rate = (100 * secret) / tiles;
-  assert.ok(rate > 0.6 && rate < 2.6, `secret rooms at ${rate.toFixed(2)}%, official is 1.98%`);
+  assert.ok(rate > 0.6 && rate < 2.6, `secret rooms at ${rate.toFixed(2)}%, expected about 2%`);
 });
 
 /**
@@ -220,10 +215,9 @@ test("secret rooms are placed, at something like the rate the official does", as
  *
  * Seam matching alone will hang a room off any northward opening, and only
  * three per hundred of those happen to carry a wall — so the first version of
- * this placed rooms that stood open, 63% of them against the official's 5%.
- * Twenty-one of the twenty-two secret rooms in the official floor payloads are
- * shut: fifteen by a `WALL_SECRET` in the doorway of the tile below, five by a
- * `PROXIMITY_TRIGGER` of their own, one by a wall inside the room itself.
+ * this placed rooms that stood open, most of them. A secret room is shut by a
+ * `WALL_SECRET` in the doorway of the tile below, by a `PROXIMITY_TRIGGER` of
+ * its own, or by a wall inside the room itself.
  *
  * Asked of the layout rather than the library, because the same room is secret
  * behind one tile and not behind another.
@@ -282,9 +276,9 @@ test("every secret room a library offers is a one-way dead end", async () => {
 test("no two secret rooms are placed touching", async () => {
   /**
    * Reported from a test map: two treasure rooms side by side, each with its
-   * own breakable door, one wall apart. None of the 22 secret rooms in the
-   * official payloads touches another on any of the eight sides, and only one
-   * of 118 recorded floors carries two rooms at all. Ours produced 15 flat
+   * own breakable door, one wall apart. Secret rooms are meant to be rare and
+   * apart: two on one floor are unusual, and touching on any of the eight
+   * sides is wrong. Ours produced 15 flat
    * pairs and 13 corner pairs over 1800 floors before the layout rule.
    *
    * Diagonals are asserted with the rest: a room is meant to be come upon, and
@@ -333,12 +327,9 @@ test("a secret wall always has a treasure room behind it", async () => {
    * the rest had a corridor, and 43 of those were the way out and 10 the tile
    * the player starts on.
    *
-   * There is no blank door either, which took a second look at the evidence to
-   * see. Four of the official's walls appear to shut nothing, but three were
-   * never broken in the capture — the room behind them was simply never
-   * revealed — and the fourth is `1756.1363807809773`, whose `WALL_SECRET` sits
-   * on a north edge with no doorway in it at all. Every wall a player actually
-   * opened had a room behind it: 15 of 15.
+   * There is no blank door either: a secret wall in a doorway always has a room
+   * behind it. The one exception in the libraries is `1756.1363807809773`,
+   * whose `WALL_SECRET` sits on a north edge with no doorway in it at all.
    *
    * So the assertion is exact, and the doorway is checked rather than assumed,
    * because that scenery tile would otherwise fail it.
@@ -350,7 +341,7 @@ test("a secret wall always has a treasure room behind it", async () => {
    * the very north edge has no `y` at all. Read as `Number(undefined)` that is
    * NaN, which is below nothing: the catacombs' `430.1332889408700` holds its
    * doorway shut that way, and ordinary rooms were hung off it behind a
-   * breakable wall. The official puts a treasure room there, 2 times of 2.
+   * breakable wall. A treasure room belongs there.
    */
   const sealsNorth = (definition) =>
     (definition?.LEObjects ?? []).some((object) => isWall(object) && Number(object.y ?? 0) < 150);

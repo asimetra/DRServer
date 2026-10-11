@@ -11,10 +11,8 @@ import { CLID, OP } from "../src/socket/opcodes.js";
  * handful were alive. Everything that sweeps the floor — trap victims, hazard
  * victims, the AI's target search — walked all of them on every tick.
  *
- * The official does not keep them. Across the recordings 9015 of 9051 dead
- * monsters are disabled, and not one of them takes longer than 43ms: the median
- * is a single millisecond, so the corpse goes in the same breath as the death.
- * The 36 without a disable are the ones still on screen when the log stops.
+ * The original game does not keep them. A dead monster is disabled within a
+ * few milliseconds, so the corpse goes in the same breath as the death.
  */
 
 const disablesIn = (sent) =>
@@ -104,10 +102,9 @@ test("the death hook still finds the body it is about to bury", async () => {
  *
  * Taking the object away at the moment of death is a mistake this server has
  * already made once and recorded: "the bomb vanished without exploding". The
- * official does not make it. Of 9047 recorded deaths 96% are told they died
- * within 120ms of losing their last hit point — the granularity of its own
- * loop — but a distinct 3.5% wait between 1.5 and 4 seconds, which is where
- * the authored death attacks land: a barrel's blast runs 1208ms, a thrown
+ * original game does not make it. Most deaths are told within a tick of the
+ * last hit point going, but a few wait between 1.5 and 4 seconds, which is
+ * where the authored death attacks land: a barrel's blast runs 1208ms, a thrown
  * bomb's 1583ms, and the party bomb's 2792ms.
  */
 test("a barrel keeps its body until its blast has finished", async (t) => {

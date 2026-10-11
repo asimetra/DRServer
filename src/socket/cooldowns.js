@@ -16,8 +16,8 @@
  * pot, and one shared timer meant cooking soup blocked cooking food.
  *
  * And per *slot* rather than per attack, because two slots may hold the same
- * pot and the official runs them on their own clocks. Its own recording is
- * direct — `THROW_FIREBOMB` carries a five second cooldown:
+ * pot and the game runs them on their own clocks. Observed directly —
+ * `THROW_FIREBOMB` carries a five second cooldown:
  *
  *   13:30:01.187  propose slot 1
  *   13:30:01.919    FIREBOMB_PLACEABLE_L3 spawned
@@ -39,11 +39,9 @@ export const isOffCooldown = (session, attack, slot, now = Date.now()) =>
   now >= (session.attackCooldownUntil?.get(keyFor(attack, slot)) ?? 0);
 
 /**
- * The authored wait is not the wait. `WeaponController.startCooldown` is:
- *
- *   L = CooldownLength || AIRechargeT
- *   mCoolDownTime = L*1000 * weapon.cooldownReduction()
- *                 - L*1000 * hero.attackCooldownMultiplier
+ * The authored wait is not the wait. The client's wait is the authored length
+ * (`CooldownLength`, else `AIRechargeT`) scaled by the weapon's cooldown
+ * reduction, less the hero's own attack-cooldown share of that length.
  *
  * Enforcing the authored seconds instead makes this server stricter than the
  * game for anybody who bought the reduction, and a rule that is stricter than
@@ -75,7 +73,7 @@ const weaponCooldownReduction = async (session, slot) => {
 };
 
 /**
- * The hero's own share, and the client's branch is copied rather than tidied.
+ * The hero's own share, following the client's rule exactly rather than tidied.
  *
  * `HeroGameObject.get_attackCooldownMultiplier` asks whether *slot three* is
  * `MAGIC_COOLDOWN`, and if it is, buffs are not consulted at all. The data says

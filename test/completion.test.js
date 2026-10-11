@@ -199,14 +199,14 @@ test("a boss chest carries coins and treasure, not a second completion bonus", (
 
 /**
  * A treasure picked up off the floor is a *claim* on a chest, and the summary
- * screen shows both sides of it. A captured run reported a GOLD_CHEST collected
- * as 30102 with its reward as 60003 — the doober id and the chest id for the
+ * screen shows both sides of it. A run reports a GOLD_CHEST collected as
+ * 30102 with its reward as 60003 — the doober id and the chest id for the
  * same thing, the two tables running in step.
  *
  * The account is deliberately untouched here: the chest arrives when the player
- * keeps it on the report. Measured — across the official captures every
- * increase in `account_chests` follows a TakeChest or an OpenChest, and a run
- * that collected four treasures and kept one moved the account by one.
+ * keeps it on the report, as the original game does: every increase in
+ * `account_chests` follows a TakeChest or an OpenChest, and a run that
+ * collects four treasures and keeps one moves the account by one.
  */
 test("collecting a treasure records the chest it stands for", async () => {
   const { awardTreasureChest } = await import("../src/socket/rewards.js");
@@ -244,7 +244,7 @@ test("a doober that is not a treasure earns nothing", async () => {
  */
 /**
  * A trophy comes with gems. Beating a boss for the first time paid twenty-five
- * of them on the official server, beside the trophy and the key, and this
+ * of them in the original game, beside the trophy and the key, and this
  * server paid none: completing a node never touched the premium currency at
  * all. No table authors the amount — it is the game's own unit, the same
  * twenty-five an Infinite dungeon's gem floor pays — so it is a setting, and
@@ -358,8 +358,8 @@ test("a treasure placed by the tiles is marked as one, so collecting it pays", a
  * TREASURE, so a tile spot called TREASURE fell straight into that fallback and
  * rolled a uniform one-in-six, map node ignored.
  *
- * Reported from play as a legendary chest on a floor that cannot pay one. The
- * recording agrees: node 50004 spawned a DRAGON_CHEST and node 50003 two
+ * Reported from play as a legendary chest on a floor that cannot pay one, and
+ * seen again: node 50004 spawned a DRAGON_CHEST and node 50003 two
  * ROYAL_ITEM_BOX, while the RANDOM_REWARD spots on the same floors — a name
  * nothing shares — correctly paid the uncommon their tier allows. Only node
  * 50083 authorises a legendary anywhere in the game.
@@ -388,9 +388,9 @@ test("so both reward placeholders are answered by the map node instead", async (
  *
  * `RaritySpawn` carries one row per tier rank spreading TOTALS 1 across five
  * chest rarities and the two item boxes. The boxes are the powerup drops, and
- * reading only the chest half of the row left them never spawning — while the
- * official recordings carry 46 SMALL_ITEM_BOX and 26 ROYAL_ITEM_BOX, more than
- * any single chest type.
+ * reading only the chest half of the row left them never spawning — while in
+ * the original game the item boxes turn up more often than any single chest
+ * type.
  */
 test("a reward spot can pay an item box, not just a chest", async () => {
   const { treasureForTier } = await import("../src/gamemaster.js");
@@ -410,9 +410,8 @@ test("a tier with more rarities spreads across all of them", async () => {
 });
 
 /**
- * No tier pays a legendary — the column is zero on all 55 rows, and no dragon
- * chest appears in 70 official recordings. The one in the game comes from a
- * single node's BossRewardTreasureId.
+ * No tier pays a legendary — the column is zero on all 55 rows. The one dragon
+ * chest in the game comes from a single node's BossRewardTreasureId.
  */
 test("no tier roll can ever pay a legendary", async () => {
   const { treasureForTier } = await import("../src/gamemaster.js");
@@ -472,7 +471,7 @@ test("the treasure range ends at the royal box", async () => {
 
 const crewRoster = (count) => ({ account_avatars: Array.from({ length: count }, (_, id) => ({ id })) });
 
-test("the crew share is what the official paid on solo runs: a sixteenth per hero past the second", async () => {
+test("the crew share is what the original game paid on solo runs: a sixteenth per hero past the second", async () => {
   const { completionTeamXpBonus } = await import("../src/socket/rewards.js");
   assert.equal(completionTeamXpBonus({ CompletionXPBonus: 4665 }, crewRoster(6)), 1166);
   assert.equal(completionTeamXpBonus({ CompletionXPBonus: 4975 }, crewRoster(6)), 1243);
@@ -483,7 +482,7 @@ test("the crew share is what the official paid on solo runs: a sixteenth per her
   assert.equal(completionTeamXpBonus({ CompletionXPBonus: 55 }, crewRoster(1)), 0);
 });
 
-test("what the official paid beyond that is not modelled", { todo: "parties and one three-hero account pay more; the rule is unknown" }, async () => {
+test("what the original game paid beyond that is not modelled", { todo: "parties and one three-hero account pay more; the rule is unknown" }, async () => {
   const { completionTeamXpBonus } = await import("../src/socket/rewards.js");
   assert.equal(completionTeamXpBonus({ CompletionXPBonus: 137 }, crewRoster(3)), 15, "a three-hero account, solo");
   assert.equal(completionTeamXpBonus({ CompletionXPBonus: 2325 }, crewRoster(5)), 465, "beside a six-hero account");

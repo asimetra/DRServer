@@ -27,7 +27,7 @@ test("a name is trimmed, and its inner runs collapsed", () => {
 
 /**
  * The rule is about the developer's keyboard if it refuses the players'.
- * A private server whose people type Turkish must accept Turkish.
+ * A server whose people type Turkish must accept Turkish.
  */
 test("letters are letters, in any script", () => {
   for (const name of ["Şafak", "Ayşegül", "Ölüm", "Иван", "さくら", "Grimwald"]) {

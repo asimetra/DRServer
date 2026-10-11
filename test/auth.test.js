@@ -6,7 +6,7 @@ import { issueToken, verifyToken, TOKEN_TTL_SECONDS } from "../src/auth.js";
  * A token says which account it is for, and cannot be written by anyone
  * without the secret.
  *
- * The shape is the one the captures carry: a number, a colon, and a
+ * The shape is the one the client already accepts: a number, a colon, and a
  * SHA-256-sized hex string. The account id is not in the text — the client
  * sends it alongside, in `X-Account-Id` and in the socket login — but it is
  * signed, or a token issued for one account would open another.

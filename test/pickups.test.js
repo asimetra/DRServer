@@ -606,8 +606,8 @@ test("a buff that stacks stacks to its limit", async () => {
  * Reach is a hundred units. It was a hundred and twenty, and that was enough to
  * take loot from the far side of a raised spike field without stepping onto it:
  * the field is some forty units deep, which left seventy of reach behind it.
- * Where the official server's reach can be read at all — a hero standing still
- * while loot lands beside it, 32 pickups — 25 of them were inside 105.
+ * A hero standing still while loot lands beside it picks it up from about a
+ * hundred units away.
  */
 test("loot is taken from a hundred units away and no further", () => {
   const sessionWith = (x) => ({

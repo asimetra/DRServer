@@ -6,7 +6,7 @@
  *
  *   - the tile authors no connection for it, which is content and is common —
  *     4 of the temple's 8 Loki statues, 171 of the caves' 527 spike beds — and
- *     the official ships the same silence;
+ *     the game ships the same silence;
  *   - or the tile authors one and we fail to carry it, which is a bug, and
  *     always a bug in one place rather than in one trap.
  *

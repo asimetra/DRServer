@@ -12,12 +12,11 @@ const CAVES = "Resources/Levels/nordic/caves/tiles.json";
  * nothing else: a constant that is not there logs `invalid prop constant` and
  * the object never appears. Almost every LEProp does have a Prop row — 30 927
  * of them across the libraries — but 198 do not, and those live in the Npc
- * table instead. The official generates every one as a distributed object.
+ * table instead, so each has to be generated as a distributed object.
  *
  * Reading them as client-owned left the caves missing their ice stalagmites,
  * ground spikes and towers, which is what "the maps feel like something is
- * missing" was. Replaying forty of the official's own floors, they went from
- * 147 objects the official placed and we did not, to three.
+ * missing" was.
  *
  * They hid because the same constants are *also* authored as LENPC in the same
  * libraries — ICESTALAGMITE_A 46 times as one and 35 as the other — so the

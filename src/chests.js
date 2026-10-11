@@ -8,9 +8,10 @@ import { weaponPowerAt } from "./weapon-power.js";
 /**
  * Opening a chest.
  *
- * Most of this is a port rather than a design: the drop distribution, the
- * modifier roll and the pool of eligible weapons all come from GameMaster
- * tables and from what the client was sent for an opened chest. The weapon's
+ * Most of this follows the game's data rather than a design of its own: the
+ * drop distribution, the modifier roll and the pool of eligible weapons all
+ * come from GameMaster tables, and the answer carries the reward fields the
+ * client reads for an opened chest. The weapon's
  * power is the game's own curve — see `weapon-power.js`.
  *
  * Contract:
@@ -26,7 +27,7 @@ export class ChestError extends Error {
   }
 }
 
-/** The live server's code for "rolled something but could not hand it over". */
+/** The error code for "rolled something but could not hand it over". */
 export const NOTHING_AWARDED = -537;
 /** The same request cannot succeed after a retry without player action. */
 export const PERMANENT_CHEST_REFUSAL = -538;
@@ -97,9 +98,8 @@ const masteryTypes = (hero) =>
  * Which modifier types a weapon accepts.
  *
  * Each WeaponItem row carries a boolean column per modifier type it can take —
- * a short sword allows ATKSPD and CRIT_DAMAGE, which is exactly what the
- * captured award rolled. Without this filter a weapon ends up with modifiers it
- * has no business carrying.
+ * a short sword allows ATKSPD and CRIT_DAMAGE. Without this filter a weapon
+ * ends up with modifiers it has no business carrying.
  *
  * One column is spelled differently from the modifier type it refers to.
  *
@@ -109,21 +109,12 @@ const masteryTypes = (hero) =>
  * sword or a Snappy axe was a thing the data described and the game could not
  * produce.
  *
- * Measured against the official rather than reasoned about. Across 33729 item
- * records in the captured RPC traffic, 66736 modifier slots are filled and
- * nineteen distinct types appear in them. Twelve of those nineteen are ones
- * this list could not produce, and they are 27908 of the slots — forty-two per
- * cent of every modifier on every official item.
- *
- * All twenty-two go in, not only the nineteen that were seen. The boolean on
- * the weapon is the game's own statement of what that weapon may carry, and the
- * three unseen ones are rare rather than absent: `PULL` is allowed on three
- * weapons, `CHAIN` on one, and `CHARGE_REDUC` on twenty-three that a single
- * player's captures happen not to have drawn.
+ * All twenty-two go in. The boolean on the weapon is the game's own statement
+ * of what that weapon may carry, and some are simply rare: `PULL` is allowed on
+ * three weapons, `CHAIN` on one, and `CHARGE_REDUC` on twenty-three.
  *
  * `SCALING` and `BUFF_GRANT_DURATION_MULTIPLIER` stay out, and not by oversight:
  * neither has a column on `WeaponItem` at all, so no weapon can carry either.
- * Nor does either appear once in those 66736 slots.
  */
 const MODIFIER_COLUMNS = {
   DAMAGE: "DAMAGE",
@@ -185,8 +176,8 @@ const eligibleWeapons = (gm, hero) => {
 
 /**
  * Rarity decides how many modifiers a weapon carries and which levels they may
- * be drawn from. The captured award — two level-3 modifiers of different types
- * on a rarity-3 weapon — matches the table exactly.
+ * be drawn from — a rarity-3 weapon carries two level-3 modifiers, by the
+ * table.
  */
 const rollModifiers = (gm, rarity, weapon, random) => {
   const count = rarity.NumberOfModifiers ?? 0;
@@ -204,8 +195,7 @@ const rollModifiers = (gm, rarity, weapon, random) => {
 
   const chosen = [];
   const usedTypes = new Set();
-  // Distinct MODIFIER_TYPEs: the sample carried ATKSPD and CRIT_DAMAGE rather
-  // than two of a kind.
+  // Distinct MODIFIER_TYPEs: ATKSPD and CRIT_DAMAGE rather than two of a kind.
   for (let guard = 0; guard < 50 && chosen.length < count; guard++) {
     const candidate = candidates[Math.floor(random() * candidates.length)];
     if (!candidate || usedTypes.has(candidate.MODIFIER_TYPE)) continue;
@@ -217,7 +207,7 @@ const rollModifiers = (gm, rarity, weapon, random) => {
 
 /**
  * Item level tracks the opener's level with a small spread, reported from play
- * as roughly ±2 and consistent with the one capture.
+ * as roughly ±2.
  *
  * Bounded at the top by the hero's own ladder, because the client refuses to
  * equip past it: `DBInventoryInfo.canAvatarEquipThisItem` returns false when
@@ -225,15 +215,11 @@ const rollModifiers = (gm, rarity, weapon, random) => {
  * 100. Unbounded, the +2 handed a level-100 player a legendary they could never
  * hold — the roll's best outcomes were the ones it made worthless.
  *
- * The official server does not produce them. Across 509 item rows on a
- * captured account, 480 of them late-game, the distribution runs 98×136,
- * 99×160, 100×184 and stops: not one row above 100.
- *
  * Clamping rather than re-rolling or sliding the window down, because those
- * would be inventions. The capture pins the ceiling and says nothing about the
- * shape underneath it, so the change is the smallest one that makes the
- * observed fact true; the resulting weight on the top level is a consequence of
- * that and not a claim about the original.
+ * would be inventions. The client's rule fixes the ceiling and says nothing
+ * about the shape underneath it, so the change is the smallest one that keeps
+ * every award equippable; the resulting weight on the top level is a
+ * consequence of that and not a claim about anything else.
  */
 const rollItemLevel = (level, random, ceiling) =>
   Math.min(ceiling, Math.max(1, level + Math.floor(random() * 5) - 2));
@@ -268,9 +254,7 @@ export const generateWeapon = ({ gm, hero, rarity, level, accountId, id, random,
     id,
     item_id: weapon.Id,
     account_id: accountId,
-    // Priced at the level it carries, as the official's are: its one captured
-    // award, a level-99 rare short sword at 739, is the curve's 726 and its
-    // usual spread.
+    // Priced at the level it carries, on the game's power curve (weapon-power.js).
     power: weaponPowerAt(weapon, rarity, requiredlevel),
     // Awards arrive unequipped; equipping is a separate call that fills these.
     avatar_id: null,

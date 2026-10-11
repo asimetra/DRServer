@@ -6,7 +6,7 @@
  *
  * Every comparison in this repository so far has been a census: how many of a
  * field went out, which values it took. A census answers "is the snapshot
- * right" and this server's snapshots are, essentially, right — forty official
+ * right" and this server's snapshots are, essentially, right — forty reference
  * floors rebuilt here differ in a handful of fields, and five of the six
  * differences chased this week turned out to be artefacts of the measurement.
  *

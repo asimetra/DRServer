@@ -17,9 +17,9 @@ import { superStatValue } from "../hero-stats.js";
 /**
  * Whether this swing crits, and by how much.
  *
- * The decision is the server's, which the recordings are unambiguous about:
+ * The decision is the server's, which observation is unambiguous about:
  * across 13626 results the client proposes `criticalHit` as 0 every single
- * time, and the official server answers with it set on 1818 of 23103 hits —
+ * time, and the server's answer has it set on 1818 of 23103 hits —
  * 7.87%. A client that could declare its own crits would be declaring its own
  * damage.
  *
@@ -73,7 +73,7 @@ import { superStatValue } from "../hero-stats.js";
  *
  * `BUFF_GRANT_DURATION_MULTIPLIER` needs nothing at all, which took looking to
  * find out. It has no column on `WeaponItem`, so no weapon may carry it, and it
- * does not appear once in the 66736 filled modifier slots across 33729 official
+ * does not appear once in the 66736 filled modifier slots across 33729 observed
  * item records. `SCALING` is unreachable the same way. Both are rows the data
  * describes and the game cannot hand out.
  *

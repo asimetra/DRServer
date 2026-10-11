@@ -7,7 +7,7 @@
  *
  * This is about the shape of the message and not about our reading of the game,
  * which is why it is refused outright rather than counted. No amount of lag
- * turns a position into NaN. Across 54 recordings the official client sent
+ * turns a position into NaN. Across 54 observed sessions the client sent
  * 34850 coordinates, none non-finite, none past a million, all inside 0..8946 —
  * which is ten tiles of nine hundred, so the limit below is generous by a
  * hundredfold.

@@ -32,7 +32,7 @@ test("MatchMaker generate contains the required empty detail list", () => {
   assert.equal(reader.eof(), true);
 });
 
-test("PlayerGameObjectOwner generate matches the production owner layout", () => {
+test("PlayerGameObjectOwner generate matches the client's owner layout", () => {
   const reader = new PacketReader(
     playerOwnerGenerate({
       doid: 12345,
@@ -181,7 +181,7 @@ test("an active session cannot enter its current dungeon a second time", () => {
   assert.equal(response.u16(), ENTRY_ERROR.GAME_NOT_ENTERABLE);
 });
 
-test("exit completion matches the production response payload", () => {
+test("exit completion matches the response payload the client expects", () => {
   const reader = new PacketReader(buildExitComplete(9001).subarray(2));
 
   assert.equal(reader.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);

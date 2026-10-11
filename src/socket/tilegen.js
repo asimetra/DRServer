@@ -71,7 +71,7 @@ const seamFits = (tile, x, y, placed) =>
  * A treasure room has to be shut, and the thing that shuts it is usually not
  * its own.
  *
- * Twenty-one of the twenty-two secret rooms in the official floor payloads are
+ * Twenty-one of the twenty-two secret rooms in observed floor payloads are
  * sealed. Fifteen are shut by the *neighbour* — a `WALL_SECRET`, an attackable
  * prop, standing in the doorway of the tile the room opens onto. Five carry a
  * `PROXIMITY_TRIGGER` wired through a `NOT_GATE` to a line of wall segments and
@@ -114,7 +114,7 @@ const shutsTheRoomAbove = (tile) =>
 /**
  * Two treasure rooms do not stand shoulder to shoulder.
  *
- * None of the 22 secret rooms in the official floor payloads touches another,
+ * None of the 22 secret rooms in observed floor payloads touches another,
  * on any of the eight sides — and only one recorded floor has two rooms at all.
  * Ours put 15 pairs flat against each other and another 13 corner to corner
  * over 1800 floors, which reads exactly as reported: two dead ends side by side,
@@ -167,9 +167,9 @@ const fits = (tile, x, y, placed, secretRooms = []) => {
    * them, and of the rest 43 shut the floor's exit and 10 the tile the player
    * starts on. Breaking a secret wall to find the way out is not a secret.
    *
-   * The official is absolute once its evidence is read properly. Of its 19
+   * The game is absolute once its evidence is read properly. Of its 19
    * doorway walls, 15 have a `SECRET_TILE` behind them and 4 appear to have
-   * nothing — but three of those four were never broken in the capture, so the
+   * nothing — but three of those four were never broken in the session, so the
    * room was simply never revealed, and the fourth is the scenery tile
    * `shutsTheRoomAbove` now excludes. Every wall a player actually opened had a
    * room behind it. There is no such thing as a blank door.
@@ -236,18 +236,18 @@ const openSides = (entry, placed) =>
  * attach one to a north-facing doorway, and a dead end cannot sprawl.
  *
  * Measured against the wire rather than assumed. Accumulating each floor
- * object's tile list across 118 official floor births gives 22 secret rooms in
+ * object's tile list across 118 observed floor births gives 22 secret rooms in
  * 1110 tiles, 1.98%; this list produces 1.69% across nine themes. The three
  * jungle libraries author none and get none.
  *
- * Counted per tile, never per floor. The official's floors are small — 9.4
+ * Counted per tile, never per floor. The game's floors are small — 9.4
  * tiles on average against the 23 a `tileCount` of 24 grows — so the share of
  * *floors* carrying a room says more about the size asked for than about the
  * rate, and comparing the two that way reads as a 1.8x overshoot that is not
  * there.
  *
  * `FILLER_TILE` stays out. It looked like a second omission and is not: the
- * official payloads place none either.
+ * observed payloads place none either.
  */
 const BODY_CATEGORIES = ["BASIC_TILE", "TRAP_TILE", "PUZZLE_TILE", "SECRET_TILE"];
 
@@ -412,7 +412,7 @@ const growFloor = (
    * Floor.buildWalls runs its edges from (0,0) out to twelve tiles, so a tile
    * laid at a negative coordinate sits outside the world and the player meets an
    * invisible wall at x or y zero — which is what "cannot cross a tile boundary"
-   * looks like. Every captured layout from the real server is non-negative: x
+   * looks like. Every observed layout is non-negative: x
    * from 0 to 8100, y from 0 to 5400.
    *
    * Growing outward from the origin is still the simplest way to build one, so
@@ -476,7 +476,7 @@ export const generateFloor = (library, options = {}) => {
   /**
    * Close to the size asked for, not merely in the region of it.
    *
-   * A tier's NumTiles is a floor's room count and the real server lands on it:
+   * A tier's NumTiles is a floor's room count and the game lands on it:
    * four entries to node 50004, whose tier says fourteen, came back with 14, 14,
    * 13 and 14. A window of two thirds to one and a half was wide enough to hand
    * back eleven or seventeen for the same node, so attempts are now judged by

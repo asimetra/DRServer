@@ -10,9 +10,9 @@ import { weaponWith } from "./helpers/weapons.js";
  * server's table. A modified client — one that edited the weapon it shows, or
  * just writes results — could otherwise land any attack in the game with the
  * weapon it holds, and since reach is measured against the attack named, a
- * sword claiming a long-range spell hit from across the floor. Of 6616 hits by
- * the player's hero in 84 official recordings none is refused by this, once
- * Dungeon Busters, Berserk's RAMPAGE and the two revive bombs are allowed for.
+ * sword claiming a long-range spell hit from across the floor. No honest hit
+ * is refused by this, once Dungeon Busters, Berserk's RAMPAGE and the two
+ * revive bombs are allowed for.
  */
 
 const { handleProposeCombatResults } = await import("../src/socket/combat.js");

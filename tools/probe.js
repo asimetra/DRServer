@@ -163,7 +163,7 @@ const expectedByMode = {
    * Walks the floor and stands next to every trap on it.
    *
    * Not an assertion: a tour is how a capture gets coverage. `wire-diff`
-   * compares this server's stream with the official's, and it can only speak
+   * compares this server's stream with the reference's, and it can only speak
    * about traps both sides actually exercised — so a run whose hero stood where
    * it spawned reported far more about where the probe went than about what
    * this server does.
@@ -783,7 +783,7 @@ const decodeNpc = (reader, doid) => {
    * Every trap on the floor, with somewhere to stand next to it.
    *
    * The tour walks these. Which ones a run covers used to be whatever the hero
-   * happened to spawn beside, and a comparison against the official is only as
+   * happened to spawn beside, and a comparison against the reference is only as
    * good as what both sides actually exercised — a trap nobody went near reads
    * exactly like a trap we never drive.
    */
@@ -859,7 +859,7 @@ const decodeNpc = (reader, doid) => {
   if (type === SPIKE_TRAP_TYPE) {
     /**
      * A spike bed starts the floor either way, and mostly starts up: the
-     * official generates them raised 1598 times against 738 retracted, because
+     * reference generates them raised 1598 times against 738 retracted, because
      * a timer rests on and a floor is built in the first moments of its own
      * clock. Requiring a retracted one asserted the opposite of the game.
      */
@@ -1947,7 +1947,7 @@ let buffered = Buffer.alloc(0);
 
 /**
  * Writes what this server sends in the same shape the client's capture uses, so
- * every tool written against the official's logs reads ours unchanged.
+ * every tool written against the reference logs reads ours unchanged.
  *
  * It closes an asymmetry that cost a lot: their side was measured off the wire
  * and ours only ever by calling functions directly, which cannot show a
@@ -2236,7 +2236,7 @@ socket.on("data", (chunk) => {
 
     /**
      * A hero arrives on a floor with two seconds of SPAWN_INVULNERBILITY, which
-     * the official grants every time it puts one down — 12 hero generates and
+     * the reference grants every time it puts one down — 12 hero generates and
      * 12 of those buffs in one session. Nothing can hurt it until that expires,
      * so downing it has to wait for the shield the same way a player would.
      */

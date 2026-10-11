@@ -134,8 +134,8 @@ const gemsInside = async (offerId) => {
   );
 };
 
-// Gems, not gold: across four captured redeems the account's gold never moved
-// while its gems went up once and down five per replay.
+// Gems, not gold: a redeem never moves the account's gold, and each replay
+// costs five gems.
 test("a replay costs gems, and is refused without them", async () => {
   const before = await freshAccount({ premium_currency: 100, basic_currency: 1000 });
 
@@ -199,9 +199,8 @@ test("the reward screen is offered again only once the countdown runs out", asyn
 
 /**
  * The reward scales with how many heroes the account has, and the streak stops
- * counting at three. Both come from captures: an account with two avatars on
- * its first day reported [1, 2] and paid 5 × 2, while one with six avatars on
- * its sixth day reported [3, 6].
+ * counting at three: two heroes on day one show [1, 2] and are paid 5 × 2,
+ * while six heroes on day six show [3, 6].
  */
 test("the daily payout is the streak tier times the hero count", async () => {
   const avatars = (count) =>
@@ -272,9 +271,9 @@ const heroes = (count) =>
 
 /**
  * The question answers with the day that is about to be paid, not the one that
- * was. An official account that had claimed day one answered `[2, 3, …, 0]` the
- * next day and was then paid 10 × 3; fourteen of fourteen first spins were paid
- * exactly what the question had just shown. Answering with the stored day
+ * was. An account that claimed day one is shown day two the next day, and the
+ * first spin pays exactly what the question has just shown. Answering with the
+ * stored day
  * instead put one figure on the screen and another on the account.
  */
 test("the reward screen shows the day it is about to pay", async () => {
@@ -298,9 +297,9 @@ test("the reward screen shows the day it is about to pay", async () => {
 });
 
 /**
- * The streak is counted in calendar days. The official account that claimed on
- * the 19th and came back on the 21st was shown day one and paid 5 × 6, with a
- * streak of eleven behind it. Measuring the gap in hours let a claim late one
+ * The streak is counted in calendar days: a claim on one day and a return two
+ * calendar days later is day one again, however long the streak behind it.
+ * Measuring the gap in hours let a claim late one
  * evening and another early two mornings later pass for consecutive.
  */
 test("a missed day starts the streak again, however few hours it was", async () => {
@@ -548,8 +547,7 @@ test("retraining a hero with nothing placed is refused, not charged", async () =
  * `avatarrecord/setSkin` was registered against a stub that answered with the
  * account and wrote nothing, so choosing a costume succeeded and changed
  * nothing: the client sends (token, accountId, avatarId, skinId) and the fourth
- * value went on the floor. One live account owned two skins with every avatar
- * still on its default.
+ * value went on the floor, so an account could own skins and still wear none.
  *
  * The ownership check is the server's own rather than the client's. The client
  * does check — `doesPlayerOwnSkin` refuses before it calls — but a check only

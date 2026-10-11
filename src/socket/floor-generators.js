@@ -50,12 +50,12 @@ const generatorWaitForDeath = (runtime) => {
  * A generator's door: up to `maxPopulation` of its spawns standing at once, and
  * `maxSpawns` in all.
  *
- * Measured over every official capture in the recorded corpus (532 generator
+ * Measured over every observed session (532 generator
  * mouths, 2681 spawns, authored floors and generated ones alike): none ever
  * stood more than its maxPopulation, and every one that refilled did so one
  * for one. The input releases a whole pack — the population — at the
  * generator's clock (generatorCadenceFor); each death makes room for one more.
- * The Battleheim boss's imp cave (socket-20261005-165901, population 10): ten
+ * The Battleheim boss's imp cave (population 10): ten
  * out in 0.75s; five die together and five come back; four, and four.
  *
  * For a while this was a pack door instead — the first death after a pack
@@ -100,7 +100,7 @@ export const createPopulationDoor = ({ maxPopulation, maxSpawns, standing: alrea
 /**
  * The official's clock beats about every 80ms: spawns of one generator with
  * no authored interval at all come out 80ms apart at the median (p10 70, p90
- * 100), over every official capture.
+ * 100), over every observed session.
  */
 export const GENERATOR_TICK_MS = 80;
 
@@ -125,7 +125,7 @@ export const generatorBeatWait = (lastAt, now, periodMs) => {
  * How long a refill waits once a death has made room: the death is seen on one
  * tick, and the generator acts on a beat after that. The official arena's
  * refills come 92 / 134 / 212ms (p10 / median / p90) after the death's own
- * frame — both frames the server's, so no link in it (socket-20261007-163805).
+ * frame — both frames the server's, so no link in it.
  */
 export const generatorRefillWait = (lastAt, now, periodMs) =>
   GENERATOR_TICK_MS + generatorBeatWait(lastAt, now + GENERATOR_TICK_MS, periodMs);
@@ -301,7 +301,7 @@ export const generatorSpawn = (session, runtime, npc) => {
 
 /**
  * A generator's clock (`periodMs`): its `spawnInterval` in whole seconds and
- * more, a tick under one. Over every official capture, the first packs of
+ * more, a tick under one. Over every observed session, the first packs of
  * generators authored 0, 0.1, 0.2, 0.3, 0.4, 0.5 and 0.6 all come out 80ms
  * apart at the median (1724 gaps); 1 and 2 at 1000 and 2000; the arena's
  * lions, authored 4, 4.08s apart. Taken at its word, a pack of eight at 0.3

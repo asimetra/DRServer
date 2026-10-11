@@ -3,7 +3,7 @@
  *
  * The loop this replaces is a person playing, describing what looked wrong, and
  * someone guessing which constant they meant. Both sides are on the wire now —
- * the official's own logs, and ours via `DR_CAPTURE` on the probe — so the
+ * the reference logs, and ours via `DR_CAPTURE` on the probe — so the
  * comparison is mechanical.
  *
  *   node tools/wire-diff.js --theirs <capture…> --ours <capture…>
@@ -48,7 +48,7 @@ const loadSchema = () => {
  * Field ids are unique across the schema's fourteen classes, so a stream can be
  * summarised without knowing which object each doid is — and matchmaking, the
  * dungeon summary, buffs and doobers are as much a part of what this server has
- * to get right as anything on a floor. A field the official sends and we never
+ * to get right as anything on a floor. A field the reference sends and we never
  * do is the same shape of finding wherever it lives.
  */
 const protocolReport = (theirs, ours, schema, implemented) => {
@@ -94,7 +94,7 @@ const protocolReport = (theirs, ours, schema, implemented) => {
     );
   }
   console.log(
-    `\n${missing.length} field(s) the official sends that this server has no code for:` +
+    `\n${missing.length} field(s) the reference sends that this server has no code for:` +
       (missing.length ? "\n  " + missing.map((row) => `${row.id} ${row.name}`).join("\n  ") : " none")
   );
 };
@@ -109,14 +109,14 @@ const read = async (files, npcName) => {
    *
    * Summed per capture, not spanned across them: ten sessions recorded over an
    * afternoon are not one six-hour session, and treating them as one made every
-   * official rate round to zero.
+   * reference rate round to zero.
    */
   let seconds = 0;
   /**
    * How long each trap was actually being told about.
    *
    * A doid only sends while the client holds interest in it, and a session
-   * wanders: the official's twelve gargoyle emitters are each in view for a
+   * wanders: the reference's twelve gargoyle emitters are each in view for a
    * few seconds of a two-minute run, while a tour that parks next to one keeps
    * it for the whole stop. Dividing by the session made theirs look seventeen
    * times slower than ours when the difference was mostly how long anybody was

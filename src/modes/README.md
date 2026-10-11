@@ -320,8 +320,8 @@ mode's; with the mode off, `/draw` is an unknown command, which is the truth.
 ## Content and visuals
 
 The core never requires a picture, a string or a game-data row the stock client
-does not ship with. What it does is *offer* content: the server serves its game
-data and assets from `/content` (`docs/client-setup.md`), a client either fetches
+does not ship with. What it does is *offer* content: the server can serve an
+operator's own overrides from `/content` (`docs/client-setup.md`), a client either fetches
 them from the server (`gameMasterPath`) or declares what it holds
 (`Demographics`, as `uiStrings` does in `src/socket/ui-strings.js`), and a
 client that does neither gets the stock behaviour. The rules for a mode's

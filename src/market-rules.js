@@ -90,9 +90,9 @@ export const shareOf = (price) => {
 /**
  * Whether this account may take part at all.
  *
- * Its own column rather than a bit in `account_flags`. That field is
- * transcribed from captures and goes to the client, and this server does not
- * know which bits the client reads — writing meaning into one would be
+ * Its own column rather than a bit in `account_flags`. That field is the
+ * client's and goes back to it, and this server does not know which bits the
+ * client reads — writing meaning into one would be
  * guessing at somebody else's format. `market_barred` is the server's own, and
  * is stripped from the account payload the way `market_listings` is.
  *

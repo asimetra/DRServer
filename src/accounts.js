@@ -196,7 +196,7 @@ export const repairActiveAvatarProgress = (account) => {
 /**
  * Moves avatar instance ids out of the native client's LocalUniqueID range.
  *
- * Avatar ids are not just database keys: the official protocol reuses the
+ * Avatar ids are not just database keys: the game's protocol reuses the
  * active avatar id as HeroGameObjectOwner's distributed-object id. Old server
  * sequences began inside the client's 1,000,000..1,099,999 local-object range,
  * so a purchased hero could replace an unrelated local GameObject and never be
@@ -866,9 +866,8 @@ export const saveAccount = async (account) => {
  * Every account this server knows about.
  *
  * The friends and leaderboard endpoints answer questions about *other people*,
- * which on the official server is a separate service holding millions of rows.
- * A custom server's population is whoever plays on it, so the population is the
- * data directory. Ids only — callers load the few they actually need.
+ * which on a large deployment would be a service of its own. A custom server's
+ * population is whoever plays on it, so the population is the data directory. Ids only — callers load the few they actually need.
  */
 export const listAccountIds = async () => {
   if (usingDatabase()) return (await db()).listAccountIds?.() ?? [];
@@ -939,9 +938,9 @@ const initializeFileObjectId = async () => {
 /**
  * Where ids for accounts this server invents begin.
  *
- * Above the client's persistent-object range and in the neighbourhood the
- * captures show real accounts occupying, so an id minted here looks like one
- * the client has always dealt with. Accounts an operator imports or names by
+ * Above the client's persistent-object range and inside the ten-digit range
+ * the client's invite box accepts as an account id (`^1[0-9]{9}$`), so an id
+ * minted here looks like one the client has always dealt with. Accounts an operator imports or names by
  * hand are free to sit anywhere below it.
  */
 export const ACCOUNT_ID_FLOOR = 1_000_000_000;
@@ -1016,8 +1015,8 @@ export const createNewAccount = async ({ name } = {}) => {
  * Checked and claimed on the allocation chain, as a registration's name is, so
  * a rename and a sign-up asking for the same name cannot both have it; and
  * under the account's own lock, so it is one write with whatever else is
- * touching the account. Its own name in other letters is not a clash: "sym"
- * may become "Sym".
+ * touching the account. Its own name in other letters is not a clash: "sable"
+ * may become "Sable".
  */
 export const renameAccount = async (id, name) => {
   const mine = allocationChain.then(() =>

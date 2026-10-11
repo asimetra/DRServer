@@ -264,8 +264,8 @@ const evaluateGate = (session, gate) => {
      * laid-out floor inherits gates with nothing upstream, and every one of
      * those `NOT`s was holding its branch high for the whole run.
      *
-     * The official's own layouts say otherwise. Replaying all 24 floors of the
-     * catacombs capture, `CASTLE_CATACOMB_TRAP_SPIKES_SKELETONSTATUE` came out
+     * The official's own layouts say otherwise. Replaying all 24 observed
+     * catacombs floors, `CASTLE_CATACOMB_TRAP_SPIKES_SKELETONSTATUE` came out
      * raised by this server 12 times of 191 where the official leaves it flat,
      * and all twelve are wired to exactly one shape: `NOT_GATE(nothing)`.
      *
@@ -335,7 +335,7 @@ const evaluateGate = (session, gate) => {
  * treasure zone and six spike beds drop, steps 41 units out of it 1.2 seconds
  * later and they are back.
  *
- * No recording of the official settles it — none solves a timed-button room —
+ * Nothing observed settles it — no observed run solves a timed-button room —
  * so this rests on the flag itself and on how the rooms are known to play.
  * That is also why it stops here: `RESET_TIMER_GATE` authors the flag 38 times,
  * mostly on boss floors' generators, and what it means there is not known.
@@ -377,8 +377,8 @@ const gateOutput = (session, gate) => {
  * A `resetTime` of zero is not a pulse of no width. 192 of the game's 740 reset
  * gates author zero, and taking it literally scheduled the close on the next
  * turn of the event loop: across this server's captures 3329 trigger pulses
- * lasted between nought and four milliseconds. The official never sends one
- * that short — not one of its 3737 recorded spike pulses is under twenty
+ * lasted between nought and four milliseconds. The game never sends one
+ * that short — not one of 3737 observed spike pulses is under twenty
  * milliseconds, and the short ones cluster around a tenth of a second: 30 of
  * its 52 sub-400ms pulses fall between 60 and 149, with a median of 117.
  *
@@ -678,7 +678,7 @@ const deliverSignal = (session, targetId, on, sourceId = null) => {
     if (!initialTargetState(session, targetId)) {
       /**
        * A generator runs while its input holds, and a state going low stops it:
-       * the tutorial's jails close when the minotaur dies (five official runs,
+       * the tutorial's jails close when the minotaur dies (five observed runs,
        * no brute after his death). A pulse ending is not that. The Battleheim
        * boss's caves hang off reset gates of one tick and pour their twenty
        * each on the official; stopped on the fall, they made one or two.
@@ -864,8 +864,8 @@ export const reportNpcDeath = (session, placementId) => {
  *
  * A point inside the circle, though, and not an overlap of the hero's own body
  * with it. Measured, because an audit proposed the overlap as the reason the
- * original's traps seem to stay up longer: 375 switch-on edges replayed off 109
- * official floors, with the hero read at the moment that caused each one — a
+ * game's traps seem to stay up longer: 375 switch-on edges replayed off 109
+ * observed floors, with the hero read at the moment that caused each one — a
  * round trip earlier, 143ms — and its body compared against the trigger's
  * centre and radius. Of the 149 landing anywhere near the rim rather than on
  * some other source wired to the same trap, the median margin is **-4** and the
@@ -1188,8 +1188,8 @@ export const trackTriggers = (session, floor) => {
    * timer, and that one was resting off — which put every trap wired straight
    * to one into the floor retracted and harmless until its first tick.
    *
-   * The captures say otherwise. Of the traps whose every placement is fed by
-   * nothing but an `AUTO_TIMER_TRIGGER`, the official generates **76 raised
+   * Observation says otherwise. Of the traps whose every placement is fed by
+   * nothing but an `AUTO_TIMER_TRIGGER`, the game generates **76 raised
    * against 18 retracted**, and the two that are unambiguous are unanimous:
    * `CASTLE_ARENA_TRAP_SPIKES_I` 17 of 17 raised, `NORDIC_CAVE_GARGOYLE_
    * EMITTER_C` 18 of 18. Ours generated all of them retracted.
@@ -1205,7 +1205,7 @@ export const trackTriggers = (session, floor) => {
      * A timer rests on only if it is already running.
      *
      * The split above is 76 raised to 18 retracted, and `startDelay` is what
-     * separates them. Replaying an ARENA_C floor of the official's own layout
+     * separates them. Replaying an observed ARENA_C floor layout
      * and reading the state it opened each trap in:
      *
      *   startDelay 0     ->  on   (3)

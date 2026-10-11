@@ -61,7 +61,7 @@ const STONE = "tavern.stone";
  * `voiceHero` gives the speaker a hero body, which is what carries the chat
  * balloon and the nametag — and the balloon is the point, because the chat log
  * is closed most of the time. It costs the monster artwork. The star is not
- * decoration: `PlayerSpecialStatus` reads the first character of a name and
+ * decoration: the client reads the first character of a name and
  * paints it #05CE78.
  */
 const keeper = (x, y) => ({

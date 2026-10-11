@@ -168,7 +168,7 @@ const main = async () => {
   console.log(`read ${files.length} capture(s), newest ${path.basename(files.at(-1))}\n`);
 
   const onGround = total.layers.get(5) ?? 0;
-  console.log(verdict(onGround === 0, `layer 5: ${onGround} actor(s) on the ground plane (the official never uses it)`));
+  console.log(verdict(onGround === 0, `layer 5: ${onGround} actor(s) on the ground plane (the reference never uses it)`));
   console.log(`   --   objects only the server can place: ${total.scenery} generated (a theme may author none)`);
   console.log(
     verdict(total.fireLit === 0, `fires: ${total.fireDark} arrived dark, ${total.fireLit} arrived lit`) +
@@ -185,7 +185,7 @@ const main = async () => {
     verdict(
       total.shots === 0 || total.shotsAimedFirst / total.shots > 0.8,
       `loki: ${total.shotsAimedFirst} of ${total.shots} shots had an aim immediately before them` +
-        ` (the official manages 71 of 84)`
+        ` (the reference manages 71 of 84)`
     )
   );
 };

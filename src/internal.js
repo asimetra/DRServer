@@ -337,7 +337,7 @@ const revokeTokens = async (req, [capture]) => {
 /**
  * PUT /internal/v1/accounts/:id/restriction — restrict an account.
  *
- *   { "reason": "speed hack", "until": "2026-10-12T00:00:00Z", "by": "simetra" }
+ *   { "reason": "speed hack", "until": "2026-10-12T00:00:00Z", "by": "admin" }
  *
  * `until` left out or null is until it is lifted. Whoever is online on the
  * account is sent back to the start: out of any dungeon they were in, signing
@@ -1278,7 +1278,7 @@ const readMaintenance = async (req) => {
 /**
  * PUT /internal/v1/maintenance — close the dungeons.
  *
- *   { "message": "We restart at 15:00, finish your run", "by": "simetra" }
+ *   { "message": "We restart at 15:00, finish your run", "by": "admin" }
  *
  * Nobody starts or joins a run until it is opened again; runs under way go on.
  * A message, if there is one, is said to everybody on a floor as it closes and

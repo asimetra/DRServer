@@ -127,7 +127,7 @@ test("an owner generate round-trips through the same decoder", async () => {
    */
   const owner = decodeGenerate(
     playerOwnerGenerate({
-      doid: 500, parent: 1, zone: 10, screenName: "Asimetra", basicCurrency: 12345,
+      doid: 500, parent: 1, zone: 10, screenName: "Marrow", basicCurrency: 12345,
     }).subarray(2)
   );
 
@@ -136,7 +136,7 @@ test("an owner generate round-trips through the same decoder", async () => {
   assert.equal(owner.class, "PlayerGameObjectOwner");
   assert.equal(owner.clid, 29, "read from the owner header, not the visible one");
   assert.equal(owner.doid, 500);
-  assert.equal(owner.fields.screenName, "Asimetra");
+  assert.equal(owner.fields.screenName, "Marrow");
   assert.equal(owner.fields.basicCurrency, 12345, "typed from the owner component's reader");
   assert.equal(owner.trailing, 0);
 });

@@ -7,13 +7,12 @@ const GHOST_SAMURAI = 106;
 const RANGER = 102;
 
 /**
- * Replayed from a captured dungeon entry against the live official server: a
- * level-100 Ghost Samurai with [0, 75, 75, 50] placed arrived carrying 879 hit
- * points and 79 mana. Those are current values a tick below the maximum, which
- * this reproduces as 880 and 80 — 180 base health, 250 from the fifty points in
- * its health slot, 450 from LV_HP_BOOST over a hundred levels.
+ * A level-100 Ghost Samurai with [0, 75, 75, 50] placed has a maximum of 880
+ * hit points and 80 mana, as the original game gives it — 180 base health, 250
+ * from the fifty points in its health slot, 450 from LV_HP_BOOST over a
+ * hundred levels.
  */
-test("reproduces the health the live server gave a maxed hero", async () => {
+test("reproduces the health the original game gives a maxed hero", async () => {
   const gm = await loadGameMaster();
   const hero = gm.heroById.get(GHOST_SAMURAI);
   const avatar = {
@@ -133,8 +132,8 @@ test("STAMINA and APTITUDE follow the weapon's level, not the hero's", async () 
 
 /**
  * The wire carries the base; the client adds legendary bonuses itself, so
- * including them here would count them twice. Pinned to the same capture: the
- * hero carried an APTITUDE weapon worth 49 mana and still reported 79.
+ * including them here would count them twice: a hero carrying an APTITUDE
+ * weapon worth 49 mana is still sent its base mana.
  */
 test("legendary bonuses stay off the wire but count towards the real ceiling", async () => {
   const gm = await loadGameMaster();
@@ -149,6 +148,6 @@ test("legendary bonuses stay off the wire but count towards the real ceiling", a
   };
   const weapons = [{ legendarymodifier: 2, requiredlevel: 98 }];
 
-  assert.equal(maxManaPoints(gm, hero, avatar), 80, "what the capture shows on the wire");
+  assert.equal(maxManaPoints(gm, hero, avatar), 80, "the base the wire carries");
   assert.equal(effectiveMaxManaPoints(gm, hero, avatar, weapons), 129, "what the bar reads");
 });

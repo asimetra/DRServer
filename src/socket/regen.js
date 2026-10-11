@@ -21,8 +21,8 @@ import { heroOnFloor } from "./match-world.js";
  * the bar refill five times faster than the game's — fast enough that a spell's
  * cost was back before the animation finished, which is how it was reported.
  *
- * It is measured now. Field 163 is the Mana bar, and across 49 official socket
- * captures its unprompted rises are exactly one hero's `MP_REGEN` and arrive on
+ * It is measured now. Field 163 is the Mana bar, and across 49 observed
+ * sessions its unprompted rises are exactly one hero's `MP_REGEN` and arrive on
  * a five-second clock: of 409 such rises the median gap is 4.999s, p75 5.008s,
  * p90 5.026s. The amounts settle whose they are — +3 Berserker, +4 Ranger and
  * Battle Chef, +5 Vampire Hunter and Ghost Samurai, +6 Sorcerer, and +20/+21

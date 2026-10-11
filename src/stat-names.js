@@ -5,8 +5,8 @@
  * words a player actually reads come from the client's locale file,
  * `Resources/Locale/GameMasterLocale.default.json` under `strings.STATS_NAME`.
  * This server ships no locale of its own and the training screen has no other
- * name for these, so the table travels here verbatim — the game is frozen
- * data, and a label that drifts from the client's would be a second opinion.
+ * name for these, so the labels here are kept the same as the client's: a
+ * label that drifts from the client's would be a second opinion.
  *
  * Falls back to the constant itself, so a hero added later with a slot naming
  * a stat nobody has labelled still reads as something rather than nothing.

@@ -24,8 +24,8 @@ import { computeHealing } from "./hero-healing.js";
  * `damage` at zero. So a relayed proposal with its zero intact produces a hit
  * that does nothing.
  *
- * The arithmetic itself is not ours: the client still carries it whole in
- * DistributedDungionArea.calculateNetAttackDamage, with every call site removed.
+ * The arithmetic matches the client's own damage calculation
+ * (DistributedDungionArea.calculateNetAttackDamage, with every call site removed).
  * See combat-damage.js — attacker offence stat and weapon power against the
  * victim's defence, scaled by the attack's DamageMod.
  *
@@ -78,7 +78,7 @@ export const statsFor = async (session, doid) => {
 export const generationFalloff = (hit, generation) => {
   /**
    * Each collision half of the one before, rounded — not the first over a
-   * power of two. A Sonic Slash in the official's recording (2026-10-03) went
+   * power of two. An observed Sonic Slash went
    * 5623, 2812, 1406, 703, 352, 176, 88, 44, 22, 11, 6, 3, 2, 1: halves rounded
    * up, 2811.5 to 2812 and 351.5 to 352, where 5623 over sixteen is 351. The
    * storm's 2877 and 720 above are the same rule.
@@ -334,7 +334,7 @@ const NOT_RATED = Object.freeze({ rated: false, multiplier: 1, effectiveness: 0 
 /**
  * The level from which a monster's ratings count.
  *
- * The first dungeons have none. Every rated hit in the official's recordings on
+ * The first dungeons have none. Every observed rated hit on
  * a monster of level 1 to 4 (map nodes 50002-50005) is neutral — 63 of 63,
  * knights and juggernauts rated +1 against melee among them — and from level 7
  * (50008, Icewater Caverns) they count, 41 of 41. It is also where the client
@@ -382,7 +382,7 @@ const categoryFor = async (session, attackerDoid, victimDoid, attack) => {
   return { rated: true, multiplier: 2 ** effectiveness, effectiveness };
 };
 
-/** Prices one persistent pet hit exactly as the official pet corpus does. */
+/** Prices one persistent pet hit exactly as the game does. */
 export const computePetDamage = async (session, attackerDoid, victimDoid, attack, weaponPower) => {
   const offsets = statOffsetsFor(attack);
   const { effectiveness, multiplier } = await categoryFor(session, attackerDoid, victimDoid, attack);

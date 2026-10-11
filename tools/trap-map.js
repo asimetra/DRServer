@@ -93,7 +93,7 @@ const COVER = ONLY ? "kinds" : (argument("cover") ?? "kinds");
 /**
  * How a treasure room is shut, which is two mechanisms and worth testing apart.
  *
- * Of the 22 placed in the official floor payloads, 21 are shut: 15 by a
+ * Of the 22 placed in the reference floor payloads, 21 are shut: 15 by a
  * `WALL_SECRET` in the doorway of the tile *below*, an attackable prop that has
  * to be broken; 5 by a `PROXIMITY_TRIGGER` wired through a `NOT_GATE` to a line
  * of wall segments, which the room carries itself and which drops when somebody

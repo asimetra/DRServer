@@ -1,8 +1,7 @@
 /**
  * The week, as the client counts it.
  *
- * Epoch parameters, taken from a live capture of the official server rather
- * than guessed: a one-week window offset by 40 hours. The client is sent both
+ * Epoch parameters: a one-week window offset by 40 hours. The client is sent both
  * with the server's time and counts weeks as `int((seconds + offset) /
  * duration)` (GameClock.getEpoch), which turns on Tuesday at 08:00 UTC.
  *

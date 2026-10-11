@@ -228,8 +228,8 @@ export const maxManaPoints = (gm, hero, avatar) =>
  * What the health and mana bars actually read, weapons included.
  *
  * These are deliberately *not* what goes on the wire. The client adds the
- * legendary bonuses itself — get_maxHitPoints is `mStats.maxHitPoints +
- * mStaminaModMultiplier` — so sending a total that already contains them would
+ * legendary bonuses itself — get_maxHitPoints adds the Stamina total to the
+ * stat it was sent — so sending a total that already contains them would
  * count them twice. The capture settles it: a hero carrying an APTITUDE weapon
  * worth 49 mana arrived with 79 on the wire against a base of 80, not 129.
  *
@@ -379,16 +379,11 @@ export const legendaryTrapShield = (weapons = []) =>
 /**
  * Which legendaries stack, and why.
  *
- * The client answers it, in the three it handles itself:
+ * The client answers it, in the three it handles itself
+ * (HeroGameObject.processLegendaryModifiers): it walks every weapon carried and
+ * adds each one's Stamina, Aptitude or Acceleration bonus to a running total.
  *
- *     for (weapon in mWeaponDetails)
- *       switch (weapon.legendarymodifier - 1) {
- *         case 0: mStaminaModMultiplier      += 10 + weapon.requiredlevel * 0.9;
- *         case 1: mAptitudeModMultiplier     += 10 + weapon.requiredlevel * 0.4;
- *         case 2: mAccelerationModMultiplier += 0.1;
- *       }
- *
- * Every weapon, and `+=`. So the game's idiom is to add — including for a
+ * Every weapon, and added. So the game's idiom is to add — including for a
  * *share*: `Acceleration` is ten per cent of movement and two of them make
  * twenty, which is the case that decides it for `Midas Touch` and
  * `Admiral's Luck` too.
@@ -403,7 +398,5 @@ export const legendaryTrapShield = (weapons = []) =>
  *
  * This replaces an earlier reading that made four of them flat on the argument
  * that doubling 5% into 10% looked wrong. The client had the answer the whole
- * time and it was not consulted; the captures were, and could not help — of 384
- * heroes seen with a legendary equipped, exactly one wears the same kind twice,
- * and it is a `Barrier`.
+ * time and it was not consulted.
  */

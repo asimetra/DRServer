@@ -11,17 +11,17 @@ import { OP } from "../src/socket/opcodes.js";
  * A capture is a debugging artefact — copied into scratch directories, attached
  * to reports, read by whoever is chasing a bug. The login packet puts a session
  * token into it as plainly readable text: it is the first line of every
- * official recording, sitting next to the account id.
+ * capture, sitting next to the account id.
  *
  * The length is kept and the bytes are not, so every offset after it still
  * lines up and the decoder reads the frame exactly as it did.
  */
 test("a capture keeps the login packet's shape and not its credential", () => {
-  const token = "1786742092:aefe553a77ffda00f9ff6dddadfff90e";
+  const token = "1000000000:0123456789abcdef0123456789abcdef";
   const login = new PacketWriter(OP.CLIENT_LOGIN_DUNGEONBUSTER)
     .utf(token)
     .utf("1.0.0")
-    .u32(1351928210)
+    .u32(0x12345678)
     .body();
 
   const safe = withoutCredentials(login);
@@ -32,7 +32,7 @@ test("a capture keeps the login packet's shape and not its credential", () => {
   // What follows the credential is untouched, so a decoder reads the rest.
   assert.equal(
     safe.readUInt32LE(4 + token.length + 2 + 5),
-    1351928210,
+    0x12345678,
     "the dc hash after it survives"
   );
 
@@ -41,7 +41,7 @@ test("a capture keeps the login packet's shape and not its credential", () => {
   assert.deepEqual(withoutCredentials(other), other, "only the login is masked");
 });
 
-test("multiplayer capture keeps one official-shaped file per client perspective", async (t) => {
+test("multiplayer capture keeps one file per client perspective", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dr-capture-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const at = new Date("2026-08-22T12:34:56.789Z");

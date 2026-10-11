@@ -14,24 +14,24 @@ import { CLID } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
 
 /**
- * Who flinches, against the official's recordings.
+ * Who flinches.
  *
  * A combat result carries two bytes the client proposes as zero and the server
  * decides: `suffer` and `knockback`. They are what makes the victim react —
- * the client plays its stagger or its knockback only when told to — and the
- * official fills them in on every hit. This server echoed a hero's hit with
+ * the client plays its stagger or its knockback only when told to — so the
+ * server has to fill them in on every hit. This server echoed a hero's hit with
  * both still zero, so nothing a hero struck ever flinched; and it set them on
  * a monster's hit whenever the attack authored any chance at all, so a thrown
  * axe with a 15% chance staggered the hero every time.
  *
- * What the recordings say, both ways round:
+ * The rule, both ways round:
  *
  *   an attack that authors a Knockback   suffer and knockback, every time
  *   one that does not                    suffer, by its SufferChance
  *
- * KATANA_SOUL_BANG (chance 1, knockback 50) is 6583 of 6583 staggered and 95%
- * thrown; LONG_BOW_SHOT (chance 0.1, none) is 8%; THROW_AXE_KN (chance 0.05,
- * knockback 30) staggers three hits in four all the same.
+ * KATANA_SOUL_BANG (chance 1, knockback 50) always staggers and nearly always
+ * throws; LONG_BOW_SHOT (chance 0.1, none) staggers about one hit in ten;
+ * THROW_AXE_KN (chance 0.05, knockback 30) staggers most hits all the same.
  */
 
 const HERO = 500;
@@ -97,14 +97,14 @@ test("a hero's hit that authors a knockback staggers the monster and throws it",
   const hit = await heroHit(ATTACK.KATANA_SOUL_BANG);
 
   assert.deepEqual([hit.suffer, hit.knockback], [1, 1]);
-  // The official's monsters end a median 48 from where they stood; the row says 50.
+  // The row says 50, and the monster ends about that far from where it stood.
   assert.equal(hit.moved, 50, "away from the hero, by what the attack authors");
 });
 
 /**
- * And it is not only a picture. After a hit that staggered it, an official
- * monster's next attack comes a second later at the quartile and 1.4 at the
- * median; after one that did not, 0.16 and 0.56.
+ * And it is not only a picture. After a hit that staggered it, a monster's
+ * next attack waits about a second or more; after one that did not, it can
+ * come almost at once.
  */
 test("a staggered monster is held for the attack's hit stun", async () => {
   const hit = await heroHit(ATTACK.KATANA_SOUL_BANG);
@@ -129,8 +129,8 @@ test("a monster that cannot be thrown still flinches", async () => {
 });
 
 /**
- * A barrel is told it was thrown — the official flags 99% of 722 such hits on
- * props, which is the client shaking it — and stays where it is.
+ * A barrel is told it was thrown — a prop hit like this is flagged, which is
+ * the client shaking it — and stays where it is.
  */
 test("what cannot walk is told it was thrown and is not moved", async () => {
   const hit = await heroHit(ATTACK.KATANA_SOUL_BANG, { moveSpeed: 0 });
@@ -142,7 +142,7 @@ test("what cannot walk is told it was thrown and is not moved", async () => {
 test("a monster's attack with no knockback rolls its chance on the hero", async () => {
   const farAxe = await attackForConstant("THROW_FAR_AXE_KN"); // chance 0.15, no knockback
   assert.deepEqual(staggerFor(farAxe, 10, () => 0.1), { suffer: 1, knockback: 0 });
-  assert.deepEqual(staggerFor(farAxe, 10, () => 0.2), { suffer: 0, knockback: 0 }, "287 recorded: 11%");
+  assert.deepEqual(staggerFor(farAxe, 10, () => 0.2), { suffer: 0, knockback: 0 }, "above its 15% chance: no stagger");
 });
 
 test("one that authors a knockback staggers whatever its chance says", async () => {
@@ -152,10 +152,10 @@ test("one that authors a knockback staggers whatever its chance says", async () 
 });
 
 /**
- * A hero already thrown is not thrown again by the next blow. Sorted by the
- * time since the hero last staggered, the official's 684 knockback hits by
- * monsters stagger 1% within 0.3s, 31% up to 0.7s, 83% up to 2s and every one
- * of the 345 after that — the same shape its floor traps have.
+ * A hero already thrown is not thrown again by the next blow. A monster's
+ * knockback hit almost never staggers a hero inside a third of a second of
+ * the last stagger, and nearly always does after two seconds — the same shape
+ * floor traps have.
  */
 test("a hero just staggered shrugs off the next blow, and not the one after", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
@@ -173,8 +173,8 @@ test("a hero just staggered shrugs off the next blow, and not the one after", as
 
 /**
  * `Barrier`, `Cover` and `Comprehend` halve one type of damage each, and the
- * official says so on the hit: 408 of 408 arrows on a hero carrying `Cover`
- * arrive with effectiveness -1, which the client draws as the weak flash and
+ * hit says so: an arrow on a hero carrying `Cover` arrives with effectiveness
+ * -1, which the client draws as the weak flash and
  * the pale number. The half was taken here and nothing said it had been.
  */
 const arrowOn = async (weapons) => {

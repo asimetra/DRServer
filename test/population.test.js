@@ -50,8 +50,8 @@ test("the count lands inside the tier's quota", async () => {
   const gm = await loadGameMaster();
 
   /**
-   * `CASTLE_TIER1` authors exactly six bruisers, and the official sends exactly
-   * six — the one quota in the table with no range to hide in.
+   * `CASTLE_TIER1` authors exactly six bruisers — the one quota in the table
+   * with no range to hide in.
    */
   const tutorial = tierOf(gm, "CASTLE_TIER1");
   for (let seed = 0; seed < 20; seed += 1) {
@@ -59,7 +59,7 @@ test("the count lands inside the tier's quota", async () => {
     const stock = populationFor(gm, tutorial, random);
     const bruisers = stock.filter((entry) => entry.role === "bruiser").length;
     const fodder = stock.filter((entry) => entry.role === "fodder").length;
-    assert.equal(bruisers, 6, "six, as the tier says and the corpus shows");
+    assert.equal(bruisers, 6, "six, as the tier says");
     assert.ok(fodder >= 35 && fodder <= 49, `fodder ${fodder} within 35-49`);
   }
 });
@@ -82,7 +82,7 @@ test("Infinite population shrinks to its authored role floors without crossing m
   assert.ok(count(deep, "bruiser") <= count(first, "bruiser"));
   assert.ok(count(deep, "fodder") >= Math.round(count(first, "fodder") * 0.35));
   assert.ok(count(deep, "bruiser") >= Math.round(count(first, "bruiser") * 0.75));
-  // Minibosses author a drop of 0 to a floor of 0: none, from the first floor (97 captured floors, 1 miniboss).
+  // Minibosses author a drop of 0 to a floor of 0: none, from the first floor.
   assert.equal(count(first, "miniboss"), 0);
   assert.equal(count(deep, "miniboss"), 0);
 });
@@ -94,7 +94,7 @@ test("fodder is dealt across the pool rather than piled on one constant", async 
   const counts = new Map();
   for (const entry of fodder) counts.set(entry.constant, (counts.get(entry.constant) ?? 0) + 1);
 
-  // The recorded arena floor split 31 fodder 8/8/8/7 over its four constants.
+  // An arena floor deals its fodder evenly over its four constants.
   assert.equal(counts.size, 4);
   const spread = [...counts.values()].sort();
   assert.ok(spread.at(-1) - spread[0] <= 1, `evenly dealt, got ${spread.join("/")}`);
@@ -103,10 +103,10 @@ test("fodder is dealt across the pool rather than piled on one constant", async 
 /**
  * Monsters stand where the tile says, and gather there.
  *
- * A tile authors `FODDER`, `BRUISER` and `MINIBOSS` placeholders and the
- * official fills each with a real enemy of that role — where a tile says
- * FODDER the corpus carries an ICE_IMP 334 times and a BABY_YETI 312. They
- * come about 2.7 to a marker: 13% land exactly on one and 62% within 80 units.
+ * A tile authors `FODDER`, `BRUISER` and `MINIBOSS` placeholders, and each is
+ * filled with a real enemy of that role — where a tile says FODDER, an
+ * ICE_IMP or a BABY_YETI. They come a few to a marker: some land exactly on
+ * one and most close by.
  *
  * An earlier cut scattered them around random points inside each tile. It
  * matched the spacing and still played wrong, which is the report this exists
@@ -163,7 +163,7 @@ test("stocking a floor names a constant and a place for each", async () => {
 /**
  * A quota short of the markers leaves some empty, and which ones is a draw.
  * Dealt in tile order, the last tile's markers — the exit tile, often — were
- * the empty ones on every floor; the official's empty markers are anywhere.
+ * the empty ones on every floor, where the empty markers belong anywhere.
  */
 test("which markers a short quota fills is drawn, not the tiles' order", async () => {
   const gm = await loadGameMaster();
@@ -189,9 +189,9 @@ test("which markers a short quota fills is drawn, not the tiles' order", async (
 });
 
 /**
- * Minibosses are the dungeon's, not each floor's: the captured two-floor
- * runs carry the tier's count across both floors (ARENA_D 4-6: 2+2, 1+4,
- * 2+3, 2+4), dealt one by one onto markers drawn from the whole dungeon's.
+ * Minibosses are the dungeon's, not each floor's: a two-floor run carries the
+ * tier's count across both floors (ARENA_D 4-6 can come as 2+2 or 1+4), dealt
+ * one by one onto markers drawn from the whole dungeon's.
  */
 test("the miniboss quota is the dungeon's, dealt over its floors by their markers", () => {
   const tier = { MinMiniboss: 6, MaxMiniboss: 6 };

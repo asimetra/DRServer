@@ -8,7 +8,7 @@ import { OP } from "../src/socket/opcodes.js";
 import { config } from "../src/config.js";
 
 /**
- * Standing still in a dungeon, measured the way the official server did it:
+ * Standing still in a dungeon, as the original game treats it:
  * thirty seconds without the hero moving, turning or attacking puts "Zzz..."
  * over its name for the whole party (HeroGameObject field 167). Here the
  * player is also told, and a minute sends them back to town.
@@ -67,7 +67,7 @@ const sentHome = (t) => {
   return sent;
 };
 
-test("the defaults are the thirty seconds the official server used, and a minute to go home", () => {
+test("the defaults are the original game's thirty seconds, and a minute to go home", () => {
   assert.equal(WARN, 30_000);
   assert.equal(KICK, 60_000);
 });

@@ -5,15 +5,15 @@
  * guess the constant, dig through the captures by hand, maybe fix it. Four
  * things were measured by hand every time — when a trap damages, how much, with
  * which stagger flags, and who it can hit — and all four are already on the
- * wire. So read them off the official once, drive the same trap here, and print
+ * wire. So read them off the reference once, drive the same trap here, and print
  * the disagreements.
  *
  *   node tools/trap-conformance.js <logdir>/socket-*.jsonl
  *   node tools/trap-conformance.js --verbose <logdir>/socket-*.jsonl
  *
- * Only the official's own sessions belong here; filter by the host in the
- * matching rpc log first. Absence is not failure — a trap the captures never
- * saw is reported as unmeasured, not as wrong.
+ * Only reference sessions belong here, not this server's own; filter by the
+ * host in the matching rpc log first. Absence is not failure — a trap the
+ * captures never saw is reported as unmeasured, not as wrong.
  */
 import fs from "node:fs";
 import readline from "node:readline";
@@ -43,7 +43,7 @@ const FIELD = { state: 141, choreography: 143, npcResult: 144, heroResult: 160 }
 const RESULT = { attacker: 8, damage: 16, attackType: 22, suffer: 31, knockback: 32, size: 45 };
 
 /**
- * What the official does with each trap attack, read once off the captures.
+ * What the reference does with each trap attack, read once off the captures.
  *
  * Hit offsets are measured from the choreography that opened the swing, which
  * is what makes them comparable with the authored frames; a trap with no
@@ -195,7 +195,7 @@ const runHere = async (constant) => {
  * deterministic and the run instant.
  *
  * What can honestly be compared is damage and the stagger flags. The elapsed
- * time cannot: the official's offsets are however far away that player happened
+ * time cannot: the reference's offsets are however far away that player happened
  * to be standing, and ours is whatever distance is chosen here. So the flight
  * is reported rather than judged.
  */
@@ -271,7 +271,7 @@ const runProjectile = async (constant) => {
  * trigger, it is what a smashable does on its way out. Nothing in the harness
  * could reach it, so the fix that made the bang come out before the death
  * state — without which the client drops the choreography onto an actor
- * already in mDeadState and plays nothing — had no measurement behind it.
+ * already dead and plays nothing — had no measurement behind it.
  *
  * Driven through applyDamage rather than by calling the blast directly, so the
  * ordering under test is the real one: hit points, bang, then death.
@@ -334,9 +334,9 @@ const runDeath = async (constant) => {
   session.dungeonActive = false;
   /**
    * The order is the finding, not a detail. A choreography that arrives after
-   * the death state is dropped by the client — enterChoreographyState only
-   * runs from the default macro state — so a barrel told to explode after it
-   * was told to die shows nothing. The official is unanimous across 59
+   * the death state is dropped by the client — it only starts a choreography
+   * from an actor's default state — so a barrel told to explode after it
+   * was told to die shows nothing. The reference is unanimous across 59
    * recorded barrels: hit points, bang, then dead.
    */
   const bangAt = order.indexOf(FIELD.choreography);

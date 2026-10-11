@@ -6,8 +6,8 @@ import { statTotals } from "../src/hero-stats.js";
 import { netAttackDamage, npcStats, statOffsetsFor } from "../src/combat-damage.js";
 
 /**
- * Ported from DistributedDungionArea.calculateNetAttackDamage, which the client
- * still carries in full with every call site removed. These pin the parts that
+ * The game's own damage formula, as the client defines it in
+ * DistributedDungionArea.calculateNetAttackDamage. These pin the parts that
  * look like mistakes and are not.
  */
 
@@ -178,8 +178,8 @@ const capturedNpcDamage = async ({
 
 test("an ordinary NPC hit uses the level sent with its actor", async () => {
   /**
-   * Official level-43 KNIGHT hits on a level-43 LION_WILD are 15 in all 23
-   * captured results: ceil(weapon 1 + base 5 + 0.2 * level 43). The actor kept
+   * A level-43 KNIGHT hit on a level-43 LION_WILD is 15, as the original game
+   * deals it: ceil(weapon 1 + base 5 + 0.2 * level 43). The actor kept
    * level 43, but statsFor rebuilt its vector without that level and dealt 6.
    */
   assert.equal(
@@ -194,10 +194,10 @@ test("an ordinary NPC hit uses the level sent with its actor", async () => {
   );
 });
 
-test("NPC damage rounds a positive magnitude up like the official server", async () => {
+test("NPC damage rounds a positive magnitude up like the original game", async () => {
   /**
    * BABY_YETI level 59 computes to 4.36 against a zero-defence target. Every
-   * one of 44 official hits on WOLF_PET is 5, ruling out nearest-integer 4.
+   * observed hit on WOLF_PET is 5, ruling out nearest-integer 4.
    */
   assert.equal(
     await capturedNpcDamage({
@@ -214,7 +214,7 @@ test("NPC damage rounds a positive magnitude up like the official server", async
 test("a larger party scales the NPC stat but not its weapon power", async () => {
   /**
    * BRUTE_CAVE L51 has 24.32 melee attack and a power-1 weapon. With the
-   * four-player MELEE_ATK multiplier 2.5 the official sends 31:
+   * four-player MELEE_ATK multiplier 2.5 the original game deals 31:
    * ceil((1 + 24.32 * 2.5) * 0.5). Multiplying the weapon too would send 32.
    */
   assert.equal(
@@ -233,7 +233,7 @@ test("a larger party scales the NPC stat but not its weapon power", async () => 
 test("an Infinite floor grows NPC damage through the authored stat multiplier", async () => {
   /**
    * InfiniteDungeons.DamageGrowth is 0.75. At depth one, BRUTE L100 therefore
-   * sends ceil(weapon 1 + melee stat 20 * 1.75) = 36 in the official corpus.
+   * deals ceil(weapon 1 + melee stat 20 * 1.75) = 36, as the original game does.
    */
   assert.equal(
     await capturedNpcDamage({
@@ -298,18 +298,18 @@ test("a projectile's repeated hits are each worth half the last", async () => {
 /**
  * Half of the hit before, rounded — not the first hit over a power of two.
  *
- * A Sonic Slash from a Shichiseiken in the official's recording (2026-10-03)
- * caught fourteen monsters in one flight: 5623, 2812, 1406, 703, 352, 176, 88,
+ * An observed Sonic Slash from a Shichiseiken caught fourteen monsters in one
+ * flight: 5623, 2812, 1406, 703, 352, 176, 88,
  * 44, 22, 11, 6, 3, 2, 1. That is each one half the last, a half rounded up —
  * 2811.5 to 2812, 351.5 to 352, 5.5 to 6, 1.5 to 2 — where the first over a
  * power of two gives 351, 5 and 1. The storm's 2877 and 720 fit it as well.
  */
-test("a projectile's collisions go down by halves of the last, as the official's Sonic Slash did", async () => {
+test("a projectile's collisions go down by halves of the last, as an observed Sonic Slash did", async () => {
   const { handleProposeCombatResults } = await import("../src/socket/combat.js");
   const { PacketWriter, PacketReader } = await import("../src/socket/packet.js");
   const { CLID } = await import("../src/socket/opcodes.js");
   const SONIC_SLASH = 902510; // KATANA_SONIC_SLASH: DamageMod -2.5, shooting
-  // 2249 × 2.5 is 5622.5, which lands as the recording's 5623.
+  // 2249 × 2.5 is 5622.5, which lands as the observed 5623.
   const weapon = await weaponWith(SONIC_SLASH, { power: 2249 });
   const landed = [];
   for (let generation = 0; generation < 14; generation++) {
@@ -366,12 +366,12 @@ test("a lethal hero result credits damage and one kill to that member's report",
 });
 
 /**
- * The buff floater, decoded from `socket-20260816-191126.jsonl`.
+ * The buff floater.
  *
  * A damage-over-time tick publishes hit points and then this, on the hero owner
- * rather than the victim. Two captured ticks fix the layout and the colour:
- * `0CE92403 EEFFFFFF 0B000000 00` is actor 52750604 losing 18 to poison, and
- * the firebomb's burn reported the same shape with colour 12.
+ * rather than the victim. Two observed ticks fix the layout and the colour:
+ * `BC020000 EEFFFFFF 0B000000 00` is actor 700 losing 18 to poison, and the
+ * firebomb's burn reports the same shape with colour 12.
  */
 test("a buff tick reports its damage on the hero owner, signed and coloured", async () => {
   const { buffColorTypeFor, buffEffectReport } = await import("../src/socket/buffs.js");
@@ -385,29 +385,29 @@ test("a buff tick reports its damage on the hero owner, signed and coloured", as
   assert.equal(fire, 12);
 
   const frame = buffEffectReport({
-    heroDoid: 1100219925,
-    actorDoid: 52750604,
+    heroDoid: 500,
+    actorDoid: 700,
     amount: -18,
     colorType: poison,
   });
 
-  // 2 length + 2 opcode + 4 doid + 2 field + 13 payload, as captured.
+  // 2 length + 2 opcode + 4 doid + 2 field + 13 payload, as the client reads it.
   assert.equal(frame.length, 23);
   const reader = new PacketReader(frame.subarray(2));
   assert.equal(reader.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
-  assert.equal(reader.u32(), 1100219925);
+  assert.equal(reader.u32(), 500);
   assert.equal(reader.u16(), 168);
-  assert.equal(reader.u32(), 52750604);
+  assert.equal(reader.u32(), 700);
   assert.equal(reader.u32() | 0, -18, "negative is damage; a positive number heals");
   assert.equal(reader.u32(), 11);
-  assert.equal(reader.u8(), 0, "effectiveness, which the captured ticks leave at zero");
+  assert.equal(reader.u8(), 0, "effectiveness, which a tick leaves at zero");
 });
 
 test("a buff nothing colours reports zero rather than guessing", async () => {
   const { buffColorTypeFor } = await import("../src/socket/buffs.js");
   const { buffForConstant } = await import("../src/gamemaster.js");
 
-  // BLEEDING authors no Ability1, and no capture shows what colour it took.
+  // BLEEDING authors no Ability1, and nothing observed shows what colour it takes.
   assert.equal(await buffColorTypeFor(await buffForConstant("BLEEDING")), 0);
 });
 
@@ -438,7 +438,7 @@ test("a smashed gate breaks in place instead of vanishing", async () => {
 
   applyDamage(session, 700, 25);
   /**
-   * The captured door took its trigger state and stayed standing for the rest
+   * An observed door took its trigger state and stayed standing for the rest
    * of the floor; "dead" runs enterDeadState and it disappears outright.
    */
   const gateFrames = sent.filter(
@@ -447,7 +447,7 @@ test("a smashed gate breaks in place instead of vanishing", async () => {
   const trigger = gateFrames.find((frame) => frame.readUInt16LE(8) === 141);
   assert.ok(trigger, "the gate switches to its broken form");
   // Generated at 1, broken at 0 — sending 1 leaves it looking untouched.
-  assert.equal(trigger[10], 0, "and the value is the one the captures carry");
+  assert.equal(trigger[10], 0, "and the value is the broken form's");
   assert.ok(!fieldsFor(700).includes(138), "and is never told it died");
 
   applyDamage(session, 701, 10);
@@ -456,9 +456,9 @@ test("a smashed gate breaks in place instead of vanishing", async () => {
 });
 
 /**
- * 625 damage-over-time ticks across the recordings, every one on a monster.
- * The same corpus has flame jets hitting the hero 152 times and TRAP_FLAME_JET
- * authors FIRE_L1, so the chance was there and the official never took it.
+ * In the original game a damage-over-time tick lands only on monsters. Flame
+ * jets hit heroes often and TRAP_FLAME_JET authors FIRE_L1, so the chance is
+ * there and the game never takes it.
  */
 test("a burn ticks on a monster and never on the hero", async (t) => {
   const { applyTargetBuff } = await import("../src/socket/combat.js");
@@ -508,9 +508,8 @@ test("a burn ticks on a monster and never on the hero", async (t) => {
 /**
  * No hero burns — including the ones who did not start the timer.
  *
- * The rule is about kind, not identity: the corpus has 625 damage-over-time
- * ticks and not one names a hero, with 152 flame-jet hits on the hero to have
- * taken the chance. But it was written `victimDoid === session.heroDoid`, the
+ * The rule is about kind, not identity: no hero is ever burned, however
+ * many flame jets hit one. But it was written `victimDoid === session.heroDoid`, the
  * same shape as the ground-trap bug — true for one hero and quietly false for
  * everybody else in the party.
  *

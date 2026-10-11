@@ -50,23 +50,21 @@ test("a gate behind a NOT with nothing feeding it can never change", () => {
   /**
    * And it rests open, because a gate nobody powered is off.
    *
-   * This asserted "shut" until the official's own layouts were replayed whole.
-   * `NOT` was the only gate in the set that came alive on an empty input list —
+   * This asserted "shut" until whole layouts were checked against it. `NOT`
+   * was the only gate in the set that came alive on an empty input list —
    * `AND` asks for `values.length > 0` and `OR` is false without any — so every
    * dangling one held its branch high for a run, and the libraries are full of
    * dangling ones.
    *
-   * Two measurements, and they agree. Replaying all 24 floors of the catacombs
-   * capture, `CASTLE_CATACOMB_TRAP_SPIKES_SKELETONSTATUE` came out raised here
-   * 12 times of 191 where the official leaves it flat, and every one of the
-   * twelve is wired to exactly `NOT_GATE(nothing)`. And of the gates, almost
-   * all sit behind a NOT that *is* fed and stay shut either way; the handful
-   * behind an unfed one are the handful the official generates open —
-   * `NORDIC_CAVE_EXIT_GATE_A` 46 shut against 2, `NORDIC_TEMPLE_EXIT_GATE_A`
-   * 26 against 1.
+   * Two things agree. A `CASTLE_CATACOMB_TRAP_SPIKES_SKELETONSTATUE` that came
+   * out raised here where it belongs flat was wired, every time, to exactly
+   * `NOT_GATE(nothing)`. And of the gates, almost all sit behind a NOT that
+   * *is* fed and stay shut either way; the few behind an unfed one, such as
+   * some `NORDIC_CAVE_EXIT_GATE_A` and `NORDIC_TEMPLE_EXIT_GATE_A`, are the
+   * ones that belong open.
    *
    * A target nobody wired at all is a different question and still rests on:
-   * `CASTLE_ARENA_GATE_D` is generated shut 84 times of 84.
+   * `CASTLE_ARENA_GATE_D` is generated shut.
    */
   assert.equal(
     initialTargetState(session, "door"),
