@@ -18,6 +18,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { createCensus } from "./ai-sim-census.js";
 import { importFrom, installVirtualClock, realNow, seededRandom, seedFor } from "./equivalence-lib.js";
 
 /** The nine tile libraries a run can be laid out from. */
@@ -410,6 +411,7 @@ const digestOf = (lines, frames, counts) => {
  *   B <run> <hash> <frames> <actors>     what the build sent
  *   T <run> <tick> <hash> <frames> <random> <sessionRandom>
  *   D <run> <tick> <json>                the whole state, when asked for a tick
+ *   S <run> <json>                       what its monsters did, counted, when the spec asks (`stats`)
  *   E <run> <ticks> <ms> <timerFailures> the run ends
  *
  * `detail` names ticks whose full state is wanted, for explaining a difference.
@@ -434,6 +436,7 @@ export const runSpec = async (modules, spec, emit, { detail = new Set() } = {}) 
       if (!hero) throw new Error(`${run}: the build put no hero on the floor`);
       const frames = [];
       session.send = (frame) => frames.push(frame);
+      const census = spec.stats ? createCensus() : null;
       for (let tick = 0; tick < spec.ticks; tick++) {
         frames.length = 0;
         const randomBefore = mathRandom.calls;
@@ -445,6 +448,7 @@ export const runSpec = async (modules, spec, emit, { detail = new Set() } = {}) 
         if (brawled !== null && session.actors.get(brawled)) await brawl(modules, session, brawled, tick);
         await modules.ai.tickNpcAi(session, clock.now, TICK_MS / 1000);
         await clock.flush();
+        census?.tick(session, frames);
         const lines = stateLines(session);
         const counts = [mathRandom.calls - randomBefore, sessionRandom.calls - sessionBefore];
         emit(`T ${run} ${tick} ${digestOf(lines, frames, counts)} ${frames.length} ${counts[0]} ${counts[1]}`);
@@ -459,6 +463,7 @@ export const runSpec = async (modules, spec, emit, { detail = new Set() } = {}) 
         }
       }
       session.runScope?.dispose?.();
+      if (census) emit(`S ${run} ${JSON.stringify(census.result())}`);
       emit(`E ${run} ${spec.ticks} ${realNow() - started} ${clock.failures}`);
     }
   } finally {

@@ -7,6 +7,7 @@
  *   node tools/ai-sim.js --base ../other-checkout --libraries nordic/caves --seeds 1,2 --ticks 2000
  *   node tools/ai-sim.js --base HEAD~1 --node 50070 --catalogue config/floors.scenario-test.json --hero walls
  *   node tools/ai-sim.js --digest-out run.txt               one root, its digest written down
+ *   node tools/ai-sim.js --base master --full --stats      and what the monsters did, counted (tools/ai-sim-census.js)
  *   npm run sim:ai -- --base master
  *
  * A refactor of the AI is not a change of behaviour, and the only way to say
@@ -50,7 +51,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { argument, flag, listArgument, realNow, resolveRoot, TOOL_ROOT } from "./equivalence-lib.js";
-import { HERO_SCRIPTS, LIBRARIES, runWorker, SCENARIO_HEROES, SCENARIOS } from "./ai-sim-lib.js";
+import { HERO_SCRIPTS, LIBRARIES, runWorker, SCENARIO_HEROES, SCENARIOS, TICK_MS } from "./ai-sim-lib.js";
+import { describeCensus, mergeCensus } from "./ai-sim-census.js";
 
 const self = fileURLToPath(import.meta.url);
 
@@ -67,7 +69,7 @@ const usage = () => {
       "         [--libraries a/b,c/d] [--scenarios a,b] [--seeds 1,2] [--ticks N]",
       "         [--hero loadsim|walls|walker|brawler|still|script]",
       "         [--floor <authored file>] [--node <map node> [--catalogue <floors.json>]] [--script <file>]",
-      "         [--tile-count N] [--jobs N] [--explain N]",
+      "         [--tile-count N] [--jobs N] [--explain N] [--stats]",
       "       node tools/ai-sim.js --digest-out <file> [same selection]      one root, written down",
     ].join("\n")
   );
@@ -108,11 +110,12 @@ const expandRuns = () => {
     });
   }
   const runs = [];
+  const stats = flag("stats");
   for (const { heroes: worldHeroes, ...world } of worlds) {
     for (const seed of seeds) {
       for (const hero of worldHeroes ?? heroes) {
         const id = `${world.name.replace(/\//g, "-")}~s${seed}~${hero}`;
-        runs.push({ ...world, seed, hero, ticks, script, id, label: `${world.name} seed ${seed} ${hero}` });
+        runs.push({ ...world, seed, hero, ticks, script, stats, id, label: `${world.name} seed ${seed} ${hero}` });
       }
     }
   }
@@ -156,14 +159,14 @@ const collect = (lines) => {
   const record = (run) => {
     let entry = byRun.get(run);
     if (!entry) {
-      entry = { build: null, ticks: [], details: new Map(), end: null, label: "" };
+      entry = { build: null, ticks: [], details: new Map(), end: null, label: "", stats: null };
       byRun.set(run, entry);
     }
     return entry;
   };
   for (const line of lines) {
     const kind = line[0];
-    if (!"RBTDE".includes(kind) || line[1] !== " ") continue;
+    if (!"RBTDSE".includes(kind) || line[1] !== " ") continue;
     const space = line.indexOf(" ", 2);
     const run = line.slice(2, space);
     const rest = line.slice(space + 1);
@@ -172,6 +175,7 @@ const collect = (lines) => {
     else if (kind === "B") entry.build = rest;
     else if (kind === "T") entry.ticks.push(rest);
     else if (kind === "E") entry.end = rest;
+    else if (kind === "S") entry.stats = JSON.parse(rest);
     else if (kind === "D") {
       const at = rest.indexOf(" ");
       entry.details.set(Number(rest.slice(0, at)), JSON.parse(rest.slice(at + 1)));
@@ -239,6 +243,13 @@ const explain = (base, candidate, tick) => {
   return lines;
 };
 
+/** The census of every run of one root, printed, when `--stats` asked for one. */
+const printCensus = (label, results) => {
+  const counted = [...results.values()].map((entry) => entry.stats).filter(Boolean);
+  if (!counted.length) return;
+  for (const text of describeCensus(label, mergeCensus(counted), TICK_MS / 1000)) console.log(text);
+};
+
 const main = async () => {
   if (flag("worker")) {
     await runWorker({ root: argument("root"), runsFile: argument("runs"), detail: argument("detail") });
@@ -267,6 +278,7 @@ const main = async () => {
       }
       writeFileSync(digestOut, `${lines.join("\n")}\n`);
       console.log(`${candidate.label}: ${results.size} run(s), ${ticks} ticks, written to ${digestOut} in ${((realNow() - started) / 1000).toFixed(1)} s`);
+      printCensus(candidate.label, results);
       return;
     }
 
@@ -297,6 +309,8 @@ const main = async () => {
         `${differing.length ? `${differing.length} differ` : "no difference"}` +
         (failures ? `; ${failures} timer callback(s) threw` : "")
     );
+    printCensus(`\nbase ${base.label}`, baseResults);
+    printCensus(`candidate ${candidate.label}`, candidateResults);
     const explainCount = Math.max(0, Number(argument("explain", 3)));
     for (const difference of differing.slice(0, explainCount)) {
       if (difference.tick < 0) continue;
