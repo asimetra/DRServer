@@ -12,6 +12,7 @@ import {
   isPositionBlocked,
   loadNavigationLibrary,
   moveWithNavigation,
+  nearestClearPosition,
   removeNavigationObstacle,
   segmentStaysOnAuthoredTiles,
   setNavigationTriggerState,
@@ -418,6 +419,52 @@ test("escaping one collider cannot spend that progress by entering another", () 
     false,
     `escape entered the neighbouring collider at ${JSON.stringify(moved)}`
   );
+});
+
+test("a body pushed out of a wall comes out on the side the room can see", () => {
+  /**
+   * A wall 20 thick across the whole floor, the body inside it and the player
+   * below. The search walks +Y first, and +Y is clear one step out: the far
+   * side of the wall, where nobody can reach it. The near side is one step out
+   * too, two directions later.
+   */
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 300, maxY: 300 },
+    cellSize: 30,
+    staticColliders: [rectangle(150, 150, 150, 10)],
+  });
+  const inWall = { x: 150, y: 150 };
+  const player = { x: 150, y: 60 };
+  assert.equal(isPositionBlocked(navigation, inWall, 0), true);
+  assert.deepEqual(nearestClearPosition(navigation, inWall), { x: 150, y: 166 }, "the far side comes first");
+
+  const seen = nearestClearPosition(navigation, inWall, 0, { reachableFrom: player });
+  assert.deepEqual(seen, { x: 150, y: 134 });
+  assert.equal(hasLineOfSight(navigation, seen, player, 0), true);
+
+  // Nothing within reach can see a player behind a second wall: standable
+  // ground is still better than none, and it is the same ground as before.
+  const sealed = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 300, maxY: 300 },
+    cellSize: 30,
+    staticColliders: [rectangle(150, 150, 150, 10), rectangle(150, 40, 150, 10)],
+  });
+  assert.deepEqual(
+    nearestClearPosition(sealed, inWall, 0, { reach: 48, reachableFrom: { x: 150, y: 10 } }),
+    { x: 150, y: 166 }
+  );
+
+  // The caller's own test still holds in both passes.
+  const rightOnly = (candidate) => candidate.x > 160;
+  const seenRight = nearestClearPosition(navigation, inWall, 0, { reachableFrom: player, accept: rightOnly });
+  assert.ok(seenRight.x > 160 && seenRight.y < 140, JSON.stringify(seenRight));
+  assert.equal(hasLineOfSight(navigation, seenRight, player, 0), true);
+  const anyRight = nearestClearPosition(sealed, inWall, 0, {
+    reach: 48,
+    reachableFrom: { x: 150, y: 10 },
+    accept: rightOnly,
+  });
+  assert.ok(anyRight.x > 160 && anyRight.y > 160, JSON.stringify(anyRight));
 });
 
 test("tutorial's proximity cage has a short collider-only release route", async () => {

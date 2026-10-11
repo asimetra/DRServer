@@ -187,13 +187,15 @@ export const nearestClearPosition = (
    *
    * Two passes rather than one test, so that a floor whose geometry defeats the
    * sight line still places its actor somewhere standable instead of nowhere.
+   * Each pass asks its own question on top of clear ground and the caller's
+   * `accept`; the first pass never asked, and returned the far side of a wall
+   * whenever that came first in the walk.
    */
-  const scan = (accept) => {
+  const scan = (also) => {
     for (let distance = step; distance <= reach; distance += step) {
       for (const [dx, dy] of directions) {
         const candidate = { x: origin.x + dx * distance, y: origin.y + dy * distance };
-        if (!isClear(candidate)) continue;
-        return candidate;
+        if (isClear(candidate) && also(candidate)) return candidate;
       }
     }
     return null;
