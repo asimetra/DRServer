@@ -131,16 +131,17 @@ test("chase AI moves and faces an aggroed hero", async () => {
   assert.equal(session.actors.get(knightDoid).position.x, 150);
   assert.equal(sent.length, 2);
 
-  const heading = readUpdate(sent[0]);
-  assert.equal(heading.doid, knightDoid);
-  assert.equal(heading.fieldId, 133);
-  assert.equal(heading.reader.f32(), 180);
-
-  const position = readUpdate(sent[1]);
+  // Where it got to, then which way it faces from there (npc-facing.js).
+  const position = readUpdate(sent[0]);
   assert.equal(position.doid, knightDoid);
   assert.equal(position.fieldId, 132);
   assert.equal(position.reader.f32(), 150);
   assert.equal(position.reader.f32(), 0);
+
+  const heading = readUpdate(sent[1]);
+  assert.equal(heading.doid, knightDoid);
+  assert.equal(heading.fieldId, 133);
+  assert.equal(heading.reader.f32(), 180);
 });
 
 test("an enemy acquires and releases targets at its authored awareness boundaries", async () => {

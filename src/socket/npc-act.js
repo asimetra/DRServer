@@ -4,7 +4,7 @@ import { buffMultiplierFor } from "./buffs.js";
 import { performNpcAttack } from "./combat.js";
 import { hasLineOfSight } from "./navigation.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
-import { faceTarget } from "./npc-move.js";
+import { face } from "./npc-facing.js";
 import { endBackOff } from "./behaviours/kite.js";
 
 /**
@@ -150,10 +150,12 @@ export const attackIntervalMs = (ai, slowness = 1) =>
     ((ai.attackTimerMs ?? 1500) + Math.random() * (ai.attackRandMs ?? 0)) * Math.max(1, slowness)
   );
 
-/** The swing itself, once `act` has said it happens. */
-const swing = async (session, doid, actor, victim, chosen, now) => {
+/** The swing itself, once `act` has said it happens, at `victim` standing at `target`. */
+const swing = async (session, doid, actor, victim, target, chosen, now) => {
   const { ai } = actor;
   chosen.readyAt = now + (chosen.rechargeMs ?? 0);
+  // Exactly at its victim, and the client told with the swing (npc-facing.js).
+  face(session, doid, actor, target, { swing: true });
 
   /**
    * Both authored speed layers pace the cast.
@@ -175,9 +177,9 @@ const swing = async (session, doid, actor, victim, chosen, now) => {
    *
    * A constant velocity for `MoveDuration` at `MoveAngle` degrees off the way
    * it is facing, which is what the client does for the player and what the
-   * corpus shows the official doing for monsters. `faceTarget` ran a moment
-   * ago, so the heading is at the victim and an angle of 0 is a charge at
-   * them while 180 is a hop backwards.
+   * corpus shows the official doing for monsters. It has just faced its
+   * victim exactly, so an angle of 0 is a charge at them while 180 is a hop
+   * backwards.
    *
    * From the frame the timeline puts `attackautomove` on (gamemaster.js,
    * `autoMoveFrame`), at the pace the cast plays: a frost troll winds its
@@ -239,7 +241,6 @@ export const act = async (session, turn) => {
   // swing (the lock above) and carries on after.
   if (turn.fleeing && (turn.cannotAttack || now < ai.nextAttackAt)) return "backing-off";
 
-  faceTarget(session, doid, actor, target);
   // A garlic trap's whole point: STUN_L4 for three seconds, during which it
   // does not swing. Without this the debuff was a picture on the health bar.
   if (turn.cannotAttack) return "stopped";
@@ -258,6 +259,6 @@ export const act = async (session, turn) => {
   const random = session.random ?? Math.random;
   const chosen = chooseNpcAttack(ai, distance, bodies, now, random);
   if (!chosen) return "no-attack";
-  await swing(session, doid, actor, victim, chosen, now);
+  await swing(session, doid, actor, victim, target, chosen, now);
   return "swung";
 };

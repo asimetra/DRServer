@@ -5,6 +5,7 @@ import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { matchStateOf, worldOf } from "./match-world.js";
 import { act, reachOf } from "./npc-act.js";
 import { boundedPush, nobodyToFight, senseCrowd, separateIdleNpc, separationDisplacement } from "./npc-crowd.js";
+import { face } from "./npc-facing.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
 import { advanceNpcRelease } from "./npc-release.js";
 import { clearNpcTarget, LET_GO, pickTarget } from "./npc-targeting.js";
@@ -30,6 +31,7 @@ import { comeBack, teleportsOnCycle, teleportSwung, teleportTurn } from "./behav
  *            (behaviours/: chase, kite, pet, stationary)
  *   move     the step taken through the crowd and the scenery (npc-move.js)
  *   act      whether it swings (npc-act.js)
+ *   face     which way it turns (npc-facing.js)
  *
  * Each stage after `held` may end the tick. What the tick came to is the
  * one state the floor command shows (`ai.state`, command-set.js): each
@@ -103,7 +105,8 @@ const traceRoute = (doid, actor, route, target) =>
 
 /**
  * The move stage: the intent's step, pushed by the crowd, kept out of the
- * players, through the scenery (`stepNpc`), and sent.
+ * players, through the scenery (`stepNpc`), and sent. True when it went
+ * anywhere.
  */
 const move = (session, state, crowd, doid, actor, intent, turn) => {
   const { ai } = actor;
@@ -128,7 +131,25 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
    * would set off at full speed the moment the wall let it slide.
    */
   if (step?.refused && ai.kind !== "pet") ai.walkSpeed = 0;
-  if (step) placeNpc(session, doid, actor, step, turn.route.waypoint ?? turn.target);
+  if (!step) return false;
+  placeNpc(session, doid, actor, step);
+  return step.travel > 0.001;
+};
+
+/**
+ * The face stage, once it has moved and acted: its victim, whichever way it
+ * walked — round a corner, backing off, along a wall (npc-facing.js). A
+ * swing faced its victim as it went (`act`), and one still under way keeps
+ * the heading it went with. A pet walking back to its owner faces where it
+ * walks, and one standing by does not turn.
+ */
+const turnAfter = (session, doid, actor, turn, reason, walked) => {
+  if (reason === "swung" || reason === "locked") return;
+  if (!turn.following) {
+    face(session, doid, actor, turn.target);
+    return;
+  }
+  if (walked) face(session, doid, actor, turn.route.waypoint ?? turn.target);
 };
 
 /**
@@ -215,7 +236,7 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   turn.away = behaviour.prepare?.(turn) ?? null;
   const intent = swingIntent(ai, may, now, deltaSeconds) ?? behaviour.intent(turn);
   const before = { x: actor.position.x, y: actor.position.y };
-  move(session, state, crowd, doid, actor, intent, turn);
+  const walked = move(session, state, crowd, doid, actor, intent, turn);
   behaviour.moved?.(turn, intent, before);
 
   const fleeing = backingOff(ai, turn.away, now);
@@ -237,6 +258,7 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     heroDoids: crowd.heroDoids,
   });
   if (reason === "swung" && cycle) teleportSwung(ai, now);
+  turnAfter(session, doid, actor, turn, reason, walked);
   return stateAfterAct(reason, fleeing, route);
 };
 

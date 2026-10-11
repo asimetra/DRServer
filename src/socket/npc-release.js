@@ -3,6 +3,7 @@ import { bodyRadius } from "./body.js";
 import { heroMembersOf } from "./match-world.js";
 import { isPositionBlocked } from "./navigation.js";
 import { boundedPush, separationDisplacement } from "./npc-crowd.js";
+import { face } from "./npc-facing.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
 import { clearNpcTarget } from "./npc-targeting.js";
 import { escapeBy } from "./routing.js";
@@ -140,7 +141,9 @@ export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spati
     }
   }
 
-  placeNpc(session, doid, actor, step, release.target);
+  placeNpc(session, doid, actor, step);
+  // It looks where it walks out, not yet at anybody (npc-facing.js).
+  if (step.travel > 0.001) face(session, doid, actor, release.target);
   if (!isPositionBlocked(session.navigation, actor.position, radius)) {
     endRelease(actor);
     return "out";

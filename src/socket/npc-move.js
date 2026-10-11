@@ -7,12 +7,12 @@ import { PacketWriter } from "./packet.js";
  * How a monster's body gets from where it stands to where it is sent.
  *
  * The AI decides the step — a chase, a back-off, a lunge, a cage exit, an idle
- * body pushed off another — and what it faces while taking it (ai.js and
- * behaviours/). What happens to that step after is the same every time and
- * is here once: the part that runs into a body it touches is dropped, the
- * push of the crowd is added within one walking budget, the players are kept
- * out of it, the walls get the last word, and the client is told where it
- * ended and which way it faces.
+ * body pushed off another (ai.js and behaviours/). What happens to that step
+ * after is the same every time and is here once: the part that runs into a
+ * body it touches is dropped, the push of the crowd is added within one
+ * walking budget, the players are kept out of it, the walls get the last
+ * word, and the client is told where it ended. Which way it faces is not the
+ * step's: see npc-facing.js.
  */
 
 const npcPositionUpdate = (doid, position) =>
@@ -31,15 +31,6 @@ export const npcHeadingUpdate = (doid, heading) =>
     .frame();
 
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
-
-/** Turns it to `target` and says so, unless it never turns or already faces it within half a degree. */
-export const faceTarget = (session, doid, actor, target) => {
-  if (actor.ai?.lockRotation) return;
-  const heading = (Math.atan2(target.y - actor.position.y, target.x - actor.position.x) * 180) / Math.PI;
-  if (Math.abs(heading - actor.heading) < 0.5) return;
-  actor.heading = heading;
-  session.send(npcHeadingUpdate(doid, heading));
-};
 
 /**
  * The one position this server must never send: a body inside the player's.
@@ -237,14 +228,10 @@ export const stepNpc = (navigation, actor, options) => {
   return { next: step.next, travel: distanceTo(actor.position, step.next), refused };
 };
 
-/**
- * Puts it where a step ended. A step that went anywhere is sent, turned to
- * `facing` first when the caller names something to face.
- */
-export const placeNpc = (session, doid, actor, { next, travel }, facing = null) => {
+/** Puts it where a step ended; a step that went anywhere is sent. */
+export const placeNpc = (session, doid, actor, { next, travel }) => {
   actor.position.x = next.x;
   actor.position.y = next.y;
   if (travel <= 0.001) return;
-  if (facing) faceTarget(session, doid, actor, facing);
   session.send(npcPositionUpdate(doid, actor.position));
 };
