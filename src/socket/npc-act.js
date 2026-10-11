@@ -5,6 +5,7 @@ import { performNpcAttack } from "./combat.js";
 import { hasLineOfSight } from "./navigation.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
 import { faceTarget } from "./npc-move.js";
+import { endBackOff } from "./behaviours/kite.js";
 
 /**
  * Whether it swings this tick, and with what: the act stage of the AI.
@@ -204,7 +205,7 @@ const swing = async (session, doid, actor, victim, chosen, now) => {
     : session;
   ai.attackHeading = actor.heading;
   // A shot ends a back-off: it stands for the swing and fights from there.
-  ai.fleeUntil = 0;
+  endBackOff(ai);
   await performNpcAttack(
     victimSession,
     doid,

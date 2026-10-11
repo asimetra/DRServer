@@ -2,6 +2,7 @@ import { contact } from "./body.js";
 import { nearestTo, squaredDistanceTo } from "./npc-crowd.js";
 import { collectNearbyForPet } from "./pickups.js";
 import { forgetRoute } from "./routing.js";
+import { forgetBackOff } from "./behaviours/kite.js";
 
 /**
  * Who each one goes for this tick, one selector per kind.
@@ -56,8 +57,7 @@ export const clearNpcTarget = (actor) => {
   ai.nextTargetAt = 0;
   ai.walkSpeed = 0;
   ai.attackLockedUntil = 0;
-  ai.fleeUntil = 0;
-  ai.targetSeen = null;
+  forgetBackOff(ai);
 };
 
 const fighting = (victim) => (victim ? { victim, following: false } : null);
