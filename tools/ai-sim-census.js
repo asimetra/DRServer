@@ -70,7 +70,7 @@ const fieldUpdateOf = (frame) =>
 const facesRight = (heading) => Math.cos((heading * Math.PI) / 180) >= 0;
 
 /**
- * A census of one run; `tick` after each AI tick, `result` at the end.
+ * A census of one run; `tick` after each AI tick, with its clock, `result` at the end.
  * `modules` are the root's (tools/ai-sim-lib.js `loadRoot`), for its
  * navigation and its NPC rows.
  */
@@ -146,7 +146,68 @@ export const createCensus = async (modules) => {
   };
   const isMonster = (actor) => actor?.ai?.kind === "enemy";
 
-  const tick = (session, frames) => {
+  /**
+   * Frozen chasers: a CHASE_AI that walks, engaged, not stunned, rooted,
+   * staggered or thrown, its route found and not ending short, chasing (not
+   * swinging, locked or lunging), with no other monster's body in its
+   * way — within 70 degrees of the way to its next waypoint, touching or 12
+   * off — and standing within a unit of one spot for 3 s or more. Nothing
+   * explains such a stand; the run fails on any (tools/ai-sim.js).
+   */
+  const stands = new Map();
+  let frozen = 0;
+  const frozenSeen = new Set();
+  const frozenAt = [];
+  const inTheWay = (session, actor, to) => {
+    const at = bodyOf(actor);
+    const radius = Math.max(12, actor.ai?.collisionRadius ?? 35);
+    const length = Math.hypot(to.x - actor.position.x, to.y - actor.position.y) || 1;
+    const ux = (to.x - actor.position.x) / length;
+    const uy = (to.y - actor.position.y) / length;
+    for (const other of session.actors.values()) {
+      if (other === actor || !other.ai || other.dead || !other.position) continue;
+      const b = bodyOf(other);
+      const dx = b.x - at.x;
+      const dy = b.y - at.y;
+      const d = Math.hypot(dx, dy);
+      if (d > radius + Math.max(12, other.ai.collisionRadius ?? 35) + 12) continue;
+      if ((dx * ux + dy * uy) / (d || 1) >= Math.cos((70 * Math.PI) / 180)) return true;
+    }
+    return false;
+  };
+  const sampleFrozen = (session, now) => {
+    for (const [doid, actor] of session.actors) {
+      const ai = actor.ai;
+      if (!isMonster(actor) || actor.dead || !actor.position || !ai.engaged || ai.state !== "chase") continue;
+      // A chaser that walks; held by a hit or a debuff it may not.
+      const rooted = [...(session.activeBuffs?.values() ?? [])].some(
+        (active) => active.affectedActor === doid && Number(active.buff?.MOVEMENT ?? 1) === 0
+      );
+      if (ai.behavior !== "CHASE_AI" || !(ai.moveSpeed > 0) || rooted || ai.shove || now < (ai.staggeredUntil ?? 0)) {
+        stands.delete(doid);
+        continue;
+      }
+      const points = ai.routing?.points;
+      const next = points?.[ai.routing.next ?? 0];
+      const fine = points?.length && !points.endsShort && !ai.routing.failed && next;
+      const busy = now < (ai.attackLockedUntil ?? 0) || (ai.lunge && now < ai.lunge.until);
+      const last = stands.get(doid);
+      if (!fine || busy || inTheWay(session, actor, next)) {
+        stands.delete(doid);
+        continue;
+      }
+      if (last && Math.hypot(actor.position.x - last.x, actor.position.y - last.y) <= 1) {
+        last.ticks++;
+        if (last.ticks >= 12 && !frozenSeen.has(`${doid}@${last.since}`)) {
+          frozenSeen.add(`${doid}@${last.since}`);
+          frozen++;
+          if (frozenAt.length < 5) frozenAt.push(`${session.id} ${actor.constant} ${doid} at ${Math.round(actor.position.x)},${Math.round(actor.position.y)}`);
+        }
+      } else stands.set(doid, { x: actor.position.x, y: actor.position.y, ticks: 0, since: now });
+    }
+  };
+  const tick = (session, frames, now) => {
+    sampleFrozen(session, now);
     for (const actor of session.actors.values()) {
       if (!isMonster(actor) || actor.dead || actor.teleportHidden || !actor.ai.engaged || !actor.position) continue;
       rowOf(actor.constant).engagedTicks++;
@@ -184,7 +245,7 @@ export const createCensus = async (modules) => {
     sampleCrowd(session, crowdSwings);
   };
 
-  return { tick, result: () => ({ rows: Object.fromEntries(rows), crowd: crowd.result() }) };
+  return { tick, result: () => ({ rows: Object.fromEntries(rows), crowd: crowd.result(), frozen, frozenAt }) };
 };
 
 /** Several runs' results, summed per row, and their crowds. */
@@ -196,7 +257,12 @@ export const mergeCensus = (results) => {
       for (const key of Object.keys(row)) row[key] += counts[key] ?? 0;
     }
   }
-  return { rows, crowd: mergeCrowd(results.map((result) => result.crowd).filter(Boolean)) };
+  return {
+    rows,
+    crowd: mergeCrowd(results.map((result) => result.crowd).filter(Boolean)),
+    frozen: results.reduce((sum, result) => sum + (result.frozen ?? 0), 0),
+    frozenAt: results.flatMap((result) => result.frozenAt ?? []).slice(0, 8),
+  };
 };
 
 const line = (name, row, tickSeconds) => {
@@ -213,7 +279,7 @@ const line = (name, row, tickSeconds) => {
 };
 
 /** The census as text: the total, then the rows with the most engaged time. */
-export const describeCensus = (label, { rows, crowd }, tickSeconds, { top = 8 } = {}) => {
+export const describeCensus = (label, { rows, crowd, frozen = 0, frozenAt = [] }, tickSeconds, { top = 8 } = {}) => {
   const total = rows;
   const sum = Object.values(total).reduce((into, row) => {
     for (const key of Object.keys(into)) into[key] += row[key];
@@ -223,5 +289,7 @@ export const describeCensus = (label, { rows, crowd }, tickSeconds, { top = 8 } 
   const ranked = Object.entries(total).sort((a, b) => b[1].engagedTicks - a[1].engagedTicks).slice(0, top);
   for (const [constant, row] of ranked) lines.push(line(constant, row, tickSeconds));
   if (crowd) lines.push(...describeCrowd(crowd));
+  lines.push(`  frozen chasers (engaged, a route, nothing in the way, still 3 s or more): ${frozen}`);
+  for (const where of frozenAt) lines.push(`    ${where}`);
   return lines;
 };

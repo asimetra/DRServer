@@ -495,7 +495,7 @@ export const runSpec = async (modules, spec, emit, { detail = new Set() } = {}) 
         if (brawled !== null && session.actors.get(brawled)) await brawl(modules, session, brawled, tick);
         await modules.ai.tickNpcAi(session, clock.now, TICK_MS / 1000);
         await clock.flush();
-        census?.tick(session, frames);
+        census?.tick(session, frames, clock.now);
         const lines = stateLines(session);
         const counts = [mathRandom.calls - randomBefore, sessionRandom.calls - sessionBefore];
         emit(`T ${run} ${tick} ${digestOf(lines, frames, counts)} ${frames.length} ${counts[0]} ${counts[1]}`);

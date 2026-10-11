@@ -244,10 +244,13 @@ const explain = (base, candidate, tick) => {
 };
 
 /** The census of every run of one root, printed, when `--stats` asked for one. */
+/** The census of every run of one root, printed, when `--stats` asked for one; answers with its frozen chasers. */
 const printCensus = (label, results) => {
   const counted = [...results.values()].map((entry) => entry.stats).filter(Boolean);
-  if (!counted.length) return;
-  for (const text of describeCensus(label, mergeCensus(counted), TICK_MS / 1000)) console.log(text);
+  if (!counted.length) return 0;
+  const merged = mergeCensus(counted);
+  for (const text of describeCensus(label, merged, TICK_MS / 1000)) console.log(text);
+  return merged.frozen;
 };
 
 const main = async () => {
@@ -278,7 +281,10 @@ const main = async () => {
       }
       writeFileSync(digestOut, `${lines.join("\n")}\n`);
       console.log(`${candidate.label}: ${results.size} run(s), ${ticks} ticks, written to ${digestOut} in ${((realNow() - started) / 1000).toFixed(1)} s`);
-      printCensus(candidate.label, results);
+      if (printCensus(candidate.label, results)) {
+        console.log("FROZEN: monsters with a route and nothing in their way stood 3 s or more");
+        process.exitCode = 1;
+      }
       return;
     }
 
@@ -310,7 +316,7 @@ const main = async () => {
         (failures ? `; ${failures} timer callback(s) threw` : "")
     );
     printCensus(`\nbase ${base.label}`, baseResults);
-    printCensus(`candidate ${candidate.label}`, candidateResults);
+    const frozen = printCensus(`candidate ${candidate.label}`, candidateResults);
     const explainCount = Math.max(0, Number(argument("explain", 3)));
     for (const difference of differing.slice(0, explainCount)) {
       if (difference.tick < 0) continue;
@@ -327,7 +333,8 @@ const main = async () => {
         console.log(line);
       }
     }
-    process.exitCode = differing.length ? 1 : 0;
+    if (frozen) console.log("FROZEN: in the candidate, monsters with a route and nothing in their way stood 3 s or more");
+    process.exitCode = differing.length || frozen ? 1 : 0;
   } finally {
     base?.cleanup();
     candidate.cleanup();

@@ -25,6 +25,9 @@
  *               chaser, at its standoff for a kiter, 15 of slack — and
  *               whether it was still advancing: 10 or more nearer the hero
  *               over the half second before
+ *   waits       a chaser standing still behind another monster's body
+ *               within 300 of the hero, a second or more at a time:
+ *               how many and how long per chaser-minute in that range
  *   due         monster samples in reach of the hero, its cadence floor
  *               (`AttackTimer`) past since its last swing: how often a swing
  *               starts on the sample when it is at its walk's end or
@@ -91,6 +94,7 @@ export const emptyCrowd = () => ({
     ["chase", "kite", "teleport"].flatMap((kind) => ["contact", "other", "shot"].map((what) => [`${kind} ${what}`, emptyKind()]))
   ),
   due: { allowed: 0, allowedSwung: 0, held: 0, heldSwung: 0 },
+  waits: { chaserSamples: 0, episodes: 0, waitedMs: 0, over5: 0, over10: 0, lengths: {} },
 });
 
 const hypot = (x, y) => Math.hypot(x, y);
@@ -103,7 +107,7 @@ const hypot = (x, y) => Math.hypot(x, y);
  * chaser). `onSwing` and `onDue`, when given, are handed each swing and each
  * due sample with the gap and the advance it was counted by.
  */
-export const createCrowdMetrics = ({ tickMs = 250, onSwing = null, onDue = null } = {}) => {
+export const createCrowdMetrics = ({ tickMs = 250, onSwing = null, onDue = null, onWait = null } = {}) => {
   const counts = emptyCrowd();
   const history = new Map();
   const lastSwing = new Map();
@@ -153,6 +157,63 @@ export const createCrowdMetrics = ({ tickMs = 250, onSwing = null, onDue = null 
       into[outcome]++;
       if (b && hypot(a.bx - b.bx, a.by - b.by) < a.r + b.r - OVERLAP_DEPTH) into.overlapping++;
     }
+  };
+
+  /**
+   * Waits behind another monster (`waits`), as tools/barrel2's waitcorpus
+   * counts them: a chaser whose body is within 300 of the hero's and not in
+   * contact (15 of slack), with another monster's body in its way — within
+   * 70 degrees of the line to the hero and within both radii and 12 —
+   * standing within 4 of where it stood when it began; an episode of a
+   * second or more is a wait. `onWait` is handed each one as it ends, with
+   * what the monster, the one in its way and the hero did.
+   */
+  const waiting = new Map();
+  const closeWait = (id, entry, t, a, hero, how) => {
+    waiting.delete(id);
+    const length = t - entry.t0;
+    if (!entry.ahead || length < 1000) return;
+    const w = counts.waits;
+    w.episodes++;
+    w.waitedMs += length;
+    if (length >= 5000) w.over5++;
+    if (length >= 10000) w.over10++;
+    const bin = length >= 20000 ? "20+" : String(Math.floor(length / 1000));
+    w.lengths[bin] = (w.lengths[bin] ?? 0) + 1;
+    onWait?.({ id, length, t0: entry.t0, t, how, entry, monster: a, hero });
+  };
+  const sampleWaits = (t, hero, monsters) => {
+    const seen = new Set();
+    for (const a of monsters) {
+      if (a.kind !== "chase" || !a.mover || !hero) continue;
+      const toHero = hypot(hero.bx - a.bx, hero.by - a.by);
+      const entry = waiting.get(a.id);
+      const inRange = toHero < 300 && toHero > a.r + hero.r + 15;
+      let ahead = null;
+      if (inRange) {
+        counts.waits.chaserSamples++;
+        const ux = (hero.bx - a.bx) / toHero;
+        const uy = (hero.by - a.by) / toHero;
+        for (const b of monsters) {
+          if (b === a) continue;
+          const ox = b.bx - a.bx;
+          const oy = b.by - a.by;
+          const d = hypot(ox, oy);
+          if (d > a.r + b.r + 12) continue;
+          if ((ox * ux + oy * uy) / (d || 1) > 0.34) {
+            ahead = b;
+            break;
+          }
+        }
+      }
+      seen.add(a.id);
+      const moved = !entry || hypot(a.x - entry.x, a.y - entry.y) > 4;
+      if (moved || !ahead) {
+        if (entry) closeWait(a.id, entry, t, a, hero, moved ? "moved" : "way open");
+        waiting.set(a.id, { t0: t, x: a.x, y: a.y, ahead: Boolean(ahead), blocker: ahead?.id ?? null, hx: hero.x, hy: hero.y, toHero });
+      }
+    }
+    for (const [id, entry] of waiting) if (!seen.has(id)) closeWait(id, entry, t, null, hero, "gone");
   };
 
   /**
@@ -245,6 +306,7 @@ export const createCrowdMetrics = ({ tickMs = 250, onSwing = null, onDue = null 
         }
       }
     }
+    if (hero) sampleWaits(t, hero, monsters);
     for (const { id } of swung) lastSwing.set(id, t);
     for (const monster of monsters) {
       const past = history.get(monster.id) ?? [];
@@ -296,5 +358,14 @@ export const describeCrowd = (crowd) => {
   lines.push(
     `  due in reach: allowed ${d.allowed} swung ${share(d.allowedSwung, d.allowed)}  held ${d.held} swung ${share(d.heldSwung, d.held)}`
   );
+  const w = crowd.waits;
+  if (w) {
+    const minutes = (w.chaserSamples * 0.25) / 60;
+    const per = (n) => (minutes > 0 ? (n / minutes).toFixed(2) : "-");
+    lines.push(
+      `  waits behind a monster: ${w.episodes} in ${minutes.toFixed(1)} chaser-min, ${per(w.episodes)}/min, ` +
+        `${per(w.waitedMs / 1000)} s waiting/min, 5 s or more ${w.over5}, 10 s or more ${w.over10}, lengths ${JSON.stringify(w.lengths)}`
+    );
+  }
   return lines;
 };
