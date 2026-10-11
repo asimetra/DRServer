@@ -54,7 +54,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
   ]);
   const aiMutant = mutantRoot(TOOL_ROOT, [
     {
-      file: "src/socket/ai.js",
+      file: "src/socket/behaviours/chase.js",
       from: "const NPC_WALK_ACCELERATION_SECONDS = 0.9;",
       to: "const NPC_WALK_ACCELERATION_SECONDS = 0.8;",
     },

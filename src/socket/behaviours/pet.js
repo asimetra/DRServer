@@ -2,6 +2,7 @@ import { contact } from "../body.js";
 import { inBand } from "../npc-act.js";
 import { nearestTo } from "../npc-crowd.js";
 import { collectNearbyForPet } from "../pickups.js";
+import { STILL, walkTowards } from "./chase.js";
 import { backsOffFrom } from "./kite.js";
 
 /**
@@ -81,9 +82,15 @@ export const petRetreat = (actor, { target, route, distance, stopAt, bodies, top
     !(ai.attacks ?? []).some((attack) => !attack.projectile && inBand(attack, distance, bodies, now, true));
   if (!backsOut) return null;
   const retreat = Math.min(topSpeed * deltaSeconds, stopAt - distance);
-  if (!(distance > 0.001)) return { x: 0, y: 0 };
+  if (!(distance > 0.001)) return STILL;
   return {
+    ...STILL,
     x: ((actor.position.x - target.x) / distance) * retreat,
     y: ((actor.position.y - target.y) / distance) * retreat,
   };
+};
+
+/** A pet walks, at its full speed, unless it is backing out. */
+export const pet = {
+  intent: (turn) => petRetreat(turn.actor, turn) ?? walkTowards(turn, false),
 };

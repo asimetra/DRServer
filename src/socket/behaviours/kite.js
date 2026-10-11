@@ -1,3 +1,5 @@
+import { STILL, walkTowards } from "./chase.js";
+
 /**
  * A kiter's back-off: KITE_AI keeps its distance by backing off now and then
  * from whoever stands inside its keep distance, not by holding a ring.
@@ -178,4 +180,21 @@ export const backOffHeadway = (actor, away, before, topSpeed, deltaSeconds) => {
   ) {
     endBackOff(actor.ai);
   }
+};
+
+/**
+ * KITE_AI: it walks as a chaser does, to contact or its keep distance, and
+ * now and then backs off instead (`backOffTurn`, which the tick asks before
+ * the intent). A back-off that got nowhere is over (`backOffHeadway`).
+ */
+export const kite = {
+  prepare: (turn) => backOffTurn(turn.session, turn.actor, turn.victim, turn),
+  intent: (turn) => {
+    if (!backingOff(turn.ai, turn.away, turn.now)) return walkTowards(turn, true);
+    const step = backOffStep(turn.ai, turn.away, turn.topSpeed, turn.deltaSeconds);
+    return step ? { ...STILL, x: step.x, y: step.y, away: turn.away } : STILL;
+  },
+  moved: (turn, intent, before) => {
+    if (intent.away) backOffHeadway(turn.actor, intent.away, before, turn.topSpeed, turn.deltaSeconds);
+  },
 };
