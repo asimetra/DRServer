@@ -37,6 +37,7 @@ import {
 } from "./combat.js";
 import { hasLineOfSight } from "./navigation.js";
 import { bodyBlocked, bodyClearSpot, furthestAttackRange, rowBody, rowBodyRadius } from "./body.js";
+import { petAiOf } from "./behaviours/pet.js";
 import { inFrontOf, worldColliders } from "./heading.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
@@ -593,12 +594,9 @@ export const spawnPlaceable = async (
         ...primaryAttack,
         kind: "pet",
         ownerDoid: session.heroDoid,
-        tetherDistance: Math.max(0, Number(npc.TetherDist ?? 0)),
-        tetherTimerMs: Math.max(0, Number(npc.TetherTimer ?? 0) * 1000),
-        returnDistance: Math.max(0, Number(npc.ReturnDist ?? 0)),
+        ...petAiOf(npc),
         targetTimerMs: Math.max(0, Number(npc.ChangeTargetT ?? 2) * 1000),
         targetRandMs: Math.max(0, Number(npc.ChangeTargetRand ?? 0) * 1000),
-        collects: { gold: false, xp: false, crowd: false },
         state: "idle",
         engaged: false,
         aggroRadius: Math.max(0, Number(npc.AggroRadius ?? 600)),

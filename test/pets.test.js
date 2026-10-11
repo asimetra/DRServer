@@ -7,8 +7,6 @@ import {
   cancelPetRespawn,
   spawnEquippedPet,
 } from "../src/socket/dungeon.js";
-import { loadGameMaster } from "../src/gamemaster.js";
-import { loadNavigationLibrary } from "../src/socket/navigation.js";
 import { CLID, OP, TEAM } from "../src/socket/opcodes.js";
 import { PacketReader } from "../src/socket/packet.js";
 import {
@@ -16,71 +14,9 @@ import {
   petSpawnPosition,
   scaledNpcWeaponPower,
 } from "../src/pets.js";
-import { experienceForLevel } from "../src/progression.js";
 import { netAttackDamage } from "../src/combat-damage.js";
 import { readFrame, readNpc } from "./helpers/floor.js";
-
-const contextWithPet = async (level = 75, npcId = 3301) => {
-  await loadNavigationLibrary();
-  const gm = await loadGameMaster();
-  const hero = gm.heroById.get(102);
-  const avatar = {
-    id: 7001,
-    avatar_id: hero.Id,
-    experience: experienceForLevel(gm, hero, level),
-  };
-  const account = {
-    id: 9001,
-    account_pets: [
-      { id: 81, npc_id: npcId, equipped_hero: avatar.id, is_new: 0 },
-    ],
-  };
-  const petSpawn = equippedPetSpawn(gm, account, avatar, hero);
-  const sent = [];
-  let nextDoid = 8000;
-  const session = {
-    id: 9,
-    accountId: account.id,
-    dungeonActive: true,
-    dungeonEpoch: 1,
-    floorDoid: 1002,
-    heroDoid: avatar.id,
-    heroPosition: { x: 1000, y: 1000 },
-    petSpawn,
-    objects: new Map([
-      [1002, CLID.DistributedDungeonFloor],
-      [avatar.id, CLID.HeroGameObject],
-    ]),
-    actors: new Map([
-      [
-        avatar.id,
-        {
-          hitPoints: 500,
-          maxHitPoints: 500,
-          collisionRadius: 26,
-          position: { x: 1000, y: 1000 },
-          team: TEAM.PLAYERS,
-        },
-      ],
-    ]),
-    sent,
-    send: (frame) => sent.push(frame),
-    allocateDoid(clid) {
-      const doid = nextDoid++;
-      this.objects.set(doid, clid);
-      return doid;
-    },
-  };
-  const context = {
-    session,
-    floorDoid: session.floorDoid,
-    heroDoid: session.heroDoid,
-    mapNodeId: 50002,
-    gm,
-    isActive: () => session.dungeonActive,
-  };
-  return { gm, hero, avatar, account, session, context, petSpawn };
-};
+import { contextWithPet } from "./helpers/pets.js";
 
 test("an equipped inventory pet inherits its hero's level and only valid pet rows spawn", async () => {
   const { gm, hero, avatar, account } = await contextWithPet(75);
@@ -247,17 +183,17 @@ test("a dragon ignores distant rooms and opens with its fireball from range", as
   assert.deepEqual(pet.position, { x: 1000, y: 889 });
   assert.equal(pet.ai.state, "idle");
 
-  session.actors.get(enemyDoid).position = { x: 1500, y: 889 };
-  await tickNpcAi(session, 2000, 0.25);
   /**
-   * One step at it, and the fireball from there. The hero stands 111 below
-   * the dragon, inside the standoff a pet keeps from its player
-   * (`separationDisplacement`), so the step also takes it off him and comes
-   * to 91 along rather than 100; the crowd used to miss him in a cell the
-   * size of one walking step.
+   * Within its aggro radius, and within its TetherDist (300) of its owner,
+   * who has walked on towards it: a pet takes on nothing it would have to
+   * leave its owner's side for.
    */
-  assert.ok(pet.position.x > 1080 && pet.position.x <= 1100, `walked at the enemy: ${pet.position.x}`);
-  assert.ok(pet.position.y < 889, "and off its player");
+  session.actors.get(enemyDoid).position = { x: 1500, y: 889 };
+  session.heroPosition = { x: 1300, y: 889 };
+  session.actors.get(session.heroDoid).position = { x: 1300, y: 889 };
+  await tickNpcAi(session, 2000, 0.25);
+  // One step at it, and the fireball from there.
+  assert.ok(pet.position.x > 1090 && pet.position.x <= 1100, `walked at the enemy: ${pet.position.x}`);
   assert.equal(pet.ai.state, "attack");
   assert.ok(
     Math.hypot(

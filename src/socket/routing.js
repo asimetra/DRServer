@@ -172,6 +172,14 @@ const currentRouting = (actor, navigation, target, radius, now) => {
   return ai.routing;
 };
 
+/**
+ * Whether its body, its feet at `place`, may swing at `victim` (an actor;
+ * feet at `target`) from there: within `reach`, and in sight by the line of
+ * no width a swing is let go on (`seesBody`).
+ */
+const swingsAt = (navigation, actor, place, victim, target, reach) =>
+  squaredDistanceTo(place, target) <= reach * reach && seesBody(navigation, actor, place, victim, target);
+
 /** Passes the points the body already stands at. */
 const passReachedPoints = (routing, position, radius) => {
   const reachedDistance = Math.max(18, radius * 0.5);
@@ -253,8 +261,7 @@ export const routeToTarget = (session, actor, target, now, heroes = [], reach = 
    */
   if (points.endsShort) {
     const end = points.at(-1);
-    const swingsFrom = (place) =>
-      squaredDistanceTo(place, target) <= reach * reach && seesBody(navigation, actor, place, victim, target);
+    const swingsFrom = (place) => swingsAt(navigation, actor, place, victim, target, reach);
     const endBetter =
       swingsFrom(end) &&
       (!swingsFrom(actor.position) || squaredDistanceTo(end, target) < squaredDistanceTo(actor.position, target));
@@ -263,4 +270,28 @@ export const routeToTarget = (session, actor, target, now, heroes = [], reach = 
     return route(target, { steers: true, exhausted });
   }
   return route(waypoint, { exhausted });
+};
+
+/**
+ * Whether `actor` can get at `candidate` (a candidate of the crowd: its
+ * `actor` and `position`) from where it stands, to swing at it from
+ * `reach`, keeping to the places `keepsTo` allows: it may swing from here,
+ * it can walk straight at it, or a route search finds a way, through allowed
+ * points only, that ends at it or ends short where it may swing from. The
+ * route search is the one `routeToTarget` makes (`bodyRoute`, and its memo),
+ * from the same place to the same point, so the walk that follows a yes
+ * does not search again. A body in the scenery is not asked: the way out
+ * comes first, and from inside a collider no search finds anything.
+ */
+export const canGetAt = (navigation, actor, candidate, reach, keepsTo = () => true) => {
+  if (!navigation) return true;
+  const { actor: victim, position: target } = candidate;
+  const radius = bodyRadius(actor);
+  if (bodyBlocked(navigation, actor, actor.position, radius)) return true;
+  if (swingsAt(navigation, actor, actor.position, victim, target, reach)) return true;
+  const aim = aimAt(actor, victim, target);
+  if (keepsTo(aim) && bodyWalkClear(navigation, actor, actor.position, aim, radius)) return true;
+  const points = bodyRoute(actor.ai, navigation, actor, actor.position, aim, radius);
+  if (!points.length || !points.every(keepsTo)) return false;
+  return !points.endsShort || swingsAt(navigation, actor, points.at(-1), victim, target, reach);
 };

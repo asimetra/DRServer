@@ -12,6 +12,7 @@ import { worldColliders } from "./heading.js";
 import { npcAttackChoices } from "./npc-attacks.js";
 import { addNavigationObstacle, retireNavigationObject } from "./navigation.js";
 import { authoredBodyRadius, furthestAttackRange } from "./body.js";
+import { petAiOf } from "./behaviours/pet.js";
 import { config } from "../config.js";
 import { warn } from "../log.js";
 import { spawnNpcRewards } from "./drops.js";
@@ -569,16 +570,9 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
                     ? "ally"
                     : "enemy",
               ownerDoid: Number(options.petOwnerDoid ?? 0),
-              tetherDistance: Math.max(0, Number(npc.TetherDist ?? 0)),
-              tetherTimerMs: Math.max(0, Number(npc.TetherTimer ?? 0) * 1000),
-              returnDistance: Math.max(0, Number(npc.ReturnDist ?? 0)),
+              ...petAiOf(npc),
               targetTimerMs: Math.max(0, Number(npc.ChangeTargetT ?? 2) * 1000),
               targetRandMs: Math.max(0, Number(npc.ChangeTargetRand ?? 0) * 1000),
-              collects: {
-                gold: Boolean(npc.CollectsGold),
-                xp: Boolean(npc.CollectsXp),
-                crowd: Boolean(npc.CollectsCrowd),
-              },
               state: "idle",
               attackLockedUntil: 0,
               /**

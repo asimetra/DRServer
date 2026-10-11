@@ -233,7 +233,8 @@ export const separateIdleNpc = (
  *
  * Each candidate holds the actor's own position, not a copy, so one that has
  * already moved in this tick is found where it now stands. A hidden teleporter
- * is not on the floor. `petAggressors` is how many enemies are on each pet,
+ * is not on the floor. `navigation` is the floor's scenery, which a pet's
+ * pick asks of (npc-targeting.js). `petAggressors` is how many enemies are on each pet,
  * which targeting keeps current as it goes (npc-targeting.js).
  */
 export const senseCrowd = (session, actors, deltaSeconds) => {
@@ -271,6 +272,7 @@ export const senseCrowd = (session, actors, deltaSeconds) => {
     );
   }
   return {
+    navigation: session.navigation ?? null,
     heroes,
     heroDoids,
     spatialIndex,

@@ -1,7 +1,10 @@
+import { contact } from "./body.js";
+import { reachOf } from "./npc-act.js";
 import { nearestTo, squaredDistanceTo } from "./npc-crowd.js";
-import { forgetRoute } from "./routing.js";
+import { canGetAt, forgetRoute } from "./routing.js";
 import { forgetBackOff } from "./behaviours/kite.js";
-import { petTarget } from "./behaviours/pet.js";
+import { backAt, leashed, ownerOf, pickUpFor } from "./behaviours/pet.js";
+import { teleportsOnCycle } from "./behaviours/teleport.js";
 
 /**
  * Who each one goes for this tick, one selector per kind.
@@ -48,7 +51,10 @@ const stillLocked = (ai, now) => now < (ai.nextTargetAt ?? 0);
 /**
  * The target is gone or out of reach: everything it was doing about it is
  * dropped, its way out of the scenery too (`forgetRoute`). It shows as idle,
- * which the AI says for it (ai.js `letGo`).
+ * which the AI says for it (ai.js `letGo`). When it next picks is left as it
+ * was: with no target to hold, every selector but the pet's picks again at
+ * once, and the pet looks again at what it passed over on its own clock
+ * (`petTarget`).
  *
  * A cage release given up on hands the cage's mouth on as the way out after
  * letting go, not through it (npc-release.js `endRelease`).
@@ -59,7 +65,6 @@ export const clearNpcTarget = (actor) => {
   ai.engaged = false;
   forgetRoute(ai);
   ai.targetDoid = null;
-  ai.nextTargetAt = 0;
   ai.walkSpeed = 0;
   ai.attackLockedUntil = 0;
   forgetBackOff(ai);
@@ -151,6 +156,89 @@ const allyTarget = ({ huntable }, actor, now) => {
     ? locked
     : lockOn(ai, nearestTo(actor.position, huntable), now);
   return victim ? fighting(victim) : LET_GO;
+};
+
+/**
+ * A pet's pick, when it has none to hold: the monster nearest it that it can
+ * get at without leaving its tether (`canGetAt`, routing.js — from where it
+ * stands, straight, or by a route all within TetherDist of its owner; a
+ * teleporter, which comes back beside its victim, at anything), among those
+ * within its AggroRadius and within its TetherDist of its owner. A way out
+ * past the tether would only end in the leash and back, again and again: a
+ * dragon so went to and fro at a skeleton round a corner, 300 from its
+ * owner every other second (tools/ai-sim.js, scenario pet-dragon seed 2).
+ * One it cannot get at is passed over until it looks again, `ChangeTargetT`
+ * after it last picked (`lockOn`): the search for a way to it is not made
+ * every tick, and one that becomes reachable is taken then. Null for none.
+ */
+const petPick = ({ petTargets, navigation }, actor, owner, now) => {
+  const { ai } = actor;
+  if (!stillLocked(ai, now) || !ai.passedOver) ai.passedOver = new Set();
+  const tether = ai.tetherDistance > 0 ? ai.tetherDistance : Infinity;
+  const candidates = petTargets
+    .filter(
+      ({ doid, position }) =>
+        !ai.passedOver?.has(doid) &&
+        distanceTo(actor.position, position) <= ai.aggroRadius &&
+        distanceTo(owner.position, position) <= tether
+    )
+    .sort((a, b) => squaredDistanceTo(actor.position, a.position) - squaredDistanceTo(actor.position, b.position));
+  const withinTether = (point) => distanceTo(owner.position, point) <= tether;
+  const getsAt = (candidate) =>
+    teleportsOnCycle(actor) ||
+    canGetAt(navigation, actor, candidate, reachOf(ai, contact(actor, candidate.actor)), withinTether);
+  for (const candidate of candidates) {
+    if (getsAt(candidate)) return lockOn(ai, candidate, now);
+    ai.passedOver.add(candidate.doid);
+  }
+  if (!stillLocked(ai, now)) lockOn(ai, null, now);
+  return null;
+};
+
+/**
+ * A player's pet, the same for every pet row, every number its row's
+ * (behaviours/pet.js `petAiOf`):
+ *
+ *   leash   once farther than TetherDist from its owner it drops what it
+ *           fights and walks back, and takes nothing on until it is back
+ *           at ReturnDist (`leashed`);
+ *   target  what it picked it holds until ChangeTargetT is up (`lockOn`)
+ *           or the target is gone, and then picks again (`petPick`): a
+ *           target it lost sight of and has no way to is held that long at
+ *           most, and no timer of its own is needed. The official wolf
+ *           (ChangeTargetT 2) stood facing a monster behind a wall 3.8% of
+ *           its time, 14 times in 20 pet-minutes and 7 s at the longest
+ *           (the time counted from 2 s of standing); ours, going for the
+ *           nearest monster whatever stood between them, 3.4% over 110
+ *           pet-minutes, up to 33 s, and 37% in socket-20261012-013624;
+ *   idle    with nothing to fight it follows its owner, by a route, to
+ *           ReturnDist, and stands there (`backAt`). The official rests
+ *           nearer, p50 0.61, 0.68 and 0.55 of ReturnDist for the wolf,
+ *           rhino and dragon, but in 7, 17 and 5 stands; on the official
+ *           owners' own tracks neither ending the walk at ReturnDist nor
+ *           a whole tick's walk past it gives that, so it ends where the
+ *           row says.
+ *
+ * Null when its owner is not on the floor, and when it is back at its
+ * owner with nothing to fight: either way it lets go and stands.
+ */
+const petTarget = (crowd, actor, now) => {
+  const { ai } = actor;
+  const owner = ownerOf(crowd.heroes, ai);
+  if (!owner) return null;
+  pickUpFor(owner, actor, now);
+  const ownerDistance = distanceTo(actor.position, owner.position);
+  const following = { victim: owner, following: true };
+  if (leashed(actor, owner, ownerDistance)) {
+    ai.targetDoid = null;
+    ai.engaged = false;
+    return following;
+  }
+  const locked = crowd.petTargets.find(({ doid }) => doid === ai.targetDoid);
+  const victim = locked && stillLocked(ai, now) ? locked : petPick(crowd, actor, owner, now);
+  if (victim) return fighting(victim);
+  ai.engaged = false;
+  return backAt(actor, owner, ownerDistance) ? null : following;
 };
 
 /** One selector per `ai.kind`; anything else picks as an enemy does. */
