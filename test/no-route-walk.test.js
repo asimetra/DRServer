@@ -5,6 +5,7 @@ import { tickNpcAi } from "../src/socket/ai.js";
 import {
   createNavigationState,
   findPath,
+  hasLineOfSight,
   isPositionBlocked,
   setNavigationTriggerState,
 } from "../src/socket/navigation.js";
@@ -20,7 +21,8 @@ import { CLID } from "../src/socket/opcodes.js";
  * are the things that walk has to get right: it goes at BaseMove and stops at
  * the wall without grinding, a ranged one still shoots through a gap its body
  * does not fit, a gate opening gives it a real route, a kiter keeps its
- * distance, and a route that ends short of the hero ends in the same walk.
+ * distance, and a route that ends short of the hero ends where he is in
+ * sight, if anywhere the body can get to has him in sight.
  */
 
 const rectangle = (x, y, halfWidth, halfHeight) => ({
@@ -132,7 +134,7 @@ test("with no route it walks at BaseMove to the wall and stands there", async ()
   assert.ok(distance() < 240, `it did not close on the hero: ${distance().toFixed(0)}`);
 });
 
-test("a ranged monster with no route shoots through a gap its body does not fit", async () => {
+test("a ranged monster shoots through a gap its body does not fit", async () => {
   const navigation = createNavigationState({
     bounds: { minX: 0, minY: 0, maxX: 600, maxY: 600 },
     cellSize: 30,
@@ -140,7 +142,10 @@ test("a ranged monster with no route shoots through a gap its body does not fit"
   });
   const hero = { x: 100, y: 300 };
   const start = { x: 500, y: 300 };
-  assert.deepEqual(findPath(navigation, start, hero, RADIUS), [], "a 30 u gap is no route for a 40 u body");
+  // A 30 u gap lets no 40 u body through: the route ends short, at its mouth, with the hero in sight.
+  const route = findPath(navigation, start, hero, RADIUS);
+  assert.equal(route.endsShort, true);
+  assert.ok(hasLineOfSight(navigation, route.at(-1), hero, 0), `the route ends in sight of him: ${JSON.stringify(route)}`);
   const { actor, run, swings } = makeSession({
     navigation,
     hero,
@@ -216,14 +221,12 @@ test("a kiter with no route keeps its distance rather than walking to the wall",
   assert.ok(distance() >= 290, `and get back out to it: ${distance().toFixed(0)}`);
 });
 
-test("a route that ends short is walked to its end, and on from there straight at the hero", async () => {
+test("a route that ends short is walked to its end, where it stands and swings", async () => {
   /**
    * The hero in a slot between two boxes that a body of 26 does not fit, a
-   * wall between them: the route ends short, at the anchor of the open cell
-   * nearest the hero, above the upper box (navigation.test.js). From there
-   * the walk is the straight one: down the box's side to the slot's mouth,
-   * where it stands and swings. A route searched again from the mouth ends
-   * at the same anchor, behind it, and is not walked back to.
+   * wall between them: the route ends short, at the slot's mouth, where the
+   * hero is in sight (navigation.test.js). The monster walks it to its end,
+   * swings from there, and stays: nothing nearer has him in sight.
    */
   const navigation = createNavigationState({
     bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
@@ -252,4 +255,35 @@ test("a route that ends short is walked to its end, and on from there straight a
   const later = await run(80);
   const drift = Math.max(...later.map((at) => Math.hypot(at.x - end.x, at.y - end.y)));
   assert.ok(drift < 2, `it should stay at the mouth, not move ${drift.toFixed(2)} u`);
+});
+
+test("a hero in a pocket it cannot enter is struck through the slit, from the far side", async () => {
+  /**
+   * Walled on three sides, a slit of 30 on the east that a body of 20 does
+   * not pass, the hero 25 from the west wall: the nearest the monster can
+   * stand to him is behind that wall, out of sight. It walks round to the
+   * slit, where he is in sight and in reach, swings, and stays.
+   */
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    cellSize: 60,
+    staticColliders: [
+      rectangle(400, 450, 10, 80),
+      rectangle(450, 380, 60, 10),
+      rectangle(450, 520, 60, 10),
+      rectangle(500, 407.5, 10, 27.5),
+      rectangle(500, 492.5, 10, 27.5),
+    ],
+  });
+  const hero = { x: 425, y: 450 };
+  const { actor, run, distance, swings } = makeSession({ navigation, hero, monster: { x: 150, y: 450 } });
+
+  await run(60);
+  const end = { ...actor.position };
+  assert.ok(end.x > 500, `it should go round to the slit, not stand at ${JSON.stringify(end)}`);
+  assert.ok(hasLineOfSight(navigation, end, hero, 0), `with the hero in sight: ${JSON.stringify(end)}`);
+  assert.ok(swings() >= 1, `and swing, ${distance().toFixed(0)} from him`);
+  const later = await run(40);
+  const drift = Math.max(...later.map((at) => Math.hypot(at.x - end.x, at.y - end.y)));
+  assert.ok(drift < 2, `it should stay there, not move ${drift.toFixed(2)} u`);
 });

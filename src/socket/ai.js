@@ -3,7 +3,7 @@ import { info, warn } from "../log.js";
 import { bodyRadius, contact } from "./body.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { matchStateOf, worldOf } from "./match-world.js";
-import { act } from "./npc-act.js";
+import { act, reachOf } from "./npc-act.js";
 import { boundedPush, nobodyToFight, senseCrowd, separateIdleNpc, separationDisplacement } from "./npc-crowd.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
 import { advanceNpcRelease } from "./npc-release.js";
@@ -187,7 +187,9 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   }
 
   const may = whatItMayDo(session, doid, ai, now);
-  const route = isStationary(ai) ? NO_ROUTE_ASKED : routeToTarget(session, actor, target, now, crowd.heroes);
+  const route = isStationary(ai)
+    ? NO_ROUTE_ASKED
+    : routeToTarget(session, actor, target, now, crowd.heroes, following ? Infinity : reachOf(ai, bodies));
   if (state.debugAi && route.waypoint) traceRoute(doid, actor, route, target);
   const behaviour = behaviourOf(ai);
   const turn = {

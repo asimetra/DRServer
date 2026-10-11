@@ -712,14 +712,14 @@ test("the yeti's dead pocket on a laid-out ice cave has a way out", async () => 
   }
 });
 
-test("a route to a target in a slot the body cannot enter ends short, at the anchor nearest it", () => {
+test("a route to a target in a slot the body cannot enter ends short, at the slot's mouth", () => {
   /**
    * A target between two boxes, in a slot 40 units wide that a body of 26
    * fits nowhere near; a wall between it and the start, so the route has to
-   * be searched. The search lands on the open cell nearest the target, above
-   * the upper box, and the route ends at its anchor and says it ends short.
-   * The rest — sliding down the box's side to the slot's mouth — is the AI's
-   * straight walk (test/no-route-walk.test.js), not the route's.
+   * be searched. It ends at the nearest place the body can get to with the
+   * target in sight — the slot's west mouth, 90 from it — and says it ends
+   * short. It used to end at the open cell nearest the target on the grid,
+   * above the upper box, 108 from it and out of sight.
    */
   const radius = 26;
   const navigation = createNavigationState({
@@ -737,11 +737,63 @@ test("a route to a target in a slot the body cannot enter ends short, at the anc
   assert.equal(path.endsShort, true, "the route says it does not reach the target");
   const end = assertWalkable(navigation, start, path, radius);
   assert.equal(isPositionBlocked(navigation, end, radius), false, "the route ends where the body can stand");
-  assert.notDeepEqual(end, target);
+  assert.ok(hasLineOfSight(navigation, end, target, 0), `the route ends with the target in sight, not at ${JSON.stringify(end)}`);
+  assert.ok(Math.hypot(end.x - target.x, end.y - target.y) <= 90.5, `at the mouth, not ${JSON.stringify(end)}`);
 
   const open = findPath(navigation, start, { x: 480, y: 300 }, radius);
   assert.deepEqual(open.at(-1), { x: 480, y: 300 }, "a target the body can stand at is reached");
   assert.equal(open.endsShort, undefined, "and that route says nothing more");
+});
+
+/**
+ * A pocket the body cannot enter: walled on three sides, and on the fourth,
+ * the east, a slit of 30 that a body of 26 does not pass. The target stands
+ * in it 25 from the west wall.
+ */
+const pocket = () =>
+  createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 900, maxY: 900 },
+    cellSize: 60,
+    staticColliders: [
+      rectangle(400, 450, 10, 80),
+      rectangle(450, 380, 60, 10),
+      rectangle(450, 520, 60, 10),
+      rectangle(500, 407.5, 10, 27.5),
+      rectangle(500, 492.5, 10, 27.5),
+    ],
+  });
+
+test("a route to a target in a pocket ends where the slit shows it, not behind the nearer wall", () => {
+  /**
+   * The nearest place the body can stand is west of the pocket, against the
+   * wall the target stands 25 from, and the nearest open cell on the grid is
+   * there too; neither sees the target. The route goes round the pocket to
+   * the slit's side and ends where the target is in sight through it,
+   * farther from it on the grid but the only place a swing could go from.
+   */
+  const radius = 26;
+  const navigation = pocket();
+  const start = { x: 150, y: 450 };
+  const target = { x: 425, y: 450 };
+  assert.equal(isPositionBlocked(navigation, target, radius), true, "the body does not fit where the target stands");
+  assert.equal(isPositionBlocked(navigation, { x: 500, y: 450 }, radius), true, "but not through its slit");
+  assert.equal(hasLineOfSight(navigation, { x: 360, y: 450 }, target, 0), false, "the west wall hides it");
+
+  const path = findPath(navigation, start, target, radius);
+  assert.equal(path.endsShort, true);
+  const end = assertWalkable(navigation, start, path, radius);
+  assert.ok(end.x > 510, `the route ends east of the pocket, not at ${JSON.stringify(end)}`);
+  assert.ok(hasLineOfSight(navigation, end, target, 0), `with the target in sight through the slit: ${JSON.stringify(end)}`);
+  assert.ok(Math.hypot(end.x - target.x, end.y - target.y) < 130);
+});
+
+test("a target nothing the body can reach sees has no route", () => {
+  // The same pocket with its slit shut: no place it can get to shows the
+  // target, and a place that does not is no use to it. With no route, the AI
+  // walks straight at the target (test/no-route-walk.test.js).
+  const navigation = pocket();
+  addNavigationObstacle(navigation, "shutter", [rectangle(500, 450, 10, 20)]);
+  assert.deepEqual(findPath(navigation, { x: 150, y: 450 }, { x: 425, y: 450 }, 26), []);
 });
 
 test("a target standing clear just past the end of a wall is reached, not its neighbour's anchor across the wall", () => {
@@ -794,5 +846,29 @@ test("a knight's route to a hero between the prison's barrel racks ends short, w
     assert.equal(path.endsShort, true);
     const end = assertWalkable(navigation, knight, path, radius);
     assert.equal(isPositionBlocked(navigation, end, radius), false);
+  }
+});
+
+test("with all four racks standing the knight's route ends where the hero is in sight, not behind the wall", async () => {
+  /**
+   * The same hero with the north-east rack standing too. The open cell
+   * nearest him on the grid is behind CASTLE_PRISON_WALL_C @154,570, at
+   * (90,498), 201 away and out of sight, and every route from the east went
+   * there. He is in sight from a strip of floor east of the racks a few units
+   * wide; the route ends on it, 151 from him.
+   */
+  const radius = 42;
+  const floor = await loadFloor("scenario-test/db_floor_GAPS_CASTLE_PRISON.json");
+  const navigation = createNavigationState(floor.navigation);
+  for (const [index, placement] of floor.placements.npc.entries()) {
+    if (placement.navigationColliders?.length) addNavigationObstacle(navigation, `prop-${index}`, placement.navigationColliders);
+  }
+  const hero = { x: 167, y: 684 };
+  for (const knight of [{ x: 300.9, y: 641.1 }, { x: 346, y: 639 }, { x: 600, y: 640 }, { x: 150, y: 450 }]) {
+    const path = findPath(navigation, knight, hero, radius);
+    assert.equal(path.endsShort, true, `from ${JSON.stringify(knight)}`);
+    const end = assertWalkable(navigation, knight, path, radius);
+    assert.ok(hasLineOfSight(navigation, end, hero, 0), `from ${JSON.stringify(knight)} it ends out of sight at ${JSON.stringify(end)}`);
+    assert.ok(Math.hypot(end.x - hero.x, end.y - hero.y) < 160, `from ${JSON.stringify(knight)} it ends at ${JSON.stringify(end)}`);
   }
 });

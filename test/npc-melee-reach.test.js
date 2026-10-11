@@ -8,6 +8,7 @@ import { loadFloor } from "../src/socket/floors.js";
 import {
   addNavigationObstacle,
   createNavigationState,
+  hasLineOfSight,
   isPositionBlocked,
   loadNavigationLibrary,
 } from "../src/socket/navigation.js";
@@ -266,23 +267,30 @@ test("a halberd at a hero between the prison's barrel racks ends inside its reac
   }
 });
 
-test("with all four racks standing it stands at them, and stays there", async () => {
-  // No route to the hero at all for a body of 42: the straight walk from the
-  // east ends against the racks, short of its reach, and does not pace there.
-  for (const from of [{ x: 300.9, y: 641.1 }, { x: 346, y: 639 }]) {
+test("with all four racks standing it walks to where it sees him, swings, and stays there", async () => {
+  // No route to the hero for a body of 42, but a strip of floor east of the
+  // racks from which he is in sight, 151 from him: within the reach. From
+  // the east it stood blind against the racks 147-153 away; from farther
+  // east and from the room north of the wall it went to the open cell
+  // nearest him, behind CASTLE_PRISON_WALL_C, 191-196 away. Neither swung.
+  for (const from of [{ x: 300.9, y: 641.1 }, { x: 346, y: 639 }, { x: 600, y: 640 }, { x: 150, y: 450 }]) {
     const walk = await walkOnPrisonFloor({ x: 167, y: 684 }, from);
     assert.equal(isPositionBlocked(walk.navigation, walk.knight.position, 42), false);
-    assert.ok(walk.distance < 210, `from ${JSON.stringify(from)} it ended ${walk.distance.toFixed(1)} away`);
+    assert.ok(hasLineOfSight(walk.navigation, walk.knight.position, { x: 167, y: 684 }, 0), `from ${JSON.stringify(from)} it ended out of sight`);
+    assert.ok(walk.distance < 208, `from ${JSON.stringify(from)} it ended ${walk.distance.toFixed(1)} away`);
+    assert.ok(walk.swings >= 1, `from ${JSON.stringify(from)} it never swung`);
     assert.ok(walk.drift < 2, `from ${JSON.stringify(from)} it kept moving: ${walk.drift.toFixed(2)} u`);
-    assert.equal(walk.knight.ai.state, "blocked");
   }
 });
 
-test("a halberd at a hero in the slot above the shut exit gate swings from within 140", async () => {
+test("a halberd at a hero in the slot above the shut exit gate swings from where its route ends", async () => {
   // Spot B of the scenario floor: (750,2380), between WALL_C and the gate.
+  // The route ends at the nearest place it can get to with him in sight,
+  // 146 away, and it stands there; walking straight on from the old end it
+  // came to 133, a spot two units nearer the wall than a route's places keep.
   for (const from of [{ x: 612, y: 2053 }, { x: 378, y: 2053 }]) {
     const walk = await walkOnPrisonFloor({ x: 750, y: 2380 }, from);
-    assert.ok(walk.distance <= 140, `from ${JSON.stringify(from)} it ended ${walk.distance.toFixed(1)} away`);
+    assert.ok(walk.distance <= 150, `from ${JSON.stringify(from)} it ended ${walk.distance.toFixed(1)} away`);
     assert.ok(walk.swings >= 1, `from ${JSON.stringify(from)} it never swung`);
     assert.ok(walk.drift < 2, `from ${JSON.stringify(from)} it kept moving: ${walk.drift.toFixed(2)} u`);
   }

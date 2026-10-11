@@ -150,18 +150,119 @@ const octileDistance = (ax, ay, bx, by) => {
   return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
 };
 
-const nearestOpenCell = (cell, columns, rows, blocked) => {
-  if (!blocked(cell.x, cell.y)) return cell;
-  for (let radius = 1; radius <= 5; radius++) {
-    for (let y = cell.y - radius; y <= cell.y + radius; y++) {
-      for (let x = cell.x - radius; x <= cell.x + radius; x++) {
-        if (x < 0 || y < 0 || x >= columns || y >= rows) continue;
-        if (Math.max(Math.abs(x - cell.x), Math.abs(y - cell.y)) !== radius) continue;
-        if (!blocked(x, y)) return { x, y };
+/** The cells a landing is looked for in, and how near the goal each could hold one; kept between searches as the heap is. */
+let landingKeys = new Int32Array(1024);
+let landingBounds = new Float64Array(0);
+/** How far from its centre a cell's lattice reaches, in cells. */
+const LATTICE_REACH = Math.max(...ANCHOR_X.map(Math.abs), ...ANCHOR_Y.map(Math.abs));
+/** How much farther from the goal than the nearest anchor a place in sight is looked for, in cells. */
+const LOOK_CELLS = 3;
+/** How far apart a landing's sight line is asked: under the thinnest board of the nine tile libraries, 6.6 units. */
+const SIGHT_STEP = 4;
+
+/**
+ * Whether the goal is in sight from (x, y) by a line of no width.
+ *
+ * `lineIsClear` asks such a line every 16 units, and a swing is let go on
+ * that; it is asked first, as it is the cheaper. But a line asked that
+ * seldom passes through a board thinner than 16, and a landing is looked for
+ * among many places: a knight in a test with a 10-unit wall between it and
+ * the hero was sent to the one point of its lattice whose samples fell
+ * either side of the wall, and swung through it. So the line is asked again,
+ * every `SIGHT_STEP`.
+ */
+const inSight = (navigation, x, y, goal) => {
+  if (!lineIsClear(navigation, x, y, goal.x, goal.y, 0, undefined)) return false;
+  const samples = Math.ceil(Math.hypot(goal.x - x, goal.y - y) / SIGHT_STEP);
+  for (let at = 1; at < samples; at++) {
+    const along = at / samples;
+    if (blockedAt(navigation, x + (goal.x - x) * along, y + (goal.y - y) * along, 0, undefined)) return false;
+  }
+  return true;
+};
+
+/**
+ * Where a route that cannot reach its goal ends, once the search has run out
+ * and so has closed every cell the body can get to: the place in those cells
+ * nearest the goal from which the goal is in sight. `{ key, point }`, the
+ * cell and the place in it, or null when there is none.
+ *
+ * In sight is a line of no width from the place to the goal. That is the line
+ * a swing is let go on: `victimInSight` (npc-act.js) draws it from the
+ * monster's feet, where the route leaves the body, and asks nothing of the
+ * body's width. A place is any point of a cell's lattice — the points its
+ * anchor was chosen among — where the body fits as at an anchor and which it
+ * can walk to straight from the anchor. Anchors alone are too few: between the
+ * prison's barrel racks a hero is in sight from a strip of floor a few units
+ * wide, which held a point of one reached cell's lattice 151 units from the
+ * hero and no anchor nearer than 403.
+ *
+ * No place in sight, no route: a place the body can stand at but not see
+ * from is no use to it, and with no route the AI walks straight at the goal,
+ * which is what the official does (routing.js). The landing this replaces,
+ * the open cell nearest the goal on the grid, was chosen without asking
+ * either: behind the prison's wall from the barrel racks, 201 from the hero,
+ * where a knight then stood.
+ *
+ * Places are looked for no more than three cells farther from the goal than
+ * the nearest of the cells' anchors. With no bound the look tries the lattice
+ * of every cell the body can reach whenever nothing sees the goal, which made
+ * the searches that cannot reach ten times dearer than with it; and of the
+ * 1123 heroes in tools/gap-census.js with a place to swing at them from that
+ * the monster could reach, it swung at 98.0% with no bound and within three
+ * cells alike, and 97.4% within one. The cells are taken by the nearest their
+ * lattice could come, and the look ends when that is no nearer than the place
+ * in hand, so a goal seen from close by costs a few sight lines.
+ */
+const placeReached = (navigation, goal, radius, grid, stamp) => {
+  const { minX, minY, cellSize, columns, size, anchorOf } = grid;
+  if (landingKeys.length < size) landingKeys = new Int32Array(size);
+  if (landingBounds.length < size) landingBounds = new Float64Array(size);
+  let count = 0;
+  let nearestDistance = Infinity;
+  for (let key = 0; key < size; key++) {
+    if (closedStamps[key] !== stamp) continue;
+    nearestDistance = Math.min(nearestDistance, squaredDistance(anchorOf(key), goal));
+    landingKeys[count++] = key;
+  }
+  if (nearestDistance === Infinity) return null;
+  const farthest = (Math.sqrt(nearestDistance) + LOOK_CELLS * cellSize) ** 2;
+  const reach = LATTICE_REACH * cellSize;
+  let kept = 0;
+  for (let at = 0; at < count; at++) {
+    const key = landingKeys[at];
+    const gapX = Math.max(0, Math.abs(minX + ((key % columns) + 0.5) * cellSize - goal.x) - reach);
+    const gapY = Math.max(0, Math.abs(minY + (Math.floor(key / columns) + 0.5) * cellSize - goal.y) - reach);
+    const bound = gapX * gapX + gapY * gapY;
+    if (bound >= farthest) continue;
+    landingBounds[key] = bound;
+    landingKeys[kept++] = key;
+  }
+  const order = landingKeys.subarray(0, kept).sort((a, b) => landingBounds[a] - landingBounds[b] || a - b);
+  let best = null;
+  let bestDistance = farthest;
+  for (let at = 0; at < kept && landingBounds[order[at]] < bestDistance; at++) {
+    const key = order[at];
+    const anchor = anchorOf(key);
+    const centreX = minX + ((key % columns) + 0.5) * cellSize;
+    const centreY = minY + (Math.floor(key / columns) + 0.5) * cellSize;
+    for (let point = 0; point < ANCHOR_X.length; point++) {
+      const x = centreX + ANCHOR_X[point] * cellSize;
+      const y = centreY + ANCHOR_Y[point] * cellSize;
+      const distance = (x - goal.x) ** 2 + (y - goal.y) ** 2;
+      if (
+        distance >= bestDistance ||
+        blockedAt(navigation, x, y, radius + ANCHOR_MARGIN, undefined) ||
+        !inSight(navigation, x, y, goal) ||
+        !lineIsClear(navigation, anchor.x, anchor.y, x, y, radius, undefined)
+      ) {
+        continue;
       }
+      best = { key, point: { x, y } };
+      bestDistance = distance;
     }
   }
-  return null;
+  return best;
 };
 
 /** A link between two anchors needing no corner; shared, since most are. */
@@ -177,9 +278,9 @@ const LINK_VIA = 3;
  * A* over the authored floor collision geometry, returning compressed world waypoints.
  *
  * The route ends at the goal, or, where the body cannot get there, at the
- * nearest place the search could bring it to; such a route carries
- * `endsShort: true`, and what the body does from its end is the AI's (see
- * routing.js). An empty route is no route at all.
+ * nearest place it can get to with the goal in sight (`placeReached`); such a
+ * route carries `endsShort: true`, and what the body does from its end is the
+ * AI's (see routing.js). An empty route is no route at all.
  *
  * A cell is open when a body fits somewhere in it, not only at its centre, and
  * the route runs through that spot — the cell's anchor. Asking the centre alone
@@ -309,27 +410,18 @@ export const findPath = (navigation, start, goal, radius = 0) => {
    * that, straight or round a corner, as it always did; else through any of
    * the nine cells round it whose anchor can, judged as the start's step is,
    * since a goal just past the end of the wall that shuts its cell has no
-   * anchor of its own. Where it cannot stand — a hero in a slot a knight does
-   * not fit — the search ends at the nearest open cell, and the route at its
-   * anchor, short of the goal. The rest is a straight walk at the goal, which
-   * the AI takes from there as it does when there is no route at all.
+   * anchor of its own. Where it cannot stand — a hero in a slot a knight
+   * does not fit — nothing walks to it, the search runs out, and the route
+   * ends at the nearest place in sight of it (`placeReached`).
    */
   const stands = !blockedAt(navigation, goal.x, goal.y, radius, undefined);
   const ownAnchor = stands ? anchorOf(goalCell.x, goalCell.y) : null;
   const ownLink = ownAnchor ? walkFrom(ownAnchor, goal) : null;
   /** The goal point as a node of the search, one past the grid. */
   const GOAL = columns * rows;
-  let target = goalKey;
-  if (!ownLink) {
-    if (stands) target = GOAL;
-    else {
-      const landing = nearestOpenCell(goalCell, columns, rows, blocked);
-      if (!landing) return [];
-      target = keyFor(landing.x, landing.y);
-    }
-  }
-  const aimX = target === GOAL ? goalCell.x : target % columns;
-  const aimY = target === GOAL ? goalCell.y : Math.floor(target / columns);
+  const target = ownLink ? goalKey : GOAL;
+  const aimX = goalCell.x;
+  const aimY = goalCell.y;
   const stamp = beginSearch(GOAL + 1);
   /**
    * Offers a node a way in; taken when it is the cheapest so far. The cell
@@ -394,7 +486,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     const currentX = currentKey % columns;
     const currentY = Math.floor(currentKey / columns);
 
-    if (target === GOAL) linkGoalFrom(currentKey, currentX, currentY);
+    if (target === GOAL && stands) linkGoalFrom(currentKey, currentX, currentY);
 
     for (let direction = 0; direction < 8; direction++) {
       const dx = STEP_X[direction];
@@ -413,21 +505,23 @@ export const findPath = (navigation, start, goal, radius = 0) => {
   }
 
   let end = target;
+  let landing = null;
   if (parentStamps[end] !== stamp) {
-    if (target !== GOAL) return [];
-    // No cell round the goal that can walk to it was reached. The search has
-    // been everywhere the body can go, so if the nearest open cell is among
-    // that, its route is on record, and the route ends there, short.
-    const landing = nearestOpenCell(goalCell, columns, rows, blocked);
-    if (!landing) return [];
-    end = keyFor(landing.x, landing.y);
-    if (parentStamps[end] !== stamp) return [];
+    // Not reached, so the search has been everywhere the body can go, and
+    // the route ends at the best place in that, short.
+    const anchorAt = (key) => anchorOf(key % columns, Math.floor(key / columns));
+    const grid = { minX: bounds.minX, minY: bounds.minY, cellSize, columns, size: GOAL, anchorOf: anchorAt };
+    const found = placeReached(navigation, goal, radius, grid, stamp);
+    if (!found) return [];
+    end = found.key;
+    landing = found.point;
   }
-  const endLink = end === GOAL ? { via: viasInto[GOAL] } : target === goalKey ? ownLink : null;
+  const endLink = end === GOAL ? { via: viasInto[GOAL] } : end === goalKey && !landing ? ownLink : null;
   const lastCell = end === GOAL ? parents[GOAL] : end;
 
   // Walked back from the last cell and turned round once, rather than built by
-  // putting each point at the front.
+  // putting each point at the front. A landing off its cell's anchor is
+  // walked to straight from it.
   const raw = [];
   for (let key = lastCell; key !== START; key = parents[key]) {
     const anchor = anchorOf(key % columns, Math.floor(key / columns));
@@ -436,6 +530,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     if (via) raw.push({ ...via });
   }
   raw.reverse();
+  if (landing && squaredDistance(raw.at(-1), landing) > 0.001) raw.push(landing);
 
   // Of those, the points a body needs to walk them in turn from the start:
   // each the farthest it can see from the one before. Every point can be

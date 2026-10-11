@@ -70,6 +70,9 @@ const victimInSight = (navigation, actor, victim, target, heroDoids) => {
   return Boolean(body) && body !== target && hasLineOfSight(navigation, origin, body, 0);
 };
 
+/** The farthest it may swing from at all, given the two bodies: the bar `act` holds a swing to. */
+export const reachOf = (ai, bodies) => furthestReach(attacksOf(ai), bodies);
+
 /**
  * Whether one attack can go from `distance` now: off its own cooldown, within
  * its reach and, when `honoursMinRange`, outside its MinRange.
@@ -231,7 +234,7 @@ export const act = async (session, turn) => {
 
   const clearAttack =
     turn.seesAlways || victimInSight(turn.navigation, actor, victim, target, turn.heroDoids);
-  if (distance > furthestReach(attacksOf(ai), bodies) || !clearAttack) return "out-of-reach";
+  if (distance > reachOf(ai, bodies) || !clearAttack) return "out-of-reach";
   // Backing off, it still shoots when its swing is due: it stands for the
   // swing (the lock above) and carries on after.
   if (turn.fleeing && (turn.cannotAttack || now < ai.nextAttackAt)) return "backing-off";

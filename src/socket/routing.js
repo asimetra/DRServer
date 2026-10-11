@@ -19,8 +19,8 @@ import { searchRoute } from "./route-memo.js";
  *   blocked    the latest route search to this target found no route. Kept
  *              while the body escapes the scenery, which does not search;
  *   steers     it walks straight at the target without seeing it — there is
- *              no route, or the route ends short of the target and has nothing
- *              nearer left to give: the waypoint is the target, and the walk
+ *              no route, or the route ends short of the target and is not
+ *              worth walking: the waypoint is the target, and the walk
  *              slides along what it meets and is not taken on a tick the
  *              scenery gives nothing back on (`stepNpc`, npc-move.js);
  *   exhausted  the route's points are used up, so there is no waypoint;
@@ -147,8 +147,8 @@ const wayOut = (navigation, actor, target, heroes, radius) => {
  * is used up. A closed route should not make every NPC redo a full map search
  * five times per second; a changed target or navigation revision retries
  * early. A route that ends short is not searched again for being used up:
- * the body walks straight on from its end, and a search from every step of
- * that walk would find the same end behind it.
+ * the body stands at its end or walks straight on from it, and a search from
+ * every step of that would find the same end.
  */
 const currentRouting = (ai, navigation, position, target, radius, now) => {
   const routing = ai.routing;
@@ -185,8 +185,12 @@ const passReachedPoints = (routing, position, radius) => {
   }
 };
 
-/** Where `actor` walks next on its way to `target`; see the module comment for the answer. */
-export const routeToTarget = (session, actor, target, now, heroes = []) => {
+/**
+ * Where `actor` walks next on its way to `target`; see the module comment for
+ * the answer. `reach` is how far it may swing at the target from (npc-act.js
+ * `reachOf`), which decides whether a route that ends short is worth walking.
+ */
+export const routeToTarget = (session, actor, target, now, heroes = [], reach = Infinity) => {
   const { ai } = actor;
   const navigation = session.navigation;
   const radius = bodyRadius(actor);
@@ -226,14 +230,35 @@ export const routeToTarget = (session, actor, target, now, heroes = []) => {
   const exhausted = waypoint === null;
   /**
    * A route that ends short of the target — a hero in a slot the body does
-   * not fit — is followed while its end is nearer the target than the body
-   * is; from there on the walk is the same straight walk as with no route at
-   * all. Its end is the anchor of the open cell nearest the target, which a
-   * body that has walked on from it is past: a route searched again from
-   * there ends at the same anchor, behind it, and is not walked back to.
+   * not fit — ends at the nearest place the body can get to with the target
+   * in sight (pathfind.js). It is walked, to its very end, when that end is a
+   * place to swing from — the target in sight, by the line of no width a
+   * swing is let go on, and within `reach` — and a better one than where the
+   * body stands: it cannot swing from there, or it can and the end is nearer.
+   * Otherwise the walk is the straight one the official takes when it has no
+   * route, and one that has come to the end of its route with the target in
+   * sight stands there: nothing nearer is in sight, so the straight walk on
+   * could only take it out of sight, and the route would bring it back —
+   * two chasers in tools/gap-census.js went to and fro so, every tick.
+   *
+   * Asking only which was nearer, a halberd knight 143 from a hero between
+   * the prison's barrel racks stood there blind rather than walk to 151,
+   * where it swings. Walked to whenever it was in sight, or nearer, an end
+   * out of reach was a detour for nothing: of the 1380 heroes a monster cannot
+   * route to in tools/gap-census.js, 21 had a chaser walk from 200 to 3400
+   * units farther than before and swing no more, against 4 with the end held
+   * to its reach, which swung as often (98.0% of those it could).
    */
-  const endNearer = () =>
-    squaredDistanceTo(points.at(-1), target) < squaredDistanceTo(actor.position, target);
-  if (points.endsShort && (exhausted || !endNearer())) return route(target, { steers: true, exhausted });
+  if (points.endsShort) {
+    const end = points.at(-1);
+    const swingsFrom = (place) =>
+      squaredDistanceTo(place, target) <= reach * reach && hasLineOfSight(navigation, place, target, 0);
+    const endBetter =
+      swingsFrom(end) &&
+      (!swingsFrom(actor.position) || squaredDistanceTo(end, target) < squaredDistanceTo(actor.position, target));
+    if (endBetter) return route(exhausted ? end : waypoint);
+    if (exhausted && hasLineOfSight(navigation, actor.position, target, 0)) return route(null, { exhausted });
+    return route(target, { steers: true, exhausted });
+  }
   return route(waypoint, { exhausted });
 };
