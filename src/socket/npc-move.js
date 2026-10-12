@@ -129,6 +129,10 @@ export const bodyRule = (walker, other, { player = false, playersSide = null, wa
  * whatever part of itself runs along a player it touches and loses the part
  * that runs through him, so a crowd arriving at one player spreads round
  * him instead of piling into him.
+ *
+ * A body of `bodies` is the `near` record itself, its rule written on it:
+ * the crowd builds those for this walker this tick, and nothing else holds
+ * them.
  */
 export const bodiesMet = (walker, near, { playersSide = null, walkingAt = null } = {}) => {
   const contacts = [];
@@ -138,7 +142,8 @@ export const bodiesMet = (walker, near, { playersSide = null, walkingAt = null }
     if (body.player) {
       if (rule === BODY.KEEP_OUT && body.out) contacts.push(body.out);
     } else if (rule !== BODY.PASS) {
-      bodies.push({ doid: body.doid, x: body.x, y: body.y, touching: body.touching, rule });
+      body.rule = rule;
+      bodies.push(body);
     }
   }
   return { contacts, bodies };

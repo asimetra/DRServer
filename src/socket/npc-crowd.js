@@ -1,6 +1,7 @@
 import { candidateSetOf } from "./actor-roles.js";
-import { bodyPointOf, bodyRadius } from "./body.js";
+import { bodyRadius } from "./body.js";
 import { heroMembersOf } from "./match-world.js";
+import { bodyOffsetOf } from "./navigation.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
 
 /**
@@ -47,6 +48,7 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
    * different heights above their feet.
    */
   const cellSize = Math.max(1, largestRadius * 2 + maximumTravel * 2 + 8);
+  // Each cell a flat list of doid, actor, doid, actor... under its `cellKey`.
   const cells = new Map();
   /** The team the players are on, as their heroes carry it (npc-move.js `bodyRule`). */
   let playersSide = null;
@@ -56,13 +58,16 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
     if ((!actor.ai && !heroDoids.has(doid)) || actor.dead || actor.teleportHidden || !actor.position) continue;
     const x = Math.floor(actor.position.x / cellSize);
     const y = Math.floor(actor.position.y / cellSize);
-    const key = `${x},${y}`;
-    const cell = cells.get(key) ?? [];
-    cell.push([doid, actor]);
-    cells.set(key, cell);
+    const key = cellKey(x, y);
+    const cell = cells.get(key);
+    if (cell) cell.push(doid, actor);
+    else cells.set(key, [doid, actor]);
   }
   return { cellSize, cells, playersSide };
 };
+
+/** A cell's key in the index: a number, one per cell of any floor (a coordinate within ±2^19 cells). */
+const cellKey = (x, y) => x * 1048576 + y;
 
 /**
  * The crowd round one body: the push out of whatever it already overlaps,
@@ -90,28 +95,36 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
  * and for a player it rests against, `out`, the way out of him. What each
  * of them is to a walk — a body it walks through, goes round, waits behind
  * or is kept out of — is not the crowd's to say (npc-move.js `bodyRule`).
+ * A body that does not walk (`separateIdleNpc`) asks for the push alone
+ * (`collectNear` false), and `near` stays empty.
  */
 export const separationDisplacement = (
   doid,
   actor,
   spatialIndex,
   heroDoids,
-  { includeHeroes = true, correctionShare = 0.5 } = {}
+  { includeHeroes = true, correctionShare = 0.5, collectNear = true } = {}
 ) => {
   let x = 0;
   let y = 0;
   const near = [];
   const radius = bodyRadius(actor);
-  const own = bodyPointOf(actor, actor.position);
-  const cellX = Math.floor(actor.position.x / spatialIndex.cellSize);
-  const cellY = Math.floor(actor.position.y / spatialIndex.cellSize);
+  const { position } = actor;
+  // Its body point (body.js `bodyPointOf`), and each monster's below, as numbers.
+  const ownOffset = bodyOffsetOf(actor);
+  const ownX = ownOffset ? position.x + ownOffset.x : position.x;
+  const ownY = ownOffset ? position.y + ownOffset.y : position.y;
+  const cellX = Math.floor(position.x / spatialIndex.cellSize);
+  const cellY = Math.floor(position.y / spatialIndex.cellSize);
 
   for (let yOffset = -1; yOffset <= 1; yOffset++) {
     for (let xOffset = -1; xOffset <= 1; xOffset++) {
-      const cell = spatialIndex.cells.get(`${cellX + xOffset},${cellY + yOffset}`);
+      const cell = spatialIndex.cells.get(cellKey(cellX + xOffset, cellY + yOffset));
       if (!cell) continue;
 
-      for (const [otherDoid, other] of cell) {
+      for (let at = 0; at < cell.length; at += 2) {
+        const otherDoid = cell[at];
+        const other = cell[at + 1];
         if (otherDoid === doid) continue;
         const isHero = heroDoids.has(otherDoid);
         // Idle separation solves mob spawn overlap. A passive AggroRadius=0
@@ -119,14 +132,18 @@ export const separationDisplacement = (
         // walked into it; engaged/release movement keeps the hero-body rule.
         if (!includeHeroes && isHero) continue;
 
-        const from = isHero ? actor.position : own;
-        const at = isHero ? other.position : bodyPointOf(other, other.position);
-        let dx = from.x - at.x;
-        let dy = from.y - at.y;
+        // A player is met at his feet, from its feet; a monster body to body.
+        const offset = isHero ? null : bodyOffsetOf(other);
+        const atX = offset ? other.position.x + offset.x : other.position.x;
+        const atY = offset ? other.position.y + offset.y : other.position.y;
+        let dx = (isHero ? position.x : ownX) - atX;
+        let dy = (isHero ? position.y : ownY) - atY;
         let distance = Math.hypot(dx, dy);
         const touching = radius + bodyRadius(other);
-        const body = { doid: otherDoid, actor: other, player: isHero, x: at.x, y: at.y, touching, out: null };
-        near.push(body);
+        const body = collectNear
+          ? { doid: otherDoid, actor: other, player: isHero, x: atX, y: atY, touching, out: null }
+          : null;
+        if (body) near.push(body);
         /**
          * The nearest peer sits on the sum of the two bodies. Measured
          * against the official for monsters standing in a fight: KNIGHT p25
@@ -161,7 +178,7 @@ export const separationDisplacement = (
           (minimumDistance - Math.min(distance, minimumDistance)) * correctionShare;
         x += (dx / distance) * correction;
         y += (dy / distance) * correction;
-        if (isHero) body.out = { x: dx / distance, y: dy / distance };
+        if (isHero && body) body.out = { x: dx / distance, y: dy / distance };
       }
     }
   }
@@ -213,11 +230,16 @@ export const separateIdleNpc = (
     {
       includeHeroes: false,
       correctionShare: 1,
+      collectNear: false,
     }
   );
+  // Nothing to be lifted out of, no step: with no walk and no push the step
+  // would go nowhere (`stepNpc`).
+  const push = boundedPush(crowding, actor.ai, deltaSeconds);
+  if (!push.x && !push.y) return false;
   const step = stepNpc(session.navigation, actor, {
     walk: { x: 0, y: 0 },
-    separation: boundedPush(crowding, actor.ai, deltaSeconds),
+    separation: push,
     heroes,
     radius: bodyRadius(actor),
     deltaSeconds,

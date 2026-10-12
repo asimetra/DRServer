@@ -96,8 +96,17 @@ export const bodyOffsetOf = (actor) => {
   const shape = navigationEntryFor(actor?.constant)?.navCollisions?.[0];
   if (!shape) return null;
   const scale = Number(actor.scale) > 0 ? Number(actor.scale) : 1;
-  return { x: Number(shape.x ?? 0) * scale, y: Number(shape.y ?? 0) * scale };
+  let byScale = offsetsByShape.get(shape);
+  if (!byScale) offsetsByShape.set(shape, (byScale = new Map()));
+  let offset = byScale.get(scale);
+  if (!offset) {
+    offset = Object.freeze({ x: Number(shape.x ?? 0) * scale, y: Number(shape.y ?? 0) * scale });
+    byScale.set(scale, offset);
+  }
+  return offset;
 };
+/** Each shape's offset at each scale, worked out once: asked for every body near every monster every tick, and never changed (frozen). */
+const offsetsByShape = new WeakMap();
 
 export const collisionPointOf = (actor, position) => {
   const offset = bodyOffsetOf(actor);

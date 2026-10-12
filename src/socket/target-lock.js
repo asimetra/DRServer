@@ -87,24 +87,44 @@ export const fighting = (victim) => (victim ? { victim, following: false } : nul
  *             may be hit (actor-roles.js `isHuntable`);
  *   byPet     what a pet picks from: the huntable enemies, then the beasts;
  *   byBeast   what a beast fights: everyone outside its team 7.
+ *
+ * Each is built when first asked for: a floor with no pet or beast never
+ * builds theirs.
  */
 export const targetsOf = (crowd) => {
   if (crowd.targets) return crowd.targets;
   const { heroes, pets, enemies, beasts, allies } = crowd;
-  const byDoid = (candidates) => new Map(candidates.map((candidate) => [candidate.doid, candidate]));
-  const heroByDoid = byDoid(heroes);
-  const petByDoid = byDoid(pets);
-  const beastByDoid = byDoid(beasts);
-  const allyByDoid = byDoid(allies);
-  const huntable = enemies.filter(({ actor }) => isHuntable(actor));
-  const byBeast = [...heroes, ...pets, ...allies, ...huntable];
-  const byBeastDoid = byDoid(byBeast);
+  let heldByDoid = null;
+  let huntable = null;
+  let byPet = null;
+  let byBeast = null;
+  let byBeastDoid = null;
   crowd.targets = {
-    held: (doid) => heroByDoid.get(doid) ?? petByDoid.get(doid) ?? beastByDoid.get(doid) ?? allyByDoid.get(doid) ?? null,
-    heldByBeast: (doid) => byBeastDoid.get(doid) ?? null,
-    huntable,
-    byPet: [...huntable, ...beasts],
-    byBeast,
+    held: (doid) => {
+      // Last set first, so a doid in two sets is found in the first, as looked up in order.
+      heldByDoid ??= byDoid(allies, beasts, pets, heroes);
+      return heldByDoid.get(doid) ?? null;
+    },
+    heldByBeast: (doid) => {
+      byBeastDoid ??= byDoid(crowd.targets.byBeast);
+      return byBeastDoid.get(doid) ?? null;
+    },
+    get huntable() {
+      return (huntable ??= enemies.filter(({ actor }) => isHuntable(actor)));
+    },
+    get byPet() {
+      return (byPet ??= [...crowd.targets.huntable, ...beasts]);
+    },
+    get byBeast() {
+      return (byBeast ??= [...heroes, ...pets, ...allies, ...crowd.targets.huntable]);
+    },
   };
   return crowd.targets;
+};
+
+/** The candidates of these sets by doid, a later set's over an earlier's. */
+const byDoid = (...sets) => {
+  const found = new Map();
+  for (const candidates of sets) for (const candidate of candidates) found.set(candidate.doid, candidate);
+  return found;
 };

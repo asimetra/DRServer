@@ -127,7 +127,8 @@ const firstPick = ({ heroes, pets, beasts, allies }, actor) => {
     (!player ||
       squaredDistanceTo(actor.position, ally.position) < squaredDistanceTo(actor.position, player.position))
   ) player = ally;
-  const pet = nearestTo(actor.position, pets.filter(inReach));
+  // Most floors have no pet: no list built for none.
+  const pet = pets.length ? nearestTo(actor.position, pets.filter(inReach)) : null;
   if (pet && !heroes.some(inReach) && !allies.some(inReach)) player = pet;
   const beast = nearestTo(actor.position, beasts);
   return beast && (!player || squaredDistanceTo(actor.position, beast.position) <
