@@ -28,11 +28,10 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  *
  * It walks at its full speed, without the ramp a monster's walk has
  * (`npcWalkingSpeed`), and a ranged one backs out of a gap where none of
- * its attacks can go (`petRetreat`). Three of its rules live where the
+ * its attacks can go (`petRetreat`). Two of its rules live where the
  * thing they change is: a pet honours its attacks' MinRange
- * (`usableAttacks`, npc-act.js), in the crowd it keeps a standoff from the
- * players rather than touching them (`separationDisplacement`,
- * npc-crowd.js), and it walks through them (npc-move.js `bodyRule`).
+ * (`usableAttacks`, npc-act.js), and it walks through the players
+ * (npc-move.js `bodyRule`).
  */
 
 /**

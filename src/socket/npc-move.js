@@ -86,7 +86,8 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  * simpler than a wait behind a body that holds nothing, and costs only a
  * picture of the two overlapping for a moment. Resting is another matter:
  * the crowd's push still lifts two bodies on the side out of each other,
- * and a pet keeps its standoff from the players (`separationDisplacement`).
+ * at contact (`separationDisplacement`), and a pet's walk to its owner ends
+ * at its ReturnDist (behaviours/chase.js `walkEndsAt`).
  *
  * A wait is a queue, and one queues only behind its own side: all the
  * measure behind `afterStep` is of monsters behind monsters. The official's

@@ -1,5 +1,5 @@
 import { isHuntable } from "./actor-roles.js";
-import { bodyPointOf, bodyRadius, standoff } from "./body.js";
+import { bodyPointOf, bodyRadius } from "./body.js";
 import { heroMembersOf } from "./match-world.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
 
@@ -131,17 +131,17 @@ export const separationDisplacement = (
          * The nearest peer sits on the sum of the two bodies. Measured
          * against the official for monsters standing in a fight: KNIGHT p25
          * 84 against 84, BRUTE p25 85 against 88, ICE_IMP p25 70 against 70.
-         * The player is the same rule with one exception, which `standoff`
-         * (body.js) carries.
+         * The player is the same rule, for every body: lifted out of him at
+         * contact, and no further.
          *
-         * That exception is a pet's alone. A kiter's standoff is where it
-         * stops walking in, not a ring a player pushes it along: kept at its
-         * keep distance here, a hero walking into a marksman dragged it 3528
-         * units in 20 s, attacking or not. The official kiter stands its
-         * ground when a player closes on it, and only backs off now and then
-         * (`awayFromThreats`).
+         * A standoff is where a walk stops (body.js `standoff`), not a ring
+         * the crowd pushes it out to. Kept at its keep distance here, a hero
+         * walking into a marksman dragged it 3528 units in 20 s, attacking or
+         * not, and the dragon pet was shoved 200 off every player it passed.
+         * The official kiter stands its ground when a player closes on it,
+         * and only backs off now and then (`awayFromThreats`).
          */
-        const minimumDistance = isHero && actor.ai?.kind === "pet" ? standoff(actor, touching) : touching;
+        const minimumDistance = touching;
         if (distance >= minimumDistance) continue;
 
         if (distance < 0.001) {

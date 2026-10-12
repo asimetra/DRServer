@@ -685,3 +685,25 @@ test("a wolf still leaves alone a monster it could only bite from outside its te
   await ticks(session, 1000, 4);
   assert.equal(pet.ai.targetDoid, null);
 });
+
+/**
+ * A pet keeps no standoff from the players beyond their bodies: the crowd's
+ * push lifts friendly bodies out of each other at contact, as any overlap,
+ * and no more. The dragon's keep distance of 200 used to shove it off every
+ * player it passed (player-eye #9).
+ */
+test("a dragon walking past another player is not shoved off him", async (t) => {
+  const { session: host, pet } = await petOnFloor(t, DRAGON, { owner: { x: 0, y: 1000 }, at: { x: 700, y: 1000 } });
+  host.socket = { destroyed: false };
+  const joiner = {
+    accountId: 9002, heroDoid: 7002, heroPosition: { x: 400, y: 1120 }, objects: new Map(), actors: new Map(),
+    doobers: new Map(), socket: { destroyed: false }, send: () => {}, allocateDoid: host.allocateDoid,
+  };
+  const world = createMatchWorld({ members: new Set([host, joiner]) }, host);
+  world.contextFor(joiner);
+  world.objects.set(joiner.heroDoid, CLID.HeroGameObject);
+  world.actors.set(joiner.heroDoid, { hitPoints: 500, maxHitPoints: 500, collisionRadius: 26, position: joiner.heroPosition, team: TEAM.PLAYERS });
+  let drift = 0;
+  await ticks(world.contextFor(host), 1000, 8, () => { drift = Math.max(drift, Math.abs(pet.position.y - 1000)); });
+  assert.ok(drift < 1, `shoved ${drift.toFixed(1)} off its way`);
+});
