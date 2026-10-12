@@ -304,7 +304,8 @@ const main = async () => {
         continue;
       }
       ticks += b.ticks.length;
-      failures += Number(b.end?.split(" ")[2] ?? 0);
+      // A delayed callback that throws is a failure whichever root it is in.
+      failures += Number(a.end?.split(" ")[2] ?? 0) + Number(b.end?.split(" ")[2] ?? 0);
       const difference = firstDifference(a, b);
       const ms = Number(b.end?.split(" ")[1] ?? 0);
       if (difference) differing.push({ run, label: b.label, ...difference });
@@ -334,7 +335,8 @@ const main = async () => {
       }
     }
     if (frozen) console.log("FROZEN: in the candidate, monsters with a route and nothing in their way stood 3 s or more");
-    process.exitCode = differing.length || frozen ? 1 : 0;
+    if (failures) console.log(`FAILED: ${failures} timer callback(s) threw`);
+    process.exitCode = differing.length || frozen || failures ? 1 : 0;
   } finally {
     base?.cleanup();
     candidate.cleanup();

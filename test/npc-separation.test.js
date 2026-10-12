@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { awayFromThreats, tickNpcAi } from "../src/socket/ai.js";
 import { keptOutOfHeroes } from "../src/socket/npc-move.js";
+import { act } from "../src/socket/npc-act.js";
+import { walkTowards } from "../src/socket/behaviours/chase.js";
 import { CLID, TEAM } from "../src/socket/opcodes.js";
 
 /**
@@ -550,4 +552,32 @@ test("a step through a player stops at his body unless he and it pass through ea
   assert.ok(Math.abs(stops(walker({ team: TEAM.PLAYERS, collidesWithTeam: true })) + 55.4) < 1e-6, "and a barricade");
   assert.equal(stops(walker({ team: TEAM.PLAYERS }), 8), 100, "a pet walks through a player it is not walking at");
   assert.ok(Math.abs(stops(walker({ team: TEAM.PLAYERS }), 7) + 55.4) < 1e-6, "and stops at the one it walks at");
+});
+
+/** A body standing at its waypoint is not walking: its ramp does not build (chase.js `walkTowards`). */
+test("a walk that goes nowhere does not build its ramp", () => {
+  const ai = { moveSpeed: 180, walkSpeed: 0 };
+  const actor = { position: { x: 100, y: 100 }, ai };
+  const turn = {
+    ai, actor, route: { waypoint: { x: 100, y: 100 }, sees: false, steers: false },
+    distance: 400, stopAt: 60, topSpeed: 180, deltaSeconds: 0.25,
+  };
+  for (let tick = 0; tick < 4; tick++) {
+    const step = walkTowards(turn, true);
+    assert.equal(Math.hypot(step.x, step.y), 0);
+  }
+  assert.equal(ai.walkSpeed, 0, "still from standing when it sets off");
+});
+
+/** A victim killed earlier in the tick is not swung at: the swing is not spent (npc-act.js `act`). */
+test("no swing is started at a victim already dead", async () => {
+  const ai = { attackRange: 80, attackTimerMs: 1500, attackRandMs: 0, nextAttackAt: 0, attackType: 920050, damage: 1, attackColliders: [] };
+  const actor = { position: { x: 0, y: 0 }, heading: 0, collisionRadius: 25, ai };
+  const victim = { doid: 30, actor: { dead: true, hitPoints: 0, collisionRadius: 25, position: { x: 50, y: 0 } }, position: { x: 50, y: 0 } };
+  const reason = await act({ send: () => {}, actors: new Map(), objects: new Map() }, {
+    doid: 20, actor, victim, target: victim.position, bodies: 50, distance: 50, stopAt: 50, pressed: 0, advanced: 0,
+    route: { waypoint: null }, now: 1000, following: false, attackLocked: false, cannotAttack: false, fleeing: false, seesAlways: true,
+  });
+  assert.notEqual(reason, "swung");
+  assert.equal(ai.nextAttackAt, 0, "its cadence untouched");
 });

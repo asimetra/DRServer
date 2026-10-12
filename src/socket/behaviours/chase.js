@@ -82,9 +82,14 @@ export const walkTowards = (turn, ramped) => {
   // At the target itself the walk ends at the standoff; at a point on
   // the way, or the way out of the scenery, it ends there.
   const remaining = headsAtTarget ? Math.max(0, distance - stopAt) : waypointDistance;
+  const walked = waypointDistance > 0.001;
+  // Standing at its waypoint, as at the end of a route that ends short, it
+  // is not walking: its ramp does not build to set off at full speed later.
+  if (!walked || !(remaining > 0)) {
+    return { ...STILL, steering: route.steers, throughBodies: Boolean(route.escaping) };
+  }
   const speed = ramped ? npcWalkingSpeed(ai, topSpeed, deltaSeconds) : topSpeed;
   const chaseTravel = Math.min(speed * deltaSeconds, remaining);
-  const walked = waypointDistance > 0.001;
   return {
     x: walked ? ((route.waypoint.x - actor.position.x) / waypointDistance) * chaseTravel : 0,
     y: walked ? ((route.waypoint.y - actor.position.y) / waypointDistance) * chaseTravel : 0,

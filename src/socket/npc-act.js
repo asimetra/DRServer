@@ -272,6 +272,8 @@ export const act = async (session, turn) => {
   const { doid, actor, victim, target, bodies, distance, route, now } = turn;
   const { ai } = actor;
   if (turn.following) return "following";
+  // Killed earlier in this tick (the crowd is sensed once): nothing to swing at.
+  if (victim.actor?.dead) return "victim-down";
   // Nothing is fought from inside the scenery: out first. See routeToTarget.
   if (route.escaping) return "escaping";
   if (turn.attackLocked) return "locked";

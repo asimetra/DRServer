@@ -1,5 +1,6 @@
 import { emitGeneratorRelease, emitSignal, initialTargetState } from "./triggers.js";
 import { checkFloorCleared } from "./floorstate.js";
+import { bodyOffsetOf } from "./navigation.js";
 import { bodyBlocked, bodyCageExit, bodyClearSpot, rowBody, rowBodyRadius } from "./body.js";
 import { info, warn } from "../log.js";
 import { spawnBossReward } from "./drops.js";
@@ -193,7 +194,9 @@ export const generatorSpawn = (session, runtime, npc) => {
    */
   const hero = nearestPartyHeroPosition(session, placement);
   const heroCell = hero ? `${Math.round(hero.x / 900)},${Math.round(hero.y / 900)}` : "none";
-  const cacheKey = `${collisionRadius}:${navigation?.revision ?? 0}:${heroCell}`;
+  // And the body's offset above the feet: the plan is searched for the body (`bodyCageExit`).
+  const offset = bodyOffsetOf(body) ?? { x: 0, y: 0 };
+  const cacheKey = `${collisionRadius}:${offset.x},${offset.y}:${navigation?.revision ?? 0}:${heroCell}`;
   runtime.releasePlans ??= new Map();
   let release = runtime.releasePlans.get(cacheKey);
 
