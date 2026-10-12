@@ -106,7 +106,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
   const petMutant = mutantRoot(TOOL_ROOT, [
     {
       file: "src/socket/behaviours/pet.js",
-      from: "      : canGetAt(navigation, actor, candidate, reachOf(ai, bodies), withinTether, walkEndsAt(actor, bodies, false));",
+      from: "      : canGetAt(navigation, actor, candidate, reachOf(ai, bodies), withinTether, walkEndsAt(actor, bodies));",
       to: "      : true;",
     },
   ]);
