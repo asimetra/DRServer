@@ -27,6 +27,8 @@
  *              its way to him (70 degrees), the share it stood (under 15)
  *              the next second, and how often a second it turned back on
  *              itself (`reversals`); and the same with none touching
+ *   swung at   of the monsters' swings at it or its owner (the
+ *              choreography's victim), the share at it
  *   snaps      the times it was put back beside its owner from afar
  *              (behaviours/pet.js `snapBackSpot`): over 1000 in one tick,
  *              which a teleporting pet's come-back beside its victim is too
@@ -41,7 +43,10 @@
  * overlapping its owner moving 2.2%, 1.4%, 1.8% (radius 29.4 against the
  * hero's 25.87); snaps 1, 13, 0, from 1996-2205; held back 10.6%, 31.7%,
  * 0.0% (n 189, 60, 18) against 12.1%, 8.8%, 1.4% with none touching,
- * turning back 0.24, 0.17, 0.11 times a second held, 0.20, 0.07, 0.03 not.
+ * turning back 0.24, 0.17, 0.11 times a second held, 0.20, 0.07, 0.03 not;
+ * over all of them, 142 of 3,724 monsters' swings told apart were at the
+ * pet (3.8%; scratchpad/aggro), and 10.9% of the hits and 16.1% of the
+ * damage taken by a pet and its owner were the pet's.
  */
 
 const CHOREOGRAPHY = 143;
@@ -62,6 +67,8 @@ const emptyRow = () => ({
   rest: [],
   behindOwner: 0,
   snaps: 0,
+  swingsAtPet: 0,
+  swingsAtOwner: 0,
   heldBack: 0,
   heldBackStood: 0,
   heldBackReversals: 0,
@@ -118,6 +125,7 @@ const hypot = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
   const rows = new Map();
   const tracks = new Map();
+
   const rowOf = (constant) => {
     let row = rows.get(constant);
     if (!row) rows.set(constant, (row = emptyRow()));
@@ -126,9 +134,16 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
 
   const tick = (session, frames) => {
     const swung = new Set();
+    /** The monsters' swings this tick, by victim. */
+    const victims = new Map();
     for (const frame of frames) {
       if (frame.length >= 10 && frame.readUInt16LE(2) === FIELD_UPDATE && frame.readUInt16LE(8) === CHOREOGRAPHY) {
-        swung.add(frame.readUInt32LE(4));
+        const swinger = frame.readUInt32LE(4);
+        swung.add(swinger);
+        if (frame.length >= 20 && session.actors.get(swinger)?.isEnemy) {
+          const victim = frame.readUInt32LE(16);
+          victims.set(victim, (victims.get(victim) ?? 0) + 1);
+        }
       }
     }
     for (const [doid, actor] of session.actors) {
@@ -141,6 +156,8 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
       const tether = Number(source.TetherDist ?? 0) || Infinity;
       const row = rowOf(actor.constant);
       row.ticks++;
+      row.swingsAtPet += victims.get(doid) ?? 0;
+      row.swingsAtOwner += victims.get(ai.ownerDoid) ?? 0;
       const track = tracks.get(doid) ?? { pet: [], owner: [], swung: [], beyond: 0, backs: [], ticks: 0 };
       tracks.set(doid, track);
       track.pet.push({ ...actor.position });
@@ -264,6 +281,7 @@ export const describePets = (rows) =>
       `rest/ReturnDist p10/50/90 ${quantile(row.rest, 0.1)}/${quantile(row.rest, 0.5)}/${quantile(row.rest, 0.9)} (n ${row.rest.length})  ` +
       `behind owner ${share(row.behindOwner, row.ticks)}  ` +
       `in owner moving ${share(row.overlapMoving, row.moving)} of ${row.moving}, resting ${share(row.overlapStanding, row.standing)}  ` +
+      `swung at ${share(row.swingsAtPet, row.swingsAtPet + row.swingsAtOwner)} of ${row.swingsAtPet + row.swingsAtOwner}  ` +
       `held back stood ${share(row.heldBackStood, row.heldBack)} of ${row.heldBack} (turns ${perSample(row.heldBackReversals, row.heldBack)}/s), ` +
       `free ${share(row.freeBackStood, row.freeBack)} of ${row.freeBack} (turns ${perSample(row.freeBackReversals, row.freeBack)}/s)`
   );

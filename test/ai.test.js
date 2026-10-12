@@ -299,6 +299,63 @@ test("shared-world AI attacks the nearest live member instead of the host foreve
   assert.ok(joinerSent.length > 0, "the same world result is broadcast to the joiner");
 });
 
+/**
+ * Dropped past its DisengageDist, a target is forgotten (npc-targeting.js
+ * `enemyTarget`): the next pick is a fresh one, and the one it then holds
+ * is not given up for the old one coming back nearer.
+ */
+test("a monster that lost one hero past its DisengageDist takes the next fresh, and holds him", async () => {
+  const { session: host, heroDoid, knightDoid } = makeSession();
+  host.accountId = 100;
+  host.socket = { destroyed: false };
+  host.allocateDoid = function (clid) {
+    const doid = 9000 + this.objects.size;
+    this.objects.set(doid, clid);
+    return doid;
+  };
+  const knight = host.actors.get(knightDoid);
+  knight.position = { x: 0, y: 0 };
+  Object.assign(knight.ai, { aggroRadius: 300, disengageDistance: 600, moveSpeed: 0, nextAttackAt: Number.POSITIVE_INFINITY });
+  const joiner = {
+    accountId: 101,
+    heroDoid: 11,
+    heroPosition: { x: 2000, y: 0 },
+    objects: new Map(),
+    actors: new Map(),
+    doobers: new Map(),
+    socket: { destroyed: false },
+    send: () => {},
+    allocateDoid: host.allocateDoid,
+  };
+  const world = createMatchWorld({ members: new Set([host, joiner]) }, host);
+  world.contextFor(joiner);
+  world.objects.set(joiner.heroDoid, CLID.HeroGameObject);
+  world.actors.set(joiner.heroDoid, { hitPoints: 200, maxHitPoints: 200, position: joiner.heroPosition });
+  const context = world.contextFor(host);
+  const place = (member, doid, at) => {
+    member.heroPosition = { ...at };
+    world.actors.get(doid).position = member.heroPosition;
+  };
+  let now = 1000;
+  const tick = async (count = 1) => {
+    for (let i = 0; i < count; i++) await tickNpcAi(context, (now += 250), 0.25);
+  };
+
+  place(host, heroDoid, { x: 100, y: 0 });
+  await tick();
+  assert.equal(knight.ai.targetDoid, heroDoid, "the host, in its aggro");
+  place(host, heroDoid, { x: 700, y: 0 });
+  await tick();
+  assert.equal(knight.ai.targetDoid, null, "let go past its DisengageDist");
+  assert.equal(knight.ai.engaged, false);
+  place(joiner, joiner.heroDoid, { x: 250, y: 0 });
+  await tick(2);
+  assert.equal(knight.ai.targetDoid, joiner.heroDoid, "the joiner, fresh");
+  place(host, heroDoid, { x: 50, y: 0 });
+  await tick(16);
+  assert.equal(knight.ai.targetDoid, joiner.heroDoid, "held when the host comes back nearer");
+});
+
 test("overlapping melee NPCs separate instead of stacking on the hero", async () => {
   const { session, knightDoid } = makeSession();
   const first = session.actors.get(knightDoid);

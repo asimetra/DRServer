@@ -513,65 +513,88 @@ test("a hero-targeted melee arc may still catch a pet as collateral", async () =
   assert.equal(session.actors.get(enemyDoid).hitPoints, 100);
 });
 
-test("only two enemies may deliberately peel from the hero onto one pet", async () => {
-  const heroDoid = 10;
-  const petDoid = 11;
-  const enemyDoids = [20, 21, 22];
-  const objects = new Map([
-    [heroDoid, CLID.HeroGameObject],
-    [petDoid, CLID.DistributedNPCGameObject],
-  ]);
+/**
+ * The enemy's pick, as the official makes it (npc-targeting.js
+ * `enemyTarget`): the player, unless a pet is within reach of one of its
+ * attacks and no player is; and once it has a target, that one, while it
+ * lives, is on the floor and is within its DisengageDist.
+ */
+const HERO = 10;
+const PET = 11;
+const ENEMY = 20;
+const pickSession = ({ hero, pet, enemies = [{ x: 0, y: 0 }], attackRange = 80, projectile = null }) => {
+  const objects = new Map([[HERO, CLID.HeroGameObject], [PET, CLID.DistributedNPCGameObject]]);
   const actors = new Map([
-    [heroDoid, { hitPoints: 200, maxHitPoints: 200, position: { x: 250, y: 0 } }],
-    [petDoid, {
-      hitPoints: 100,
-      maxHitPoints: 100,
-      collisionRadius: 25,
-      isPet: true,
-      position: { x: 55, y: 0 },
-      team: TEAM.PLAYERS,
-    }],
+    [HERO, { hitPoints: 200, maxHitPoints: 200, collisionRadius: 25, position: { ...hero }, team: TEAM.PLAYERS }],
+    [PET, { hitPoints: 100, maxHitPoints: 100, collisionRadius: 25, isPet: true, position: { ...pet }, team: TEAM.PLAYERS }],
   ]);
-  for (const [index, doid] of enemyDoids.entries()) {
-    objects.set(doid, CLID.DistributedNPCGameObject);
-    actors.set(doid, {
+  for (const [index, at] of enemies.entries()) {
+    objects.set(ENEMY + index, CLID.DistributedNPCGameObject);
+    actors.set(ENEMY + index, {
       hitPoints: 100,
       maxHitPoints: 100,
       collisionRadius: 25,
       isEnemy: true,
-      position: { x: index * 5, y: 0 },
+      position: { ...at },
       team: TEAM.ENEMIES,
       ai: {
-        kind: "enemy",
-        state: "idle",
-        engaged: false,
-        aggroRadius: 500,
-        disengageDistance: 1000,
-        moveSpeed: 0,
-        attackRange: 80,
-        attackTimerMs: 1500,
-        attackRandMs: 0,
-        nextAttackAt: Number.POSITIVE_INFINITY,
-        attackType: 920050,
-        damage: 1,
-        attackColliders: [],
+        kind: "enemy", state: "idle", engaged: false, aggroRadius: 1000, disengageDistance: 1200,
+        moveSpeed: 0, attackRange, projectile, attackTimerMs: 1500, attackRandMs: 0,
+        nextAttackAt: Number.POSITIVE_INFINITY, attackType: 920050, damage: 1, attackColliders: [],
+        targetTimerMs: 2000,
       },
     });
   }
-  const session = {
-    id: 12,
-    heroDoid,
-    heroPosition: { x: 250, y: 0 },
-    objects,
-    actors,
-    send: () => {},
-  };
+  return { id: 12, heroDoid: HERO, heroPosition: actors.get(HERO).position, objects, actors, send: () => {} };
+};
+const targetsOf = (session) => [...session.actors.values()].filter((actor) => actor.isEnemy).map((actor) => actor.ai.targetDoid);
+const moveHero = (session, to) => {
+  session.heroPosition = { ...to };
+  session.actors.get(HERO).position = session.heroPosition;
+};
 
+test("every enemy with a pet in its reach and no hero in it takes the pet: there is no cap", async () => {
+  const session = pickSession({ hero: { x: 250, y: 0 }, pet: { x: 55, y: 0 }, enemies: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }] });
   await tickNpcAi(session, 1000, 0.1);
-  assert.deepEqual(
-    enemyDoids.map((doid) => actors.get(doid).ai.targetDoid),
-    [petDoid, petDoid, heroDoid]
-  );
+  assert.deepEqual(targetsOf(session), [PET, PET, PET]);
+});
+
+test("a pet merely nearer than the hero, out of reach, is not taken", async () => {
+  // Reach 80 + 50: the pet at 200 is out of it, and 200 nearer than the hero.
+  const session = pickSession({ hero: { x: 400, y: 0 }, pet: { x: 200, y: 0 } });
+  await tickNpcAi(session, 1000, 0.1);
+  assert.deepEqual(targetsOf(session), [HERO]);
+});
+
+test("a shooter with both in reach takes the hero", async () => {
+  const session = pickSession({ hero: { x: 300, y: 0 }, pet: { x: 55, y: 0 }, attackRange: 600, projectile: { Constant: "ARROW" } });
+  await tickNpcAi(session, 1000, 0.1);
+  assert.deepEqual(targetsOf(session), [HERO]);
+});
+
+test("a monster on the pet keeps it when the hero walks nearer, past ChangeTargetT", async () => {
+  const session = pickSession({ hero: { x: 400, y: 0 }, pet: { x: 55, y: 0 } });
+  await tickNpcAi(session, 1000, 0.1);
+  assert.deepEqual(targetsOf(session), [PET]);
+  moveHero(session, { x: -45, y: 0 });
+  for (let now = 1250; now <= 6000; now += 250) await tickNpcAi(session, now, 0.25);
+  assert.deepEqual(targetsOf(session), [PET], "the hero, nearer and in reach, does not take it");
+});
+
+test("a monster drops a dead, hidden or far target and picks again", async () => {
+  for (const lose of [
+    (session) => { const pet = session.actors.get(PET); pet.dead = true; pet.hitPoints = 0; },
+    (session) => { session.actors.get(PET).teleportHidden = true; },
+    (session) => { session.actors.get(PET).position = { x: 1500, y: 0 }; },
+  ]) {
+    const session = pickSession({ hero: { x: 300, y: 0 }, pet: { x: 55, y: 0 } });
+    await tickNpcAi(session, 1000, 0.1);
+    assert.deepEqual(targetsOf(session), [PET]);
+    lose(session);
+    await tickNpcAi(session, 1250, 0.25);
+    await tickNpcAi(session, 1500, 0.25);
+    assert.deepEqual(targetsOf(session), [HERO], lose.toString());
+  }
 });
 
 test("the measured initial pet offset is stable", () => {

@@ -16,17 +16,13 @@ import { teleportsOnCycle } from "./behaviours/teleport.js";
  * victim is a candidate of the crowd (npc-crowd.js), and `following` says a
  * pet is walking back to its owner rather than fighting.
  *
- * A pick holds for `ChangeTargetT` and a roll of `ChangeTargetRand`
- * (`lockOn`); until then the one it locked on to is kept while it is still
- * on the floor.
+ * A pet's and an ally's pick holds for `ChangeTargetT` and a roll of
+ * `ChangeTargetRand` (`lockOn`); until then the one it locked on to is kept
+ * while it is still on the floor. A monster's holds until its target is
+ * gone (`enemyTarget`).
  */
 
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
-
-/** Only this many enemies may deliberately choose one pet over a live hero. */
-export const MAX_PET_AGGRESSORS = 2;
-/** A pet must be materially ahead of the hero before it is an aggro candidate. */
-const PET_AGGRO_DISTANCE_ADVANTAGE = 100;
 
 /** What a selector answers when the actor is to drop its target altogether. */
 export const LET_GO = Object.freeze({ letGo: true });
@@ -72,46 +68,64 @@ export const clearNpcTarget = (actor) => {
 
 const fighting = (victim) => (victim ? { victim, following: false } : null);
 
-/** Keeps the pet aggressor tally right as an enemy changes its target. */
-const rememberEnemyTarget = ({ petByDoid, petAggressors }, ai, target, now) => {
-  const previousPet = petByDoid.has(ai.targetDoid) ? ai.targetDoid : null;
-  const nextPet = petByDoid.has(target?.doid) ? target.doid : null;
-  if (previousPet && previousPet !== nextPet) {
-    petAggressors.set(previousPet, Math.max(0, (petAggressors.get(previousPet) ?? 1) - 1));
-  }
-  if (nextPet && previousPet !== nextPet) {
-    petAggressors.set(nextPet, (petAggressors.get(nextPet) ?? 0) + 1);
-  }
-  return lockOn(ai, target, now);
-};
-
 /**
- * Heroes own aggro; pets only peel a small number of enemies when they are
- * clearly screening ahead. Official pet floors put just 3.4% of enemy damage
- * on pets, and heading analysis shows most of even that was collateral from
- * a swing aimed at the hero. Nearest-body targeting inverted that ratio.
+ * A monster's target: the one it already has, while it lives, is on the
+ * floor (not hidden in a teleport) and the monster is engaged — past its
+ * DisengageDist it lets go (ai.js) — and otherwise the player, unless a
+ * pet is in its reach and no player is.
+ *
+ * It holds. Over the official solo captures a melee monster on the pet
+ * swung at it again in 94% of the chances it had, the pet alive and in
+ * reach (strict n 33; 76% of n 45 by the looser count), and one on the hero
+ * at him in 99% and more (n 852-1716); a hero coming nearer did not take
+ * it, nor did hitting it (he had hit it in the 3 s before 0-5% of
+ * switches). Most of the hold on a pet is one capture,
+ * socket-20260816-225257 (castle arena, node 50053), where one pet held
+ * seven melee monsters at once, so there is no cap on how many a pet may
+ * hold. In the multiplayer captures (45 floors, 176 monsters) 10 of 11
+ * strict switches from one hero to another came once the old one was down
+ * or out of reach, every one to the nearest, and a melee monster whose
+ * target walked out of its reach with another hero in it kept after the
+ * first 10 of 16 times: what drops a target is death, the floor, and the
+ * DisengageDist, not leaving its reach. Let go of past it (ai.js,
+ * `clearNpcTarget`), a target is forgotten: the monster stands disengaged
+ * where it is, and its next pick, when anyone comes within its AggroRadius,
+ * is a fresh one. `ChangeTargetT` is no clock for a
+ * monster to look again (it kept the hero 99% across many periods; time on
+ * a target before a switch p50 ~6 s, with no gathering at 2-3 s): a target
+ * gone, it picks again at once. The shooters do move to the nearest hero
+ * with the old one still in reach (SKELETON_ARCHER 30 of 59 switches, the
+ * throwers, the imps); this holds them longer than the official does, and
+ * is left so. Nor does a monster that re-targets the nearest hero all the
+ * time (the maintainer reports NEMESIS does; no capture has it, and this
+ * server never spawns it) come from here: whatever placed one would say so.
+ *
+ * Its first pick is the player's. The official went for the pet first in
+ * 45 of 1494 monsters' first swings (3%), and with the pet 100 or more
+ * nearer than the hero only 14 of 42 times; about half of its runs at the
+ * pet began with the pet in reach of the monster's attack and the hero
+ * not. So a pet is taken only in reach of one of its attacks
+ * (`reachOf`, npc-act.js) when no player is, and not for being nearer:
+ * reckoned by distance (a pet 100 nearer, two monsters a pet at most), ours
+ * put 29-32% of its hits on the pet in a played capture
+ * (socket-20261012-123340), where the official solo captures put 10.9% of
+ * hits and 16.1% of damage. A shooter, whose reach takes in the hero as well,
+ * so stays on him. An ally stands in for a hero, by distance alone: the
+ * official's monsters hit the barricade in their way as readily as the
+ * player behind it. A beast nearer than the player is taken, as any
+ * monster of another side.
  */
 const enemyTarget = (crowd, actor, now) => {
   const { ai } = actor;
-  const { heroes, pets, beasts, allies, heroByDoid, petByDoid, beastByDoid, allyByDoid, petAggressors } = crowd;
-  const lockedHero = heroByDoid.get(ai.targetDoid);
-  if (lockedHero && stillLocked(ai, now)) return fighting(lockedHero);
-  const lockedPet = petByDoid.get(ai.targetDoid);
-  if (
-    lockedPet &&
-    stillLocked(ai, now) &&
-    (petAggressors.get(lockedPet.doid) ?? 0) <= MAX_PET_AGGRESSORS
-  ) return fighting(lockedPet);
-  const lockedBeast = beastByDoid.get(ai.targetDoid);
-  if (lockedBeast && stillLocked(ai, now)) return fighting(lockedBeast);
-  const lockedAlly = allyByDoid.get(ai.targetDoid);
-  if (lockedAlly && stillLocked(ai, now)) return fighting(lockedAlly);
+  const { heroes, pets, beasts, allies, heroByDoid, petByDoid, beastByDoid, allyByDoid } = crowd;
+  const held =
+    heroByDoid.get(ai.targetDoid) ?? petByDoid.get(ai.targetDoid) ??
+    beastByDoid.get(ai.targetDoid) ?? allyByDoid.get(ai.targetDoid);
+  if (held && ai.engaged) return fighting(held);
 
+  const inReach = (candidate) =>
+    distanceTo(actor.position, candidate.position) <= reachOf(ai, contact(actor, candidate.actor));
   const hero = nearestTo(actor.position, heroes);
-  const pet = nearestTo(actor.position, pets);
-  // An ally stands in for a hero as a target, by distance alone: the
-  // official's monsters hit the barricade in their way as readily as the
-  // player behind it.
   const ally = nearestTo(actor.position, allies);
   let player = hero;
   if (
@@ -119,27 +133,25 @@ const enemyTarget = (crowd, actor, now) => {
     (!player ||
       squaredDistanceTo(actor.position, ally.position) < squaredDistanceTo(actor.position, player.position))
   ) player = ally;
-  if (pet && (petAggressors.get(pet.doid) ?? 0) < MAX_PET_AGGRESSORS) {
-    const heroDistance = hero ? distanceTo(actor.position, hero.position) : Infinity;
-    const petDistance = distanceTo(actor.position, pet.position);
-    if (petDistance + PET_AGGRO_DISTANCE_ADVANTAGE < heroDistance) {
-      player = pet;
-    }
-  }
+  const pet = nearestTo(actor.position, pets.filter(inReach));
+  if (pet && !heroes.some(inReach) && !allies.some(inReach)) player = pet;
   const beast = nearestTo(actor.position, beasts);
   const victim =
     beast && (!player || squaredDistanceTo(actor.position, beast.position) <
       squaredDistanceTo(actor.position, player.position))
       ? beast
       : player;
-  return fighting(rememberEnemyTarget(crowd, ai, victim, now));
+  return fighting(lockOn(ai, victim, now));
 };
 
-/** Team 7 fights every living combatant outside team 7, whichever is near. */
+/**
+ * Team 7 fights every living combatant outside team 7, the nearest when it
+ * picks, and holds it as a monster does (`enemyTarget`).
+ */
 const beastTarget = ({ beastTargets }, actor, now) => {
   const { ai } = actor;
-  const locked = beastTargets.find(({ doid }) => doid === ai.targetDoid);
-  if (locked && stillLocked(ai, now)) return fighting(locked);
+  const held = beastTargets.find(({ doid }) => doid === ai.targetDoid);
+  if (held && ai.engaged) return fighting(held);
   return fighting(lockOn(ai, nearestTo(actor.position, beastTargets), now));
 };
 

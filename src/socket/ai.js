@@ -39,7 +39,6 @@ import { comeBack, teleportAttacked, teleportsOnCycle, teleportTurn } from "./be
  * written once.
  */
 
-export { MAX_PET_AGGRESSORS } from "./npc-targeting.js";
 export { attackIntervalMs, chooseNpcAttack } from "./npc-act.js";
 export { awayFromThreats } from "./behaviours/kite.js";
 export { npcWalkingSpeed } from "./behaviours/chase.js";

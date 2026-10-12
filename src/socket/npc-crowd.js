@@ -246,8 +246,7 @@ export const separateIdleNpc = (
  * Each candidate holds the actor's own position, not a copy, so one that has
  * already moved in this tick is found where it now stands. A hidden teleporter
  * is not on the floor. `navigation` is the floor's scenery, which a pet's
- * pick asks of (npc-targeting.js). `petAggressors` is how many enemies are on each pet,
- * which targeting keeps current as it goes (npc-targeting.js).
+ * pick asks of (npc-targeting.js).
  */
 export const senseCrowd = (session, actors, deltaSeconds) => {
   const heroes = [...heroMembersOf(session)]
@@ -275,14 +274,6 @@ export const senseCrowd = (session, actors, deltaSeconds) => {
   const byDoid = (candidates) => new Map(candidates.map((candidate) => [candidate.doid, candidate]));
   const petByDoid = byDoid(pets);
   const huntable = enemies.filter(({ actor }) => isHuntable(actor));
-  const petAggressors = new Map();
-  for (const { actor } of enemies) {
-    if (!petByDoid.has(actor.ai?.targetDoid)) continue;
-    petAggressors.set(
-      actor.ai.targetDoid,
-      (petAggressors.get(actor.ai.targetDoid) ?? 0) + 1
-    );
-  }
   return {
     navigation: session.navigation ?? null,
     heroes,
@@ -299,7 +290,6 @@ export const senseCrowd = (session, actors, deltaSeconds) => {
     allyByDoid: byDoid(allies),
     petTargets: [...huntable, ...beasts],
     beastTargets: [...heroes, ...pets, ...allies, ...huntable],
-    petAggressors,
   };
 };
 
