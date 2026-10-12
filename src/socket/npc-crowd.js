@@ -32,7 +32,7 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
   let largestRadius = 0;
   let maximumTravel = 0;
   for (const actor of actors.values()) {
-    if (actor.ai && !actor.dead && actor.position) {
+    if (actor.ai && !actor.dead && !actor.teleportHidden && actor.position) {
       largestRadius = Math.max(largestRadius, bodyRadius(actor));
       maximumTravel = Math.max(maximumTravel, (actor.ai.moveSpeed ?? 0) * deltaSeconds);
     }
@@ -52,7 +52,8 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
   let playersSide = null;
   for (const doid of heroDoids) playersSide ??= actors.get(doid)?.team ?? null;
   for (const [doid, actor] of actors) {
-    if ((!actor.ai && !heroDoids.has(doid)) || actor.dead || !actor.position) continue;
+    // A teleporter off the floor is no body, as it is no candidate (`senseCrowd`).
+    if ((!actor.ai && !heroDoids.has(doid)) || actor.dead || actor.teleportHidden || !actor.position) continue;
     const x = Math.floor(actor.position.x / cellSize);
     const y = Math.floor(actor.position.y / cellSize);
     const key = `${x},${y}`;

@@ -424,6 +424,25 @@ const knightBehind = (at) => {
  * (`afterStep`, ai.js): behind a body of another team — a player's pet, a
  * beast — it goes round at once, and draws no wait.
  */
+/** A teleporter off the floor is no body: nothing queues behind where it went out. */
+test("a hidden teleporter does not hold a walk", async () => {
+  const { session, knightDoid } = makeSession();
+  const knight = session.actors.get(knightDoid);
+  knight.position = { x: 400, y: 0 };
+  knight.ai.engaged = true;
+  knight.ai.collisionRadius = 35;
+  knight.ai.nextAttackAt = Number.POSITIVE_INFINITY;
+  const hidden = structuredClone(knight);
+  hidden.position = { x: 300, y: 0 };
+  hidden.teleportHidden = true;
+  hidden.ai.moveSpeed = 0;
+  session.objects.set(knightDoid + 1, CLID.DistributedNPCGameObject);
+  session.actors.set(knightDoid + 1, hidden);
+  session.random = () => 0.999999;
+  for (let tick = 0; tick < 12; tick++) await tickNpcAi(session, 1000 + tick * 250, 0.25);
+  assert.ok(knight.position.x < 120, `walked to the hero: ${Math.round(knight.position.x)}`);
+});
+
 test("a monster waits behind a teammate and goes round a body of another side at once", async () => {
   for (const [frontTeam, waits] of [[6, true], [5, false]]) {
     const { session, front, behind } = knightBehind({ x: 200, y: 20 });
