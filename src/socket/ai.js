@@ -243,6 +243,14 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     if (release === "out") return said;
   }
 
+  /**
+   * The notice: within its AggroRadius it engages, past its DisengageDist it
+   * lets go. By distance alone, through walls too: the official attacks with
+   * its target out of sight (36% of first moves within AggroRadius), so a
+   * monster in a sealed pocket engages through the wall and stands pressed
+   * to it facing the hero ("blocked") until he is DisengageDist off in a
+   * straight line. Known, and left so.
+   */
   if (!following) {
     const distance = distanceTo(actor.position, target);
     if (!ai.engaged) {
