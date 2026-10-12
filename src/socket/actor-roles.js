@@ -74,6 +74,15 @@ export const rolesOfRow = (npc, { petOwnerDoid = 0, countsForFloor } = {}) => ({
   isAlly: npc.CharType === "HERO" && !petOwnerDoid && Boolean(npc.IsAttackable),
 });
 
+/**
+ * A hero's placeable (placeables.js): a summon that walks (`mobile`) is his
+ * pet, as one he brings is; anything else he puts down is on nobody's list
+ * and never an enemy — counted, a cloud the player made would hold the floor
+ * open until it expired.
+ */
+export const rolesOfPlaceable = (npc, ownerDoid, mobile) =>
+  mobile ? rolesOfRow(npc, { petOwnerDoid: ownerDoid }) : { isEnemy: false, isPet: false };
+
 /** The selector its AI picks with (npc-targeting.js `pickTarget`): a player's pet, a beast, an ally, or an enemy. */
 export const kindOfRow = (npc, { petOwnerDoid = 0 } = {}) =>
   petOwnerDoid ? "pet" : npc.CharType === "BEAST" ? "beast" : npc.CharType === "HERO" ? "ally" : "enemy";

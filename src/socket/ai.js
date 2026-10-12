@@ -89,7 +89,8 @@ const towards = (step, from, target) => {
  *   routeReach   how far it may swing from, for its route (default `reachOf`)
  *   stopAt       where its walk at its victim ends (default `walkEndsAt`)
  *   seesAlways   it swings without asking the scenery for sight
- *   prepare, moved   before its intent, and once it has moved
+ *   prepare      before its intent
+ *   moved        once it has moved: where it was, and the bodies it met
  *   fleeing      it is backing off ("flee")
  *   actGate      what holds its swing back after reach and sight
  *   acted        after it acted
@@ -163,8 +164,10 @@ const traceRoute = (doid, actor, route, target) =>
 /**
  * The move stage: the intent's step, held by the monsters in its way, pushed
  * by the crowd, kept out of the players, through the scenery (`stepNpc`), and
- * sent. True when it went anywhere. A walk is held by the monsters in its
- * way; a lunge, and the way out of the scenery, are not (`throughBodies`).
+ * sent: whether it went anywhere (`walked`), and the bodies it walked among
+ * (`among`, npc-move.js `bodiesMet`) for its behaviour to look at once it
+ * has moved (`moved`). A walk is held by the monsters in its way; a lunge,
+ * and the way out of the scenery, are not (`throughBodies`).
  */
 const move = (session, state, crowd, doid, actor, intent, turn) => {
   const { ai } = actor;
@@ -178,8 +181,6 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
     playersSide: crowd.spatialIndex.playersSide,
     walkingAt: turn.victim.doid,
   });
-  // What it walked among, for its behaviour to look at once it has moved.
-  turn.around = met.bodies;
   const step = stepNpc(state.navigation, actor, {
     walk: { x: intent.x, y: intent.y },
     contacts: met.contacts,
@@ -202,9 +203,9 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
    */
   if (step?.refused || step?.blocked) restWalk(ai);
   if (!intent.throughBodies) afterStep(session, ai, turn.now, step, passing);
-  if (!step) return false;
+  if (!step) return { walked: false, among: met.bodies };
   placeNpc(session, doid, actor, step);
-  return step.travel > 0.001;
+  return { walked: step.travel > 0.001, among: met.bodies };
 };
 
 /**
@@ -313,8 +314,8 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   turn.away = behaviour.prepare?.(turn) ?? null;
   const intent = swingIntent(ai, may, now, deltaSeconds) ?? behaviour.intent(turn);
   const before = { x: actor.position.x, y: actor.position.y };
-  const walked = move(session, state, crowd, doid, actor, intent, turn);
-  behaviour.moved?.(turn, intent, before);
+  const { walked, among } = move(session, state, crowd, doid, actor, intent, turn);
+  behaviour.moved?.(turn, intent, before, among);
 
   const fleeing = behaviour.fleeing?.(turn) ?? false;
   const distance = distanceTo(actor.position, target);

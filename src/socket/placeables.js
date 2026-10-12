@@ -24,7 +24,7 @@ import { npcGenerate, objectDisable } from "./objects.js";
 import { variantFor } from "../content-packs.js";
 import { npcHeadingUpdate } from "./npc-move.js";
 import { npcAttackChoices, npcAttackSpeed } from "./npc-attacks.js";
-import { isScenery } from "./actor-roles.js";
+import { isScenery, kindOfRow, rolesOfPlaceable } from "./actor-roles.js";
 import { membersOf } from "./match-world.js";
 import {
   dealTrapHit,
@@ -592,7 +592,7 @@ export const spawnPlaceable = async (
   const summonAi = mobileSummon && primaryAttack
     ? {
         ...primaryAttack,
-        kind: "pet",
+        kind: kindOfRow(npc, { petOwnerDoid: session.heroDoid }),
         ownerDoid: session.heroDoid,
         ...petAiOf(npc),
         targetTimerMs: Math.max(0, Number(npc.ChangeTargetT ?? 2) * 1000),
@@ -619,8 +619,8 @@ export const spawnPlaceable = async (
   session.objects?.set(doid, CLID.DistributedNPCGameObject);
   /**
    * Registered as an actor so it is a thing on the floor rather than only a
-   * picture of one, but never `isEnemy`: counting it would hold the floor open
-   * until a cloud the player made expired.
+   * picture of one, on the side its roles say (actor-roles.js
+   * `rolesOfPlaceable`).
    */
   session.actors?.set(doid, {
     hitPoints,
@@ -633,8 +633,7 @@ export const spawnPlaceable = async (
     abilities: new Set(
       [npc.Ability1, npc.Ability2, npc.Ability3, npc.Ability4, npc.Ability5].filter(Boolean)
     ),
-    isEnemy: false,
-    isPet: mobileSummon,
+    ...rolesOfPlaceable(npc, session.heroDoid, mobileSummon),
     masterId: mobileSummon ? session.heroDoid : 0,
     team,
     // Whether the players on its side are in its way (npc-move.js `bodyRule`).

@@ -231,7 +231,7 @@ const NO_HEADWAY = 0.1;
  * captures, and this is the maintainer's call for it. Ours stood, or went
  * to and fro, where nothing would let it through.
  */
-const pinnedBy = (turn, intent, before) => {
+const pinnedBy = (turn, intent, before, among) => {
   const { actor, ai } = turn;
   const asked = Math.hypot(intent.x, intent.y);
   const step = { x: actor.position.x - before.x, y: actor.position.y - before.y };
@@ -239,7 +239,7 @@ const pinnedBy = (turn, intent, before) => {
   // Back the way it came is no way on, and aside, round a body, is.
   const back = asked > 0.001 && (step.x * intent.x + step.y * intent.y) / asked < -NO_HEADWAY * asked;
   const stuck = asked > 0.001 && (went < NO_HEADWAY * asked || back);
-  ai.pinnedBy = stuck ? (touchingInTheWay(actor, intent, turn.around)[0]?.doid ?? null) : null;
+  ai.pinnedBy = stuck ? (touchingInTheWay(actor, intent, among)[0]?.doid ?? null) : null;
   // The scenery as it stood: a change to it may open the way (`clearing`).
   ai.pinnedRevision = turn.session.navigation?.revision ?? null;
 };
@@ -388,7 +388,7 @@ export const follow = {
   routeReach: () => Infinity,
   stopAt: walkBackEndsAt,
   intent: walkOrBackOut,
-  moved: (turn, intent, before) => pinnedBy(turn, intent, before),
+  moved: pinnedBy,
   face: (session, doid, actor, turn, reason, walked) => {
     if (walked) face(session, doid, actor, turn.route.waypoint ?? turn.target);
   },
