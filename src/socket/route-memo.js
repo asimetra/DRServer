@@ -45,9 +45,28 @@ const serialOf = (colliders) => {
   return serial;
 };
 
-/** A name for the active collider set, or null when there is none to give. */
+/**
+ * A name for the active collider set, or null when there is none to give.
+ *
+ * Named once per navigation revision: every collider change moves it
+ * (navigation.js `changeObject`, route-cache.js `invalidatePathfinding`),
+ * and each route asked for, a remembered one too, used to rebuild the name
+ * from every object on the floor — 771 characters on average over the
+ * walls run, 0.8% of the process. Kept per navigation object, and only
+ * while it holds the same `objects`: a copy made with `{ ...navigation }`
+ * has its own revision, and is named afresh.
+ */
 export const colliderSetKey = (navigation) => {
   if (!(navigation?.objects instanceof Map)) return null;
+  const named = setKeys.get(navigation);
+  if (named && named.revision === navigation.revision && named.objects === navigation.objects) return named.key;
+  const key = nameColliderSet(navigation);
+  setKeys.set(navigation, { revision: navigation.revision, objects: navigation.objects, key });
+  return key;
+};
+const setKeys = new WeakMap();
+
+const nameColliderSet = (navigation) => {
   // Joined, not appended: a string grown a character at a time is kept as a
   // chain of pieces until something compares it, and a key that is never hit
   // again held about 10 KB that way instead of half of one.
@@ -69,12 +88,17 @@ const copyOf = (path) => {
 /**
  * `findPath(navigation, start, goal, radius)`, answered from `owner.routeMemo`
  * when it has already been asked under this collider set.
+ *
+ * What is remembered is the search's own answer, and what is handed out is
+ * made from it (`handOut`, by default a copy): a caller that wants the
+ * points moved (body.js `bodyRoute`, from the body to the feet) has them
+ * made once, rather than copied here and mapped again there.
  */
-export const searchRoute = (owner, navigation, start, goal, radius) => {
+export const searchRoute = (owner, navigation, start, goal, radius, handOut = copyOf) => {
   // A route ends on a copy of the goal, so a goal carrying more than its two
   // coordinates could differ in what else it carries; those are not kept.
   const key = Object.keys(goal).length === 2 ? colliderSetKey(navigation) : null;
-  if (key === null) return findPath(navigation, start, goal, radius);
+  if (key === null) return handOut(findPath(navigation, start, goal, radius));
 
   let memo = owner.routeMemo;
   if (
@@ -104,10 +128,10 @@ export const searchRoute = (owner, navigation, start, goal, radius) => {
     // Most recently used last, so the oldest is the one let go.
     memo.routes.delete(key);
     memo.routes.set(key, known);
-    return copyOf(known);
+    return handOut(known);
   }
   const path = findPath(navigation, start, goal, radius);
   if (memo.routes.size >= MEMO_SIZE) memo.routes.delete(memo.routes.keys().next().value);
-  memo.routes.set(key, copyOf(path));
-  return path;
+  memo.routes.set(key, path);
+  return handOut(path);
 };

@@ -149,10 +149,11 @@ export const bodyClearSpot = (navigation, body, origin, radius = 0, { towards = 
 export const bodyRoute = (owner, navigation, body, start, goal, radius) => {
   const offset = offsetOf(body);
   if (!offset) return searchRoute(owner, navigation, start, goal, radius);
-  const found = searchRoute(owner, navigation, up(offset, start), up(offset, goal), radius);
-  const route = found.map((point) => down(offset, point));
-  if (found.endsShort) route.endsShort = true;
-  return route;
+  return searchRoute(owner, navigation, up(offset, start), up(offset, goal), radius, (found) => {
+    const route = found.map((point) => down(offset, point));
+    if (found.endsShort) route.endsShort = true;
+    return route;
+  });
 };
 
 /** The way out of the cage its body is in (`findCageReleasePath`), its `target` for the feet. */
