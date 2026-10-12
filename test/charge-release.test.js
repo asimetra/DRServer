@@ -319,3 +319,28 @@ test("a later full draw is not capped by an earlier partial arrow still in fligh
 
   assert.equal(5000 - session.actors.get(enemy).hitPoints, 42);
 });
+
+/**
+ * A hit wakes a monster that has aggro (target-lock.js `wakeOnHit`): it
+ * takes its attacker as its target, however far, and holds it from there.
+ * One that never notices anyone — no AggroRadius, a stationary boss — stays
+ * as it is.
+ */
+test("a hero's hit wakes an idle monster with aggro, and not a passive one", async () => {
+  for (const [ai, wakes] of [
+    [{ behavior: "CHASE_AI", aggroRadius: 20 }, true],
+    [{ behavior: "CHASE_AI", aggroRadius: 0 }, false],
+    [{ behavior: "STATIONARY_AI", aggroRadius: 600 }, false],
+  ]) {
+    const session = sessionWith();
+    const [enemy] = withEnemies(session, 1, 5000);
+    const actor = session.actors.get(enemy);
+    actor.team = 6;
+    actor.ai = { kind: "enemy", state: "idle", engaged: false, targetDoid: null, disengageDistance: 1600, moveSpeed: 180, ...ai };
+    const hit = result({ attackee: enemy });
+    await handleProposeCombatResults(session, new PacketReader(new PacketWriter().u16(hit.length).raw(hit).body()));
+    assert.ok(actor.hitPoints < 5000, "the hit landed");
+    assert.equal(actor.ai.engaged, wakes, `${ai.behavior} aggro ${ai.aggroRadius}`);
+    assert.equal(actor.ai.targetDoid, wakes ? HERO : null);
+  }
+});

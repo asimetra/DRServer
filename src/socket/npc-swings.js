@@ -7,6 +7,7 @@ import { info, warn } from "../log.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { RECEIVE_FIELD_BY_CLID, encodeCombatResults, npcAttackChoreography, receiveCombatResult } from "./combat-wire.js";
 import { CLID } from "./opcodes.js";
+import { wakeOnHit } from "./target-lock.js";
 import { heroStaggerFor } from "./impact.js";
 import { hazardVictims } from "./trap-attacks.js";
 import { applyTargetBuff } from "./combat-effects.js";
@@ -95,6 +96,7 @@ const dealNpcHit = async (session, attackerDoid, { attack, attackType, weaponPow
   );
   const before = victim.hitPoints ?? 0;
   const landed = applyDamage(session, victimDoid, damage, () => session.send(reaction));
+  if (landed) wakeOnHit(victim, attacker, attackerDoid);
   // Most monster hits on a hero land here, on the server's own AI: the floor's
   // toughest heal their share of it (life-steal.js), as on a proposed hit.
   if (landed && clid === CLID.HeroGameObject) stealLife(session, attackerDoid, Math.min(damage, before));

@@ -600,3 +600,19 @@ test("a monster drops a dead, hidden or far target and picks again", async () =>
 test("the measured initial pet offset is stable", () => {
   assert.deepEqual(petSpawnPosition({ x: 40, y: 90 }), { x: 40, y: -21 });
 });
+
+test("a pet's bite wakes an idle monster with aggro, on the pet", async () => {
+  const session = pickSession({ hero: { x: 2000, y: 0 }, pet: { x: 55, y: 0 } });
+  const monster = session.actors.get(ENEMY);
+  monster.ai.aggroRadius = 20;
+  monster.ai.behavior = "CHASE_AI";
+  session.objects.set(PET, CLID.DistributedNPCGameObject);
+  await performNpcAttack(session, PET, {
+    attackType: 920050, weaponPower: 1, damage: 5, impactFrame: 0,
+    attackColliders: [{ type: "circlecollider", xOffset: 0, yOffset: 0, radius: 200, frame: 0 }],
+  }, ENEMY);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(monster.hitPoints < 100, "the bite landed");
+  assert.equal(monster.ai.engaged, true);
+  assert.equal(monster.ai.targetDoid, PET);
+});

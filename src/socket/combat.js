@@ -21,6 +21,7 @@ import { priceHit, withDamage, withSuffer, holdStaggered, withKnockback, withCri
 import { CASTLESS_ATTACKS, auditCombatResultWhen, consumeAcceptedCast, reachExcess } from "./cast-audit.js";
 import { tellDowned, tellHit } from "./combat-events.js";
 import { stealLife } from "./life-steal.js";
+import { wakeOnHit } from "./target-lock.js";
 export { FLID_PROPOSE_COMBAT_RESULTS, npcAttackChoreography, withBaseAttack, stateUpdate, hitPointsUpdate, triggerStateUpdate, heroStateAndChoreography, isPartyHero } from "./combat-wire.js";
 export { pushVictim, staggerFor, heroStaggerFor } from "./impact.js";
 export { hazardCandidateDoids, trapProjectileReach, launchCarrierProjectile, tickTrapProjectiles, startTrapProjectiles, hazardVictims, dealTrapHit, performTrapAttack } from "./trap-attacks.js";
@@ -700,6 +701,7 @@ const applyProposals = async (session, proposals) => {
     const hitPointsBefore = actor?.hitPoints ?? 0;
     const origin = actor?.position ? { ...actor.position } : null;
     if (actor && applyDamage(session, proposal.attackee, damage, () => session.send(echo))) {
+      wakeOnHit(actor, session.actors?.get(proposal.attacker), proposal.attacker);
       // A monster's hit on a hero: the floor's toughest heal a share of it (life-steal.js).
       if (session.objects?.get(proposal.attackee) === CLID.HeroGameObject) {
         stealLife(session, proposal.attacker, Math.min(damage, hitPointsBefore));
