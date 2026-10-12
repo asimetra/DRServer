@@ -1,4 +1,3 @@
-import { friendlyBodies } from "./actor-roles.js";
 import { bodyPointOf, contact, moveBody } from "./body.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
@@ -8,12 +7,13 @@ import { PacketWriter } from "./packet.js";
  *
  * The AI decides the step — a chase, a back-off, a lunge, a cage exit, an idle
  * body pushed off another (ai.js and behaviours/). What happens to that step
- * after is the same every time and is here once: the part that runs into a
- * player it touches is dropped, the walk stops where it would meet another
- * monster's body, the push of the crowd is added within one walking budget,
- * the players are kept out of it, the walls get the last word, and the client
- * is told where it ended. Which way it faces is not the
- * step's: see npc-facing.js.
+ * after is the same every time and is here once: what each body round it is
+ * to the walk (`bodyRule`), the part that runs into a player it touches
+ * dropped, the walk stopped where it would meet a monster's body or waiting
+ * behind one of its own (`heldByBodies`, `afterStep`), the push of the crowd
+ * added within one walking budget, the players kept out of it, the walls
+ * given the last word, and the client told where it ended. Which way it
+ * faces is not the step's: see npc-facing.js.
  */
 
 const npcPositionUpdate = (doid, position) =>
@@ -32,6 +32,116 @@ export const npcHeadingUpdate = (doid, heading) =>
     .frame();
 
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
+
+/**
+ * What a body is to a walker this tick, the one question every part of the
+ * move stage asks of it: `BODY.PASS`, `KEEP_OUT`, `STOP_AT`, `ROUND` or
+ * `QUEUE`. It asks whose side the two are on and whether they collide, never
+ * what kind of thing either is. `player` says the body is a player's, met
+ * at his feet; `playersSide` is the team the players are on, as the floor's
+ * heroes carry it (npc-crowd.js `senseCrowd`), a player's own team for a
+ * player; `walkingAt` the doid of what the walk is at.
+ *
+ *   PASS      on the players' side, both, and neither row says
+ *             `CollideWithTeam`: they walk through each other, as heroes
+ *             always have.
+ *   STOP_AT   the same, but the player it walks at: its walk ends at his
+ *             body, whoever's side it is on (`keptOutOfHeroes`). A pet's
+ *             walk back to its owner along a route, whose last waypoint is
+ *             where he stands, ended 16 inside him in the harness (the
+ *             wolf walks 175 a tick) once nothing else stopped it there.
+ *   KEEP_OUT  any other player: no step ends inside him, and the part of a
+ *             walk into him, touched, is dropped, so it slides along him
+ *             (`keptOutOfHeroes`, `withoutDrivingIntoContacts`).
+ *   ROUND     a monster of another side: gone round at its body, with no
+ *             wait (`heldByBodies`).
+ *   QUEUE     a monster of its own side: waited behind, then passed
+ *             (`heldByBodies`, `afterStep`).
+ *
+ * The client builds every actor's collision filter from its team
+ * (`ActorGameObject.buildFilter`): it collides with every other team, and
+ * with its own only when its row says `CollideWithTeam` (or it is the local
+ * hero himself). So a player's pet, the chef, a hero's walking summon and
+ * the other players are not in his way, nor he in theirs; the barricades,
+ * the defence orb and the princesses (`CollideWithTeam`) are, and so are
+ * they to anything on his side. The official agrees: in its solo captures a
+ * hero's step ends inside a standing pet's body 98 times (centre distance
+ * p50 35).
+ *
+ * That filter decides only the player's own body, the one body the client
+ * moves; every other actor is a static body there, and two static bodies
+ * never meet. How far apart two NPCs keep is the server's, and on the
+ * monsters' side it is measured: the official does not walk one monster
+ * into another (npc-crowd.js `separationDisplacement`). On the players'
+ * side there is no such measure, so the side keeps the rule of the body
+ * that is on it to move: it passes through itself, his pets, allies and
+ * summons through him and through one another. A monster put on his side
+ * by some mode would join it as it is.
+ *
+ * The official AI did keep its pets off their owner as they walked — a
+ * moving pet overlaps its owner's body on 2.2%, 1.8% and 1.4% of samples
+ * (wolf, dragon, rhino), and 1 of 99, 0 of 10 and 0 of 41 steps past him
+ * went through him. Ours lets them through: a walk is never stopped by a
+ * body it does not collide with, but for the one it walks at. That is
+ * simpler than a wait behind a body that holds nothing, and costs only a
+ * picture of the two overlapping for a moment. Resting is another matter:
+ * the crowd's push still lifts two bodies on the side out of each other,
+ * and a pet keeps its standoff from the players (`separationDisplacement`).
+ *
+ * A wait is a queue, and one queues only behind its own side: all the
+ * measure behind `afterStep` is of monsters behind monsters. The official's
+ * pets do not queue behind monsters: a wolf walking back past its
+ * TetherDist with a monster touching it in its way stood the next second on
+ * 10.6% of quarter seconds (n 189), as on 12.1% with none (n 544); the
+ * dragon on 0% (n 18), the rhino, a slow walker, on 31.7% (n 60) against
+ * 8.8%. Ours, waiting as a monster does, stood 21.6%, 32.7% and 43.7%.
+ *
+ * An actor built without a team, as most tests build a monster, collides,
+ * and queues behind another without one.
+ */
+export const BODY = Object.freeze({
+  PASS: "pass",
+  STOP_AT: "stop-at",
+  KEEP_OUT: "keep-out",
+  ROUND: "round",
+  QUEUE: "queue",
+});
+
+export const bodyRule = (walker, other, { player = false, playersSide = null, walkingAt = null, doid = null } = {}) => {
+  const side = player ? other?.team : playersSide;
+  const friendly =
+    walker?.team != null &&
+    walker.team === side &&
+    other?.team === side &&
+    !walker.collidesWithTeam &&
+    !other.collidesWithTeam;
+  if (player) return friendly ? (doid === walkingAt ? BODY.STOP_AT : BODY.PASS) : BODY.KEEP_OUT;
+  if (friendly) return BODY.PASS;
+  return other?.team === walker?.team ? BODY.QUEUE : BODY.ROUND;
+};
+
+/**
+ * The crowd round a walker (npc-crowd.js `separationDisplacement`'s `near`)
+ * as its walk meets it (`bodyRule`): `contacts`, the players it is kept out
+ * of and rests against, each as the way out of him; `bodies`, the monsters
+ * it goes round or waits behind, each with its `rule`. The chase keeps
+ * whatever part of itself runs along a player it touches and loses the part
+ * that runs through him, so a crowd arriving at one player spreads round
+ * him instead of piling into him.
+ */
+export const bodiesMet = (walker, near, { playersSide = null, walkingAt = null } = {}) => {
+  const contacts = [];
+  const bodies = [];
+  for (const body of near ?? []) {
+    const rule = bodyRule(walker, body.actor, { player: body.player, playersSide, walkingAt, doid: body.doid });
+    if (body.player) {
+      if (rule === BODY.KEEP_OUT && body.out) contacts.push(body.out);
+    } else if (rule !== BODY.PASS) {
+      bodies.push({ doid: body.doid, x: body.x, y: body.y, touching: body.touching, rule });
+    }
+  }
+  return { contacts, bodies };
+};
 
 /**
  * The one position this server must never send: a body inside the player's.
@@ -63,21 +173,15 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  * furthest legal destination on that step. This still runs before navigation,
  * so a wall wins the argument afterward.
  *
- * A body the player does not collide with — his pet, an ally, a walking
- * summon, on his side (`friendlyBodies`, actor-roles.js) — shoves nobody, and
- * is not kept out of him; unless he is the one it walks at (`walkingAt`, his
- * doid). A walk at a player ends at his body whoever's side it is on, and
- * a pet's walk back to its owner along a route, whose last waypoint is
- * where he stands, ended 16 inside him in the harness (the wolf walks 175 a
- * tick) once nothing else stopped it there.
+ * Only the players the walk is kept out of or stops at are (`bodyRule`): a
+ * body on his side that he does not collide with shoves nobody.
  */
 export const keptOutOfHeroes = (target, actor, heroes, walkingAt = null) => {
   const start = actor.position;
   let { x, y } = target;
   for (const hero of heroes) {
     if (!hero.position || !hero.actor) continue;
-    // A hero is on the players' side by definition.
-    if (hero.doid !== walkingAt && friendlyBodies(actor, hero.actor, hero.actor.team)) continue;
+    if (bodyRule(actor, hero.actor, { player: true, walkingAt, doid: hero.doid }) === BODY.PASS) continue;
     const bodies = contact(actor, hero.actor);
     const fromX = start.x - hero.position.x;
     const fromY = start.y - hero.position.y;
@@ -157,7 +261,7 @@ export const touchingInTheWay = (actor, walk, bodies) => {
   const gap = (body) => Math.round(apart(body) - body.touching);
   const square = (body) => ((body.x - from.x) * way.x + (body.y - from.y) * way.y) / (apart(body) || 1);
   return bodies
-    .filter((body) => !body.queues && apart(body) <= body.touching + length && inTheWay(from, way, body))
+    .filter((body) => body.rule === BODY.ROUND && apart(body) <= body.touching + length && inTheWay(from, way, body))
     .sort((a, b) => gap(a) - gap(b) || square(b) - square(a));
 };
 
@@ -213,10 +317,10 @@ const firstMet = (from, walk, bodies) => {
  * A wait ends (`passing`, decided by the move stage, ai.js): then a body in
  * its way is gone round as one beside it is — the part of the walk into it
  * dropped, or, met head on, the walk turned to the side it leans to — and
- * the walk still stops where it would touch the next body. A body of
- * another team is gone round so from the first (`goesRound`): one queues
- * only behind its own side (`queues`, npc-crowd.js), and a walk held only
- * going round one is `blocked` but not `queued`, which starts no wait.
+ * the walk still stops where it would touch the next body. A body it goes
+ * `ROUND` (`bodyRule`) is gone round so from the first (`goesRound`), and a
+ * walk held only going round one is `blocked` but not `queued`, which
+ * starts no wait.
  *
  * Touching or inside another body, nothing walks it deeper: a lunge, a
  * knockback or a burst spawned on one spot leaves bodies inside one another,
@@ -228,8 +332,8 @@ const heldByBodies = (actor, walk, bodies, passing = false) => {
   return held.blocked && held.wentRound ? heldOnSide(actor, walk, bodies, passing, -1) : held;
 };
 
-/** Whether a body in its way is gone round rather than waited behind: when its wait is over, or it is not in the queue. */
-const goesRound = (body, passing) => passing || !body.queues;
+/** Whether a body in its way is gone round rather than waited behind: when its wait is over, or it is not one it queues behind. */
+const goesRound = (body, passing) => passing || body.rule !== BODY.QUEUE;
 
 const heldOnSide = (actor, walk, bodies, passing, flip) => {
   const length = Math.hypot(walk.x, walk.y);
@@ -278,10 +382,10 @@ const heldOnSide = (actor, walk, bodies, passing, flip) => {
   }
   const swept = sweptAlong(from, way, along, bodies, passing);
   wentRound ||= swept.wentRound;
-  // Going round a body of another side with no wait, a slide back the way
-  // it came is no headway: a pet boxed in by monsters was slid 55 back
-  // and walked in again the next tick. A pass after a wait keeps what it
-  // was measured with.
+  // Going round a body `ROUND` with no wait, a slide back the way it came
+  // is no headway: a pet boxed in by monsters was slid 55 back and walked
+  // in again the next tick. A pass after a wait keeps what it was measured
+  // with.
   const backwards = wentRound && !passing && swept.taken.x * way.x + swept.taken.y * way.y < -HEADWAY * length;
   if (Math.hypot(swept.taken.x, swept.taken.y) < HEADWAY * length || backwards) {
     return { walk: { x: 0, y: 0 }, blocked: true, queued: !wentRound, wentRound };
@@ -455,6 +559,52 @@ export const stepNpc = (navigation, actor, options) => {
     };
   }
   return { next: step.next, travel: distanceTo(actor.position, step.next), refused, blocked: held.blocked, queued: held.queued };
+};
+
+/**
+ * How long a monster waits behind another of its side before it goes round
+ * (`QUEUE`, `bodyRule`): a fresh draw each time it is stopped, with an even
+ * chance of ending every moment (`WAIT_ENDS_PER_SECOND`), and once it ends,
+ * how long it goes round (`PASS_MS`) before a body in its way stops it
+ * again.
+ *
+ * The official's waits end. Over 57 solo captures, a chaser stood behind
+ * another monster for a second or more 671 times; of those still waiting at
+ * 1, 2 and 3 s, 46%, 42% and 43% stopped within the next second. Second by
+ * second, with the hero standing still and the one in its way standing short
+ * of the hero (a shooter in range, one held itself, one at the end of a
+ * route; n 4,922), it waited 66% of the time and moved on the rest —
+ * advancing 12%, round it 11%; behind one swinging at the hero (n 3,073) it
+ * waited 34%. A wait without end left a queue standing behind a monster
+ * that was going nowhere: 94 s behind an ice imp shooting from range, on
+ * 838788c. With the hero moving the queue moves with him anyway (waits 5-19%
+ * of seconds), and these waits rarely run out.
+ */
+const WAIT_ENDS_PER_SECOND = 0.42;
+const PASS_MS = 1000;
+const waitFor = (random) => (-Math.log(1 - Math.min(0.999999, random())) / WAIT_ENDS_PER_SECOND) * 1000;
+
+/** Whether its wait is over and its walk goes round the bodies it queued behind this tick. */
+export const passingNow = (ai, now) => now < (ai.passingUntil ?? 0);
+
+/**
+ * The wait bookkept from what the step did (`ai.waitEndsAt`,
+ * `ai.passingUntil`, written here alone): a walk stopped in a queue
+ * (`queued`) starts a wait, one that has waited its draw goes round for
+ * `PASS_MS`, one that walks freely, or was only held going round a body of
+ * another side, has no wait.
+ */
+export const afterStep = (session, ai, now, step, passing) => {
+  if (passing) return;
+  if (!step?.queued) {
+    ai.waitEndsAt = null;
+    return;
+  }
+  if (ai.waitEndsAt == null) ai.waitEndsAt = now + waitFor(session.random ?? Math.random);
+  else if (now >= ai.waitEndsAt) {
+    ai.waitEndsAt = null;
+    ai.passingUntil = now + PASS_MS;
+  }
 };
 
 /** Puts it where a step ended; a step that went anywhere is sent. */

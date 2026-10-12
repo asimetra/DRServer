@@ -534,7 +534,7 @@ test("no position this server sends puts a monster inside the player", async (t)
 });
 
 /**
- * The friendly-bodies rule (actor-roles.js `friendlyBodies`): a step through
+ * The players' side passes through itself (npc-move.js `bodyRule`): a step through
  * a player is cut at his body for whatever he collides with on the client —
  * a monster, or one on his side whose row says `CollideWithTeam` — and left
  * whole for one on his side that he walks through, unless he is the one it

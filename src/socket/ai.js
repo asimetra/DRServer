@@ -6,7 +6,7 @@ import { matchStateOf, worldOf } from "./match-world.js";
 import { act, reachOf } from "./npc-act.js";
 import { boundedPush, nobodyToFight, senseCrowd, separateIdleNpc, separationDisplacement } from "./npc-crowd.js";
 import { face } from "./npc-facing.js";
-import { placeNpc, stepNpc } from "./npc-move.js";
+import { afterStep, bodiesMet, passingNow, placeNpc, stepNpc } from "./npc-move.js";
 import { advanceNpcRelease } from "./npc-release.js";
 import { clearNpcTarget, LET_GO, pickTarget } from "./npc-targeting.js";
 import { describeRoute, NO_ROUTE_ASKED, routeToTarget } from "./routing.js";
@@ -117,59 +117,6 @@ const traceRoute = (doid, actor, route, target) =>
  * sent. True when it went anywhere. A walk is held by the monsters in its
  * way; a lunge, and the way out of the scenery, are not (`throughBodies`).
  */
-/**
- * How long a monster waits behind another before it goes round: a fresh
- * draw each time it is stopped, with an even chance of ending every moment
- * (`WAIT_ENDS_PER_SECOND`), and once it ends, how long it goes round
- * (`PASS_MS`) before a body in its way stops it again.
- *
- * The official's waits end. Over 57 solo captures, a chaser stood behind
- * another monster for a second or more 671 times; of those still waiting at
- * 1, 2 and 3 s, 46%, 42% and 43% stopped within the next second. Second by
- * second, with the hero standing still and the one in its way standing short
- * of the hero (a shooter in range, one held itself, one at the end of a
- * route; n 4,922), it waited 66% of the time and moved on the rest —
- * advancing 12%, round it 11%; behind one swinging at the hero (n 3,073) it
- * waited 34%. A wait without end left a queue standing behind a monster
- * that was going nowhere: 94 s behind an ice imp shooting from range, on
- * 838788c. With the hero moving the queue moves with him anyway (waits 5-19%
- * of seconds), and these waits rarely run out.
- *
- * A wait is a queue, and one queues only behind its own side: a walk held
- * by a body of another team goes round it from the first tick, with no wait
- * drawn (npc-move.js `goesRound`, the body's `queues`). All the measure
- * above is of monsters behind monsters. The official's pets do not queue
- * behind monsters: a wolf walking back past its TetherDist with a monster
- * touching it in its way stood the next second on 10.6% of quarter seconds
- * (n 189), as on 12.1% with none (n 544); the dragon on 0% (n 18), the
- * rhino, a slow walker, on 31.7% (n 60) against 8.8%. Ours, waiting as a
- * monster does, stood 21.6%, 32.7% and 43.7%.
- */
-const WAIT_ENDS_PER_SECOND = 0.42;
-const PASS_MS = 1000;
-const waitFor = (random) => (-Math.log(1 - Math.min(0.999999, random())) / WAIT_ENDS_PER_SECOND) * 1000;
-
-/**
- * Whether its walk may go round the monsters in its way this tick, and the
- * wait bookkept from what the step did: a walk stopped in a queue
- * (`queued`) starts a wait, one that has waited its draw goes round for
- * `PASS_MS`, one that walks freely, or was only held going round a body of
- * another side, has no wait.
- */
-const passingNow = (ai, now) => now < (ai.passingUntil ?? 0);
-const afterStep = (session, ai, now, step, passing) => {
-  if (passing) return;
-  if (!step?.queued) {
-    ai.waitEndsAt = null;
-    return;
-  }
-  if (ai.waitEndsAt == null) ai.waitEndsAt = now + waitFor(session.random ?? Math.random);
-  else if (now >= ai.waitEndsAt) {
-    ai.waitEndsAt = null;
-    ai.passingUntil = now + PASS_MS;
-  }
-};
-
 const move = (session, state, crowd, doid, actor, intent, turn) => {
   const { ai } = actor;
   const passing = passingNow(ai, turn.now);
@@ -177,12 +124,17 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
   // Separation remains possible under MOVEMENT zero, but it no longer gives
   // an actor a second BaseMove-sized step on top of its walk.
   const crowding = separationDisplacement(doid, actor, crowd.spatialIndex, crowd.heroDoids);
+  // Each body round it, as this walk meets it (npc-move.js `bodyRule`).
+  const met = bodiesMet(actor, crowding.near, {
+    playersSide: crowd.spatialIndex.playersSide,
+    walkingAt: turn.victim.doid,
+  });
   // What it walked among, for its behaviour to look at once it has moved.
-  turn.around = crowding.bodies;
+  turn.around = met.bodies;
   const step = stepNpc(state.navigation, actor, {
     walk: { x: intent.x, y: intent.y },
-    contacts: crowding.contacts,
-    bodies: intent.throughBodies ? null : crowding.bodies,
+    contacts: met.contacts,
+    bodies: intent.throughBodies ? null : met.bodies,
     passing,
     separation: boundedPush(crowding, ai, turn.deltaSeconds),
     heroes: crowd.heroes,

@@ -1,4 +1,4 @@
-import { friendlyBodies, isHuntable } from "./actor-roles.js";
+import { isHuntable } from "./actor-roles.js";
 import { bodyPointOf, bodyRadius, standoff } from "./body.js";
 import { heroMembersOf } from "./match-world.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
@@ -48,7 +48,7 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
    */
   const cellSize = Math.max(1, largestRadius * 2 + maximumTravel * 2 + 8);
   const cells = new Map();
-  /** The team the players are on, as their heroes carry it (actor-roles.js `friendlyBodies`). */
+  /** The team the players are on, as their heroes carry it (npc-move.js `bodyRule`). */
   let playersSide = null;
   for (const doid of heroDoids) playersSide ??= actors.get(doid)?.team ?? null;
   for (const [doid, actor] of actors) {
@@ -79,17 +79,16 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
  * Two monsters touching are at rest; nothing pushes them further apart.
  *
  * Monsters meet at their bodies (`bodyPointOf`, body.js), where they meet the
- * walls; a player at his feet, as `keptOutOfHeroes` keeps him. The stable
+ * walls; a player at his feet, as `keptOutOfHeroes` (npc-move.js) keeps him. The stable
  * pair angle separates two actors on identical coordinates instead of leaving
  * the direction undefined.
  *
- * `x`, `y` is the push; `contacts` the players it touches, each as the way
- * out of him; `bodies` every other monster near enough to meet this tick,
- * its body point, the distance at which the two touch and whether it
- * `queues` behind it, being of its team (npc-move.js `goesRound`). On the
- * players' side, the others on it are neither (actor-roles.js
- * `friendlyBodies`): they pass through one another, and only the push
- * lifts two of them out of each other.
+ * `x`, `y` is the push, and `near` every other body near enough to meet
+ * this tick, players and monsters alike: its doid and actor, whether it is
+ * a `player`, the point it is met at, the distance at which the two touch,
+ * and for a player it rests against, `out`, the way out of him. What each
+ * of them is to a walk — a body it walks through, goes round, waits behind
+ * or is kept out of — is not the crowd's to say (npc-move.js `bodyRule`).
  */
 export const separationDisplacement = (
   doid,
@@ -100,17 +99,7 @@ export const separationDisplacement = (
 ) => {
   let x = 0;
   let y = 0;
-  /**
-   * The players it is resting against, each as the way out of that one.
-   *
-   * The chase keeps whatever part of itself runs along a player it touches
-   * and loses the part that runs through him (`stepNpc`), so a crowd
-   * arriving at one player spreads round him instead of piling into him.
-   * A body on his side that he does not collide with walks on through him
-   * (`friendlyBodies`, actor-roles.js); the push still lifts it out.
-   */
-  const contacts = [];
-  const bodies = [];
+  const near = [];
   const radius = bodyRadius(actor);
   const own = bodyPointOf(actor, actor.position);
   const cellX = Math.floor(actor.position.x / spatialIndex.cellSize);
@@ -135,10 +124,8 @@ export const separationDisplacement = (
         let dy = from.y - at.y;
         let distance = Math.hypot(dx, dy);
         const touching = radius + bodyRadius(other);
-        // A body on the players' side does not hold a walk on it
-        // (`friendlyBodies`); one of another team is not queued behind.
-        const friendly = friendlyBodies(actor, other, spatialIndex.playersSide);
-        if (!isHero && !friendly) bodies.push({ doid: otherDoid, x: at.x, y: at.y, touching, queues: other.team === actor.team });
+        const body = { doid: otherDoid, actor: other, player: isHero, x: at.x, y: at.y, touching, out: null };
+        near.push(body);
         /**
          * The nearest peer sits on the sum of the two bodies. Measured
          * against the official for monsters standing in a fight: KNIGHT p25
@@ -173,12 +160,12 @@ export const separationDisplacement = (
           (minimumDistance - Math.min(distance, minimumDistance)) * correctionShare;
         x += (dx / distance) * correction;
         y += (dy / distance) * correction;
-        if (isHero && !friendly) contacts.push({ x: dx / distance, y: dy / distance });
+        if (isHero) body.out = { x: dx / distance, y: dy / distance };
       }
     }
   }
 
-  return { x, y, contacts, bodies };
+  return { x, y, near };
 };
 
 /**

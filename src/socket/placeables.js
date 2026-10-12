@@ -637,7 +637,7 @@ export const spawnPlaceable = async (
     isPet: mobileSummon,
     masterId: mobileSummon ? session.heroDoid : 0,
     team,
-    // Whether the players on its side are in its way (actor-roles.js `friendlyBodies`).
+    // Whether the players on its side are in its way (npc-move.js `bodyRule`).
     collidesWithTeam: Boolean(npc.CollideWithTeam),
     level: placer.actorLevel,
     stats: mobileSummon ? npcStats(gm, npc, petCombatLevel(level)) : undefined,

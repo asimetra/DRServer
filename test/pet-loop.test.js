@@ -350,8 +350,8 @@ test("a pet short of the snap-back distance walks back", async (t) => {
 });
 
 /**
- * The players' side passes through itself (actor-roles.js
- * `friendlyBodies`): a pet's walk is not held by another player's pet or by
+ * The players' side passes through itself (npc-move.js `bodyRule`): a
+ * pet's walk is not held by another player's pet or by
  * an ally standing in its way, as it is not by a player.
  */
 const neverHeldOnTheWay = async (session, pet, skeleton) => {
