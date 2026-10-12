@@ -5,7 +5,7 @@ import { forgetRoute } from "./routing.js";
 import { restWalk } from "./behaviours/chase.js";
 import { forgetBackOff } from "./behaviours/kite.js";
 import { petTarget } from "./behaviours/pet.js";
-import { disengage, fighting, letGoOfTarget, lockOn, stillLocked } from "./target-lock.js";
+import { disengage, fighting, letGoOfTarget, lockOn, stillLocked, take } from "./target-lock.js";
 
 /**
  * Who each one goes for this tick, one selector per kind.
@@ -96,14 +96,19 @@ export const clearNpcTarget = (actor) => {
  * player behind it. A beast nearer than the player is taken, as any
  * monster of another side.
  */
-const enemyTarget = (crowd, actor, now) => {
-  const { ai } = actor;
-  const { heroes, pets, beasts, allies, heroByDoid, petByDoid, beastByDoid, allyByDoid } = crowd;
-  const held =
-    heroByDoid.get(ai.targetDoid) ?? petByDoid.get(ai.targetDoid) ??
-    beastByDoid.get(ai.targetDoid) ?? allyByDoid.get(ai.targetDoid);
-  if (held && ai.engaged) return fighting(held);
+const enemyTarget = (crowd, actor) =>
+  fighting(heldTarget(crowd, actor) ?? take(actor.ai, firstPick(crowd, actor)));
 
+/** The one it holds: on the floor, alive, and it engaged (past its DisengageDist ai.js lets go). */
+const heldTarget = ({ heroByDoid, petByDoid, beastByDoid, allyByDoid }, { ai }) => {
+  if (!ai.engaged) return null;
+  return heroByDoid.get(ai.targetDoid) ?? petByDoid.get(ai.targetDoid) ??
+    beastByDoid.get(ai.targetDoid) ?? allyByDoid.get(ai.targetDoid) ?? null;
+};
+
+/** Its pick with nothing held: the nearest player, a pet in reach with no player in it, a nearer beast. */
+const firstPick = ({ heroes, pets, beasts, allies }, actor) => {
+  const { ai } = actor;
   const inReach = (candidate) =>
     distanceTo(actor.position, candidate.position) <= reachOf(ai, contact(actor, candidate.actor));
   const hero = nearestTo(actor.position, heroes);
@@ -117,23 +122,21 @@ const enemyTarget = (crowd, actor, now) => {
   const pet = nearestTo(actor.position, pets.filter(inReach));
   if (pet && !heroes.some(inReach) && !allies.some(inReach)) player = pet;
   const beast = nearestTo(actor.position, beasts);
-  const victim =
-    beast && (!player || squaredDistanceTo(actor.position, beast.position) <
-      squaredDistanceTo(actor.position, player.position))
-      ? beast
-      : player;
-  return fighting(lockOn(ai, victim, now));
+  return beast && (!player || squaredDistanceTo(actor.position, beast.position) <
+    squaredDistanceTo(actor.position, player.position))
+    ? beast
+    : player;
 };
 
 /**
  * Team 7 fights every living combatant outside team 7, the nearest when it
  * picks, and holds it as a monster does (`enemyTarget`).
  */
-const beastTarget = ({ beastTargets }, actor, now) => {
+const beastTarget = ({ beastTargets }, actor) => {
   const { ai } = actor;
   const held = beastTargets.find(({ doid }) => doid === ai.targetDoid);
   if (held && ai.engaged) return fighting(held);
-  return fighting(lockOn(ai, nearestTo(actor.position, beastTargets), now));
+  return fighting(take(ai, nearestTo(actor.position, beastTargets)));
 };
 
 /**

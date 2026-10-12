@@ -21,6 +21,15 @@ export const lockOn = (ai, victim, now) => {
   return victim;
 };
 
+/**
+ * Takes `victim` as its target, with no clock on it: a monster holds its
+ * target until it is gone (npc-targeting.js `enemyTarget`). Answers with it.
+ */
+export const take = (ai, victim) => {
+  ai.targetDoid = victim?.doid ?? null;
+  return victim;
+};
+
 /** It holds no target; when it next picks is left as it was. */
 export const letGoOfTarget = (ai) => {
   ai.targetDoid = null;
