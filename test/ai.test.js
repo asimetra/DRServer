@@ -356,6 +356,45 @@ test("a monster that lost one hero past its DisengageDist takes the next fresh, 
   assert.equal(knight.ai.targetDoid, joiner.heroDoid, "held when the host comes back nearer");
 });
 
+/**
+ * A target that falls is dropped and forgotten, as one past DisengageDist
+ * is: the monster lets go, and its next pick is only of what is within its
+ * AggroRadius; it does not cross the room to a hero 1200 off.
+ */
+test("a monster whose target falls lets go and does not walk to a far hero", async () => {
+  const { session: host, heroDoid, knightDoid } = makeSession();
+  host.accountId = 100;
+  host.socket = { destroyed: false };
+  host.allocateDoid = function (clid) {
+    const doid = 9000 + this.objects.size;
+    this.objects.set(doid, clid);
+    return doid;
+  };
+  const knight = host.actors.get(knightDoid);
+  knight.position = { x: 200, y: 0 };
+  Object.assign(knight.ai, { aggroRadius: 300, disengageDistance: 1600, nextAttackAt: Number.POSITIVE_INFINITY });
+  const joiner = {
+    accountId: 101, heroDoid: 11, heroPosition: { x: 1400, y: 0 }, objects: new Map(), actors: new Map(),
+    doobers: new Map(), socket: { destroyed: false }, send: () => {}, allocateDoid: host.allocateDoid,
+  };
+  const world = createMatchWorld({ members: new Set([host, joiner]) }, host);
+  world.contextFor(joiner);
+  world.objects.set(joiner.heroDoid, CLID.HeroGameObject);
+  world.actors.set(joiner.heroDoid, { hitPoints: 200, maxHitPoints: 200, position: joiner.heroPosition });
+  const context = world.contextFor(host);
+  let now = 1000;
+  await tickNpcAi(context, (now += 250), 0.25);
+  assert.equal(knight.ai.targetDoid, heroDoid);
+  assert.equal(knight.ai.engaged, true);
+  const hero = world.actors.get(heroDoid);
+  hero.dead = true;
+  hero.hitPoints = 0;
+  const at = { ...knight.position };
+  for (let tick = 0; tick < 12; tick++) await tickNpcAi(context, (now += 250), 0.25);
+  assert.equal(knight.ai.engaged, false, "still engaged");
+  assert.ok(Math.hypot(knight.position.x - at.x, knight.position.y - at.y) < 5, `walked off to ${Math.round(knight.position.x)}`);
+});
+
 test("overlapping melee NPCs separate instead of stacking on the hero", async () => {
   const { session, knightDoid } = makeSession();
   const first = session.actors.get(knightDoid);

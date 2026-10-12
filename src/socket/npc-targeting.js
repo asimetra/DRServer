@@ -72,12 +72,13 @@ export const clearNpcTarget = (actor) => {
  * target walked out of its reach with another hero in it kept after the
  * first 10 of 16 times: what drops a target is death, the floor, and the
  * DisengageDist, not leaving its reach. Let go of past it (ai.js,
- * `clearNpcTarget`), a target is forgotten: the monster stands disengaged
- * where it is, and its next pick, when anyone comes within its AggroRadius,
- * is a fresh one. `ChangeTargetT` is no clock for a
+ * `clearNpcTarget`), or fallen, or gone from the floor, a target is
+ * forgotten: the monster stands disengaged where it is, and its next pick,
+ * when anyone comes within its AggroRadius, is a fresh one. A monster that
+ * walked on to the next hero, wherever he was, crossed the room to one 1200
+ * off with an AggroRadius of 300 (player-eye #3). `ChangeTargetT` is no clock for a
  * monster to look again (it kept the hero 99% across many periods; time on
- * a target before a switch p50 ~6 s, with no gathering at 2-3 s): a target
- * gone, it picks again at once. The shooters do move to the nearest hero
+ * a target before a switch p50 ~6 s, with no gathering at 2-3 s). The shooters do move to the nearest hero
  * with the old one still in reach (SKELETON_ARCHER 30 of 59 switches, the
  * throwers, the imps); this holds them longer than the official does, and
  * is left so. Nor does a monster that re-targets the nearest hero all the
@@ -99,8 +100,16 @@ export const clearNpcTarget = (actor) => {
  * player behind it. A beast nearer than the player is taken, as any
  * monster of another side.
  */
-const enemyTarget = (crowd, actor) =>
-  fighting(heldTarget(crowd, actor) ?? take(actor.ai, firstPick(crowd, actor)));
+const enemyTarget = (crowd, actor) => {
+  const held = heldTarget(crowd, actor);
+  if (held) return fighting(held);
+  // Engaged with one that fell or left the floor: dropped and forgotten, as
+  // past its DisengageDist (ai.js); its next pick is a fresh one, of what is
+  // within its AggroRadius. One engaged with none yet (a summon, spawned
+  // into its fight) picks.
+  if (actor.ai.engaged && actor.ai.targetDoid != null) return LET_GO;
+  return fighting(take(actor.ai, firstPick(crowd, actor)));
+};
 
 /** The one it holds: on the floor, alive, and it engaged (past its DisengageDist ai.js lets go). */
 const heldTarget = ({ heroByDoid, petByDoid, beastByDoid, allyByDoid }, { ai }) => {
@@ -139,6 +148,7 @@ const beastTarget = ({ beastTargets }, actor) => {
   const { ai } = actor;
   const held = beastTargets.find(({ doid }) => doid === ai.targetDoid);
   if (held && ai.engaged) return fighting(held);
+  if (ai.engaged && ai.targetDoid != null) return LET_GO;
   return fighting(take(ai, nearestTo(actor.position, beastTargets)));
 };
 
