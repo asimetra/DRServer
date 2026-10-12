@@ -559,7 +559,7 @@ test("a walk that goes nowhere does not build its ramp", () => {
   const ai = { moveSpeed: 180, walkSpeed: 0 };
   const actor = { position: { x: 100, y: 100 }, ai };
   const turn = {
-    ai, actor, route: { waypoint: { x: 100, y: 100 }, sees: false, steers: false },
+    ai, actor, route: { waypoint: { x: 100, y: 100 }, straight: false, steers: false },
     distance: 400, stopAt: 60, topSpeed: 180, deltaSeconds: 0.25,
   };
   for (let tick = 0; tick < 4; tick++) {

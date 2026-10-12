@@ -50,7 +50,9 @@ const BACK_OFF_MOST_MS = 3250;
 
 /**
  * Whether a kiter or a ranged pet may back off from its target, given the
- * route to it: when it sees the target, and when it has no route to it.
+ * route to it: when it has a clear walk straight at it (`route.straight`),
+ * and when it has no route to it. Not when it merely sees it: a kiter may
+ * shoot (`seesBody`, a line of no width) and not back off.
  *
  * The second half is today's behaviour kept on purpose, not a rule anyone
  * chose for both. c13780e made a failed route hand out the target as a
@@ -58,15 +60,16 @@ const BACK_OFF_MOST_MS = 3250;
  * back-offs read that same flag. For the kiter it was meant — the commit
  * says "a kiter backs off as from any target in sight", from the captures'
  * "kiters keep their distance", and test/no-route-walk.test.js holds it. For
- * the pet's MinRange retreat it came along unasked (and no placed pet has a
- * keep distance today, so it does not run). A target with a route that is
+ * the pet's MinRange retreat it came along unasked: the equipped dragon has
+ * a keep distance (its fireball's MinRange, 200), so it does run for it,
+ * though no placed summon has one. A target with a route that is
  * not in sight is not backed off from, and a body escaping the scenery backs
  * off from nothing.
  *
  * DECISION FOR THE MAINTAINER: should a pet or a kiter back off from a target
  * it has no route to?
  */
-export const backsOffFrom = (route) => route.sees || (route.blocked && !route.escaping);
+export const backsOffFrom = (route) => route.straight || (route.blocked && !route.escaping);
 
 /**
  * Away from everyone inside its keep distance, nearer ones counting more, or
@@ -181,6 +184,9 @@ export const backOffHeadway = (actor, away, before, topSpeed, deltaSeconds) => {
     endBackOff(actor.ai);
   }
 };
+
+/** Whether a row kites: its `Aggro_AI_Type`. */
+export const isKiter = (ai) => ai.behavior === "KITE_AI";
 
 /**
  * KITE_AI: it walks as a chaser does, to contact or its keep distance, and

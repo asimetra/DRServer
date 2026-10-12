@@ -222,9 +222,11 @@ export const furthestReach = (attacks, bodies) =>
   Math.max(bodies, ...attacks.map((attack) => reach(attack, bodies)));
 
 /**
- * The "may it swing from here at all" bar an `ai` is built with: the furthest
- * of its attacks' `Range`, twenty at least. Which attack it then uses is
- * decided per swing against that attack's own band.
+ * `ai.attackRange`: the furthest of its attacks' `Range`, twenty at least.
+ * Not the bar a swing is held to — that is `reachOf` (npc-act.js), each
+ * attack's reach given the two bodies — but the cap on a standoff
+ * (`standoff`: never further than eight inside it), and the range of the one
+ * attack a hand-built `ai` has (npc-act.js `attacksOf`).
  */
 export const furthestAttackRange = (attackSet) =>
   Math.max(20, ...attackSet.map((attack) => attack.range));

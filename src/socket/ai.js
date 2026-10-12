@@ -12,7 +12,7 @@ import { clearNpcTarget, LET_GO, pickTarget } from "./npc-targeting.js";
 import { engage } from "./target-lock.js";
 import { describeRoute, NO_ROUTE_ASKED, routeToTarget } from "./routing.js";
 import { chase, restWalk, walkEndsAt } from "./behaviours/chase.js";
-import { kite, backingOff } from "./behaviours/kite.js";
+import { isKiter, kite, backingOff } from "./behaviours/kite.js";
 import { heldByHit, swingIntent, whatItMayDo } from "./behaviours/overrides.js";
 import { pet, snapBackSpot } from "./behaviours/pet.js";
 import { isStationary, stationary } from "./behaviours/stationary.js";
@@ -82,7 +82,7 @@ const towards = (step, from, target) => {
 const behaviourOf = (ai) =>
   ai.kind === "pet"
     ? pet
-    : ai.behavior === "KITE_AI"
+    : isKiter(ai)
       ? kite
       : isStationary(ai)
         ? stationary
@@ -150,7 +150,7 @@ const traceRoute = (doid, actor, route, target) =>
 const move = (session, state, crowd, doid, actor, intent, turn) => {
   const { ai } = actor;
   const passing = passingNow(ai, turn.now);
-  if (ai.kind !== "pet" && !intent.walking) restWalk(ai);
+  if (!intent.walking) restWalk(ai);
   // Separation remains possible under MOVEMENT zero, but it no longer gives
   // an actor a second BaseMove-sized step on top of its walk.
   const crowding = separationDisplacement(doid, actor, crowd.spatialIndex, crowd.heroDoids);
@@ -181,7 +181,7 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
    * held at a wall, or behind another monster, would set off at full speed
    * the moment it was let go.
    */
-  if ((step?.refused || step?.blocked) && ai.kind !== "pet") restWalk(ai);
+  if (step?.refused || step?.blocked) restWalk(ai);
   if (!intent.throughBodies) afterStep(session, ai, turn.now, step, passing);
   if (!step) return false;
   placeNpc(session, doid, actor, step);

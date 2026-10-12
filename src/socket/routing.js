@@ -7,8 +7,10 @@ import { keptOutOfHeroes } from "./npc-move.js";
  * `routeToTarget` answers with a `Route`:
  *
  *   waypoint   the point to walk at this tick, or null when there is none;
- *   sees       the body has a straight line at its own radius to the target,
- *              so the waypoint is the target;
+ *   straight   the body has a clear walk at its own radius to the target
+ *              (`bodyWalkClear`), so the waypoint is the target. Not sight:
+ *              whether it may swing from here asks a line of no width
+ *              (body.js `seesBody`), which is what "sees" means everywhere;
  *   blocked    the latest route search to this target found no route. Kept
  *              while the body escapes the scenery, which does not search;
  *   steers     it walks straight at the target without seeing it — there is
@@ -42,9 +44,9 @@ const squaredDistanceTo = (from, to) => {
   return x * x + y * y;
 };
 
-const route = (waypoint, { sees = false, blocked = false, steers = false, exhausted = false, escaping = false } = {}) => ({
+const route = (waypoint, { straight = false, blocked = false, steers = false, exhausted = false, escaping = false } = {}) => ({
   waypoint,
-  sees,
+  straight,
   blocked,
   steers,
   exhausted,
@@ -86,9 +88,9 @@ export const searchAgain = (ai) => {
 };
 
 /** For DR_DEBUG_AI: how the waypoint was come by. */
-export const describeRoute = (ai, { sees, blocked, steers }) => {
+export const describeRoute = (ai, { straight, blocked, steers }) => {
   if (blocked) return "no route";
-  if (sees) return "direct";
+  if (straight) return "direct";
   if (steers) return "route ends short, straight at it";
   return `via path ${ai.routing?.next ?? 0}/${ai.routing?.points?.length ?? 0}`;
 };
@@ -214,7 +216,7 @@ export const routeToTarget = (session, actor, target, now, heroes = [], reach = 
   const aim = aimAt(actor, victim, target);
   if (!navigation || bodyWalkClear(navigation, actor, actor.position, aim, radius)) {
     forgetRoute(ai);
-    return route(target, { sees: true });
+    return route(target, { straight: true });
   }
 
   const routing = currentRouting(actor, navigation, aim, radius, now);

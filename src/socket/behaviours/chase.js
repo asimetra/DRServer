@@ -76,7 +76,7 @@ export const walkEndsAt = (actor, bodies, following) =>
 export const walkTowards = (turn, ramped) => {
   const { ai, actor, route, distance, stopAt, topSpeed, deltaSeconds } = turn;
   // The waypoint is the target itself: in sight, or walked at straight.
-  const headsAtTarget = route.sees || route.steers;
+  const headsAtTarget = route.straight || route.steers;
   if (!(route.waypoint && (distance > stopAt || !headsAtTarget))) return STILL;
   const waypointDistance = distanceTo(actor.position, route.waypoint);
   // At the target itself the walk ends at the standoff; at a point on
