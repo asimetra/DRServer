@@ -160,8 +160,16 @@ export const createCensus = async (modules) => {
    * staggered or thrown, its route found and not ending short, chasing (not
    * swinging, locked or lunging), with no other monster's body in its
    * way — within 70 degrees of the way to its next waypoint, touching or 12
-   * off — and standing within a unit of one spot for 3 s or more. Nothing
-   * explains such a stand; the run fails on any (tools/ai-sim.js).
+   * off — nor pinched between two, and standing within a unit of one spot
+   * for 3 s or more. Nothing explains such a stand; the run fails on any
+   * (tools/ai-sim.js).
+   *
+   * Pinched: touching a body (to two units) on each side of its way, one of
+   * them ahead of its middle. Neither is in its way, so its wait ends and
+   * its pass goes round nothing, but the walk slid along the one runs into
+   * the other: two SKELETON_WARRIORs of smashing seed 1 smasher stood so
+   * 3 s and more, between bodies 79 and 85, and 79 and 96 degrees off their
+   * way (d5b4eae), and walked on when one of the two moved.
    */
   const stands = new Map();
   let frozen = 0;
@@ -173,16 +181,25 @@ export const createCensus = async (modules) => {
     const length = Math.hypot(to.x - actor.position.x, to.y - actor.position.y) || 1;
     const ux = (to.x - actor.position.x) / length;
     const uy = (to.y - actor.position.y) / length;
+    let left = false;
+    let right = false;
+    let ahead = false;
     for (const other of session.actors.values()) {
       if (other === actor || !other.ai || other.dead || !other.position) continue;
       const b = bodyOf(other);
       const dx = b.x - at.x;
       const dy = b.y - at.y;
       const d = Math.hypot(dx, dy);
-      if (d > radius + Math.max(12, other.ai.collisionRadius ?? 35) + 12) continue;
-      if ((dx * ux + dy * uy) / (d || 1) >= Math.cos((70 * Math.PI) / 180)) return true;
+      const touching = radius + Math.max(12, other.ai.collisionRadius ?? 35);
+      if (d > touching + 12) continue;
+      const along = (dx * ux + dy * uy) / (d || 1);
+      if (along >= Math.cos((70 * Math.PI) / 180)) return true;
+      if (d > touching + 2) continue;
+      if (dx * uy - dy * ux > 0) left = true;
+      else right = true;
+      if (along > 0) ahead = true;
     }
-    return false;
+    return left && right && ahead;
   };
   const sampleFrozen = (session, now) => {
     for (const [doid, actor] of session.actors) {

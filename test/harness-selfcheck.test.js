@@ -28,7 +28,9 @@ const run = promisify(execFile);
  * broken secret wall leaving nothing instead of its broken half (npc-spawn.js);
  * a cell whose lattice misses no longer searched between its points
  * (pathfind.js); a pet going for the nearest monster whether or not it can
- * get at it (npc-targeting.js). Each must be reported. The quick presets are what a developer runs between steps, so
+ * get at it (npc-targeting.js). Each must be reported; and a chaser that
+ * stops walking its route must be counted frozen by the census
+ * (tools/ai-sim-census.js), which a tree against itself never is. The quick presets are what a developer runs between steps, so
  * they are what is checked here.
  */
 
@@ -92,6 +94,15 @@ test("both harnesses pass a tree against itself and fail it against a changed on
       to: "const found = null;",
     },
   ]);
+  // A chaser that does not walk its route: it stands with nothing in its
+  // way, which the census must call frozen (tools/ai-sim-census.js).
+  const freezeMutant = mutantRoot(TOOL_ROOT, [
+    {
+      file: "src/socket/behaviours/chase.js",
+      from: "if (!(route.waypoint && (distance > stopAt || !headsAtTarget))) return STILL;",
+      to: "if (!(route.waypoint && headsAtTarget && distance > stopAt)) return STILL;",
+    },
+  ]);
   const petMutant = mutantRoot(TOOL_ROOT, [
     {
       file: "src/socket/npc-targeting.js",
@@ -100,6 +111,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
     },
   ]);
   t.after(() => {
+    freezeMutant.cleanup();
     petMutant.cleanup();
     anchorMutant.cleanup();
     routeMutant.cleanup();
@@ -110,16 +122,18 @@ test("both harnesses pass a tree against itself and fail it against a changed on
   });
 
   // Independent processes, so they run side by side; each ai-sim keeps to one worker per root.
-  const [routesSame, routesChanged, aiSame, aiChanged, crowdChanged, swingChanged, corpseChanged, anchorChanged, petChanged] = await Promise.all([
+  const [routesSame, routesChanged, aiSame, aiChanged, crowdChanged, swingChanged, corpseChanged, anchorChanged, petChanged, frozenChanged] = await Promise.all([
     invoke("route-lockstep.js", ["--base", TOOL_ROOT, "--quick"]),
     invoke("route-lockstep.js", ["--base", routeMutant.dir, "--quick"]),
-    invoke("ai-sim.js", ["--base", TOOL_ROOT, "--quick", "--jobs", "1", "--explain", "0"]),
+    // With the census: a tree against itself has no frozen chaser either.
+    invoke("ai-sim.js", ["--base", TOOL_ROOT, "--quick", "--stats", "--jobs", "1", "--explain", "0"]),
     invoke("ai-sim.js", ["--base", aiMutant.dir, "--quick", "--jobs", "1", "--explain", "1"]),
     invoke("ai-sim.js", ["--base", crowdMutant.dir, "--quick", "--jobs", "1", "--explain", "0"]),
     invoke("ai-sim.js", ["--base", swingMutant.dir, "--quick", "--jobs", "1", "--explain", "0"]),
     invoke("ai-sim.js", ["--base", corpseMutant.dir, "--quick", "--scenarios", "smashing", "--jobs", "1", "--explain", "0"]),
     invoke("route-lockstep.js", ["--base", anchorMutant.dir, "--quick"]),
     invoke("ai-sim.js", ["--base", petMutant.dir, "--quick", "--scenarios", "pet-dragon", "--jobs", "1", "--explain", "0"]),
+    invoke("ai-sim.js", ["--base", TOOL_ROOT, "--candidate", freezeMutant.dir, "--quick", "--libraries", "castle/catacombs", "--hero", "loadsim", "--stats", "--jobs", "1", "--explain", "0"]),
   ]);
 
   assert.equal(routesSame.code, 0, `route-lockstep against itself:\n${routesSame.stdout}${routesSame.stderr ?? ""}`);
@@ -131,6 +145,10 @@ test("both harnesses pass a tree against itself and fail it against a changed on
 
   assert.equal(aiSame.code, 0, `ai-sim against itself:\n${aiSame.stdout}${aiSame.stderr ?? ""}`);
   assert.match(aiSame.stdout, /: no difference/);
+  assert.doesNotMatch(aiSame.stdout, /FROZEN/);
+
+  assert.equal(frozenChanged.code, 1, `ai-sim with the freeze mutant as candidate:\n${frozenChanged.stdout}${frozenChanged.stderr ?? ""}`);
+  assert.match(frozenChanged.stdout, /^FROZEN: in the candidate/m);
 
   assert.equal(aiChanged.code, 1, `ai-sim against the acceleration mutant:\n${aiChanged.stdout}${aiChanged.stderr ?? ""}`);
   assert.match(aiChanged.stdout, /differs at tick \d+/);
