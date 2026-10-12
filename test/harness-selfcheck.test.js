@@ -28,7 +28,7 @@ const run = promisify(execFile);
  * broken secret wall leaving nothing instead of its broken half (npc-spawn.js);
  * a cell whose lattice misses no longer searched between its points
  * (pathfind.js); a pet going for the nearest monster whether or not it can
- * get at it (npc-targeting.js). Each must be reported; and a chaser that
+ * get at it (behaviours/pet.js). Each must be reported; and a chaser that
  * stops walking its route must be counted frozen by the census
  * (tools/ai-sim-census.js), which a tree against itself never is. The quick presets are what a developer runs between steps, so
  * they are what is checked here.
@@ -69,7 +69,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
   const crowdMutant = mutantRoot(TOOL_ROOT, [
     {
       file: "src/socket/ai.js",
-      from: "bodies: intent.throughBodies ? null : crowding.bodies,",
+      from: "bodies: intent.throughBodies ? null : met.bodies,",
       to: "bodies: null,",
     },
   ]);
@@ -105,7 +105,7 @@ test("both harnesses pass a tree against itself and fail it against a changed on
   ]);
   const petMutant = mutantRoot(TOOL_ROOT, [
     {
-      file: "src/socket/npc-targeting.js",
+      file: "src/socket/behaviours/pet.js",
       from: "    canGetAt(navigation, actor, candidate, reachOf(ai, contact(actor, candidate.actor)), withinTether);",
       to: "    true;",
     },
