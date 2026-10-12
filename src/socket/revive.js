@@ -17,6 +17,7 @@ import { heroMembersOf, memberForHero } from "./match-world.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { runRulesOf } from "./run-rules.js";
 import { tellRevived } from "./combat-events.js";
+import { petComesBackWith } from "./floor-population.js";
 
 export const FLID_PROPOSE_REVIVE = 173;
 export const FLID_PROPOSE_SELF_REVIVE = 174;
@@ -172,6 +173,7 @@ export const handleProposeRevive = (session, reader, now = Date.now()) => {
 
   target.hitPoints = target.maxHitPoints;
   target.dead = false;
+  petComesBackWith(targetMember);
   session.send(hitPointsUpdate(targetDoid, CLID.HeroGameObject, target.hitPoints));
   session.send(stateUpdate(targetDoid, CLID.HeroGameObject, ""));
   (session.cancelFloorFailing ?? cancelFloorFailing)(session);
@@ -335,6 +337,7 @@ export const handleProposeSelfRevive = async (session, reader) => {
       ? Math.max(1, Math.round(actor.maxHitPoints * healthBombReviveShare()))
       : actor.maxHitPoints;
     actor.dead = false;
+    if (wasDead) petComesBackWith(member);
     const target = member.world?.contextFor(member) ?? member;
     target.send(hitPointsUpdate(doid, CLID.HeroGameObject, actor.hitPoints));
     if (healthBombRevive && target.maxHeroManaPoints > 0) {

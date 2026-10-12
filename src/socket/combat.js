@@ -22,6 +22,8 @@ import { CASTLESS_ATTACKS, auditCombatResultWhen, consumeAcceptedCast, reachExce
 import { tellDowned, tellHit } from "./combat-events.js";
 import { stealLife } from "./life-steal.js";
 import { wakeOnHit } from "./target-lock.js";
+import { petGoesDownWith } from "./floor-population.js";
+import { memberForHero } from "./match-world.js";
 export { FLID_PROPOSE_COMBAT_RESULTS, npcAttackChoreography, withBaseAttack, stateUpdate, hitPointsUpdate, triggerStateUpdate, heroStateAndChoreography, isPartyHero } from "./combat-wire.js";
 export { pushVictim, staggerFor, heroStaggerFor } from "./impact.js";
 export { hazardCandidateDoids, trapProjectileReach, launchCarrierProjectile, tickTrapProjectiles, startTrapProjectiles, hazardVictims, dealTrapHit, performTrapAttack } from "./trap-attacks.js";
@@ -242,6 +244,7 @@ export const applyDamage = (session, doid, damage, announce) => {
     actor.onDeath?.(doid);
     if (recoverableHero) {
       (session.beginFloorFailing ?? beginFloorFailing)(session);
+      petGoesDownWith(session, memberForHero(session, doid));
       tellDowned(session, doid);
     } else {
       if (blastMs <= 0) retire();

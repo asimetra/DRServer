@@ -15,6 +15,7 @@ import {
   scaledNpcWeaponPower,
 } from "../src/pets.js";
 import { netAttackDamage } from "../src/combat-damage.js";
+import { handleProposeSelfRevive } from "../src/socket/revive.js";
 import { readFrame, readNpc } from "./helpers/floor.js";
 import { contextWithPet } from "./helpers/pets.js";
 
@@ -615,4 +616,61 @@ test("a pet's bite wakes an idle monster with aggro, on the pet", async () => {
   assert.ok(monster.hitPoints < 100, "the bite landed");
   assert.equal(monster.ai.engaged, true);
   assert.equal(monster.ai.targetDoid, PET);
+});
+
+/**
+ * A pet goes down with its owner and comes back with his revive; one killed
+ * while he stands comes back on its RespawnT. Official: 21 owner deaths, the
+ * pet off the floor within 0.13 s of each (scratchpad/aggro/deadowner.mjs).
+ */
+const withBombs = (session) => {
+  session.dungeonAccount = { account_stackables: [{ stack_id: 60001, count: 3 }, { stack_id: 60018, count: 2 }] };
+  session.queueAccountSave = () => {};
+  session.heroManaPoints = 0;
+  session.maxHeroManaPoints = 250;
+};
+const quickRespawn = (t, gm, session) => {
+  const wolf = gm.npcByConstant.get("WOLF_PET");
+  const originalDelay = wolf.RespawnT;
+  wolf.RespawnT = 0.05;
+  t.after(() => {
+    wolf.RespawnT = originalDelay;
+    cancelPetRespawn(session);
+  });
+};
+
+test("a pet goes down with its owner, and comes back when he is revived", async (t) => {
+  const { gm, session, context } = await contextWithPet(75);
+  quickRespawn(t, gm, session);
+  withBombs(session);
+  const standing = await spawnEquippedPet(context, session);
+
+  applyDamage(session, session.heroDoid, session.actors.get(session.heroDoid).hitPoints);
+  assert.equal(session.petDoid ?? null, null);
+  assert.ok(!session.actors.get(standing) || session.actors.get(standing).dead, "the pet outlived its owner");
+  assert.equal(session.petRespawnTimer ?? null, null, "a downed owner's pet waits a RespawnT");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(session.petDoid ?? null, null, "a pet came back to a downed owner");
+
+  await handleProposeSelfRevive(session, new PacketReader(Buffer.from([0])));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(session.petDoid && session.petDoid !== standing, "no new pet with the revive");
+  assert.ok(!session.actors.get(session.petDoid).dead);
+
+  // Killed while its owner stands: back on its RespawnT, as before.
+  const second = session.petDoid;
+  applyDamage(session, second, session.actors.get(second).hitPoints);
+  assert.ok(session.petRespawnTimer, "a pet killed under a standing owner waits its RespawnT");
+});
+
+test("a pet's RespawnT still running when its owner goes down is cancelled", async (t) => {
+  const { gm, session, context } = await contextWithPet(75);
+  quickRespawn(t, gm, session);
+  const first = await spawnEquippedPet(context, session);
+  applyDamage(session, first, session.actors.get(first).hitPoints);
+  assert.ok(session.petRespawnTimer);
+  applyDamage(session, session.heroDoid, session.actors.get(session.heroDoid).hitPoints);
+  assert.equal(session.petRespawnTimer ?? null, null);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(session.petDoid ?? null, null, "a second pet came to a downed owner");
 });

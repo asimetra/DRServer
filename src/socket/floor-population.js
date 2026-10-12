@@ -10,7 +10,7 @@ import { giveVoice } from "./speech.js";
 import { bodyClearSpot, rowBody } from "./body.js";
 import { warn } from "../log.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
-import { hitPointsUpdate } from "./combat.js";
+import { expireActor, hitPointsUpdate } from "./combat.js";
 import { spawnNpc, npcTimelineAction } from "./npc-spawn.js";
 
 /**
@@ -145,6 +145,28 @@ export const cancelPetRespawn = (member) => {
   return true;
 };
 
+/**
+ * Its owner is down: his pet goes with him, off the floor at once with no
+ * RespawnT of its own, and any RespawnT still running is cancelled, so he
+ * never has two. Official: 21 owner deaths, the pet off the floor within
+ * 0.13 s of each, a new one 3.1-4.1 s after (scratchpad/aggro/deadowner.mjs).
+ */
+export const petGoesDownWith = (session, member) => {
+  if (!member) return false;
+  cancelPetRespawn(member);
+  const doid = member.petDoid;
+  if (doid == null) return false;
+  member.petDoid = null;
+  return expireActor(session, doid);
+};
+
+/** Its owner is back on his feet: his pet comes back with him (`spawnEquippedPet`). */
+export const petComesBackWith = (member) => {
+  if (!member || member.petDoid != null || !member.respawnPet) return false;
+  member.respawnPet();
+  return true;
+};
+
 /** Generates one member's equipped inventory pet into the active shared floor. */
 export const spawnEquippedPet = async (context, member = context?.session?.member ?? context?.session, {
   respawn = false,
@@ -204,18 +226,11 @@ export const spawnEquippedPet = async (context, member = context?.session?.membe
         cancelPetRespawn(owner);
         const delay = Math.max(0, Number(npc.RespawnT ?? 0) * 1000);
         if (!delay) return;
+        // Its owner going down cancels this (`petGoesDownWith`).
         owner.petRespawnTimer = setTimeout(() => {
           owner.petRespawnTimer = null;
-          if (
-            !context.isActive() ||
-            context.session.floorDoid !== floorAtSpawn ||
-            context.session.actors?.get(owner.heroDoid)?.dead
-          ) return;
-          spawnEquippedPet(
-            { ...context, floorDoid: context.session.floorDoid, gm },
-            owner,
-            { respawn: true }
-          ).catch((error) => warn(`[${context.session.id}] pet respawn failed: ${error.message}`));
+          if (!context.isActive() || context.session.floorDoid !== floorAtSpawn) return;
+          owner.respawnPet();
         }, delay);
         owner.petRespawnTimer.unref?.();
       },
@@ -224,6 +239,11 @@ export const spawnEquippedPet = async (context, member = context?.session?.membe
   if (!doid) return null;
 
   owner.petDoid = doid;
+  // How it comes back, on its RespawnT or with its owner's revive (`petComesBackWith`).
+  owner.respawnPet = () =>
+    spawnEquippedPet({ ...context, floorDoid: context.session.floorDoid, gm }, owner, { respawn: true }).catch(
+      (error) => warn(`[${context.session.id}] pet respawn failed: ${error.message}`)
+    );
   if (respawn && npc.Aggro_AI_Type !== "TELEPORT_AI") {
     context.session.send(npcTimelineAction(doid, npc.TeleportInTimeline || "TELEPORT_IN"));
   }
