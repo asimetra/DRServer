@@ -1,7 +1,10 @@
 import { PacketWriter } from "./packet.js";
 import { CLID, OP } from "./opcodes.js";
 import { hasAbility } from "./buffs.js";
-import { moveBody } from "./body.js";
+import { bodyRadius, moveBody } from "./body.js";
+import { placeNpc } from "./npc-move.js";
+
+const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 
 /**
  * What a blow does to where its victim stands: knockback (`pushVictim` — the
@@ -84,7 +87,7 @@ const npcPositionUpdate = (doid, position) =>
  * is concerned; it plays its own animation off the flag.
  */
 export const NO_KNOCKBACK = Object.freeze({ distance: 0, durationMs: 0 });
-/** A throw is over (`ai.shove`, written by `pushVictim` and this alone; carried by behaviours/overrides.js `slideShoved`). */
+/** A throw is over (`ai.shove`, written by `pushVictim`, `slideShoved` and this alone). */
 export const endShove = (ai) => {
   ai.shove = null;
 };
@@ -235,4 +238,39 @@ export const trapStaggerFor = (session, attack, damage, victimDoid) => {
   return previous !== undefined && now - previous < TRAP_STAGGER_GRACE_MS
     ? NO_STAGGER
     : stagger;
+};
+
+/**
+ * One tick of a shove in flight — a knockback or pull `pushVictim` (combat.js)
+ * handed to the AI with a duration, so the throw is spread over the ticks that
+ * fit in it rather than landing whole in one frame.
+ *
+ * Each tick carries the share of the distance the clock has reached and sends
+ * the position, which on a 250ms tick and a 0.4s throw is two frames, as the
+ * official's are. Through navigation: a throw that meets a wall ends there,
+ * and the share it could not cover is not tried again. While it flies the
+ * monster neither walks nor swings.
+ */
+export const slideShoved = (session, doid, actor, now) => {
+  const shove = actor.ai?.shove;
+  if (!shove) return false;
+  const share = Math.min(1, Math.max(0, (now - shove.startedAt) / shove.durationMs));
+  const step = share - shove.covered;
+  shove.covered = share;
+  if (share >= 1) endShove(actor.ai);
+  if (step <= 0) return true;
+  const nextPosition = moveBody(
+    session.navigation,
+    actor,
+    actor.position,
+    { x: shove.x * step, y: shove.y * step },
+    bodyRadius(actor)
+  );
+  const travel = distanceTo(actor.position, nextPosition);
+  if (travel < 0.5) {
+    endShove(actor.ai);
+    return true;
+  }
+  placeNpc(session, doid, actor, { next: nextPosition, travel });
+  return true;
 };

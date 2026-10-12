@@ -1,7 +1,5 @@
 import { attackStopped, buffMultiplierFor } from "../buffs.js";
-import { bodyRadius, moveBody } from "../body.js";
-import { endShove } from "../impact.js";
-import { placeNpc } from "../npc-move.js";
+import { slideShoved } from "../impact.js";
 import { STILL } from "./chase.js";
 
 /**
@@ -13,42 +11,6 @@ import { STILL } from "./chase.js";
  * (`escaping`, routing.js) and `act`'s to keep (npc-act.js).
  */
 
-const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
-
-/**
- * One tick of a shove in flight — a knockback or pull `pushVictim` (combat.js)
- * handed to the AI with a duration, so the throw is spread over the ticks that
- * fit in it rather than landing whole in one frame.
- *
- * Each tick carries the share of the distance the clock has reached and sends
- * the position, which on a 250ms tick and a 0.4s throw is two frames, as the
- * official's are. Through navigation: a throw that meets a wall ends there,
- * and the share it could not cover is not tried again. While it flies the
- * monster neither walks nor swings.
- */
-export const slideShoved = (session, doid, actor, now) => {
-  const shove = actor.ai?.shove;
-  if (!shove) return false;
-  const share = Math.min(1, Math.max(0, (now - shove.startedAt) / shove.durationMs));
-  const step = share - shove.covered;
-  shove.covered = share;
-  if (share >= 1) endShove(actor.ai);
-  if (step <= 0) return true;
-  const nextPosition = moveBody(
-    session.navigation,
-    actor,
-    actor.position,
-    { x: shove.x * step, y: shove.y * step },
-    bodyRadius(actor)
-  );
-  const travel = distanceTo(actor.position, nextPosition);
-  if (travel < 0.5) {
-    endShove(actor.ai);
-    return true;
-  }
-  placeNpc(session, doid, actor, { next: nextPosition, travel });
-  return true;
-};
 
 /** Whether a hit has the tick: a shove in flight carries it, a stagger holds it. */
 export const heldByHit = (session, doid, actor, now) => {

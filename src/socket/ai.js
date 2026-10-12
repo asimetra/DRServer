@@ -56,8 +56,7 @@ import { comeBack, standDown, teleportAttacked, teleportsOnCycle, teleportTurn }
  *     pinnedBy, pinnedRevision             behaviours/pet.js
  *   teleport*                              behaviours/teleport.js
  *   release                                npc-release.js
- *   shove                                  impact.js (carried by
- *                                            behaviours/overrides.js)
+ *   shove                                  impact.js
  *   staggeredUntil                         hit-pricing.js
  *
  * Letting go of a target (`clearNpcTarget`, npc-targeting.js) asks each of
@@ -68,7 +67,7 @@ import { comeBack, standDown, teleportAttacked, teleportsOnCycle, teleportTurn }
 export { attackIntervalMs, chooseNpcAttack } from "./npc-act.js";
 export { awayFromThreats } from "./behaviours/kite.js";
 export { npcWalkingSpeed } from "./behaviours/chase.js";
-export { slideShoved } from "./behaviours/overrides.js";
+export { slideShoved } from "./impact.js";
 
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 
@@ -171,7 +170,7 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
     walkingAt: turn.victim.doid,
     radius: turn.radius,
     deltaSeconds: turn.deltaSeconds,
-    ignoresSmall: "wanted",
+    kind: "walk",
     steering: intent.steering,
   });
   /**

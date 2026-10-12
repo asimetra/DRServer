@@ -7,7 +7,7 @@ import { canGetAt } from "../routing.js";
 import { disengage, fighting, letGoOfTarget, lockOn, stillLocked } from "../target-lock.js";
 import { STILL, walkEndsAt, walkTowards } from "./chase.js";
 import { backsOffFrom } from "./kite.js";
-import { teleportsOnCycle } from "./teleport.js";
+import { returnsBesideVictim } from "./teleport.js";
 
 const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
 
@@ -273,7 +273,7 @@ const petPick = ({ petTargets, navigation }, actor, owner, now) => {
   // A teleporter swings from beside its victim, where it comes back.
   const getsAt = (candidate) => {
     const bodies = contact(actor, candidate.actor);
-    return teleportsOnCycle(actor)
+    return returnsBesideVictim(actor)
       ? withinTether(candidate.position)
       : canGetAt(navigation, actor, candidate, reachOf(ai, bodies), withinTether, walkEndsAt(actor, bodies, false));
   };

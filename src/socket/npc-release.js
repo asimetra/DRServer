@@ -1,6 +1,5 @@
 import { info } from "../log.js";
 import { bodyBlocked, bodyRadius } from "./body.js";
-import { heroMembersOf } from "./match-world.js";
 import { boundedPush, separationDisplacement } from "./npc-crowd.js";
 import { face } from "./npc-facing.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
@@ -90,7 +89,8 @@ export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spati
    * returns before ever reaching it — so the one moment a whole cage moves in
    * step was also the one moment nothing kept them off each other.
    */
-  const heroDoids = new Set(heroMembersOf(session).keys());
+  // The players the crowd was sensed with this tick (npc-crowd.js `senseCrowd`).
+  const heroDoids = new Set(heroes.map(({ doid }) => doid));
   const separation = spatialIndex
     ? boundedPush(separationDisplacement(doid, actor, spatialIndex, heroDoids), ai, deltaSeconds)
     : { x: 0, y: 0 };
@@ -98,6 +98,7 @@ export const advanceNpcRelease = (session, doid, actor, now, deltaSeconds, spati
   // The release point is a doorway, not a destination, and walking a body into
   // the one dynamic body on the client shoves the player whatever the reason.
   const step = stepNpc(session.navigation, actor, {
+    kind: "carried",
     walk:
       distance > 0.001
         ? {

@@ -221,7 +221,7 @@ export const separateIdleNpc = (
     heroes,
     radius: bodyRadius(actor),
     deltaSeconds,
-    ignoresSmall: "movement",
+    kind: "settle",
   });
   if (!step || step.travel <= 0.001) return false;
   placeNpc(session, doid, actor, step);

@@ -3,6 +3,7 @@ import { objectDisable } from "../objects.js";
 import { OP } from "../opcodes.js";
 import { PacketWriter } from "../packet.js";
 import { swingDueAt } from "../npc-act.js";
+import { bearingTo } from "../npc-facing.js";
 import { searchAgain } from "../routing.js";
 import { restWalk } from "./chase.js";
 
@@ -55,6 +56,13 @@ const npcTimelineAction = (doid, timeline) =>
     .utf(timeline)
     .frame();
 
+/**
+ * Whether it swings from beside its victim, wherever it stands now: it comes
+ * back there (`comeBack`). What a pet's pick asks of it (behaviours/pet.js
+ * `petPick`).
+ */
+export const returnsBesideVictim = (actor) => teleportsOnCycle(actor);
+
 /** Whether it teleports on a cycle: a TELEPORT_AI row with a recurrence, and a body the floor can make again. */
 export const teleportsOnCycle = (actor) =>
   actor.ai.behavior === "TELEPORT_AI" &&
@@ -103,8 +111,8 @@ export const comeBack = (session, doid, actor, target, bodies, now) => {
   const destination = teleportDestinationFor(session, actor, target, bodies, random);
   actor.position.x = destination.x;
   actor.position.y = destination.y;
-  actor.heading =
-    (Math.atan2(target.y - destination.y, target.x - destination.x) * 180) / Math.PI;
+  // Facing its victim, sent with the generate rather than as a turn (npc-facing.js).
+  actor.heading = bearingTo(destination, target);
   actor.teleportHidden = false;
   ai.teleportPhase = "visible";
   ai.teleportHideAt = 0;

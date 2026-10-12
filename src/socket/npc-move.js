@@ -526,11 +526,14 @@ const sceneryRefused = (actor, walk, { wanted, next }) => {
  * is a walk the monsters in its way did not let it take (`heldByBodies`),
  * and `passing` a walk whose wait is over and goes round them. A caller whose
  * step is carried rather than walked — a lunge, a cage's burst walking out —
- * gives no `bodies`. `separation` is the crowd's push, already bounded. `ignoresSmall` is
- * where a step of a thousandth or less is dropped without asking navigation:
- * `"movement"` before the players are kept out of it, `"wanted"` after, unset
- * never. Each caller keeps what it did before the three shared this stage —
- * an idle body the first, the chase the second, a cage exit the third.
+ * gives no `bodies`. `separation` is the crowd's push, already bounded.
+ *
+ * `kind` names the step (`STEP`): a `walk`, the AI's own, a `settle`, an idle
+ * body lifted out of another, or `carried`, a cage's burst walking out. It
+ * says where a step of a thousandth or less is dropped without asking
+ * navigation (`ignoresSmall`): a settle before the players are kept out of
+ * it, a walk after, a carried step never. Each kept what it did before the
+ * three shared this stage.
  *
  * `steering` is a walk straight at a target the body cannot see (routing.js):
  * it slides along whatever it meets, and on a tick the scenery gives back
@@ -541,7 +544,10 @@ const sceneryRefused = (actor, walk, { wanted, next }) => {
  * asked once a tick, and a second time only for the push on a tick refused
  * with a crowd pushing.
  */
-export const stepNpc = (navigation, actor, options) => {
+export const STEP = Object.freeze({ walk: "wanted", settle: "movement", carried: null });
+
+export const stepNpc = (navigation, actor, given) => {
+  const options = { ...given, ignoresSmall: STEP[given.kind] ?? null };
   const { walk, contacts = [], bodies, passing = false, separation, deltaSeconds, steering = false } = options;
   const held = heldByBodies(actor, withoutDrivingIntoContacts(walk, contacts), bodies, passing);
   const movement = movementWithinBudget(

@@ -30,7 +30,8 @@ import { npcHeadingUpdate } from "./npc-move.js";
 /** How far its victim's bearing turns from the heading last sent before another is sent, in degrees. */
 export const HEADING_DRIFT_DEGREES = 15;
 
-const bearingTo = (from, to) => (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI;
+/** The heading from `from` to `to`, in degrees: the one way a heading is worked out. */
+export const bearingTo = (from, to) => (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI;
 
 /** The smaller angle between two headings, in degrees. */
 const turnBetween = (a, b) => Math.abs(((((a - b) % 360) + 540) % 360) - 180);
