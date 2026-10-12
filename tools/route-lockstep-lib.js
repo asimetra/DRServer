@@ -441,6 +441,20 @@ export const auditCaches = (module, nav) => {
         const anchor = cache.state[key] === 3 ? cache.anchors.get(key) : null;
         if (expected.state !== cache.state[key] || (expected.state === 3 && !isDeepStrictEqual(expected.anchor, anchor))) result.stale++;
       }
+      // The landing's lattice probes (pathfind.js `latticeBlockedAt`), where a root keeps them.
+      const probed = cache.latticeKnown?.[key] ?? 0;
+      if (probed) {
+        const centreX = bounds.minX + (x + 0.5) * cellSize;
+        const centreY = bounds.minY + (y + 0.5) * cellSize;
+        for (let point = 0; point < ANCHOR_OFFSETS.length; point++) {
+          const bit = 1 << point;
+          if (!(probed & bit)) continue;
+          result.cells++;
+          const [dx, dy] = ANCHOR_OFFSETS[point];
+          const blocked = navigation.isPositionBlocked(nav, { x: centreX + dx * cellSize, y: centreY + dy * cellSize }, radius + 2);
+          if (blocked !== ((cache.latticeBlocked[key] & bit) !== 0)) result.stale++;
+        }
+      }
       if (!cache.links[key]) continue;
       for (let direction = 0; direction < 8; direction++) {
         const known = (cache.links[key] >>> (direction * 2)) & 3;

@@ -78,9 +78,13 @@ let parentStamps = new Uint32Array(0);
 let parents = new Int32Array(0);
 let viasInto = [];
 let closedStamps = new Uint32Array(0);
+/** The cells this search has closed, in the order it closed them (`placeReached` reads them). */
+let closedKeys = new Int32Array(0);
+let closedCount = 0;
 
 const beginSearch = (size) => {
   heapLength = 0;
+  closedCount = 0;
   if (costStamps.length < size) {
     costStamps = new Uint32Array(size);
     costs = new Float64Array(size);
@@ -88,6 +92,7 @@ const beginSearch = (size) => {
     parents = new Int32Array(size);
     viasInto = new Array(size).fill(null);
     closedStamps = new Uint32Array(size);
+    closedKeys = new Int32Array(size);
     searchStamp = 0;
   }
   if (searchStamp === 0xffffffff) {
@@ -269,23 +274,23 @@ const inSight = (navigation, x, y, goal) => lineIsClear(navigation, x, y, goal.x
  * lattice could come, and the look ends when that is no nearer than the place
  * in hand, so a goal seen from close by costs a few sight lines.
  */
-const placeReached = (navigation, goal, radius, grid, stamp) => {
-  const { minX, minY, cellSize, columns, size, anchorOf } = grid;
+const placeReached = (navigation, goal, grid) => {
+  const { minX, minY, cellSize, columns, radius, size, anchorOf, squaredToAnchor, latticeBlocked } = grid;
   if (landingKeys.length < size) landingKeys = new Int32Array(size);
   if (landingBounds.length < size) landingBounds = new Float64Array(size);
-  let count = 0;
+  // The closed cells as the search closed them. Their order is not the
+  // grid's, and needs not be: the nearest is a minimum, and the cells kept
+  // are sorted below by an order that ties nothing.
   let nearestDistance = Infinity;
-  for (let key = 0; key < size; key++) {
-    if (closedStamps[key] !== stamp) continue;
-    nearestDistance = Math.min(nearestDistance, squaredDistance(anchorOf(key), goal));
-    landingKeys[count++] = key;
+  for (let at = 0; at < closedCount; at++) {
+    nearestDistance = Math.min(nearestDistance, squaredToAnchor(closedKeys[at], goal));
   }
   if (nearestDistance === Infinity) return null;
   const farthest = (Math.sqrt(nearestDistance) + LOOK_CELLS * cellSize) ** 2;
   const reach = LATTICE_REACH * cellSize;
   let kept = 0;
-  for (let at = 0; at < count; at++) {
-    const key = landingKeys[at];
+  for (let at = 0; at < closedCount; at++) {
+    const key = closedKeys[at];
     const gapX = Math.max(0, Math.abs(minX + ((key % columns) + 0.5) * cellSize - goal.x) - reach);
     const gapY = Math.max(0, Math.abs(minY + (Math.floor(key / columns) + 0.5) * cellSize - goal.y) - reach);
     const bound = gapX * gapX + gapY * gapY;
@@ -307,7 +312,7 @@ const placeReached = (navigation, goal, radius, grid, stamp) => {
       const distance = (x - goal.x) ** 2 + (y - goal.y) ** 2;
       if (
         distance >= bestDistance ||
-        blockedAt(navigation, x, y, radius + ANCHOR_MARGIN, undefined) ||
+        latticeBlocked(key, point, x, y) ||
         !inSight(navigation, x, y, goal) ||
         !lineIsClear(navigation, anchor.x, anchor.y, x, y, radius, undefined)
       ) {
@@ -333,6 +338,26 @@ const LINK_VIA = 3;
 const SHUT = 1;
 const CENTRED = 2;
 const OFF_CENTRE = 3;
+
+/**
+ * Whether a body of `radius` has no room at point `point` of cell `key`'s
+ * lattice, at (x, y): the probe an anchor is chosen by (`blockedAt` with
+ * ANCHOR_MARGIN), kept per cell and point in the radius's cache so a landing
+ * looked for again (`placeReached`) does not probe again. Forgotten with the
+ * cell's own answer (route-cache.js `forgetAround`); a radius that is not an
+ * ordinary number, whose cache is shared by its string, keeps nothing.
+ */
+const latticeBlockedAt = (navigation, cells, radius, key, point, x, y) => {
+  if (typeof radius !== "number" || !Number.isFinite(radius)) {
+    return blockedAt(navigation, x, y, radius + ANCHOR_MARGIN, undefined);
+  }
+  const bit = 1 << point;
+  if (cells.latticeKnown[key] & bit) return (cells.latticeBlocked[key] & bit) !== 0;
+  const blocked = blockedAt(navigation, x, y, radius + ANCHOR_MARGIN, undefined);
+  cells.latticeKnown[key] |= bit;
+  cells.latticeBlocked[key] = blocked ? cells.latticeBlocked[key] | bit : cells.latticeBlocked[key] & ~bit;
+  return blocked;
+};
 
 /**
  * The answer for cell (x, y) of one radius's cache, asked the first time:
@@ -580,6 +605,7 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     if (closedStamps[currentKey] === stamp) continue;
     if (currentKey === target) break;
     closedStamps[currentKey] = stamp;
+    closedKeys[closedCount++] = currentKey;
     const currentX = currentKey % columns;
     const currentY = Math.floor(currentKey / columns);
 
@@ -607,8 +633,27 @@ export const findPath = (navigation, start, goal, radius = 0) => {
     // Not reached, so the search has been everywhere the body can go, and
     // the route ends at the best place in that, short.
     const anchorAt = (key) => anchorOf(key % columns, Math.floor(key / columns));
-    const grid = { minX: bounds.minX, minY: bounds.minY, cellSize, columns, size: GOAL, anchorOf: anchorAt };
-    const found = placeReached(navigation, goal, radius, grid, stamp);
+    /** Its anchor's squared distance from `point`, as `squaredDistance` takes it, without building the anchor. */
+    const squaredToAnchor = (key, point) => {
+      const x = key % columns;
+      const y = Math.floor(key / columns);
+      if (stateOf(x, y) !== CENTRED) return squaredDistance(cells.anchors.get(key), point);
+      const dx = bounds.minX + x * cellSize + cellSize / 2 - point.x;
+      const dy = bounds.minY + y * cellSize + cellSize / 2 - point.y;
+      return dx * dx + dy * dy;
+    };
+    const grid = {
+      minX: bounds.minX,
+      minY: bounds.minY,
+      cellSize,
+      columns,
+      radius,
+      size: GOAL,
+      anchorOf: anchorAt,
+      squaredToAnchor,
+      latticeBlocked: (key, point, x, y) => latticeBlockedAt(navigation, cells, radius, key, point, x, y),
+    };
+    const found = placeReached(navigation, goal, grid);
     if (!found) return [];
     end = found.key;
     landing = found.point;

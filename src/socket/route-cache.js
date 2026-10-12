@@ -82,7 +82,8 @@ const MAX_PENDING_COLLIDERS = 512;
 
 /**
  * The route answers for one actor radius: per cell, 0 not yet asked, 1 shut, 2
- * open at its centre, 3 open off-centre with its anchor in `anchors`; per cell
+ * open at its centre, 3 open off-centre with its anchor in `anchors`, and
+ * which of its lattice's points have room (`latticeKnown`/`latticeBlocked`); per cell
  * and direction, whether the step to that neighbour can be walked, with its
  * corner in `vias` when it needs one. Typed arrays because the search asks
  * about every neighbour of every cell it opens, and because forgetting a
@@ -120,6 +121,9 @@ export const routeCacheFor = (navigation, radius, columns, rows) => {
       anchors: new Map(),
       links: new Uint16Array(columns * rows),
       vias: new Map(),
+      // Per cell, which points of its lattice have been probed for a landing, and which had no room (pathfind.js `latticeBlockedAt`).
+      latticeKnown: new Uint32Array(columns * rows),
+      latticeBlocked: new Uint32Array(columns * rows),
       // Colliders changed since this radius last searched; see invalidatePathfinding.
       pending: new Set(),
     };
@@ -160,6 +164,7 @@ const forgetAround = (navigation, cache, box) => {
     // Never seen in authored data; whatever it is, forget everything.
     cache.state.fill(0);
     cache.links.fill(0);
+    cache.latticeKnown.fill(0);
     return;
   }
   const reach = ANCHOR_REACH * cellSize + Math.abs(cache.radius) + ANCHOR_MARGIN;
@@ -177,5 +182,7 @@ const forgetAround = (navigation, cache, box) => {
     }
   };
   forget(cache.state, reach);
+  // The lattice's probes reach as far as the cell's answer does: they are its probes.
+  forget(cache.latticeKnown, reach);
   forget(cache.links, reach + cellSize);
 };
