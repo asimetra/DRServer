@@ -1,3 +1,4 @@
+import { friendlyBodies } from "./actor-roles.js";
 import { bodyPointOf, contact, moveBody } from "./body.js";
 import { OP } from "./opcodes.js";
 import { PacketWriter } from "./packet.js";
@@ -61,12 +62,21 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  * teleport straight through the player. The first circle intersection is the
  * furthest legal destination on that step. This still runs before navigation,
  * so a wall wins the argument afterward.
+ *
+ * A body the player does not collide with — his pet, an ally, a walking
+ * summon, on his side (`friendlyBodies`, actor-roles.js) — shoves nobody, and
+ * is not kept out of him; unless he is the one it walks at (`walkingAt`, his
+ * doid). A walk at a player ends at his body whoever's side it is on, and
+ * a pet's walk back to its owner along a route, whose last waypoint is
+ * where he stands, ended 16 inside him in the harness (the wolf walks 175 a
+ * tick) once nothing else stopped it there.
  */
-export const keptOutOfHeroes = (target, actor, heroes) => {
+export const keptOutOfHeroes = (target, actor, heroes, walkingAt = null) => {
   const start = actor.position;
   let { x, y } = target;
   for (const hero of heroes) {
     if (!hero.position || !hero.actor) continue;
+    if (hero.doid !== walkingAt && friendlyBodies(actor, hero.actor)) continue;
     const bodies = contact(actor, hero.actor);
     const fromX = start.x - hero.position.x;
     const fromY = start.y - hero.position.y;
@@ -310,12 +320,13 @@ const movementWithinBudget = (motion, separation, ai, deltaSeconds) => {
 };
 
 /** Where a movement takes it: kept out of the players, then its body through the scenery. */
-const moved = (navigation, actor, movement, { heroes, radius, navigationOptions, ignoresSmall }) => {
+const moved = (navigation, actor, movement, { heroes, walkingAt, radius, navigationOptions, ignoresSmall }) => {
   if (ignoresSmall === "movement" && Math.hypot(movement.x, movement.y) <= 0.001) return null;
   const wanted = keptOutOfHeroes(
     { x: actor.position.x + movement.x, y: actor.position.y + movement.y },
     actor,
-    heroes
+    heroes,
+    walkingAt
   );
   if (ignoresSmall === "wanted" && distanceTo(actor.position, wanted) <= 0.001) return null;
   const next = moveBody(
@@ -350,9 +361,10 @@ const sceneryRefused = (actor, walk, { wanted, next }) => {
  * small to ask about.
  *
  * `contacts` are the players it touches and `bodies` the monsters it may not
- * walk into, as `separationDisplacement` gives them; `blocked` is a walk the
- * monsters in its way did not let it take (`heldByBodies`), and `passing`
- * a walk whose wait is over and goes round them. A caller whose
+ * walk into, as `separationDisplacement` gives them; `walkingAt` the doid of
+ * what it walks at, whose body ends its walk (`keptOutOfHeroes`); `blocked`
+ * is a walk the monsters in its way did not let it take (`heldByBodies`),
+ * and `passing` a walk whose wait is over and goes round them. A caller whose
  * step is carried rather than walked — a lunge, a cage's burst walking out —
  * gives no `bodies`. `separation` is the crowd's push, already bounded. `ignoresSmall` is
  * where a step of a thousandth or less is dropped without asking navigation:

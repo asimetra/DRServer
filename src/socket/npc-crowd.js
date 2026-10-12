@@ -1,4 +1,4 @@
-import { isHuntable } from "./actor-roles.js";
+import { friendlyBodies, isHuntable } from "./actor-roles.js";
 import { bodyPointOf, bodyRadius, standoff } from "./body.js";
 import { heroMembersOf } from "./match-world.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
@@ -99,6 +99,8 @@ export const separationDisplacement = (
    * The chase keeps whatever part of itself runs along a player it touches
    * and loses the part that runs through him (`stepNpc`), so a crowd
    * arriving at one player spreads round him instead of piling into him.
+   * A body on his side that he does not collide with walks on through him
+   * (`friendlyBodies`, actor-roles.js); the push still lifts it out.
    */
   const contacts = [];
   const bodies = [];
@@ -161,7 +163,7 @@ export const separationDisplacement = (
           (minimumDistance - Math.min(distance, minimumDistance)) * correctionShare;
         x += (dx / distance) * correction;
         y += (dy / distance) * correction;
-        if (isHero) contacts.push({ x: dx / distance, y: dy / distance });
+        if (isHero && !friendlyBodies(actor, other)) contacts.push({ x: dx / distance, y: dy / distance });
       }
     }
   }

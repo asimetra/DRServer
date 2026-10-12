@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { awayFromThreats, tickNpcAi } from "../src/socket/ai.js";
-import { CLID } from "../src/socket/opcodes.js";
+import { keptOutOfHeroes } from "../src/socket/npc-move.js";
+import { CLID, TEAM } from "../src/socket/opcodes.js";
 
 /**
  * Monsters standing inside one another.
@@ -530,4 +531,23 @@ test("no position this server sends puts a monster inside the player", async (t)
   );
   assert.ok(session.actors.get(first).ai.engaged, "and they are still chasing him");
   assert.ok(session.actors.get(second).ai.engaged);
+});
+
+/**
+ * The friendly-bodies rule (actor-roles.js `friendlyBodies`): a step through
+ * a player is cut at his body for whatever he collides with on the client —
+ * a monster, or one on his side whose row says `CollideWithTeam` — and left
+ * whole for one on his side that he walks through, unless he is the one it
+ * walks at: a walk at a player ends at his body, whoever's side it is on.
+ */
+test("a step through a player stops at his body unless he and it pass through each other", () => {
+  const hero = { doid: 7, position: { x: 0, y: 0 }, actor: { collisionRadius: 26, team: TEAM.PLAYERS, position: { x: 0, y: 0 } } };
+  const through = { x: 0, y: 100 };
+  const walker = (fields) => ({ position: { x: 0, y: -100 }, collisionRadius: 29.4, ...fields });
+  const stops = (actor, walkingAt) => keptOutOfHeroes(through, actor, [hero], walkingAt).y;
+  assert.ok(Math.abs(stops(walker({ team: TEAM.ENEMIES })) + 55.4) < 1e-6, "a monster stops at his body");
+  assert.ok(Math.abs(stops(walker({})) + 55.4) < 1e-6, "as one built with no team");
+  assert.ok(Math.abs(stops(walker({ team: TEAM.PLAYERS, collidesWithTeam: true })) + 55.4) < 1e-6, "and a barricade");
+  assert.equal(stops(walker({ team: TEAM.PLAYERS }), 8), 100, "a pet walks through a player it is not walking at");
+  assert.ok(Math.abs(stops(walker({ team: TEAM.PLAYERS }), 7) + 55.4) < 1e-6, "and stops at the one it walks at");
 });

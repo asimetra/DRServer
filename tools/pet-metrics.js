@@ -19,11 +19,19 @@
  *   rest       where it stands from its owner, as a share of ReturnDist,
  *              when no monster is within its aggro radius, its owner has
  *              moved under 20 in the last second and it under 15 in two
+ *   behind owner  the share of its time it stood and had not swung, as for
+ *              staring, with a monster for a target in its sight and its
+ *              owner's body across the line to it
+ *   overlap    of the quarter seconds it moved 5 or more, the share it
+ *              ended more than 5 inside its owner's body; and of those it
+ *              stood (as for rest), the share it stood so
  *
  * The official, over the solo captures (WOLF_PET, RHINO_PET, DRAGON_PET):
  * staring 3.8%, 4.4%, 0.0% of the time; no leash stretch over 15 s; heading
  * back 66%, 87%, 85-95%; swings beyond TetherDist 4%, 8%, 31% (n 401, 117,
- * 13); rest p50 0.61, 0.68, 0.55 of ReturnDist, in 7, 17 and 5 stands.
+ * 13); rest p50 0.61, 0.68, 0.55 of ReturnDist, in 7, 17 and 5 stands;
+ * overlapping its owner moving 2.2%, 1.4%, 1.8% (radius 29.4 against the
+ * hero's 25.87).
  */
 
 const CHOREOGRAPHY = 143;
@@ -42,7 +50,24 @@ const emptyRow = () => ({
   swings: 0,
   swingsBeyond: 0,
   rest: [],
+  behindOwner: 0,
+  moving: 0,
+  overlapMoving: 0,
+  standing: 0,
+  overlapStanding: 0,
 });
+
+/** How far inside its owner's body a pet has to be to count as overlapping him. */
+const OVERLAP_SLACK = 5;
+
+/** Whether a circle at `centre` of `radius` crosses the segment from `a` to `b`. */
+const crosses = (a, b, centre, radius) => {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length = dx * dx + dy * dy;
+  const t = length > 0 ? Math.max(0, Math.min(1, ((centre.x - a.x) * dx + (centre.y - a.y) * dy) / length)) : 0;
+  return Math.hypot(a.x + t * dx - centre.x, a.y + t * dy - centre.y) < radius;
+};
 
 const hypot = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -93,8 +118,17 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
 
       const span = track.pet.length - 1;
       const stood = span >= STARE_TICKS && hypot(track.pet[0], actor.position) < 15;
-      if (stood && !track.swung.some(Boolean) && enemy && session.navigation &&
-          !sees(session.navigation, bodyOf(actor), bodyOf(enemy))) row.staring++;
+      const inSight = enemy && (!session.navigation || sees(session.navigation, bodyOf(actor), bodyOf(enemy)));
+      if (stood && !track.swung.some(Boolean) && enemy && !inSight) row.staring++;
+      const ownerRadius = Math.max(12, ownerActor?.collisionRadius ?? 35);
+      if (stood && !track.swung.some(Boolean) && inSight && crosses(actor.position, enemy.position, owner, ownerRadius)) {
+        row.behindOwner++;
+      }
+      const inside = ownerDistance < Math.max(12, ai.collisionRadius ?? 35) + ownerRadius - OVERLAP_SLACK;
+      if (span >= 1 && hypot(track.pet[span - 1], actor.position) >= 5) {
+        row.moving++;
+        if (inside) row.overlapMoving++;
+      }
 
       if (ownerDistance > tether) {
         track.beyond++;
@@ -121,6 +155,8 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
       const ownerStill = span >= TICKS_PER_SECOND && hypot(track.owner[span - TICKS_PER_SECOND], owner) < 20;
       if (quiet && stood && ownerStill && Number(source.ReturnDist) > 0) {
         row.rest.push(Math.round((100 * ownerDistance) / Number(source.ReturnDist)) / 100);
+        row.standing++;
+        if (inside) row.overlapStanding++;
       }
     }
   };
@@ -159,5 +195,7 @@ export const describePets = (rows) =>
       `staring ${share(row.staring, row.ticks).padStart(6)}  leash >15 s ${row.leashStretches} (farthest ${row.farthest.toFixed(0)})  ` +
       `heading back ${share(row.backs, row.backChances)} of ${row.backChances}  ` +
       `swings ${row.swings}, beyond TetherDist ${share(row.swingsBeyond, row.swings)}  ` +
-      `rest/ReturnDist p10/50/90 ${quantile(row.rest, 0.1)}/${quantile(row.rest, 0.5)}/${quantile(row.rest, 0.9)} (n ${row.rest.length})`
+      `rest/ReturnDist p10/50/90 ${quantile(row.rest, 0.1)}/${quantile(row.rest, 0.5)}/${quantile(row.rest, 0.9)} (n ${row.rest.length})  ` +
+      `behind owner ${share(row.behindOwner, row.ticks)}  ` +
+      `in owner moving ${share(row.overlapMoving, row.moving)} of ${row.moving}, resting ${share(row.overlapStanding, row.standing)}`
   );

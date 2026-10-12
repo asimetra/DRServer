@@ -174,6 +174,7 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
     passing,
     separation: boundedPush(crowding, ai, turn.deltaSeconds),
     heroes: crowd.heroes,
+    walkingAt: turn.victim.doid,
     radius: turn.radius,
     deltaSeconds: turn.deltaSeconds,
     ignoresSmall: "wanted",

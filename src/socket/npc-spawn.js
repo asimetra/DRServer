@@ -386,6 +386,8 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
        * was laid. That is the reported "there are no mines on the map".
        */
       team: TEAM_BY_CHAR_TYPE[npc.CharType] ?? TEAM.ENEMIES,
+      // Whether the players on its side are in its way (actor-roles.js `friendlyBodies`).
+      collidesWithTeam: Boolean(npc.CollideWithTeam),
       teleportRegenerate:
         npc.Aggro_AI_Type === "TELEPORT_AI"
           ? (position, heading) => {

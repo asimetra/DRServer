@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { tickNpcAi } from "../src/socket/ai.js";
-import { bodyBlocked, bodyRadius, seesBody } from "../src/socket/body.js";
+import { bodyBlocked, bodyRadius, contact, seesBody } from "../src/socket/body.js";
+import { inBand } from "../src/socket/npc-act.js";
 import { canGetAt } from "../src/socket/routing.js";
 import { cancelPetRespawn, spawnEquippedPet } from "../src/socket/dungeon.js";
 import { readPlacements } from "../src/socket/floors.js";
 import { addNavigationObstacle, createNavigationState } from "../src/socket/navigation.js";
+import { createMatchWorld } from "../src/socket/match-world.js";
 import { CLID, TEAM } from "../src/socket/opcodes.js";
 import { contextWithPet } from "./helpers/pets.js";
 
@@ -259,3 +261,60 @@ test("idle, a pet walks to its owner and rests at its ReturnDist", async (t) => 
     assert.equal(pet.ai.state, "idle");
   }
 });
+
+/**
+ * A player's body holds no walk on the players' side (actor-roles.js
+ * `friendly`). Played on the replay floor of socket-20261012-101941, the
+ * wolf stood 8 s 55 from its owner with him between it and the skeleton
+ * hitting them both; ours sat so the whole fight, its walk cut to nothing
+ * at his body. Here the skeleton is beyond the bite from where the wolf
+ * stands, and the way to it is through him.
+ */
+const walksThroughToBite = async (session, pet, skeleton) => {
+  const from = distance(pet.position, session.actors.get(skeleton).position);
+  const bodies = contact(pet, session.actors.get(skeleton));
+  assert.ok(!pet.ai.attacks.some((attack) => inBand(attack, from, bodies, 0, true)), "nothing of its reaches from where it stands");
+  let nearest = Infinity;
+  await ticks(session, 1000, 12, () => {
+    nearest = Math.min(nearest, distance(pet.position, session.actors.get(skeleton).position));
+  });
+  assert.equal(pet.ai.targetDoid, skeleton);
+  assert.ok(nearest < 80, `at the skeleton: nearest ${Math.round(nearest)}`);
+  assert.ok(pet.ai.nextAttackAt > 1000, "and bites it");
+  assert.equal(pet.ai.state, "attack");
+};
+
+test("a wolf with its owner between it and its target walks through him and bites", async (t) => {
+  const { session, pet } = await petOnFloor(t, WOLF, { owner: { x: 1000, y: 1000 }, at: { x: 1000, y: 940 } });
+  const skeleton = enemyAt(session, { x: 1000, y: 1140 });
+  await walksThroughToBite(session, pet, skeleton);
+});
+
+test("a wolf walks through another player in its way as through its owner", async (t) => {
+  const { session: host, pet } = await petOnFloor(t, WOLF, { owner: { x: 700, y: 1000 }, at: { x: 1000, y: 940 } });
+  const skeleton = enemyAt(host, { x: 1000, y: 1140 });
+  host.socket = { destroyed: false };
+  const joiner = {
+    accountId: 9002,
+    heroDoid: 7002,
+    heroPosition: { x: 1000, y: 1000 },
+    objects: new Map(),
+    actors: new Map(),
+    doobers: new Map(),
+    socket: { destroyed: false },
+    send: () => {},
+    allocateDoid: host.allocateDoid,
+  };
+  const world = createMatchWorld({ members: new Set([host, joiner]) }, host);
+  world.contextFor(joiner);
+  world.objects.set(joiner.heroDoid, CLID.HeroGameObject);
+  world.actors.set(joiner.heroDoid, {
+    hitPoints: 500,
+    maxHitPoints: 500,
+    collisionRadius: 26,
+    position: joiner.heroPosition,
+    team: TEAM.PLAYERS,
+  });
+  await walksThroughToBite(world.contextFor(host), pet, skeleton);
+});
+
