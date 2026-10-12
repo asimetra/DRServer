@@ -25,7 +25,8 @@
  *   held back  of the quarter seconds it was farther than TetherDist from
  *              its owner with a monster's body touching it (within 5) in
  *              its way to him (70 degrees), the share it stood (under 15)
- *              the next second; and the same with none touching
+ *              the next second, and how often a second it turned back on
+ *              itself (`reversals`); and the same with none touching
  *   snaps      the times it was put back beside its owner from afar
  *              (behaviours/pet.js `snapBackSpot`): over 1000 in one tick,
  *              which a teleporting pet's come-back beside its victim is too
@@ -39,7 +40,8 @@
  * 13); rest p50 0.61, 0.68, 0.55 of ReturnDist, in 7, 17 and 5 stands;
  * overlapping its owner moving 2.2%, 1.4%, 1.8% (radius 29.4 against the
  * hero's 25.87); snaps 1, 13, 0, from 1996-2205; held back 10.6%, 31.7%,
- * 0.0% (n 189, 60, 18) against 12.1%, 8.8%, 1.4% with none touching.
+ * 0.0% (n 189, 60, 18) against 12.1%, 8.8%, 1.4% with none touching,
+ * turning back 0.24, 0.17, 0.11 times a second held, 0.20, 0.07, 0.03 not.
  */
 
 const CHOREOGRAPHY = 143;
@@ -62,8 +64,10 @@ const emptyRow = () => ({
   snaps: 0,
   heldBack: 0,
   heldBackStood: 0,
+  heldBackReversals: 0,
   freeBack: 0,
   freeBackStood: 0,
+  freeBackReversals: 0,
   moving: 0,
   overlapMoving: 0,
   standing: 0,
@@ -72,6 +76,23 @@ const emptyRow = () => ({
 
 /** A move longer than this in one tick is no walk: a snap back. */
 const SNAP_TRAVEL = 1000;
+
+/**
+ * How often a walk turned back on itself among `positions` a quarter second
+ * apart: a step of 10 or more more than 120 degrees off the last such step.
+ */
+const reversals = (positions) => {
+  let turns = 0;
+  let last = null;
+  for (let index = 1; index < positions.length; index++) {
+    const step = { x: positions[index].x - positions[index - 1].x, y: positions[index].y - positions[index - 1].y };
+    const length = Math.hypot(step.x, step.y);
+    if (length < 10) continue;
+    if (last && (step.x * last.x + step.y * last.y) / (length * Math.hypot(last.x, last.y)) < -0.5) turns++;
+    last = step;
+  }
+  return turns;
+};
 
 /** How far off its way to its owner a monster touching it is still in it, as a cosine. */
 const AHEAD = Math.cos((70 * Math.PI) / 180);
@@ -155,8 +176,9 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
       while (track.backs.length && track.backs[0].tick <= track.ticks - TICKS_PER_SECOND) {
         const { at, held } = track.backs.shift();
         const stoodStill = hypot(at, actor.position) < 15;
-        if (held) { row.heldBack++; if (stoodStill) row.heldBackStood++; }
-        else { row.freeBack++; if (stoodStill) row.freeBackStood++; }
+        const turns = reversals(track.pet.slice(-(TICKS_PER_SECOND + 1)));
+        if (held) { row.heldBack++; if (stoodStill) row.heldBackStood++; row.heldBackReversals += turns; }
+        else { row.freeBack++; if (stoodStill) row.freeBackStood++; row.freeBackReversals += turns; }
       }
       if (ownerDistance > tether && ownerDistance > 0) {
         const way = { x: (owner.x - actor.position.x) / ownerDistance, y: (owner.y - actor.position.y) / ownerDistance };
@@ -228,6 +250,7 @@ const quantile = (values, q) => {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))].toFixed(2);
 };
+const perSample = (count, samples) => (samples > 0 ? (count / samples).toFixed(2) : "-");
 const share = (part, whole) => (whole > 0 ? `${((100 * part) / whole).toFixed(1)}%` : "-");
 
 /** The pets as text, a line per row. */
@@ -241,5 +264,6 @@ export const describePets = (rows) =>
       `rest/ReturnDist p10/50/90 ${quantile(row.rest, 0.1)}/${quantile(row.rest, 0.5)}/${quantile(row.rest, 0.9)} (n ${row.rest.length})  ` +
       `behind owner ${share(row.behindOwner, row.ticks)}  ` +
       `in owner moving ${share(row.overlapMoving, row.moving)} of ${row.moving}, resting ${share(row.overlapStanding, row.standing)}  ` +
-      `held back stood ${share(row.heldBackStood, row.heldBack)} of ${row.heldBack}, free ${share(row.freeBackStood, row.freeBack)} of ${row.freeBack}`
+      `held back stood ${share(row.heldBackStood, row.heldBack)} of ${row.heldBack} (turns ${perSample(row.heldBackReversals, row.heldBack)}/s), ` +
+      `free ${share(row.freeBackStood, row.freeBack)} of ${row.freeBack} (turns ${perSample(row.freeBackReversals, row.freeBack)}/s)`
   );

@@ -448,3 +448,35 @@ test("a pet held by a monster in its way goes round it at once", async (t) => {
   assert.equal(drew, false, "no wait drawn");
   assert.ok(nearest < 80, `round it to the skeleton: nearest ${Math.round(nearest)}`);
 });
+
+/**
+ * Going round a body is done at the body, not a step ahead of it. Turned to
+ * the side while still a step off, a walk back to its owner stood off again
+ * the next tick and came back the one after: the harness's dragon so turned
+ * back on itself 616 times in one run (pet-dragon seed 3 walker), where the
+ * official, held back so, turns 0.11-0.24 times a second.
+ */
+test("a pet walks up to a monster in its way before it goes round it, and does not turn back", async (t) => {
+  const { session, pet } = await petOnFloor(t, WOLF, { owner: { x: 700, y: 1100 }, at: { x: 1000, y: 900 } });
+  const skeleton = enemyAt(session, { x: 1000, y: 1340 });
+  const blocker = 8903;
+  session.objects.set(blocker, CLID.DistributedNPCGameObject);
+  session.actors.set(blocker, {
+    hitPoints: 500, maxHitPoints: 500, collisionRadius: 35, team: TEAM.ENEMIES, isEnemy: true, attackable: false,
+    position: { x: 1000, y: 1080 }, heading: 0,
+    ai: { state: "idle", engaged: false, aggroRadius: 0, disengageDistance: 1600, moveSpeed: 0, attackRange: 80, attackTimerMs: 1000, attackRandMs: 0, nextAttackAt: Infinity },
+  });
+  const trail = [{ ...pet.position }];
+  await ticks(session, 1000, 12, () => trail.push({ ...pet.position }));
+  assert.ok(Math.abs(trail[1].x - 1000) < 1, `first a straight step at it: ${Math.round(trail[1].x)},${Math.round(trail[1].y)}`);
+  let turns = 0;
+  for (let i = 2; i < trail.length; i++) {
+    const a = { x: trail[i - 1].x - trail[i - 2].x, y: trail[i - 1].y - trail[i - 2].y };
+    const b = { x: trail[i].x - trail[i - 1].x, y: trail[i].y - trail[i - 1].y };
+    const la = Math.hypot(a.x, a.y);
+    const lb = Math.hypot(b.x, b.y);
+    if (la >= 10 && lb >= 10 && (a.x * b.x + a.y * b.y) / (la * lb) < -0.5) turns++;
+  }
+  assert.equal(turns, 0, `never back on itself: ${trail.map(({ x, y }) => `${Math.round(x)},${Math.round(y)}`).join(" ")}`);
+  assert.ok(distance(pet.position, session.actors.get(skeleton).position) < 80, "and gets to the skeleton");
+});

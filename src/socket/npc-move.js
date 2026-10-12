@@ -219,14 +219,21 @@ const heldOnSide = (actor, walk, bodies, passing, flip) => {
   let along = walk;
   let wentRound = passing;
   // Bodies already touched: one in the way holds it, one beside it is walked
-  // along. Going round, so is one in its way that this step would reach.
+  // along, and so is one in its way it goes round (`goesRound`).
   for (const body of bodies) {
     const dx = from.x - body.x;
     const dy = from.y - body.y;
     const distance = Math.hypot(dx, dy);
     const round = goesRound(body, passing);
-    // A body a sweep left at its touching distance is touched, a rounding error or not.
-    if (distance > body.touching + TOUCH_SLACK + (round && inTheWay(from, way, body) ? length : 0)) continue;
+    // A body a sweep left at its touching distance is touched, a rounding
+    // error or not. Passing, after a wait, so is one in its way that this
+    // step would reach: the pass lasts `PASS_MS`. A body gone round with no
+    // wait (one not queued behind) is walked up to first, by the sweep, and
+    // gone round there; turned aside a step short of it with no end to it,
+    // a walk stood off and came straight back the next tick, and the
+    // harness's dragon walking back to its owner past three skeletons
+    // turned back on itself 616 times in one run (pet-dragon seed 3 walker).
+    if (distance > body.touching + TOUCH_SLACK + (passing && inTheWay(from, way, body) ? length : 0)) continue;
     const into = along.x * dx + along.y * dy;
     if (into >= 0) continue;
     const inWay = inTheWay(from, way, body);
@@ -235,15 +242,18 @@ const heldOnSide = (actor, walk, bodies, passing, flip) => {
     const normal = distance < 0.001 ? way : { x: dx / distance, y: dy / distance };
     const inward = along.x * normal.x + along.y * normal.y;
     along = { x: along.x - inward * normal.x, y: along.y - inward * normal.y };
-    // Passing one met head on, there is no along to keep: it goes round on
+    // Passing one met head on, there is no along to keep: it steps aside on
     // the side of the body it already stands out to (`flip` -1: the other),
-    // at the walk's own length.
+    // its walk's length or the body's width, whichever is less. A step
+    // aside wider than the body takes it off its way and back the next
+    // tick: a wolf walks 175 a tick past a body 64 wide.
     if (inWay && Math.hypot(along.x, along.y) < PASS_HEADWAY * length) {
       const out = dx * -way.y + dy * way.x;
       const side = (out >= 0 ? 1 : -1) * flip;
       const tangent = { x: -normal.y, y: normal.x };
       const sign = (tangent.x * -way.y + tangent.y * way.x) * side >= 0 ? 1 : -1;
-      along = { x: tangent.x * sign * length, y: tangent.y * sign * length };
+      const aside = Math.min(length, body.touching);
+      along = { x: tangent.x * sign * aside, y: tangent.y * sign * aside };
     }
   }
   const swept = sweptAlong(from, way, along, bodies, passing);
