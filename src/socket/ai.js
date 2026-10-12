@@ -223,6 +223,12 @@ const turnAfter = (session, doid, actor, turn, reason, walked, behaviour) => {
 /**
  * One actor's tick, `state` being the match's (matchStateOf); answers with the
  * state it came to, or null for no change.
+ *
+ * Async, and waited on actor by actor, though only a swing has anything to
+ * wait for: what a tick sets going without waiting — a smashed prop's
+ * monsters coming out — lands between two actors' ticks, and the actors
+ * that come out this tick are ticked this tick. Run through at once, they
+ * were ticked the next (scenario/smashing on the harness).
  */
 const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) => {
   const { ai } = actor;
@@ -292,8 +298,16 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     ? NO_ROUTE_ASKED
     : routeToTarget(session, actor, target, now, crowd.heroes, (behaviour.routeReach ?? reachOf)(ai, bodies), victim.actor);
   if (state.debugAi && route.waypoint) traceRoute(doid, actor, route, target);
+  /**
+   * The tick as each stage leaves it for the next, act included
+   * (npc-act.js `act`). `distance` is how far it stands from its target:
+   * before its walk, then, once it has walked, after it; `pressed` how far
+   * its walk asked to go at its victim and `advanced` how much nearer the
+   * walk brought it; `stopAt` where its walk ends.
+   */
   const turn = {
     session,
+    doid,
     actor,
     ai,
     victim,
@@ -302,14 +316,22 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     bodies,
     route,
     heroes: crowd.heroes,
+    navigation: state.navigation,
     now,
     deltaSeconds,
     mobility: may.mobility,
     topSpeed: ai.moveSpeed * may.mobility,
     swinging: may.swinging,
+    attackLocked: may.attackLocked,
+    cannotAttack: may.cannotAttack,
     distance: distanceTo(actor.position, target),
     stopAt: (behaviour.stopAt ?? walkEndsAt)(actor, bodies),
     away: null,
+    pressed: 0,
+    advanced: 0,
+    fleeing: false,
+    actGate: behaviour.actGate,
+    seesAlways: behaviour.seesAlways === true,
   };
   turn.away = behaviour.prepare?.(turn) ?? null;
   const intent = swingIntent(ai, may, now, deltaSeconds) ?? behaviour.intent(turn);
@@ -317,34 +339,17 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   const { walked, among } = move(session, state, crowd, doid, actor, intent, turn);
   behaviour.moved?.(turn, intent, before, among);
 
-  const fleeing = behaviour.fleeing?.(turn) ?? false;
+  turn.fleeing = behaviour.fleeing?.(turn) ?? false;
+  // A contact swing is made at the walk's end or on the way in (npc-act.js `heldShort`).
   const distance = distanceTo(actor.position, target);
-  const reason = !fights ? "not-fighting" : await act(session, {
-    doid,
-    actor,
-    victim,
-    target,
-    bodies,
-    distance,
-    // Where its walk ends, how far it asked to go at its victim, and how much
-    // nearer the tick brought it: a contact swing is made at the walk's end or
-    // on the way in.
-    stopAt: turn.stopAt,
-    pressed: towards(intent, before, target),
-    advanced: turn.distance - distance,
-    route,
-    now,
-    attackLocked: may.attackLocked,
-    cannotAttack: may.cannotAttack,
-    fleeing,
-    actGate: behaviour.actGate,
-    seesAlways: behaviour.seesAlways === true,
-    navigation: state.navigation,
-  });
+  turn.pressed = towards(intent, before, target);
+  turn.advanced = turn.distance - distance;
+  turn.distance = distance;
+  const reason = fights ? await act(session, turn) : "not-fighting";
   behaviour.acted?.(turn, reason);
   if (cycle) teleportAttacked(ai, now);
   turnAfter(session, doid, actor, turn, reason, walked, behaviour);
-  return stateAfterAct(reason, fleeing, route, said);
+  return stateAfterAct(reason, turn.fleeing, route, said);
 };
 
 /** One deterministic AI step; exported so movement and combat can be locked by tests. */

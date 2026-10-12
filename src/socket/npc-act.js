@@ -275,15 +275,15 @@ export const act = async (session, turn) => {
   if (route.escaping) return "escaping";
   if (turn.attackLocked) return "locked";
 
-  const clearAttack =
-    turn.seesAlways || victimInSight(turn.navigation, actor, victim, target);
   // Its target only: a monster locked on one hero and held behind another,
   // or behind a pet, in a door, swings at neither — the swing that would
   // catch the one in front is never started. The official kept its target
   // when it left reach with another hero in it 10 of 16 times; there is no
   // capture of a pet in the way. Known, and left so: a monster has no
   // "fight what blocks you" rule, as a pet does (behaviours/pet.js `clearing`).
-  if (distance > reachOf(ai, bodies) || !clearAttack) return "out-of-reach";
+  // Reach first: out of it, no sight line is drawn.
+  if (distance > reachOf(ai, bodies)) return "out-of-reach";
+  if (!turn.seesAlways && !victimInSight(turn.navigation, actor, victim, target)) return "out-of-reach";
   // What its behaviour holds a swing to here (behaviours/kite.js `actGate`).
   const gated = turn.actGate?.(turn);
   if (gated) return gated;
