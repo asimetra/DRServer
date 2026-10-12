@@ -141,6 +141,26 @@ const inTheWay = (from, way, body) => {
   return distance < 0.001 || (dx * way.x + dy * way.y) / distance >= AHEAD;
 };
 
+/**
+ * The bodies of another side in the way of a `walk` from where it stands
+ * that the walk would meet — touching it, or within the walk's length of
+ * touching — nearest first, and of the bodies as near (to a unit) the most
+ * squarely in its way: what pins a walk that went nowhere
+ * (behaviours/pet.js `pinnedBy`).
+ */
+export const touchingInTheWay = (actor, walk, bodies) => {
+  const length = Math.hypot(walk.x, walk.y);
+  if (!bodies?.length || length < 1e-6) return [];
+  const from = bodyPointOf(actor, actor.position);
+  const way = { x: walk.x / length, y: walk.y / length };
+  const apart = (body) => Math.hypot(body.x - from.x, body.y - from.y);
+  const gap = (body) => Math.round(apart(body) - body.touching);
+  const square = (body) => ((body.x - from.x) * way.x + (body.y - from.y) * way.y) / (apart(body) || 1);
+  return bodies
+    .filter((body) => !body.queues && apart(body) <= body.touching + length && inTheWay(from, way, body))
+    .sort((a, b) => gap(a) - gap(b) || square(b) - square(a));
+};
+
 /** How far off a body still counts as touching it: what a sweep to its edge leaves of rounding. */
 const TOUCH_SLACK = 0.01;
 
@@ -258,7 +278,12 @@ const heldOnSide = (actor, walk, bodies, passing, flip) => {
   }
   const swept = sweptAlong(from, way, along, bodies, passing);
   wentRound ||= swept.wentRound;
-  if (Math.hypot(swept.taken.x, swept.taken.y) < HEADWAY * length) {
+  // Going round a body of another side with no wait, a slide back the way
+  // it came is no headway: a pet boxed in by monsters was slid 55 back
+  // and walked in again the next tick. A pass after a wait keeps what it
+  // was measured with.
+  const backwards = wentRound && !passing && swept.taken.x * way.x + swept.taken.y * way.y < -HEADWAY * length;
+  if (Math.hypot(swept.taken.x, swept.taken.y) < HEADWAY * length || backwards) {
     return { walk: { x: 0, y: 0 }, blocked: true, queued: !wentRound, wentRound };
   }
   return { walk: swept.taken, blocked: false, queued: false, wentRound };

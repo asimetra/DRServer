@@ -241,6 +241,8 @@ const petTarget = (crowd, actor, now) => {
   pickUpFor(owner, actor, now);
   const ownerDistance = distanceTo(actor.position, owner.position);
   const following = { victim: owner, following: true };
+  const blocker = clearing(crowd, actor, now);
+  if (blocker) return fighting(blocker);
   if (leashed(actor, owner, ownerDistance)) {
     ai.targetDoid = null;
     ai.engaged = false;
@@ -251,6 +253,28 @@ const petTarget = (crowd, actor, now) => {
   if (victim) return fighting(victim);
   ai.engaged = false;
   return backAt(actor, owner, ownerDistance) ? null : following;
+};
+
+/**
+ * Its way back cleared: the monster that pins it (behaviours/pet.js
+ * `pinnedBy`), taken as its target as any pick is (`lockOn`), so it keeps
+ * at it if the monster gives half a step. When its pick is up
+ * (`ChangeTargetT`) it lets go and walks back again: the walk is the test of
+ * whether it can, and one that goes nowhere pins it on the monster again.
+ * One that falls, or leaves the floor, is let go at once. Null when nothing
+ * pins it.
+ */
+const clearing = ({ petTargets }, actor, now) => {
+  const { ai } = actor;
+  if (ai.pinnedBy == null) return null;
+  const blocker = petTargets.find(({ doid }) => doid === ai.pinnedBy);
+  const holding = blocker && ai.targetDoid === blocker.doid;
+  if (!blocker || (holding && !stillLocked(ai, now))) {
+    if (holding || !blocker) ai.targetDoid = null;
+    ai.pinnedBy = null;
+    return null;
+  }
+  return holding ? blocker : lockOn(ai, blocker, now);
 };
 
 /** One selector per `ai.kind`; anything else picks as an enemy does. */

@@ -138,7 +138,7 @@ export const separationDisplacement = (
         // A body on the players' side does not hold a walk on it
         // (`friendlyBodies`); one of another team is not queued behind.
         const friendly = friendlyBodies(actor, other, spatialIndex.playersSide);
-        if (!isHero && !friendly) bodies.push({ x: at.x, y: at.y, touching, queues: other.team === actor.team });
+        if (!isHero && !friendly) bodies.push({ doid: otherDoid, x: at.x, y: at.y, touching, queues: other.team === actor.team });
         /**
          * The nearest peer sits on the sum of the two bodies. Measured
          * against the official for monsters standing in a fight: KNIGHT p25

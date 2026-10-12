@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { tickNpcAi } from "../src/socket/ai.js";
-import { bodyBlocked, bodyRadius, contact, seesBody } from "../src/socket/body.js";
+import { bodyBlocked, bodyPointOf, bodyRadius, contact, seesBody } from "../src/socket/body.js";
 import { inBand } from "../src/socket/npc-act.js";
 import { canGetAt } from "../src/socket/routing.js";
 import { cancelPetRespawn, spawnEquippedPet } from "../src/socket/dungeon.js";
@@ -479,4 +479,113 @@ test("a pet walks up to a monster in its way before it goes round it, and does n
   }
   assert.equal(turns, 0, `never back on itself: ${trail.map(({ x, y }) => `${Math.round(x)},${Math.round(y)}`).join(" ")}`);
   assert.ok(distance(pet.position, session.actors.get(skeleton).position) < 80, "and gets to the skeleton");
+});
+
+/**
+ * Walking back to its owner with no way on, a pet clears its way: it takes
+ * the monster touching it in its way as its target, and goes back to its
+ * owner the moment a step to him is open again (npc-targeting.js
+ * `petTarget`, behaviours/pet.js `pinnedBy`).
+ */
+/** A skeleton that stands where it is put and fights nobody, its body at `body`. */
+const standingMonster = (body) => {
+  const monster = {
+    hitPoints: 1e6, maxHitPoints: 1e6, collisionRadius: 35, team: TEAM.ENEMIES, isEnemy: true, heading: 0,
+    constant: "SKELETON_WARRIOR", scale: 1, position: { x: 0, y: 0 },
+    ai: { state: "idle", engaged: false, aggroRadius: 0, disengageDistance: 1600, moveSpeed: 0, attackRange: 80, attackTimerMs: 1000, attackRandMs: 0, nextAttackAt: Infinity },
+  };
+  const offset = bodyPointOf(monster, { x: 0, y: 0 });
+  monster.position = { x: body.x - offset.x, y: body.y - offset.y };
+  return monster;
+};
+
+const pinnedWolf = async (t, { angles = [180, 130, 230], navigation = null, owner = { x: 0, y: 1000 }, at = { x: 700, y: 1000 } } = {}) => {
+  const { session, pet, petDoid } = await petOnFloor(t, WOLF, { owner, at, navigation });
+  const from = bodyPointOf(pet, pet.position);
+  const doids = angles.map((angle, index) => {
+    const doid = 9300 + index;
+    const radians = (angle * Math.PI) / 180;
+    session.objects.set(doid, CLID.DistributedNPCGameObject);
+    session.actors.set(doid, standingMonster({ x: from.x + Math.cos(radians) * 64.5, y: from.y + Math.sin(radians) * 64.5 }));
+    return doid;
+  });
+  return { session, pet, petDoid, doids };
+};
+const bitesBy = (session, petDoid, from) =>
+  session.sent.slice(from).filter((frame) => frame.length >= 10 && frame.readUInt16LE(2) === 124 && frame.readUInt32LE(4) === petDoid && frame.readUInt16LE(8) === 143).length;
+
+test("a leashed wolf boxed in by monsters fights the one in its way, and walks on once a way opens", async (t) => {
+  const { session, pet, petDoid, doids: [ahead, above] } = await pinnedWolf(t);
+  let now = await ticks(session, 1000, 3);
+  assert.equal(pet.ai.targetDoid, ahead, "the one in its way");
+  const before = session.sent.length;
+  now = await ticks(session, now, 12);
+  assert.ok(bitesBy(session, petDoid, before) >= 2, "it keeps biting it");
+  assert.equal(pet.ai.targetDoid, ahead, "and keeps at it past its pick, still pinned");
+  // The one above it falls: a way round the one ahead is open.
+  session.actors.get(above).dead = true;
+  session.actors.get(above).hitPoints = 0;
+  const at = { ...pet.position };
+  now = await ticks(session, now, 10);
+  assert.equal(pet.ai.targetDoid, null, "it leaves the one ahead, alive, within a pick");
+  assert.ok(pet.position.x < at.x - 50, `and walks on: ${Math.round(pet.position.x)}`);
+});
+
+test("a wolf clearing its way walks on when the one in its way falls, and takes nothing past its tether", async (t) => {
+  // Above and below it, just wide enough apart to let it through once the one ahead is gone.
+  const { session, pet, doids: [ahead, above, below] } = await pinnedWolf(t, { angles: [180, 90, 270] });
+  const now = await ticks(session, 1000, 3);
+  assert.equal(pet.ai.targetDoid, ahead);
+  session.actors.get(ahead).dead = true;
+  session.actors.get(ahead).hitPoints = 0;
+  const targets = new Set();
+  const at = { ...pet.position };
+  await ticks(session, now, 8, () => targets.add(pet.ai.targetDoid));
+  assert.ok(!targets.has(above) && !targets.has(below), "nothing past its tether taken");
+  assert.ok(pet.position.x < at.x - 100, `it walks on: ${Math.round(pet.position.x)}`);
+});
+
+/** A wall from top to bottom at x 400, and no way round it. */
+const walled = () =>
+  createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 2000, maxY: 2000 },
+    cellSize: 30,
+    staticColliders: [{ type: "rectangle", x: 400, y: 1000, halfWidth: 5, halfHeight: 1000, angle: 0 }],
+  });
+
+/** A leashed wolf stood at the wall, and a monster touching it in its way. */
+const wolfAtTheWall = async (t) => {
+  const { session, pet, petDoid } = await petOnFloor(t, WOLF, { owner: { x: 100, y: 1000 }, at: { x: 700, y: 1000 }, navigation: walled() });
+  const now = await ticks(session, 1000, 6);
+  assert.ok(pet.position.x < 460 && pet.position.x > 400, `at the wall: ${Math.round(pet.position.x)}`);
+  assert.equal(pet.ai.state, "return");
+  const from = bodyPointOf(pet, pet.position);
+  const monster = 9400;
+  session.objects.set(monster, CLID.DistributedNPCGameObject);
+  session.actors.set(monster, standingMonster({ x: from.x - 27, y: from.y - 58.5 }));
+  return { session, pet, petDoid, monster, now };
+};
+
+test("a leashed wolf at a wall with no way to its owner fights the monster on it, and then stands", async (t) => {
+  const { session, pet, monster, now: start } = await wolfAtTheWall(t);
+  let now = await ticks(session, start, 3);
+  assert.equal(pet.ai.targetDoid, monster, "the monster on it, in its way");
+  session.actors.delete(monster);
+  now = await ticks(session, now, 3);
+  const at = { ...pet.position };
+  await ticks(session, now, 10);
+  assert.equal(pet.ai.targetDoid, null);
+  assert.ok(distance(pet.position, at) < 1, `it stands at the wall: ${Math.round(pet.position.x)},${Math.round(pet.position.y)}`);
+});
+
+test("a wolf clearing its way keeps at the monster when it steps back", async (t) => {
+  const { session, pet, petDoid, monster, now: start } = await wolfAtTheWall(t);
+  let now = await ticks(session, start, 3);
+  assert.equal(pet.ai.targetDoid, monster);
+  session.actors.get(monster).position.y -= 20;
+  const before = session.sent.length;
+  // Short of its next pick, when it tries its way back again.
+  now = await ticks(session, now, 5);
+  assert.equal(pet.ai.targetDoid, monster, "still its target");
+  assert.ok(bitesBy(session, petDoid, before) >= 1, "and bitten");
 });

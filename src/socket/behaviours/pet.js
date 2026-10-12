@@ -1,5 +1,6 @@
 import { bodyClearSpot, bodyRadius, bodyWalkClear, contact } from "../body.js";
 import { inBand } from "../npc-act.js";
+import { touchingInTheWay } from "../npc-move.js";
 import { collectNearbyForPet } from "../pickups.js";
 import { STILL, walkEndsAt, walkTowards } from "./chase.js";
 import { backsOffFrom } from "./kite.js";
@@ -184,7 +185,41 @@ export const snapBackSpot = (navigation, actor, owner) => {
   );
 };
 
+/** Less than this share of the walk it asked for, a walk back went nowhere. */
+const NO_HEADWAY = 0.1;
+
+/**
+ * What pins it: walking back to its owner, a tick it could not make a
+ * tenth of its walk, or was put back the way it came by as much —
+ * monsters closing both ways round, or the scenery with no way through —
+ * the nearest monster's body touching it in its way
+ * (`touchingInTheWay`, npc-move.js), whose doid it keeps as `ai.pinnedBy`
+ * for its next pick to take (npc-targeting.js `petTarget`). A walk that
+ * went anywhere, round a body or along a wall, pins it on nothing.
+ *
+ * The leash keeps a pet from chasing what is far; it does not keep it from
+ * fighting what holds it in place. The official's pets held so got round:
+ * past their TetherDist with a monster touching them in their way they
+ * swung on 0-3% of quarter seconds (wolf n 189, rhino n 60, dragon n 18)
+ * and were held p50 0.5 s; one with no way round at all is not in the
+ * captures, and this is the maintainer's call for it. Ours stood, or went
+ * to and fro, where nothing would let it through.
+ */
+const pinnedBy = (turn, intent, before) => {
+  const { actor, ai } = turn;
+  // Fighting what pins it, it is pinned on it still (npc-targeting.js `clearing`).
+  if (!turn.following) return;
+  const asked = Math.hypot(intent.x, intent.y);
+  const step = { x: actor.position.x - before.x, y: actor.position.y - before.y };
+  const went = Math.hypot(step.x, step.y);
+  // Back the way it came is no way on, and aside, round a body, is.
+  const back = asked > 0.001 && (step.x * intent.x + step.y * intent.y) / asked < -NO_HEADWAY * asked;
+  const stuck = asked > 0.001 && (went < NO_HEADWAY * asked || back);
+  ai.pinnedBy = stuck ? (touchingInTheWay(actor, intent, turn.around)[0]?.doid ?? null) : null;
+};
+
 /** A pet walks, at its full speed, unless it is backing out. */
 export const pet = {
   intent: (turn) => petRetreat(turn.actor, turn) ?? walkTowards(turn, false),
+  moved: pinnedBy,
 };

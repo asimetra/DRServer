@@ -29,6 +29,8 @@
  *              itself (`reversals`); and the same with none touching
  *   swung at   of the monsters' swings at it or its owner (the
  *              choreography's victim), the share at it
+ *   clearing   the share of its time it fought what pinned it on its way
+ *              back (npc-targeting.js `clearing`)
  *   snaps      the times it was put back beside its owner from afar
  *              (behaviours/pet.js `snapBackSpot`): over 1000 in one tick,
  *              which a teleporting pet's come-back beside its victim is too
@@ -67,6 +69,7 @@ const emptyRow = () => ({
   rest: [],
   behindOwner: 0,
   snaps: 0,
+  clearing: 0,
   swingsAtPet: 0,
   swingsAtOwner: 0,
   heldBack: 0,
@@ -156,6 +159,7 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
       const tether = Number(source.TetherDist ?? 0) || Infinity;
       const row = rowOf(actor.constant);
       row.ticks++;
+      if (ai.pinnedBy != null && ai.targetDoid === ai.pinnedBy) row.clearing++;
       row.swingsAtPet += victims.get(doid) ?? 0;
       row.swingsAtOwner += victims.get(ai.ownerDoid) ?? 0;
       const track = tracks.get(doid) ?? { pet: [], owner: [], swung: [], beyond: 0, backs: [], ticks: 0 };
@@ -282,6 +286,7 @@ export const describePets = (rows) =>
       `behind owner ${share(row.behindOwner, row.ticks)}  ` +
       `in owner moving ${share(row.overlapMoving, row.moving)} of ${row.moving}, resting ${share(row.overlapStanding, row.standing)}  ` +
       `swung at ${share(row.swingsAtPet, row.swingsAtPet + row.swingsAtOwner)} of ${row.swingsAtPet + row.swingsAtOwner}  ` +
+      `clearing ${share(row.clearing, row.ticks)}  ` +
       `held back stood ${share(row.heldBackStood, row.heldBack)} of ${row.heldBack} (turns ${perSample(row.heldBackReversals, row.heldBack)}/s), ` +
       `free ${share(row.freeBackStood, row.freeBack)} of ${row.freeBack} (turns ${perSample(row.freeBackReversals, row.freeBack)}/s)`
   );

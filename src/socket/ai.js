@@ -177,6 +177,8 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
   // Separation remains possible under MOVEMENT zero, but it no longer gives
   // an actor a second BaseMove-sized step on top of its walk.
   const crowding = separationDisplacement(doid, actor, crowd.spatialIndex, crowd.heroDoids);
+  // What it walked among, for its behaviour to look at once it has moved.
+  turn.around = crowding.bodies;
   const step = stepNpc(state.navigation, actor, {
     walk: { x: intent.x, y: intent.y },
     contacts: crowding.contacts,
