@@ -39,11 +39,13 @@ import { restWalk } from "./chase.js";
  * within its aggro radius, and comes back with TELEPORT_IN some 2.5 s later,
  * 87-92% of the time. So the first tick of a fight hides it (`teleportTurn`).
  *
- * The AI asks it three things, at the three points of the tick where they
- * belong: a hidden one whether it comes back (`comeBack`), before anything
- * else, since one off the floor is not released, noticed or lost; a visible
- * one in the fight what its phase does this tick (`teleportTurn`); and, after
- * the fight's act, one at its attack moment moves on (`teleportAttacked`).
+ * The AI asks it four things, at the points of the tick where they
+ * belong: a hidden one, once the AI has seen it is still in its fight (its
+ * DisengageDist, its target), whether it comes back (`comeBack`); a visible
+ * one in the fight what its phase does this tick (`teleportTurn`); after the
+ * fight's act, one at its attack moment moves on (`teleportAttacked`); and
+ * one that lets go of its fight, hidden or going out, stands down
+ * (`standDown`).
  */
 
 const npcTimelineAction = (doid, timeline) =>
@@ -115,6 +117,30 @@ export const comeBack = (session, doid, actor, target, bodies, now) => {
   actor.teleportRegenerate(destination, actor.heading);
   session.send(npcTimelineAction(doid, ai.teleportInTimeline ?? "TELEPORT_IN"));
   return true;
+};
+
+/**
+ * It has let go of its fight (ai.js `letGo`): its cycle is over. Off the
+ * floor, it comes back where it went out, facing as it was; going out, it
+ * comes back in; and it stands visible until its next fight, which starts
+ * the cycle again by going. Left as it was, a specter let go while hidden
+ * reappeared beside its victim wherever he had run, and a shadow wolf whose
+ * fight ended while it was hidden stayed off the floor.
+ */
+export const standDown = (session, doid, actor) => {
+  const { ai } = actor;
+  if (actor.teleportHidden) {
+    actor.teleportHidden = false;
+    actor.teleportRegenerate(actor.position, actor.heading);
+    session.send(npcTimelineAction(doid, ai.teleportInTimeline ?? "TELEPORT_IN"));
+  } else if (ai.teleportPhase === "teleport-out") {
+    session.send(npcTimelineAction(doid, ai.teleportInTimeline ?? "TELEPORT_IN"));
+  }
+  ai.teleportPhase = "visible";
+  ai.teleportHideAt = 0;
+  ai.teleportReturnAt = 0;
+  ai.teleportDisableAt = 0;
+  ai.teleportCycleStarted = false;
 };
 
 /** Off the floor until `TeleportRecurT` and a roll of `TeleportRecurRand` from now. */

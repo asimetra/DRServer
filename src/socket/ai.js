@@ -16,7 +16,7 @@ import { kite, backingOff } from "./behaviours/kite.js";
 import { heldByHit, swingIntent, whatItMayDo } from "./behaviours/overrides.js";
 import { pet, snapBackSpot } from "./behaviours/pet.js";
 import { isStationary, stationary } from "./behaviours/stationary.js";
-import { comeBack, teleportAttacked, teleportsOnCycle, teleportTurn } from "./behaviours/teleport.js";
+import { comeBack, standDown, teleportAttacked, teleportsOnCycle, teleportTurn } from "./behaviours/teleport.js";
 
 /**
  * The monster AI: every actor with an `ai`, every tick, the same pipeline.
@@ -24,9 +24,9 @@ import { comeBack, teleportAttacked, teleportsOnCycle, teleportTurn } from "./be
  *   sense    the crowd on the floor (npc-crowd.js)
  *   held     a hit that throws or staggers it has the tick (behaviours/overrides.js)
  *   target   who it goes for, one selector per kind (npc-targeting.js)
- *   cycle    a teleporter off the floor, or between swings (behaviours/teleport.js)
  *   release  a prisoner walking out of its cage (npc-release.js)
  *   notice   aggro and disengagement
+ *   cycle    a teleporter off the floor, or between swings (behaviours/teleport.js)
  *   route    where it walks next (routing.js)
  *   intent   the step its own swing, or else its behaviour, asks for
  *            (behaviours/: chase, kite, pet, stationary)
@@ -88,9 +88,13 @@ const behaviourOf = (ai) =>
         ? stationary
         : chase;
 
-/** It lets go of its target (`clearNpcTarget`), and shows as idle. */
-const letGo = (actor) => {
+/**
+ * It lets go of its target (`clearNpcTarget`), and shows as idle; a
+ * teleporter's cycle ends with it (behaviours/teleport.js `standDown`).
+ */
+const letGo = (session, doid, actor) => {
   clearNpcTarget(actor);
+  if (teleportsOnCycle(actor)) standDown(session, doid, actor);
   return "idle";
 };
 
@@ -209,7 +213,7 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   if (heldByHit(session, doid, actor, now)) return null;
 
   const picked = pickTarget(crowd, actor, now);
-  if (picked === LET_GO) return letGo(actor);
+  if (picked === LET_GO) return letGo(session, doid, actor);
   if (!picked) return null;
   const { victim, following } = picked;
   let said = following ? "return" : null;
@@ -218,11 +222,6 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   const radius = bodyRadius(actor);
   const bodies = contact(actor, victim.actor);
   const cycle = teleportsOnCycle(actor);
-
-  // Off the floor between teleports: nothing else of the tick is its own.
-  if (actor.teleportHidden) {
-    return cycle && comeBack(session, doid, actor, target, bodies, now) ? "teleport-in" : said;
-  }
 
   // Too far behind the one it follows, it is put back beside him, and has
   // nothing to do with what it fought or the way it was going
@@ -257,8 +256,18 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
       engage(ai);
       said = "chase";
     } else if (distance > ai.disengageDistance) {
-      return letGo(actor);
+      return letGo(session, doid, actor);
     }
+  }
+
+  // Off the floor between teleports, still in its fight: nothing else of the
+  // tick is its own. Following its owner, its fight is over (`standDown`).
+  if (actor.teleportHidden) {
+    if (following) {
+      standDown(session, doid, actor);
+      return said;
+    }
+    return cycle && comeBack(session, doid, actor, target, bodies, now) ? "teleport-in" : said;
   }
 
   if (cycle) {
@@ -336,7 +345,7 @@ export const tickNpcAi = async (session, now, deltaSeconds) => {
   if (nobodyToFight(crowd)) {
     // Nothing has an opposing combatant left. Releasing chase state prevents
     // stale routes resuming after a revive or a new spawn.
-    for (const actor of actors.values()) if (actor.ai) settle(actor.ai, letGo(actor));
+    for (const [doid, actor] of actors) if (actor.ai) settle(actor.ai, letGo(session, doid, actor));
     return;
   }
   for (const [doid, actor] of actors) {

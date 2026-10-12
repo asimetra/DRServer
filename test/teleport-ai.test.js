@@ -172,3 +172,75 @@ test("a specter outside its AggroRadius never cycles; inside it, it activates", 
   assert.equal(specter.teleportHidden, true, "it engaged and did not start its cycle");
   assert.equal(disables(), 1);
 });
+
+/**
+ * A teleporter lets go as everything else does: past its DisengageDist, or
+ * with nothing left to fight. Hidden, it comes back where it went out and
+ * stands there visible; going out, it comes back in.
+ */
+test("a hidden specter whose hero runs past its DisengageDist comes back where it went out, and idles", async () => {
+  const { session, specter, hero, regenerations, timeline } = await makeSpecterSession();
+  await tickNpcAi(session, 1000, 0.25);
+  assert.equal(specter.teleportHidden, true);
+  const wentOut = { ...specter.position };
+  hero.position.x = 3000;
+  session.heroPosition = hero.position;
+  await tickNpcAi(session, 1250, 0.25);
+  assert.equal(specter.teleportHidden, false, "still hidden");
+  assert.deepEqual(specter.position, wentOut, "back where it went out");
+  assert.deepEqual(regenerations.at(-1)?.position, wentOut);
+  assert.ok(timeline("TELEPORT_IN"));
+  assert.equal(specter.ai.engaged, false);
+  assert.equal(specter.ai.state, "idle");
+  await run(session, 1500, 6000);
+  assert.equal(specter.teleportHidden, false, "it stays on the floor while it idles");
+});
+
+test("a specter let go during its out animation comes back in", async () => {
+  const { session, specter, hero, sent, timeline, disables } = await makeSpecterSession();
+  await run(session, 1000, 8000);
+  assert.equal(specter.ai.teleportPhase, "teleport-out");
+  const before = disables();
+  const outAt = sent.length;
+  hero.position.x = 3000;
+  session.heroPosition = hero.position;
+  await run(session, 8250, 9000);
+  assert.equal(specter.teleportHidden, false);
+  assert.equal(specter.ai.teleportPhase, "visible");
+  assert.equal(disables(), before, "disabled after it let go");
+  assert.ok(sent.slice(outAt).some((frame) => field(frame) === 145 && frame.includes(Buffer.from("TELEPORT_IN"))), "not brought back in");
+});
+
+/** A teleporting pet hidden when its fight ends is never left off the floor (review probe 4). */
+test("a shadow wolf hidden when its fight ends comes back on the floor", async () => {
+  const heroDoid = 10;
+  const regen = [];
+  const hero = { hitPoints: 200, maxHitPoints: 200, collisionRadius: 26, position: { x: 0, y: 0 }, team: TEAM.PLAYERS };
+  const monster = {
+    hitPoints: 99999, maxHitPoints: 99999, collisionRadius: 30, team: TEAM.ENEMIES, isEnemy: true, position: { x: 230, y: 0 }, heading: 180,
+    ai: { kind: "enemy", state: "idle", engaged: false, aggroRadius: 0, disengageDistance: 1600, moveSpeed: 0, attackRange: 80, attackTimerMs: 1500, nextAttackAt: Infinity, attackType: 920050, attackColliders: [] },
+  };
+  const wolf = {
+    hitPoints: 999, maxHitPoints: 999, collisionRadius: 25, team: TEAM.PLAYERS, isPet: true, position: { x: 120, y: 0 }, heading: 0,
+    teleportRegenerate: (position) => regen.push({ ...position }),
+    ai: {
+      kind: "pet", behavior: "TELEPORT_AI", ownerDoid: heroDoid, state: "idle", engaged: false, aggroRadius: 300, disengageDistance: 1000,
+      tetherDistance: 400, returnDistance: 250, collects: {}, moveSpeed: 312, attackRange: 120, keepDistance: 0, targetTimerMs: 1000,
+      targetRandMs: 0, nextAttackAt: Infinity, attacks: [{ attackType: 1, range: 120, minRange: 0, rechargeMs: 0, readyAt: 0 }],
+      teleportRange: 75, teleportRecurMs: 200, teleportRecurRandMs: 300, preTeleportAttackMs: 200, postTeleportAttackMs: 1200,
+      teleportOutDelayMs: 1000, teleportPhase: "visible",
+    },
+  };
+  const session = {
+    id: 71, heroDoid, heroPosition: hero.position, random: () => 0.5, send: () => {},
+    objects: new Map([[heroDoid, CLID.HeroGameObject], [20, CLID.DistributedNPCGameObject], [30, CLID.DistributedNPCGameObject]]),
+    actors: new Map([[heroDoid, hero], [20, monster], [30, wolf]]),
+  };
+  let now = 1000;
+  for (let tick = 0; tick < 40 && !(wolf.teleportHidden && regen.length >= 1); tick++) await tickNpcAi(session, (now += 250), 0.25);
+  assert.equal(wolf.teleportHidden, true, "it went out in its fight");
+  monster.dead = true;
+  monster.hitPoints = 0;
+  await run(session, now + 250, now + 1500);
+  assert.equal(wolf.teleportHidden, false, "left off the floor when its fight ended");
+});
