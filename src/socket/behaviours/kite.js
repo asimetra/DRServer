@@ -200,6 +200,18 @@ export const kite = {
     const step = backOffStep(turn.ai, turn.away, turn.topSpeed, turn.deltaSeconds);
     return step ? { ...STILL, x: step.x, y: step.y, away: turn.away } : STILL;
   },
+  /** Backing off: what the floor command shows as "flee" (ai.js). */
+  fleeing: (turn) => backingOff(turn.ai, turn.away, turn.now),
+  /**
+   * Backing off, it still shoots when its swing is due: it stands for the
+   * swing (the lock) and carries on after (npc-act.js `act`).
+   */
+  actGate: (acting) =>
+    acting.fleeing && (acting.cannotAttack || acting.now < acting.actor.ai.nextAttackAt) ? "backing-off" : null,
+  /** A shot ends a back-off: it stands for the swing and fights from there. */
+  acted: (turn, reason) => {
+    if (reason === "swung") endBackOff(turn.ai);
+  },
   moved: (turn, intent, before) => {
     if (intent.away) backOffHeadway(turn.actor, intent.away, before, turn.topSpeed, turn.deltaSeconds);
   },

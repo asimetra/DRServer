@@ -61,12 +61,10 @@ export const restWalk = (ai) => {
  * range is only ever asked one question, which is whether the thing may
  * swing from where it now stands. That question is `act`'s (npc-act.js).
  *
- * A pet `following` its owner stops at its `ReturnDist` instead.
+ * A pet walking back to its owner stops at its `ReturnDist` instead
+ * (behaviours/pet.js `walkBackEndsAt`).
  */
-export const walkEndsAt = (actor, bodies, following) =>
-  following
-    ? Math.max(bodies, actor.ai.returnDistance ?? 0)
-    : standoff(actor, bodies);
+export const walkEndsAt = (actor, bodies) => standoff(actor, bodies);
 
 /**
  * The walk along `turn.route` this tick: to its waypoint, or at the target

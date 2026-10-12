@@ -6,6 +6,7 @@ import { collectNearbyForPet } from "../pickups.js";
 import { canGetAt } from "../routing.js";
 import { fighting, letGoOfTarget, lockOn, stillLocked, targetsOf } from "../target-lock.js";
 import { STILL, walkEndsAt, walkTowards } from "./chase.js";
+import { face } from "../npc-facing.js";
 import { backsOffFrom } from "./kite.js";
 import { returnsBesideVictim } from "./teleport.js";
 
@@ -44,7 +45,7 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  *   tetherDistance  TetherDist: how far from its owner it may be before it
  *                   breaks off and goes back (`leashed`);
  *   returnDistance  ReturnDist: where that walk back, and any walk to its
- *                   owner, ends (`walkEndsAt`, behaviours/chase.js);
+ *                   owner, ends (`walkBackEndsAt`);
  *   collects        CollectsGold, CollectsXp, CollectsCrowd (`pickUpFor`).
  *
  * TetherTimer is not read. Taken literally — out past TetherDist that long
@@ -75,13 +76,13 @@ export const ownerOf = (heroes, ai) => heroes.find(({ doid }) => doid === ai.own
 
 /**
  * Whether it is back at its owner: where a walk to him ends, from its own
- * body and his (`walkEndsAt`, behaviours/chase.js). The walk ends there to
+ * body and his (`walkBackEndsAt`). The walk ends there to
  * the last bit of a float and no nearer, so the arithmetic's rounding is
  * allowed for.
  */
 const ROUNDING = 1e-6;
 export const backAt = (actor, owner, ownerDistance) =>
-  ownerDistance <= walkEndsAt(actor, contact(actor, owner.actor), true) + ROUNDING;
+  ownerDistance <= walkBackEndsAt(actor, contact(actor, owner.actor)) + ROUNDING;
 
 /**
  * Whether it is on its way back to its owner, taking nothing on: from the
@@ -183,7 +184,7 @@ export const SNAP_BACK_DISTANCE = 2000;
 export const snapBackSpot = (navigation, actor, owner) => {
   const away = Math.hypot(actor.position.x - owner.position.x, actor.position.y - owner.position.y);
   if (!(away > SNAP_BACK_DISTANCE)) return null;
-  const returnDistance = walkEndsAt(actor, contact(actor, owner.actor), true);
+  const returnDistance = walkBackEndsAt(actor, contact(actor, owner.actor));
   const desired = {
     x: owner.position.x + ((actor.position.x - owner.position.x) / away) * returnDistance,
     y: owner.position.y + ((actor.position.y - owner.position.y) / away) * returnDistance,
@@ -232,8 +233,6 @@ const NO_HEADWAY = 0.1;
  */
 const pinnedBy = (turn, intent, before) => {
   const { actor, ai } = turn;
-  // Fighting what pins it, it is pinned on it still (`clearing`).
-  if (!turn.following) return;
   const asked = Math.hypot(intent.x, intent.y);
   const step = { x: actor.position.x - before.x, y: actor.position.y - before.y };
   const went = Math.hypot(step.x, step.y);
@@ -277,7 +276,7 @@ const petPick = (crowd, actor, owner, now) => {
     const bodies = contact(actor, candidate.actor);
     return returnsBesideVictim(actor)
       ? withinTether(candidate.position)
-      : canGetAt(navigation, actor, candidate, reachOf(ai, bodies), withinTether, walkEndsAt(actor, bodies, false));
+      : canGetAt(navigation, actor, candidate, reachOf(ai, bodies), withinTether, walkEndsAt(actor, bodies));
   };
   for (const candidate of candidates) {
     if (getsAt(candidate)) return lockOn(ai, candidate, now);
@@ -363,8 +362,34 @@ const clearing = (crowd, actor, now) => {
   return holding ? blocker : lockOn(ai, blocker, now);
 };
 
+/** Where its walk back to its owner ends: at its ReturnDist, or at his body if that is further. */
+export const walkBackEndsAt = (actor, bodies) => Math.max(bodies, actor.ai.returnDistance ?? 0);
+
 /** A pet walks, at its full speed, unless it is backing out. */
+const walkOrBackOut = (turn) => petRetreat(turn.actor, turn) ?? walkTowards(turn, false);
+
+/** A pet fighting: it walks at its target, and acts as anything in a fight does (ai.js). */
 export const pet = {
-  intent: (turn) => petRetreat(turn.actor, turn) ?? walkTowards(turn, false),
-  moved: pinnedBy,
+  intent: walkOrBackOut,
+};
+
+/**
+ * A pet walking back to its owner (`petTarget`'s `following`): no fight.
+ * Neither noticed nor lost (npc-targeting.js `notice`), off its teleport
+ * cycle, it does not swing; its route asks no reach of him, its walk ends
+ * at its ReturnDist, it faces where it walks and does not turn standing,
+ * and it shows "return". Too far behind him it is put back beside him
+ * (`snapBackSpot`), and with no way on it fights what pins it (`pinnedBy`).
+ */
+export const follow = {
+  fights: false,
+  said: "return",
+  placeAt: (navigation, actor, owner) => snapBackSpot(navigation, actor, owner),
+  routeReach: () => Infinity,
+  stopAt: walkBackEndsAt,
+  intent: walkOrBackOut,
+  moved: (turn, intent, before) => pinnedBy(turn, intent, before),
+  face: (session, doid, actor, turn, reason, walked) => {
+    if (walked) face(session, doid, actor, turn.route.waypoint ?? turn.target);
+  },
 };

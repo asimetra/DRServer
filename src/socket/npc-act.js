@@ -4,14 +4,14 @@ import { buffMultiplierFor } from "./buffs.js";
 import { performNpcAttack } from "./combat.js";
 import { floorAttackSpeedScale, npcAttackSpeed } from "./npc-attacks.js";
 import { face } from "./npc-facing.js";
-import { endBackOff } from "./behaviours/kite.js";
 
 /**
  * Whether it swings this tick, and with what: the act stage of the AI.
  *
- * `act` asks, in order, what keeps it from swinging — following its owner,
- * being in the scenery, a swing of its own still under way, the victim out
- * of reach or out of sight, a back-off with no swing due, a stun, the
+ * `act` asks, in order, what keeps it from swinging — the victim already
+ * down, being in the scenery, a swing of its own still under way, the victim
+ * out of reach or out of sight, what its behaviour holds it to (a back-off
+ * with no swing due, behaviours/kite.js), a stun, the
  * cadence, nothing to throw from here, or only contact swings while it is
  * held short of its walk's end — and swings when nothing does. It
  * answers with the reason, which is what the state the floor command shows
@@ -201,8 +201,6 @@ const swing = async (session, doid, actor, victim, target, chosen, now) => {
     ? victim.member.world?.contextFor(victim.member) ?? victim.member
     : session;
   ai.attackHeading = actor.heading;
-  // A shot ends a back-off: it stands for the swing and fights from there.
-  endBackOff(ai);
   await performNpcAttack(
     victimSession,
     doid,
@@ -261,8 +259,8 @@ const heldShort = (turn) =>
 /**
  * Whether it swings, given where the tick has left it: `turn` is the actor,
  * its victim and the victim's position, the two bodies, the distance it now
- * stands at, the route, and what the tick has found out — `following` its
- * owner, `attackLocked`, `cannotAttack`, `fleeing`, `seesAlways` for one that
+ * stands at, the route, and what the tick has found out — `attackLocked`,
+ * `cannotAttack`, `fleeing` and its behaviour's `actGate`, `seesAlways` for one that
  * does not ask the scenery, `stopAt` where its walk ends, `pressed` how far
  * its walk asked to go towards its victim this tick and `advanced` how much
  * nearer the tick brought it.
@@ -271,7 +269,6 @@ const heldShort = (turn) =>
 export const act = async (session, turn) => {
   const { doid, actor, victim, target, bodies, distance, route, now } = turn;
   const { ai } = actor;
-  if (turn.following) return "following";
   // Killed earlier in this tick (the crowd is sensed once): nothing to swing at.
   if (victim.actor?.dead) return "victim-down";
   // Nothing is fought from inside the scenery: out first. See routeToTarget.
@@ -287,9 +284,9 @@ export const act = async (session, turn) => {
   // capture of a pet in the way. Known, and left so: a monster has no
   // "fight what blocks you" rule, as a pet does (behaviours/pet.js `clearing`).
   if (distance > reachOf(ai, bodies) || !clearAttack) return "out-of-reach";
-  // Backing off, it still shoots when its swing is due: it stands for the
-  // swing (the lock above) and carries on after.
-  if (turn.fleeing && (turn.cannotAttack || now < ai.nextAttackAt)) return "backing-off";
+  // What its behaviour holds a swing to here (behaviours/kite.js `actGate`).
+  const gated = turn.actGate?.(turn);
+  if (gated) return gated;
 
   // A garlic trap's whole point: STUN_L4 for three seconds, during which it
   // does not swing. Without this the debuff was a picture on the health bar.

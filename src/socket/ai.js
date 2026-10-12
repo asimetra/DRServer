@@ -11,9 +11,9 @@ import { advanceNpcRelease } from "./npc-release.js";
 import { clearNpcTarget, LET_GO, notice, pickTarget } from "./npc-targeting.js";
 import { describeRoute, NO_ROUTE_ASKED, routeToTarget } from "./routing.js";
 import { chase, restWalk, walkEndsAt } from "./behaviours/chase.js";
-import { isKiter, kite, backingOff } from "./behaviours/kite.js";
+import { isKiter, kite } from "./behaviours/kite.js";
 import { heldByHit, swingIntent, whatItMayDo } from "./behaviours/overrides.js";
-import { pet, snapBackSpot } from "./behaviours/pet.js";
+import { follow, pet } from "./behaviours/pet.js";
 import { isStationary, stationary } from "./behaviours/stationary.js";
 import { comeBack, standDown, teleportAttacked, teleportsOnCycle, teleportTurn } from "./behaviours/teleport.js";
 
@@ -76,15 +76,35 @@ const towards = (step, from, target) => {
   return length > 0.001 ? (step.x * (target.x - from.x) + step.y * (target.y - from.y)) / length : 0;
 };
 
-/** Its behaviour: a pet is a pet whatever its row says; then by `Aggro_AI_Type`. */
-const behaviourOf = (ai) =>
-  ai.kind === "pet"
-    ? pet
-    : isKiter(ai)
-      ? kite
-      : isStationary(ai)
-        ? stationary
-        : chase;
+/**
+ * Its behaviour this tick: a pet walking back to its owner follows; a pet
+ * is a pet whatever its row says; then by `Aggro_AI_Type`. What a behaviour
+ * may say, beside its `intent` (each optional; ai.js reads only these):
+ *
+ *   fights       false: no fight — not noticed or lost, off a teleport
+ *                cycle, no swing; it shows `said`
+ *   said         the state it starts the tick showing
+ *   placeAt      a spot to be put at instead of walking, letting go
+ *   routes       false: it asks no route
+ *   routeReach   how far it may swing from, for its route (default `reachOf`)
+ *   stopAt       where its walk at its victim ends (default `walkEndsAt`)
+ *   seesAlways   it swings without asking the scenery for sight
+ *   prepare, moved   before its intent, and once it has moved
+ *   fleeing      it is backing off ("flee")
+ *   actGate      what holds its swing back after reach and sight
+ *   acted        after it acted
+ *   face         which way it turns (default: its victim)
+ */
+const behaviourOf = (ai, picked) =>
+  picked.following
+    ? follow
+    : ai.kind === "pet"
+      ? pet
+      : isKiter(ai)
+        ? kite
+        : isStationary(ai)
+          ? stationary
+          : chase;
 
 /**
  * It lets go of its target (`clearNpcTarget`), and shows as idle; a
@@ -98,12 +118,13 @@ const letGo = (session, doid, actor) => {
 
 /**
  * What the floor command shows for a monster once it has acted, or not
- * (command-set.js), from `act`'s reason.
+ * (command-set.js), from `act`'s reason; one not in a fight shows what it
+ * said.
  */
-const stateAfterAct = (reason, fleeing, route) => {
+const stateAfterAct = (reason, fleeing, route, said) => {
   switch (reason) {
-    case "following":
-      return "return";
+    case "not-fighting":
+      return said;
     case "escaping":
       return "escape";
     case "out-of-reach":
@@ -188,18 +209,14 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
 
 /**
  * The face stage, once it has moved and acted: its victim, whichever way it
- * walked — round a corner, backing off, along a wall (npc-facing.js). A
- * swing faced its victim as it went (`act`), and one still under way keeps
- * the heading it went with. A pet walking back to its owner faces where it
- * walks, and one standing by does not turn.
+ * walked — round a corner, backing off, along a wall (npc-facing.js), unless
+ * its behaviour turns it otherwise (`face`). A swing faced its victim as it
+ * went (`act`), and one still under way keeps the heading it went with.
  */
-const turnAfter = (session, doid, actor, turn, reason, walked) => {
+const turnAfter = (session, doid, actor, turn, reason, walked, behaviour) => {
   if (reason === "swung" || reason === "locked") return;
-  if (!turn.following) {
-    face(session, doid, actor, turn.target);
-    return;
-  }
-  if (walked) face(session, doid, actor, turn.route.waypoint ?? turn.target);
+  if (behaviour.face) behaviour.face(session, doid, actor, turn, reason, walked);
+  else face(session, doid, actor, turn.target);
 };
 
 /**
@@ -213,22 +230,22 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   const picked = pickTarget(crowd, actor, now);
   if (picked === LET_GO) return letGo(session, doid, actor);
   if (!picked) return null;
-  const { victim, following } = picked;
-  let said = following ? "return" : null;
+  const { victim } = picked;
+  const behaviour = behaviourOf(ai, picked);
+  const fights = behaviour.fights !== false;
+  let said = behaviour.said ?? null;
   const target = victim.position;
   // Its body and the victim's, asked once: neither changes in the tick.
   const radius = bodyRadius(actor);
   const bodies = contact(actor, victim.actor);
   const cycle = teleportsOnCycle(actor);
 
-  // Too far behind the one it follows, it is put back beside him, and has
-  // nothing to do with what it fought or the way it was going
-  // (behaviours/pet.js `snapBackSpot`). Every pet row's TetherDist is well
-  // inside the distance, so one that far off is always following.
-  const snapped = following ? snapBackSpot(state.navigation, actor, victim) : null;
-  if (snapped) {
+  // Put somewhere else instead of walking (behaviours/pet.js `snapBackSpot`):
+  // it has nothing to do with what it fought or the way it was going.
+  const placed = behaviour.placeAt?.(state.navigation, actor, victim) ?? null;
+  if (placed) {
     clearNpcTarget(actor);
-    placeNpc(session, doid, actor, { next: snapped, travel: distanceTo(actor.position, snapped) });
+    placeNpc(session, doid, actor, { next: placed, travel: distanceTo(actor.position, placed) });
     return said;
   }
 
@@ -242,7 +259,7 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   }
 
   // Aggro and disengagement (npc-targeting.js `notice`).
-  const noticed = following ? null : notice(actor, target);
+  const noticed = fights ? notice(actor, target) : null;
   if (noticed === "idle") {
     // Release AI already returned above while a cage exit was active.
     // Outside awareness the only permitted motion is resolving a body
@@ -254,27 +271,26 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   if (noticed === "let-go") return letGo(session, doid, actor);
 
   // Off the floor between teleports, still in its fight: nothing else of the
-  // tick is its own. Following its owner, its fight is over (`standDown`).
+  // tick is its own. Out of a fight, it stands down (`standDown`).
   if (actor.teleportHidden) {
-    if (following) {
+    if (!fights) {
       standDown(session, doid, actor);
       return said;
     }
     return cycle && comeBack(session, doid, actor, target, bodies, now) ? "teleport-in" : said;
   }
 
-  // Its cycle is its fight's: following its owner, a teleporting pet walks.
-  if (cycle && !following) {
+  // Its cycle is its fight's: out of a fight, a teleporter walks.
+  if (cycle && fights) {
     const phase = teleportTurn(session, doid, actor, now);
     if (phase) return phase.said ?? said;
   }
 
   const may = whatItMayDo(session, doid, ai, now);
-  const route = isStationary(ai)
+  const route = behaviour.routes === false
     ? NO_ROUTE_ASKED
-    : routeToTarget(session, actor, target, now, crowd.heroes, following ? Infinity : reachOf(ai, bodies), victim.actor);
+    : routeToTarget(session, actor, target, now, crowd.heroes, (behaviour.routeReach ?? reachOf)(ai, bodies), victim.actor);
   if (state.debugAi && route.waypoint) traceRoute(doid, actor, route, target);
-  const behaviour = behaviourOf(ai);
   const turn = {
     session,
     actor,
@@ -284,7 +300,6 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     radius,
     bodies,
     route,
-    following,
     heroes: crowd.heroes,
     now,
     deltaSeconds,
@@ -292,7 +307,7 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     topSpeed: ai.moveSpeed * may.mobility,
     swinging: may.swinging,
     distance: distanceTo(actor.position, target),
-    stopAt: walkEndsAt(actor, bodies, following),
+    stopAt: (behaviour.stopAt ?? walkEndsAt)(actor, bodies),
     away: null,
   };
   turn.away = behaviour.prepare?.(turn) ?? null;
@@ -301,9 +316,9 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   const walked = move(session, state, crowd, doid, actor, intent, turn);
   behaviour.moved?.(turn, intent, before);
 
-  const fleeing = backingOff(ai, turn.away, now);
+  const fleeing = behaviour.fleeing?.(turn) ?? false;
   const distance = distanceTo(actor.position, target);
-  const reason = await act(session, {
+  const reason = !fights ? "not-fighting" : await act(session, {
     doid,
     actor,
     victim,
@@ -318,16 +333,17 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     advanced: turn.distance - distance,
     route,
     now,
-    following,
     attackLocked: may.attackLocked,
     cannotAttack: may.cannotAttack,
     fleeing,
-    seesAlways: isStationary(ai),
+    actGate: behaviour.actGate,
+    seesAlways: behaviour.seesAlways === true,
     navigation: state.navigation,
   });
+  behaviour.acted?.(turn, reason);
   if (cycle) teleportAttacked(ai, now);
-  turnAfter(session, doid, actor, turn, reason, walked);
-  return stateAfterAct(reason, fleeing, route);
+  turnAfter(session, doid, actor, turn, reason, walked, behaviour);
+  return stateAfterAct(reason, fleeing, route, said);
 };
 
 /** One deterministic AI step; exported so movement and combat can be locked by tests. */

@@ -1,4 +1,5 @@
 import { npcGenerate, layerFor } from "./objects.js";
+import { firstSwingAt, isStationaryRow } from "./behaviours/stationary.js";
 import { kindOfRow, rolesOfRow } from "./actor-roles.js";
 import { runRulesOf } from "./run-rules.js";
 import { npcForConstant, resolveSpawnConstant, weaponForConstant, attackForConstant, attackColliders, projectileLaunches, projectileForConstant, deathRewardDataForNpc, isArrivalAnimation, FRAMES_PER_SECOND } from "../gamemaster.js";
@@ -527,7 +528,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
       heading: spawnHeading,
       ai:
         (["ENEMY", "BEAST", "HERO"].includes(npc.CharType) || options.petOwnerDoid) &&
-        (npc.IsMover || (npc.IsBoss && npc.Aggro_AI_Type === "STATIONARY_AI")) &&
+        (npc.IsMover || (npc.IsBoss && isStationaryRow(npc))) &&
         nativeAttack
           ? {
               kind: kindOfRow(npc, options),
@@ -629,12 +630,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
                */
               attackTimerMs: Math.max(0, Number(npc.AttackTimer ?? 1.5) * 1000),
               attackRandMs: Math.max(0, Number(npc.AttackTimeRand ?? 0) * 1000),
-              // Its opening TIMELINE_TRIGGERABLE wakes it. Without this hold
-              // the first 250ms AI tick can attack before GOLEM_INTRO arrives.
-              nextAttackAt:
-                npc.Aggro_AI_Type === "STATIONARY_AI"
-                  ? Number.POSITIVE_INFINITY
-                  : 0,
+              nextAttackAt: firstSwingAt(npc),
               attackType: nativeAttack.Id,
               // The attacker's own weapon, so damage is not read off the hero's.
               weaponPower: nativeWeaponPower,

@@ -14,6 +14,19 @@ import { STILL } from "./chase.js";
  */
 export const isStationary = (ai) => ai.behavior === "STATIONARY_AI";
 
+/** A stationary row: one that gets an AI only as a boss set in its arena (npc-spawn.js). */
+export const isStationaryRow = (npc) => npc.Aggro_AI_Type === "STATIONARY_AI";
+
+/**
+ * When its first swing may come: never, for a stationary boss, until its
+ * opening TIMELINE_TRIGGERABLE wakes it; without the hold the first 250 ms AI
+ * tick could attack before GOLEM_INTRO arrives. At once for anything else.
+ */
+export const firstSwingAt = (npc) => (isStationaryRow(npc) ? Number.POSITIVE_INFINITY : 0);
+
+/** Set in its arena: it asks no route and is not held to sight (ai.js), and stands. */
 export const stationary = {
+  routes: false,
+  seesAlways: true,
   intent: () => STILL,
 };
