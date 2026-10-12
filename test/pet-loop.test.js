@@ -4,6 +4,7 @@ import test from "node:test";
 import { tickNpcAi } from "../src/socket/ai.js";
 import { bodyBlocked, bodyPointOf, bodyRadius, contact, seesBody } from "../src/socket/body.js";
 import { inBand } from "../src/socket/npc-act.js";
+import { clearNpcTarget } from "../src/socket/npc-targeting.js";
 import { canGetAt } from "../src/socket/routing.js";
 import { cancelPetRespawn, spawnEquippedPet } from "../src/socket/dungeon.js";
 import { readPlacements } from "../src/socket/floors.js";
@@ -634,4 +635,29 @@ test("a wolf clearing its way at raised spikes crosses when they drop, on that t
   // Back at its owner it may well go for the monster again, by the open way.
   await ticks(session, now, 3, () => { westmost = Math.min(westmost, pet.position.x); });
   assert.ok(westmost < 300, `across: ${Math.round(westmost)}`);
+});
+
+/**
+ * Letting go is complete (npc-targeting.js `clearNpcTarget`): nothing of the
+ * target outlives it — the monster that pinned a pet and the ones it passed
+ * over, and a wait in a queue, whose old draw would otherwise end the next
+ * wait at once.
+ */
+test("letting go of a target forgets the pin, the passed-over and the wait", async (t) => {
+  const { session, pet } = await petOnFloor(t, WOLF, { owner: { x: 1000, y: 1000 }, at: { x: 1000, y: 900 } });
+  Object.assign(pet.ai, { pinnedBy: 9150, pinnedRevision: 3, passedOver: new Set([9151]), waitEndsAt: 1234, passingUntil: 5678, targetDoid: 9150 });
+  clearNpcTarget(pet);
+  assert.equal(pet.ai.pinnedBy ?? null, null);
+  assert.equal(pet.ai.passedOver ?? null, null);
+  assert.equal(pet.ai.waitEndsAt ?? null, null);
+  assert.equal(pet.ai.passingUntil ?? null, null);
+  assert.equal(pet.ai.targetDoid, null);
+  // Its owner gone and back: the old blocker is not taken up again.
+  const blocker = enemyAt(session, { x: 2500, y: 1000 });
+  pet.ai.pinnedBy = blocker;
+  session.actors.get(session.heroDoid).dead = true;
+  await tickNpcAi(session, 1000, 0.25);
+  session.actors.get(session.heroDoid).dead = false;
+  await tickNpcAi(session, 1250, 0.25);
+  assert.notEqual(pet.ai.targetDoid, blocker, "the old blocker 1500 off is not locked on");
 });

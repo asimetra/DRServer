@@ -584,6 +584,12 @@ const WAIT_ENDS_PER_SECOND = 0.42;
 const PASS_MS = 1000;
 const waitFor = (random) => (-Math.log(1 - Math.min(0.999999, random())) / WAIT_ENDS_PER_SECOND) * 1000;
 
+/** It is in no queue: no wait drawn, no pass under way (letting go of a target, npc-targeting.js `clearNpcTarget`). */
+export const forgetQueue = (ai) => {
+  ai.waitEndsAt = null;
+  ai.passingUntil = null;
+};
+
 /** Whether its wait is over and its walk goes round the bodies it queued behind this tick. */
 export const passingNow = (ai, now) => now < (ai.passingUntil ?? 0);
 

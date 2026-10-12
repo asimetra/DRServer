@@ -199,6 +199,18 @@ export const snapBackSpot = (navigation, actor, owner) => {
   );
 };
 
+/**
+ * It has let go of what it fought (npc-targeting.js `clearNpcTarget`): what
+ * pinned it and what it passed over go with it. Kept, a pin outlived its
+ * owner's death and was locked on again, wherever the monster had gone,
+ * when he came back.
+ */
+export const forgetPetTarget = (ai) => {
+  ai.pinnedBy = null;
+  ai.pinnedRevision = null;
+  ai.passedOver = null;
+};
+
 /** Less than this share of the walk it asked for, a walk back went nowhere. */
 const NO_HEADWAY = 0.1;
 

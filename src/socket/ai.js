@@ -46,6 +46,7 @@ import { comeBack, teleportAttacked, teleportsOnCycle, teleportTurn } from "./be
  *   state                                  ai.js
  *   targetDoid, nextTargetAt, engaged      target-lock.js
  *   routing, escape                        routing.js
+ *   routeMemo                              route-memo.js
  *   waitEndsAt, passingUntil               npc-move.js
  *   walkSpeed                              behaviours/chase.js
  *   nextAttackAt, attackLockedUntil,
@@ -55,11 +56,13 @@ import { comeBack, teleportAttacked, teleportsOnCycle, teleportTurn } from "./be
  *     pinnedBy, pinnedRevision             behaviours/pet.js
  *   teleport*                              behaviours/teleport.js
  *   release                                npc-release.js
- *   shove                                  impact.js
+ *   shove                                  impact.js (carried by
+ *                                            behaviours/overrides.js)
  *   staggeredUntil                         hit-pricing.js
  *
  * Letting go of a target (`clearNpcTarget`, npc-targeting.js) asks each of
- * those that keeps something about it to forget it.
+ * those that keeps something about it to forget it: target-lock.js,
+ * routing.js, chase.js, npc-act.js, kite.js, npc-move.js and pet.js.
  */
 
 export { attackIntervalMs, chooseNpcAttack } from "./npc-act.js";

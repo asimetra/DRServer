@@ -4,7 +4,8 @@ import { nearestTo, squaredDistanceTo } from "./npc-crowd.js";
 import { forgetRoute } from "./routing.js";
 import { restWalk } from "./behaviours/chase.js";
 import { forgetBackOff } from "./behaviours/kite.js";
-import { petTarget } from "./behaviours/pet.js";
+import { forgetPetTarget, petTarget } from "./behaviours/pet.js";
+import { forgetQueue } from "./npc-move.js";
 import { disengage, fighting, letGoOfTarget, lockOn, stillLocked, take } from "./target-lock.js";
 
 /**
@@ -47,6 +48,8 @@ export const clearNpcTarget = (actor) => {
   restWalk(ai);
   unlockSwing(ai);
   forgetBackOff(ai);
+  forgetQueue(ai);
+  forgetPetTarget(ai);
 };
 
 /**
