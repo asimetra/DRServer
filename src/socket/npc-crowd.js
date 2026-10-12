@@ -48,6 +48,9 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
    */
   const cellSize = Math.max(1, largestRadius * 2 + maximumTravel * 2 + 8);
   const cells = new Map();
+  /** The team the players are on, as their heroes carry it (actor-roles.js `friendlyBodies`). */
+  let playersSide = null;
+  for (const doid of heroDoids) playersSide ??= actors.get(doid)?.team ?? null;
   for (const [doid, actor] of actors) {
     if ((!actor.ai && !heroDoids.has(doid)) || actor.dead || !actor.position) continue;
     const x = Math.floor(actor.position.x / cellSize);
@@ -57,7 +60,7 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
     cell.push([doid, actor]);
     cells.set(key, cell);
   }
-  return { cellSize, cells };
+  return { cellSize, cells, playersSide };
 };
 
 /**
@@ -82,7 +85,11 @@ const buildNpcSpatialIndex = (actors, deltaSeconds, heroDoids) => {
  *
  * `x`, `y` is the push; `contacts` the players it touches, each as the way
  * out of him; `bodies` every other monster near enough to meet this tick,
- * its body point and the distance at which the two touch.
+ * its body point, the distance at which the two touch and whether it
+ * `queues` behind it, being of its team (npc-move.js `goesRound`). On the
+ * players' side, the others on it are neither (actor-roles.js
+ * `friendlyBodies`): they pass through one another, and only the push
+ * lifts two of them out of each other.
  */
 export const separationDisplacement = (
   doid,
@@ -128,7 +135,10 @@ export const separationDisplacement = (
         let dy = from.y - at.y;
         let distance = Math.hypot(dx, dy);
         const touching = radius + bodyRadius(other);
-        if (!isHero) bodies.push({ x: at.x, y: at.y, touching });
+        // A body on the players' side does not hold a walk on it
+        // (`friendlyBodies`); one of another team is not queued behind.
+        const friendly = friendlyBodies(actor, other, spatialIndex.playersSide);
+        if (!isHero && !friendly) bodies.push({ x: at.x, y: at.y, touching, queues: other.team === actor.team });
         /**
          * The nearest peer sits on the sum of the two bodies. Measured
          * against the official for monsters standing in a fight: KNIGHT p25
@@ -163,7 +173,7 @@ export const separationDisplacement = (
           (minimumDistance - Math.min(distance, minimumDistance)) * correctionShare;
         x += (dx / distance) * correction;
         y += (dy / distance) * correction;
-        if (isHero && !friendlyBodies(actor, other)) contacts.push({ x: dx / distance, y: dy / distance });
+        if (isHero && !friendly) contacts.push({ x: dx / distance, y: dy / distance });
       }
     }
   }

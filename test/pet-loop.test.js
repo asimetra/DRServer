@@ -348,3 +348,103 @@ test("a pet short of the snap-back distance walks back", async (t) => {
   await tickNpcAi(session, 1000, 0.25);
   assert.ok(Math.abs(pet.position.x - (2990 - 200 * 0.25)) < 1, `a step: ${pet.position.x}`);
 });
+
+/**
+ * The players' side passes through itself (actor-roles.js
+ * `friendlyBodies`): a pet's walk is not held by another player's pet or by
+ * an ally standing in its way, as it is not by a player.
+ */
+const neverHeldOnTheWay = async (session, pet, skeleton) => {
+  // A wait drawn would not run out within the test (`waitFor`, ai.js).
+  session.random = () => 0.999999;
+  let drew = false;
+  let nearest = Infinity;
+  await ticks(session, 1000, 12, () => {
+    drew ||= pet.ai.waitEndsAt != null;
+    nearest = Math.min(nearest, distance(pet.position, session.actors.get(skeleton).position));
+  });
+  assert.equal(drew, false, "no wait drawn");
+  assert.ok(nearest < 80, `at the skeleton: nearest ${Math.round(nearest)}`);
+  assert.ok(pet.ai.nextAttackAt > 1000, "and bites it");
+};
+
+test("two pets of different owners walk through each other", async (t) => {
+  const { session: host, pet } = await petOnFloor(t, WOLF, { owner: { x: 700, y: 1000 }, at: { x: 1000, y: 940 } });
+  const skeleton = enemyAt(host, { x: 1000, y: 1140 });
+  host.socket = { destroyed: false };
+  const joiner = {
+    accountId: 9002,
+    heroDoid: 7002,
+    heroPosition: { x: 1100, y: 1010 },
+    objects: new Map(),
+    actors: new Map(),
+    doobers: new Map(),
+    socket: { destroyed: false },
+    send: () => {},
+    allocateDoid: host.allocateDoid,
+  };
+  // The joiner's wolf, resting by him across the first wolf's way: it takes
+  // nothing on (no AggroRadius), so it stands there.
+  const otherDoid = 8900;
+  const other = {
+    ...pet,
+    position: { x: 1015, y: 1010 },
+    ai: { ...pet.ai, ownerDoid: joiner.heroDoid, aggroRadius: 0, targetDoid: null },
+  };
+  host.objects.set(otherDoid, CLID.DistributedNPCGameObject);
+  host.actors.set(otherDoid, other);
+  const world = createMatchWorld({ members: new Set([host, joiner]) }, host);
+  world.contextFor(joiner);
+  world.objects.set(joiner.heroDoid, CLID.HeroGameObject);
+  world.actors.set(joiner.heroDoid, {
+    hitPoints: 500,
+    maxHitPoints: 500,
+    collisionRadius: 26,
+    position: joiner.heroPosition,
+    team: TEAM.PLAYERS,
+  });
+  const context = world.contextFor(host);
+  await neverHeldOnTheWay(context, pet, skeleton);
+});
+
+test("a pet walks through an ally standing in its way", async (t) => {
+  const { session, pet } = await petOnFloor(t, WOLF, { owner: { x: 700, y: 1000 }, at: { x: 1000, y: 940 } });
+  const skeleton = enemyAt(session, { x: 1000, y: 1140 });
+  const ally = 8901;
+  session.objects.set(ally, CLID.DistributedNPCGameObject);
+  session.actors.set(ally, {
+    hitPoints: 500, maxHitPoints: 500, collisionRadius: 22, team: TEAM.PLAYERS, isAlly: true,
+    position: { x: 1010, y: 1015 }, heading: 0,
+    // Takes nothing on: it stands.
+    ai: { kind: "ally", state: "idle", engaged: false, aggroRadius: 0, disengageDistance: 1600, moveSpeed: 230, attackRange: 80, attackTimerMs: 1000, attackRandMs: 0, nextAttackAt: 0 },
+  });
+  await neverHeldOnTheWay(session, pet, skeleton);
+});
+
+/**
+ * A wait is a queue, and a pet is not in one behind a monster: of the
+ * official wolf's quarter seconds walking back past TetherDist with a
+ * monster touching it in its way, it stood the next second on 10.6% (n 189),
+ * as on 12.1% with nothing touching it.
+ */
+test("a pet held by a monster in its way goes round it at once", async (t) => {
+  const { session, pet } = await petOnFloor(t, WOLF, { owner: { x: 700, y: 1000 }, at: { x: 1000, y: 940 } });
+  const skeleton = enemyAt(session, { x: 1000, y: 1240 });
+  // A monster that is not to be fought, standing in the way.
+  const wall = 8902;
+  session.objects.set(wall, CLID.DistributedNPCGameObject);
+  session.actors.set(wall, {
+    hitPoints: 500, maxHitPoints: 500, collisionRadius: 35, team: TEAM.ENEMIES, isEnemy: true, attackable: false,
+    position: { x: 1005, y: 1050 }, heading: 0,
+    ai: { state: "idle", engaged: false, aggroRadius: 0, disengageDistance: 1600, moveSpeed: 0, attackRange: 80, attackTimerMs: 1000, attackRandMs: 0, nextAttackAt: Infinity },
+  });
+  session.random = () => 0.999999;
+  let drew = false;
+  let nearest = Infinity;
+  await ticks(session, 1000, 12, () => {
+    drew ||= pet.ai.waitEndsAt != null;
+    nearest = Math.min(nearest, distance(pet.position, session.actors.get(skeleton).position));
+  });
+  assert.equal(drew, false, "no wait drawn");
+  assert.ok(nearest < 80, `round it to the skeleton: nearest ${Math.round(nearest)}`);
+});

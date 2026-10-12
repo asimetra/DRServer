@@ -22,6 +22,10 @@
  *   behind owner  the share of its time it stood and had not swung, as for
  *              staring, with a monster for a target in its sight and its
  *              owner's body across the line to it
+ *   held back  of the quarter seconds it was farther than TetherDist from
+ *              its owner with a monster's body touching it (within 5) in
+ *              its way to him (70 degrees), the share it stood (under 15)
+ *              the next second; and the same with none touching
  *   snaps      the times it was put back beside its owner from afar
  *              (behaviours/pet.js `snapBackSpot`): over 1000 in one tick,
  *              which a teleporting pet's come-back beside its victim is too
@@ -34,7 +38,8 @@
  * back 66%, 87%, 85-95%; swings beyond TetherDist 4%, 8%, 31% (n 401, 117,
  * 13); rest p50 0.61, 0.68, 0.55 of ReturnDist, in 7, 17 and 5 stands;
  * overlapping its owner moving 2.2%, 1.4%, 1.8% (radius 29.4 against the
- * hero's 25.87); snaps 1, 13, 0, from 1996-2205.
+ * hero's 25.87); snaps 1, 13, 0, from 1996-2205; held back 10.6%, 31.7%,
+ * 0.0% (n 189, 60, 18) against 12.1%, 8.8%, 1.4% with none touching.
  */
 
 const CHOREOGRAPHY = 143;
@@ -55,6 +60,10 @@ const emptyRow = () => ({
   rest: [],
   behindOwner: 0,
   snaps: 0,
+  heldBack: 0,
+  heldBackStood: 0,
+  freeBack: 0,
+  freeBackStood: 0,
   moving: 0,
   overlapMoving: 0,
   standing: 0,
@@ -63,6 +72,9 @@ const emptyRow = () => ({
 
 /** A move longer than this in one tick is no walk: a snap back. */
 const SNAP_TRAVEL = 1000;
+
+/** How far off its way to its owner a monster touching it is still in it, as a cosine. */
+const AHEAD = Math.cos((70 * Math.PI) / 180);
 
 /** How far inside its owner's body a pet has to be to count as overlapping him. */
 const OVERLAP_SLACK = 5;
@@ -108,7 +120,7 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
       const tether = Number(source.TetherDist ?? 0) || Infinity;
       const row = rowOf(actor.constant);
       row.ticks++;
-      const track = tracks.get(doid) ?? { pet: [], owner: [], swung: [], beyond: 0 };
+      const track = tracks.get(doid) ?? { pet: [], owner: [], swung: [], beyond: 0, backs: [], ticks: 0 };
       tracks.set(doid, track);
       track.pet.push({ ...actor.position });
       track.owner.push({ ...owner });
@@ -138,6 +150,29 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
         if (inside) row.overlapMoving++;
       }
 
+      // A quarter second walking back, judged a second on.
+      track.ticks++;
+      while (track.backs.length && track.backs[0].tick <= track.ticks - TICKS_PER_SECOND) {
+        const { at, held } = track.backs.shift();
+        const stoodStill = hypot(at, actor.position) < 15;
+        if (held) { row.heldBack++; if (stoodStill) row.heldBackStood++; }
+        else { row.freeBack++; if (stoodStill) row.freeBackStood++; }
+      }
+      if (ownerDistance > tether && ownerDistance > 0) {
+        const way = { x: (owner.x - actor.position.x) / ownerDistance, y: (owner.y - actor.position.y) / ownerDistance };
+        const own = bodyOf(actor);
+        const reach = Math.max(12, ai.collisionRadius ?? 35) + 5;
+        const held = [...session.actors.values()].some((other) => {
+          if (!other.isEnemy || other.dead || !other.position || other.teleportHidden) return false;
+          const at = bodyOf(other);
+          const dx = at.x - own.x;
+          const dy = at.y - own.y;
+          const apart = Math.hypot(dx, dy);
+          return apart < reach + Math.max(12, other.ai?.collisionRadius ?? other.collisionRadius ?? 35) &&
+            (apart < 0.001 || (dx * way.x + dy * way.y) / apart >= AHEAD);
+        });
+        track.backs.push({ tick: track.ticks, at: { ...actor.position }, held });
+      }
       if (ownerDistance > tether) {
         track.beyond++;
         if (track.beyond === LEASH_TICKS + 1) row.leashStretches++;
@@ -205,5 +240,6 @@ export const describePets = (rows) =>
       `swings ${row.swings}, beyond TetherDist ${share(row.swingsBeyond, row.swings)}  ` +
       `rest/ReturnDist p10/50/90 ${quantile(row.rest, 0.1)}/${quantile(row.rest, 0.5)}/${quantile(row.rest, 0.9)} (n ${row.rest.length})  ` +
       `behind owner ${share(row.behindOwner, row.ticks)}  ` +
-      `in owner moving ${share(row.overlapMoving, row.moving)} of ${row.moving}, resting ${share(row.overlapStanding, row.standing)}`
+      `in owner moving ${share(row.overlapMoving, row.moving)} of ${row.moving}, resting ${share(row.overlapStanding, row.standing)}  ` +
+      `held back stood ${share(row.heldBackStood, row.heldBack)} of ${row.heldBack}, free ${share(row.freeBackStood, row.freeBack)} of ${row.freeBack}`
   );

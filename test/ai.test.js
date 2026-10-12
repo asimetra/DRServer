@@ -362,6 +362,28 @@ const knightBehind = (at) => {
   return { ...made, front, behind };
 };
 
+/**
+ * A wait is a queue, and a monster queues only behind its own side
+ * (`afterStep`, ai.js): behind a body of another team — a player's pet, a
+ * beast — it goes round at once, and draws no wait.
+ */
+test("a monster waits behind a teammate and goes round a body of another side at once", async () => {
+  for (const [frontTeam, waits] of [[6, true], [5, false]]) {
+    const { session, front, behind } = knightBehind({ x: 200, y: 20 });
+    front.team = frontTeam;
+    behind.team = 6;
+    session.random = () => 0.999999;
+    let drew = false;
+    for (let tick = 0; tick < 12; tick++) {
+      await tickNpcAi(session, 1000 + tick * 250, 0.25);
+      drew ||= behind.ai.waitEndsAt != null;
+    }
+    const fromHero = Math.hypot(behind.position.x, behind.position.y);
+    assert.equal(drew, waits, `team ${frontTeam} in front: a wait drawn`);
+    assert.ok(waits ? fromHero >= 130 : fromHero < 100, `team ${frontTeam} in front: ${Math.round(fromHero)} from the hero`);
+  }
+});
+
 test("a monster held behind another waits at its body, and goes on when the hero moves", async () => {
   const { session, front, behind } = knightBehind({ x: 200, y: 20 });
   // A wait that does not run out in this test (`waitFor`, ai.js): ~33 s.

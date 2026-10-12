@@ -135,6 +135,16 @@ const traceRoute = (doid, actor, route, target) =>
  * that was going nowhere: 94 s behind an ice imp shooting from range, on
  * 838788c. With the hero moving the queue moves with him anyway (waits 5-19%
  * of seconds), and these waits rarely run out.
+ *
+ * A wait is a queue, and one queues only behind its own side: a walk held
+ * by a body of another team goes round it from the first tick, with no wait
+ * drawn (npc-move.js `goesRound`, the body's `queues`). All the measure
+ * above is of monsters behind monsters. The official's pets do not queue
+ * behind monsters: a wolf walking back past its TetherDist with a monster
+ * touching it in its way stood the next second on 10.6% of quarter seconds
+ * (n 189), as on 12.1% with none (n 544); the dragon on 0% (n 18), the
+ * rhino, a slow walker, on 31.7% (n 60) against 8.8%. Ours, waiting as a
+ * monster does, stood 21.6%, 32.7% and 43.7%.
  */
 const WAIT_ENDS_PER_SECOND = 0.42;
 const PASS_MS = 1000;
@@ -142,14 +152,15 @@ const waitFor = (random) => (-Math.log(1 - Math.min(0.999999, random())) / WAIT_
 
 /**
  * Whether its walk may go round the monsters in its way this tick, and the
- * wait bookkept from what the step did: a walk stopped starts a wait, one that
- * has waited its draw goes round for `PASS_MS`, one that walks freely has no
- * wait.
+ * wait bookkept from what the step did: a walk stopped in a queue
+ * (`queued`) starts a wait, one that has waited its draw goes round for
+ * `PASS_MS`, one that walks freely, or was only held going round a body of
+ * another side, has no wait.
  */
 const passingNow = (ai, now) => now < (ai.passingUntil ?? 0);
 const afterStep = (session, ai, now, step, passing) => {
   if (passing) return;
-  if (!step?.blocked) {
+  if (!step?.queued) {
     ai.waitEndsAt = null;
     return;
   }

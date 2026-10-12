@@ -76,7 +76,8 @@ export const keptOutOfHeroes = (target, actor, heroes, walkingAt = null) => {
   let { x, y } = target;
   for (const hero of heroes) {
     if (!hero.position || !hero.actor) continue;
-    if (hero.doid !== walkingAt && friendlyBodies(actor, hero.actor)) continue;
+    // A hero is on the players' side by definition.
+    if (hero.doid !== walkingAt && friendlyBodies(actor, hero.actor, hero.actor.team)) continue;
     const bodies = contact(actor, hero.actor);
     const fromX = start.x - hero.position.x;
     const fromY = start.y - hero.position.y;
@@ -174,7 +175,7 @@ const firstMet = (from, walk, bodies) => {
 };
 
 /**
- * A walk held by the monsters in its way: `{ walk, blocked }`.
+ * A walk held by the monsters in its way: `{ walk, blocked, queued, wentRound }`.
  *
  * Monster bodies are hard (npc-crowd.js). A walk goes as far as the first
  * body it would touch. If that body is in its way (`AHEAD`) it goes no
@@ -192,7 +193,10 @@ const firstMet = (from, walk, bodies) => {
  * A wait ends (`passing`, decided by the move stage, ai.js): then a body in
  * its way is gone round as one beside it is — the part of the walk into it
  * dropped, or, met head on, the walk turned to the side it leans to — and
- * the walk still stops where it would touch the next body.
+ * the walk still stops where it would touch the next body. A body of
+ * another team is gone round so from the first (`goesRound`): one queues
+ * only behind its own side (`queues`, npc-crowd.js), and a walk held only
+ * going round one is `blocked` but not `queued`, which starts no wait.
  *
  * Touching or inside another body, nothing walks it deeper: a lunge, a
  * knockback or a burst spawned on one spot leaves bodies inside one another,
@@ -201,27 +205,33 @@ const firstMet = (from, walk, bodies) => {
 const heldByBodies = (actor, walk, bodies, passing = false) => {
   const held = heldOnSide(actor, walk, bodies, passing, 1);
   // Going round, a side the crowd closes is tried the other way round.
-  return passing && held.blocked ? heldOnSide(actor, walk, bodies, passing, -1) : held;
+  return held.blocked && held.wentRound ? heldOnSide(actor, walk, bodies, passing, -1) : held;
 };
+
+/** Whether a body in its way is gone round rather than waited behind: when its wait is over, or it is not in the queue. */
+const goesRound = (body, passing) => passing || !body.queues;
 
 const heldOnSide = (actor, walk, bodies, passing, flip) => {
   const length = Math.hypot(walk.x, walk.y);
-  if (!bodies?.length || length < 1e-6) return { walk, blocked: false };
+  if (!bodies?.length || length < 1e-6) return { walk, blocked: false, queued: false, wentRound: false };
   const from = bodyPointOf(actor, actor.position);
   const way = { x: walk.x / length, y: walk.y / length };
   let along = walk;
+  let wentRound = passing;
   // Bodies already touched: one in the way holds it, one beside it is walked
   // along. Going round, so is one in its way that this step would reach.
   for (const body of bodies) {
     const dx = from.x - body.x;
     const dy = from.y - body.y;
     const distance = Math.hypot(dx, dy);
+    const round = goesRound(body, passing);
     // A body a sweep left at its touching distance is touched, a rounding error or not.
-    if (distance > body.touching + TOUCH_SLACK + (passing && inTheWay(from, way, body) ? length : 0)) continue;
+    if (distance > body.touching + TOUCH_SLACK + (round && inTheWay(from, way, body) ? length : 0)) continue;
     const into = along.x * dx + along.y * dy;
     if (into >= 0) continue;
     const inWay = inTheWay(from, way, body);
-    if (inWay && !passing) return { walk: { x: 0, y: 0 }, blocked: true };
+    if (inWay && !round) return { walk: { x: 0, y: 0 }, blocked: true, queued: true, wentRound: false };
+    wentRound ||= inWay;
     const normal = distance < 0.001 ? way : { x: dx / distance, y: dy / distance };
     const inward = along.x * normal.x + along.y * normal.y;
     along = { x: along.x - inward * normal.x, y: along.y - inward * normal.y };
@@ -236,31 +246,41 @@ const heldOnSide = (actor, walk, bodies, passing, flip) => {
       along = { x: tangent.x * sign * length, y: tangent.y * sign * length };
     }
   }
-  const taken = sweptAlong(from, way, along, bodies, passing);
-  if (Math.hypot(taken.x, taken.y) < HEADWAY * length) return { walk: { x: 0, y: 0 }, blocked: true };
-  return { walk: taken, blocked: false };
+  const swept = sweptAlong(from, way, along, bodies, passing);
+  wentRound ||= swept.wentRound;
+  if (Math.hypot(swept.taken.x, swept.taken.y) < HEADWAY * length) {
+    return { walk: { x: 0, y: 0 }, blocked: true, queued: !wentRound, wentRound };
+  }
+  return { walk: swept.taken, blocked: false, queued: false, wentRound };
 };
 
 /**
  * Where a walk from `from` gets to among `bodies`: up to the first body it
  * meets. One in its way (`way`, `AHEAD`) stops it there, unless it is going
- * round (`passing`); one beside it is slid along from the point they meet,
+ * round (`goesRound`: its wait is over, or the body is not one it queues
+ * behind); one beside it is slid along from the point they meet,
  * as one already touched is — wherever the sweep first meets it, a step's
  * length off or at a rounding error from touching. Two bodies side by side
  * that each walk a little into the other therefore slide past each other;
- * neither holds the other.
+ * neither holds the other. `{ taken, wentRound }`, the second when it slid
+ * round one in its way.
  */
 const SLIDES = 3;
 const sweptAlong = (from, way, walk, bodies, passing) => {
   let at = from;
   let rest = walk;
+  let wentRound = false;
   const taken = { x: 0, y: 0 };
   for (let slide = 0; slide <= SLIDES; slide++) {
     const met = firstMet(at, rest, bodies);
     const share = met ? met.share : 1;
     taken.x += rest.x * share;
     taken.y += rest.y * share;
-    if (!met || slide === SLIDES || (!passing && inTheWay(from, way, met.body))) break;
+    if (!met || slide === SLIDES) break;
+    if (inTheWay(from, way, met.body)) {
+      if (!goesRound(met.body, passing)) break;
+      wentRound = true;
+    }
     at = { x: from.x + taken.x, y: from.y + taken.y };
     const dx = at.x - met.body.x;
     const dy = at.y - met.body.y;
@@ -270,7 +290,7 @@ const sweptAlong = (from, way, walk, bodies, passing) => {
     rest = inward < 0 ? { x: left.x - (inward * dx) / distance, y: left.y - (inward * dy) / distance } : left;
     if (Math.hypot(rest.x, rest.y) < 1e-6) break;
   }
-  return taken;
+  return { taken, wentRound };
 };
 
 /** Less of its walk than this left by sliding, a monster going round a body turns to the body's side. */
@@ -391,7 +411,7 @@ export const stepNpc = (navigation, actor, options) => {
     deltaSeconds
   );
   let step = moved(navigation, actor, movement, options);
-  if (!step) return held.blocked ? { next: { ...actor.position }, travel: 0, refused: false, blocked: true } : null;
+  if (!step) return held.blocked ? { next: { ...actor.position }, travel: 0, refused: false, blocked: true, queued: held.queued } : null;
   const refused = steering && sceneryRefused(actor, walk, step);
   if (refused) {
     const push = movementWithinBudget({ x: 0, y: 0 }, separation, actor.ai, deltaSeconds);
@@ -399,7 +419,7 @@ export const stepNpc = (navigation, actor, options) => {
       next: { ...actor.position },
     };
   }
-  return { next: step.next, travel: distanceTo(actor.position, step.next), refused, blocked: held.blocked };
+  return { next: step.next, travel: distanceTo(actor.position, step.next), refused, blocked: held.blocked, queued: held.queued };
 };
 
 /** Puts it where a step ended; a step that went anywhere is sent. */
