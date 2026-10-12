@@ -235,8 +235,14 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   if (heldByHit(session, doid, actor, now)) return null;
 
   const picked = pickTarget(crowd, actor, now);
-  if (picked === LET_GO) return letGo(session, doid, actor);
-  if (!picked) return null;
+  // Nothing to go for — a pet resting by its owner, an ally or a beast with
+  // nobody to fight: it stays where it is, lifted out of any body it is
+  // inside, as an idle monster is (npc-crowd.js `separateIdleNpc`).
+  if (picked === LET_GO || !picked) {
+    const said = picked === LET_GO ? letGo(session, doid, actor) : null;
+    separateIdleNpc(session, doid, actor, crowd.spatialIndex, crowd.heroDoids, crowd.heroes, deltaSeconds);
+    return said;
+  }
   const { victim } = picked;
   const behaviour = behaviourOf(ai, picked);
   const fights = behaviour.fights !== false;

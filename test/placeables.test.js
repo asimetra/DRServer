@@ -155,6 +155,70 @@ test("an Iron Legion clone is a levelled mobile summon with its full attack kit"
   );
 });
 
+/** The three Iron Legion clones, placed by the hero and then set down on one spot. */
+const legionOnOneSpot = async (t, spot) => {
+  const session = sessionWith({ dungeonAvatar: { avatar_id: 106, experience: 10_000_000 } });
+  session.actors.set(session.heroDoid, {
+    hitPoints: 1e6, maxHitPoints: 1e6, collisionRadius: 26, position: { ...session.heroPosition }, team: TEAM.PLAYERS,
+  });
+  const clones = [];
+  for (const action of await spawnNpcActions("TM_DBUSTER_IRON_LEGION")) {
+    clones.push(await spawnPlaceable(session, { action, origin: session.heroPosition, heading: 0, weaponPower: 10 }));
+  }
+  t.after(() => {
+    clearDungeonPlaceables(session);
+    for (const stop of session.hazardBeats?.values?.() ?? []) stop();
+  });
+  for (const doid of clones) session.actors.get(doid).position = { ...spot };
+  return { session, clones: clones.map((doid) => session.actors.get(doid)) };
+};
+
+/** How close the nearest two of `actors` stand, middle to middle. */
+const closestPair = (actors) => {
+  let closest = Infinity;
+  for (let i = 0; i < actors.length; i++) {
+    for (let j = i + 1; j < actors.length; j++) {
+      closest = Math.min(closest, Math.hypot(actors[i].position.x - actors[j].position.x, actors[i].position.y - actors[j].position.y));
+    }
+  }
+  return closest;
+};
+
+/**
+ * Bodies the server moves are lifted out of each other by the crowd's push,
+ * a pet's as a monster's. A pet resting by its owner with nothing to fight
+ * left its tick before the push, and three clones placed on one spot stood
+ * on it for good: played on our server, clones were in contact 62% of the
+ * time idle against the official's 6%.
+ */
+test("three clones set down on one spot by their owner are apart within a second", async (t) => {
+  const { session, clones } = await legionOnOneSpot(t, { x: 1100, y: 1000 });
+  const contact = clones[0].collisionRadius * 2;
+  let now = 1000;
+  for (let tick = 0; tick < 4; tick++, now += 250) await tickNpcAi(session, now, 0.25);
+  assert.ok(closestPair(clones) >= contact - 0.5, `the nearest two stand ${closestPair(clones).toFixed(1)} apart`);
+  // And they stay apart, resting.
+  for (let tick = 0; tick < 8; tick++, now += 250) await tickNpcAi(session, now, 0.25);
+  assert.ok(closestPair(clones) >= contact - 0.5);
+});
+
+test("three clones set down on one spot fight their monster from three spots", async (t) => {
+  const { session, clones } = await legionOnOneSpot(t, { x: 1100, y: 1000 });
+  const brute = 9900;
+  session.objects.set(brute, CLID.DistributedNPCGameObject);
+  session.actors.set(brute, {
+    hitPoints: 1e9, maxHitPoints: 1e9, collisionRadius: 25, constant: "BRUTE", isEnemy: true,
+    position: { x: 1200, y: 1000 }, heading: 0, team: TEAM.ENEMIES,
+    // Stands, and swings at nobody.
+    ai: { state: "idle", engaged: false, aggroRadius: 0, disengageDistance: 1600, moveSpeed: 0, attackRange: 80, attackTimerMs: 1000, attackRandMs: 0, nextAttackAt: Infinity },
+  });
+  const contact = clones[0].collisionRadius * 2;
+  let now = 1000;
+  for (let tick = 0; tick < 20; tick++, now += 250) await tickNpcAi(session, now, 0.25);
+  assert.ok(closestPair(clones) >= contact - 1, `the nearest two stand ${closestPair(clones).toFixed(1)} apart`);
+  for (const clone of clones) assert.equal(clone.ai.targetDoid, brute);
+});
+
 test("the poison pot schedules its cloud instead of charging Mana for nothing", async () => {
   const session = sessionWith({ heroWeapons: [{ type: 15503 }] });
   const proposal = new PacketWriter()

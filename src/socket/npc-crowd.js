@@ -208,7 +208,9 @@ export const boundedPush = (separation, ai, deltaSeconds) => {
  * Resolves body overlap without turning an idle NPC into a pursuing one.
  *
  * This deliberately runs only after cage release has had first refusal and
- * only while the hero remains outside aggro. It emits position, not heading,
+ * only while the hero remains outside aggro — or, for a body with nothing to
+ * go for at all (a pet resting by its owner, an ally or a beast with nobody
+ * to fight; ai.js `tickActor`), whenever it rests. It emits position, not heading,
  * does not set `engaged`, and uses ordinary navigation collisions. A prisoner
  * therefore keeps the release target and its temporary ignored cage collider;
  * a resting pack merely reaches body contact and stops.
