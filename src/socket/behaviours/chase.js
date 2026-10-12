@@ -45,6 +45,11 @@ export const npcWalkingSpeed = (ai, targetSpeed, deltaSeconds) => {
   return ai.walkSpeed;
 };
 
+/** It stands: its next walk sets off from standing (`npcWalkingSpeed`, the one writer of `ai.walkSpeed`). */
+export const restWalk = (ai) => {
+  ai.walkSpeed = 0;
+};
+
 /**
  * The walk ends where the bodies meet, not where the swing starts.
  *

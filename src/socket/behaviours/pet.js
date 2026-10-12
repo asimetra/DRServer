@@ -4,7 +4,7 @@ import { squaredDistanceTo } from "../npc-crowd.js";
 import { touchingInTheWay } from "../npc-move.js";
 import { collectNearbyForPet } from "../pickups.js";
 import { canGetAt } from "../routing.js";
-import { fighting, lockOn, stillLocked } from "../target-lock.js";
+import { disengage, fighting, letGoOfTarget, lockOn, stillLocked } from "../target-lock.js";
 import { STILL, walkEndsAt, walkTowards } from "./chase.js";
 import { backsOffFrom } from "./kite.js";
 import { teleportsOnCycle } from "./teleport.js";
@@ -311,14 +311,14 @@ export const petTarget = (crowd, actor, now) => {
   const blocker = clearing(crowd, actor, now);
   if (blocker) return fighting(blocker);
   if (leashed(actor, owner, ownerDistance)) {
-    ai.targetDoid = null;
-    ai.engaged = false;
+    letGoOfTarget(ai);
+    disengage(ai);
     return following;
   }
   const locked = crowd.petTargets.find(({ doid }) => doid === ai.targetDoid);
   const victim = locked && stillLocked(ai, now) ? locked : petPick(crowd, actor, owner, now);
   if (victim) return fighting(victim);
-  ai.engaged = false;
+  disengage(ai);
   return backAt(actor, owner, ownerDistance) ? null : following;
 };
 
@@ -341,7 +341,7 @@ const clearing = ({ petTargets, navigation }, actor, now) => {
   const holding = blocker && ai.targetDoid === blocker.doid;
   const sceneryChanged = navigation && ai.pinnedRevision !== navigation.revision;
   if (!blocker || (holding && (!stillLocked(ai, now) || sceneryChanged))) {
-    if (holding || !blocker) ai.targetDoid = null;
+    if (holding || !blocker) letGoOfTarget(ai);
     ai.pinnedBy = null;
     return null;
   }

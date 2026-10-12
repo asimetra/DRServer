@@ -1,10 +1,11 @@
 import { contact } from "./body.js";
-import { reachOf } from "./npc-act.js";
+import { reachOf, unlockSwing } from "./npc-act.js";
 import { nearestTo, squaredDistanceTo } from "./npc-crowd.js";
 import { forgetRoute } from "./routing.js";
+import { restWalk } from "./behaviours/chase.js";
 import { forgetBackOff } from "./behaviours/kite.js";
 import { petTarget } from "./behaviours/pet.js";
-import { fighting, lockOn, stillLocked } from "./target-lock.js";
+import { disengage, fighting, letGoOfTarget, lockOn, stillLocked } from "./target-lock.js";
 
 /**
  * Who each one goes for this tick, one selector per kind.
@@ -40,11 +41,11 @@ export const LET_GO = Object.freeze({ letGo: true });
 export const clearNpcTarget = (actor) => {
   const { ai } = actor;
   if (!ai) return;
-  ai.engaged = false;
+  disengage(ai);
   forgetRoute(ai);
-  ai.targetDoid = null;
-  ai.walkSpeed = 0;
-  ai.attackLockedUntil = 0;
+  letGoOfTarget(ai);
+  restWalk(ai);
+  unlockSwing(ai);
   forgetBackOff(ai);
 };
 

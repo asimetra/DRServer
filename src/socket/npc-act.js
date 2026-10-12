@@ -211,6 +211,28 @@ const swing = async (session, doid, actor, victim, target, chosen, now) => {
   );
 };
 
+/** Its next swing is due at `at` (`ai.nextAttackAt`, written by a swing and by these). */
+export const swingDueAt = (ai, at) => {
+  ai.nextAttackAt = at;
+};
+
+/**
+ * A scripted timeline it plays holds it as a swing does, for `durationMs`
+ * from `now`, and puts its next swing a cadence on (triggers.js
+ * `scheduleNpcTimelineControls`).
+ */
+export const holdForTimeline = (ai, now, durationMs, random) => {
+  ai.attackLockedUntil = Math.max(ai.attackLockedUntil ?? 0, now + durationMs);
+  const cadence = Math.max(100, (ai.attackTimerMs ?? 1500) + random() * (ai.attackRandMs ?? 0));
+  const current = Number.isFinite(ai.nextAttackAt) ? ai.nextAttackAt : 0;
+  ai.nextAttackAt = Math.max(current, now + cadence);
+};
+
+/** Nothing of a swing holds it any longer (`ai.attackLockedUntil`). */
+export const unlockSwing = (ai) => {
+  ai.attackLockedUntil = 0;
+};
+
 /** Nearer its victim by this much in a tick, a walk went somewhere: a walk from standing covers more on its first tick. */
 const ADVANCING = 0.5;
 

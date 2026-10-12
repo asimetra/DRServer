@@ -1,13 +1,13 @@
 /**
- * How long a pick holds: the clock the pets' and the allies' selectors look
- * again on (npc-targeting.js, behaviours/pet.js).
+ * What an actor holds as its target, and how long a pick holds: the clock
+ * the pets' and the allies' selectors look again on (npc-targeting.js,
+ * behaviours/pet.js). `ai.targetDoid`, `ai.nextTargetAt` and `ai.engaged`
+ * are written here alone.
  *
  * A pick holds for its row's `ChangeTargetT` and a fresh roll of up to
  * `ChangeTargetRand` on top, a quarter of a second at least (`lockOn`);
  * until then the one it locked on to is kept while it is still on the floor
- * (`stillLocked`). `ai.targetDoid` and `ai.nextTargetAt` are written here
- * alone, but for letting go of a target altogether (npc-targeting.js
- * `clearNpcTarget`).
+ * (`stillLocked`).
  */
 
 /** When it next picks a target. */
@@ -19,6 +19,21 @@ export const lockOn = (ai, victim, now) => {
   ai.targetDoid = victim?.doid ?? null;
   ai.nextTargetAt = nextTargetPick(ai, now);
   return victim;
+};
+
+/** It holds no target; when it next picks is left as it was. */
+export const letGoOfTarget = (ai) => {
+  ai.targetDoid = null;
+};
+
+/** It has noticed its target: aggro (ai.js). */
+export const engage = (ai) => {
+  ai.engaged = true;
+};
+
+/** It is engaged with nothing. */
+export const disengage = (ai) => {
+  ai.engaged = false;
 };
 
 /** Whether the pick it made still holds. */

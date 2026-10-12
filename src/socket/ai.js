@@ -9,8 +9,9 @@ import { face } from "./npc-facing.js";
 import { afterStep, bodiesMet, passingNow, placeNpc, stepNpc } from "./npc-move.js";
 import { advanceNpcRelease } from "./npc-release.js";
 import { clearNpcTarget, LET_GO, pickTarget } from "./npc-targeting.js";
+import { engage } from "./target-lock.js";
 import { describeRoute, NO_ROUTE_ASKED, routeToTarget } from "./routing.js";
-import { chase, walkEndsAt } from "./behaviours/chase.js";
+import { chase, restWalk, walkEndsAt } from "./behaviours/chase.js";
 import { kite, backingOff } from "./behaviours/kite.js";
 import { heldByHit, swingIntent, whatItMayDo } from "./behaviours/overrides.js";
 import { pet, snapBackSpot } from "./behaviours/pet.js";
@@ -37,6 +38,28 @@ import { comeBack, teleportAttacked, teleportsOnCycle, teleportTurn } from "./be
  * one state the floor command shows (`ai.state`, command-set.js): each
  * stage that has something to show says it, the last word stands, and it is
  * written once.
+ *
+ * What the pipeline keeps on an `ai` between ticks, and the one module that
+ * writes each (npc-spawn.js and placeables.js build the row's numbers; the
+ * rest is written only through these):
+ *
+ *   state                                  ai.js
+ *   targetDoid, nextTargetAt, engaged      target-lock.js
+ *   routing, escape                        routing.js
+ *   waitEndsAt, passingUntil               npc-move.js
+ *   walkSpeed                              behaviours/chase.js
+ *   nextAttackAt, attackLockedUntil,
+ *     lunge, attackHeading, attacks        npc-act.js
+ *   fleeUntil, targetSeen                  behaviours/kite.js
+ *   leashed, passedOver, nextPickupAt,
+ *     pinnedBy, pinnedRevision             behaviours/pet.js
+ *   teleport*                              behaviours/teleport.js
+ *   release                                npc-release.js
+ *   shove                                  impact.js
+ *   staggeredUntil                         hit-pricing.js
+ *
+ * Letting go of a target (`clearNpcTarget`, npc-targeting.js) asks each of
+ * those that keeps something about it to forget it.
  */
 
 export { attackIntervalMs, chooseNpcAttack } from "./npc-act.js";
@@ -120,7 +143,7 @@ const traceRoute = (doid, actor, route, target) =>
 const move = (session, state, crowd, doid, actor, intent, turn) => {
   const { ai } = actor;
   const passing = passingNow(ai, turn.now);
-  if (ai.kind !== "pet" && !intent.walking) ai.walkSpeed = 0;
+  if (ai.kind !== "pet" && !intent.walking) restWalk(ai);
   // Separation remains possible under MOVEMENT zero, but it no longer gives
   // an actor a second BaseMove-sized step on top of its walk.
   const crowding = separationDisplacement(doid, actor, crowd.spatialIndex, crowd.heroDoids);
@@ -151,7 +174,7 @@ const move = (session, state, crowd, doid, actor, intent, turn) => {
    * held at a wall, or behind another monster, would set off at full speed
    * the moment it was let go.
    */
-  if ((step?.refused || step?.blocked) && ai.kind !== "pet") ai.walkSpeed = 0;
+  if ((step?.refused || step?.blocked) && ai.kind !== "pet") restWalk(ai);
   if (!intent.throughBodies) afterStep(session, ai, turn.now, step, passing);
   if (!step) return false;
   placeNpc(session, doid, actor, step);
@@ -228,7 +251,7 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
         separateIdleNpc(session, doid, actor, crowd.spatialIndex, crowd.heroDoids, crowd.heroes, deltaSeconds);
         return said;
       }
-      ai.engaged = true;
+      engage(ai);
       said = "chase";
     } else if (distance > ai.disengageDistance) {
       return letGo(actor);

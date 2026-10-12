@@ -84,6 +84,11 @@ const npcPositionUpdate = (doid, position) =>
  * is concerned; it plays its own animation off the flag.
  */
 export const NO_KNOCKBACK = Object.freeze({ distance: 0, durationMs: 0 });
+/** A throw is over (`ai.shove`, written by `pushVictim` and this alone; carried by behaviours/overrides.js `slideShoved`). */
+export const endShove = (ai) => {
+  ai.shove = null;
+};
+
 /** The share of a timed throw sent with the hit itself. */
 const FIRST_FRAME_SHARE = 0.5;
 
@@ -125,7 +130,7 @@ export const pushVictim = (session, victimDoid, attackerDoid, distance, duration
   );
   if (Math.hypot(landed.x - victim.position.x, landed.y - victim.position.y) < 0.5) {
     // Stopped at once, by a wall: nothing for the tick to carry either.
-    if (timed) victim.ai.shove = null;
+    if (timed) endShove(victim.ai);
     return false;
   }
 

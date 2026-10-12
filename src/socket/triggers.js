@@ -1,4 +1,5 @@
 import { PacketWriter } from "./packet.js";
+import { holdForTimeline } from "./npc-act.js";
 import { OP } from "./opcodes.js";
 import { config } from "../config.js";
 import { envSetting } from "../env.js";
@@ -438,17 +439,7 @@ const scheduleNpcTimelineControls = async (
   const speed = Math.max(Number(playSpeed) || 1, Number.EPSILON);
   const durationMs = timelineDelayMs(controls.totalFrames, speed);
   const actor = session.actors?.get(doid);
-  if (scripted && actor?.ai) {
-    const now = Date.now();
-    actor.ai.attackLockedUntil = Math.max(actor.ai.attackLockedUntil ?? 0, now + durationMs);
-    const random = session.random ?? Math.random;
-    const cadence = Math.max(
-      100,
-      (actor.ai.attackTimerMs ?? 1500) + random() * (actor.ai.attackRandMs ?? 0)
-    );
-    const current = Number.isFinite(actor.ai.nextAttackAt) ? actor.ai.nextAttackAt : 0;
-    actor.ai.nextAttackAt = Math.max(current, now + cadence);
-  }
+  if (scripted && actor?.ai) holdForTimeline(actor.ai, Date.now(), durationMs, session.random ?? Math.random);
 
   for (const event of controls.events) {
     const run = () => fireNpcTimelineEvent(session, placementId, event.event);

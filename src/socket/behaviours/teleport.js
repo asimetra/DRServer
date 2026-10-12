@@ -2,7 +2,9 @@ import { bodyClearSpot, bodyRadius, bodyWalkClear, standoff } from "../body.js";
 import { objectDisable } from "../objects.js";
 import { OP } from "../opcodes.js";
 import { PacketWriter } from "../packet.js";
+import { swingDueAt } from "../npc-act.js";
 import { searchAgain } from "../routing.js";
+import { restWalk } from "./chase.js";
 
 /**
  * A teleporter's cycle: TELEPORT_AI with a `TeleportRecurT`, the specters and
@@ -107,9 +109,9 @@ export const comeBack = (session, doid, actor, target, bodies, now) => {
   ai.teleportReturnAt = 0;
   ai.teleportCycleStarted = true;
   ai.teleportAttackAt = now + (ai.preTeleportAttackMs ?? 0);
-  ai.nextAttackAt = ai.teleportAttackAt;
+  swingDueAt(ai, ai.teleportAttackAt);
   searchAgain(ai);
-  ai.walkSpeed = 0;
+  restWalk(ai);
   actor.teleportRegenerate(destination, actor.heading);
   session.send(npcTimelineAction(doid, ai.teleportInTimeline ?? "TELEPORT_IN"));
   return true;

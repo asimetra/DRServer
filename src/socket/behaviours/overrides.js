@@ -1,5 +1,6 @@
 import { attackStopped, buffMultiplierFor } from "../buffs.js";
 import { bodyRadius, moveBody } from "../body.js";
+import { endShove } from "../impact.js";
 import { placeNpc } from "../npc-move.js";
 import { STILL } from "./chase.js";
 
@@ -31,7 +32,7 @@ export const slideShoved = (session, doid, actor, now) => {
   const share = Math.min(1, Math.max(0, (now - shove.startedAt) / shove.durationMs));
   const step = share - shove.covered;
   shove.covered = share;
-  if (share >= 1) actor.ai.shove = null;
+  if (share >= 1) endShove(actor.ai);
   if (step <= 0) return true;
   const nextPosition = moveBody(
     session.navigation,
@@ -42,7 +43,7 @@ export const slideShoved = (session, doid, actor, now) => {
   );
   const travel = distanceTo(actor.position, nextPosition);
   if (travel < 0.5) {
-    actor.ai.shove = null;
+    endShove(actor.ai);
     return true;
   }
   placeNpc(session, doid, actor, { next: nextPosition, travel });
