@@ -7,7 +7,7 @@ import { inBand } from "../src/socket/npc-act.js";
 import { canGetAt } from "../src/socket/routing.js";
 import { cancelPetRespawn, spawnEquippedPet } from "../src/socket/dungeon.js";
 import { readPlacements } from "../src/socket/floors.js";
-import { addNavigationObstacle, createNavigationState } from "../src/socket/navigation.js";
+import { addNavigationObstacle, createNavigationState, removeNavigationObstacle } from "../src/socket/navigation.js";
 import { createMatchWorld } from "../src/socket/match-world.js";
 import { CLID, TEAM } from "../src/socket/opcodes.js";
 import { contextWithPet } from "./helpers/pets.js";
@@ -583,9 +583,55 @@ test("a wolf clearing its way keeps at the monster when it steps back", async (t
   let now = await ticks(session, start, 3);
   assert.equal(pet.ai.targetDoid, monster);
   session.actors.get(monster).position.y -= 20;
+  // Its bite due, whatever its timer rolled: it is swung if it is still at it.
+  pet.ai.nextAttackAt = 0;
+  for (const attack of pet.ai.attacks) attack.readyAt = 0;
   const before = session.sent.length;
   // Short of its next pick, when it tries its way back again.
   now = await ticks(session, now, 5);
   assert.equal(pet.ai.targetDoid, monster, "still its target");
   assert.ok(bitesBy(session, petDoid, before) >= 1, "and bitten");
+});
+
+/**
+ * The way a clearing pet tries again opens with the scenery too, not only on
+ * its pick: a raised spike row dropping is a navigation change, and the
+ * wolf (ChangeTargetT 2 s, no roll) would otherwise try only every 2 s, in
+ * step with a spike cycle of about as long, and could miss every opening.
+ */
+test("a wolf clearing its way at raised spikes crosses when they drop, on that tick, and not into them while they stand", async (t) => {
+  const navigation = createNavigationState({
+    bounds: { minX: 0, minY: 0, maxX: 2000, maxY: 2000 },
+    cellSize: 30,
+    staticColliders: [
+      { type: "rectangle", x: 400, y: 450, halfWidth: 5, halfHeight: 450, angle: 0 },
+      { type: "rectangle", x: 400, y: 1550, halfWidth: 5, halfHeight: 450, angle: 0 },
+    ],
+  });
+  const spikes = [{ type: "rectangle", x: 400, y: 1000, halfWidth: 20, halfHeight: 100, angle: 0 }];
+  addNavigationObstacle(navigation, "spikes", spikes);
+  const { session, pet } = await petOnFloor(t, WOLF, { owner: { x: 100, y: 1000 }, at: { x: 700, y: 1000 }, navigation });
+  let now = await ticks(session, 1000, 6);
+  assert.ok(pet.position.x > 420 && pet.position.x < 480, `at the spikes: ${Math.round(pet.position.x)}`);
+  const from = bodyPointOf(pet, pet.position);
+  const monster = 9500;
+  session.objects.set(monster, CLID.DistributedNPCGameObject);
+  session.actors.set(monster, standingMonster({ x: from.x - 27, y: from.y - 58.5 }));
+  now = await ticks(session, now, 2);
+  assert.equal(pet.ai.targetDoid, monster, "clearing its way");
+
+  // Something else on the floor changes: it tries again, finds the spikes still up, and is back at it.
+  addNavigationObstacle(navigation, "elsewhere", [{ type: "rectangle", x: 1800, y: 1800, halfWidth: 10, halfHeight: 10, angle: 0 }]);
+  now = await ticks(session, now, 3);
+  assert.equal(pet.ai.targetDoid, monster, "back at it");
+  assert.ok(pet.position.x > 420, `not into the spikes: ${Math.round(pet.position.x)}`);
+
+  // The spikes drop, well inside its pick: it goes the tick it sees it.
+  removeNavigationObstacle(navigation, "spikes");
+  now = await ticks(session, now, 1);
+  assert.equal(pet.ai.targetDoid, null, "the monster left at once");
+  let westmost = Infinity;
+  // Back at its owner it may well go for the monster again, by the open way.
+  await ticks(session, now, 3, () => { westmost = Math.min(westmost, pet.position.x); });
+  assert.ok(westmost < 300, `across: ${Math.round(westmost)}`);
 });

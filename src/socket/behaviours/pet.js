@@ -216,6 +216,8 @@ const pinnedBy = (turn, intent, before) => {
   const back = asked > 0.001 && (step.x * intent.x + step.y * intent.y) / asked < -NO_HEADWAY * asked;
   const stuck = asked > 0.001 && (went < NO_HEADWAY * asked || back);
   ai.pinnedBy = stuck ? (touchingInTheWay(actor, intent, turn.around)[0]?.doid ?? null) : null;
+  // The scenery as it stood: a change to it may open the way (npc-targeting.js `clearing`).
+  ai.pinnedRevision = turn.session.navigation?.revision ?? null;
 };
 
 /** A pet walks, at its full speed, unless it is backing out. */

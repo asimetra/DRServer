@@ -259,17 +259,22 @@ const petTarget = (crowd, actor, now) => {
  * Its way back cleared: the monster that pins it (behaviours/pet.js
  * `pinnedBy`), taken as its target as any pick is (`lockOn`), so it keeps
  * at it if the monster gives half a step. When its pick is up
- * (`ChangeTargetT`) it lets go and walks back again: the walk is the test of
- * whether it can, and one that goes nowhere pins it on the monster again.
- * One that falls, or leaves the floor, is let go at once. Null when nothing
- * pins it.
+ * (`ChangeTargetT`), or the scenery has changed since it was pinned — a
+ * spike row dropping, a gate opening: the navigation revision a route is
+ * searched again on (routing.js) — it lets go and walks back again: the
+ * walk is the test of whether it can, and one that goes nowhere pins it on
+ * the monster again. On its pick alone, the wolf (ChangeTargetT 2 s, no
+ * roll) would try in step with a spike cycle of about as long, and could
+ * find it shut every time. One that falls, or leaves the floor, is let go
+ * at once. Null when nothing pins it.
  */
-const clearing = ({ petTargets }, actor, now) => {
+const clearing = ({ petTargets, navigation }, actor, now) => {
   const { ai } = actor;
   if (ai.pinnedBy == null) return null;
   const blocker = petTargets.find(({ doid }) => doid === ai.pinnedBy);
   const holding = blocker && ai.targetDoid === blocker.doid;
-  if (!blocker || (holding && !stillLocked(ai, now))) {
+  const sceneryChanged = navigation && ai.pinnedRevision !== navigation.revision;
+  if (!blocker || (holding && (!stillLocked(ai, now) || sceneryChanged))) {
     if (holding || !blocker) ai.targetDoid = null;
     ai.pinnedBy = null;
     return null;
