@@ -15,7 +15,7 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  * A player's pet, and a hero's walking summon: on the player's side, and
  * the player's to keep close. Its rules, all here:
  *
- *   target  a monster near it and its owner that it can get at, held on
+ *   target  a monster near it that it can fight from inside its tether, held on
  *           its row's clock, or its owner to walk back to (`petTarget`,
  *           `petPick`);
  *   leash   past TetherDist from its owner, back to him first (`leashed`);
@@ -247,11 +247,15 @@ const pinnedBy = (turn, intent, before) => {
 };
 
 /**
- * A pet's pick, when it has none to hold: the monster nearest it that it can
- * get at without leaving its tether (`canGetAt`, routing.js — from where it
- * stands, straight, or by a route all within TetherDist of its owner; a
- * teleporter, which comes back beside its victim, at anything), among those
- * within its AggroRadius and within its TetherDist of its owner. A way out
+ * A pet's pick, when it has none to hold: the monster nearest it, within
+ * its AggroRadius, that it can fight from inside its tether (`canGetAt`,
+ * routing.js — from where it stands, straight, or by a route all within
+ * TetherDist of its owner, and the place its walk ends, where it swings
+ * from, within it too; a teleporter, which comes back beside its victim,
+ * one within its tether). The monster itself may stand outside: archers
+ * park at their keep distance of 300 from the owner, on the dragon's
+ * TetherDist exactly, and the dragon sat by its owner while he was shot; the
+ * official dragon swung at targets past its tether on 31% (n 13). A way out
  * past the tether would only end in the leash and back, again and again: a
  * dragon so went to and fro at a skeleton round a corner, 300 from its
  * owner every other second (tools/ai-sim.js, scenario pet-dragon seed 2).
@@ -264,17 +268,16 @@ const petPick = ({ petTargets, navigation }, actor, owner, now) => {
   if (!stillLocked(ai, now) || !ai.passedOver) ai.passedOver = new Set();
   const tether = ai.tetherDistance > 0 ? ai.tetherDistance : Infinity;
   const candidates = petTargets
-    .filter(
-      ({ doid, position }) =>
-        !ai.passedOver?.has(doid) &&
-        distanceTo(actor.position, position) <= ai.aggroRadius &&
-        distanceTo(owner.position, position) <= tether
-    )
+    .filter(({ doid, position }) => !ai.passedOver?.has(doid) && distanceTo(actor.position, position) <= ai.aggroRadius)
     .sort((a, b) => squaredDistanceTo(actor.position, a.position) - squaredDistanceTo(actor.position, b.position));
   const withinTether = (point) => distanceTo(owner.position, point) <= tether;
-  const getsAt = (candidate) =>
-    teleportsOnCycle(actor) ||
-    canGetAt(navigation, actor, candidate, reachOf(ai, contact(actor, candidate.actor)), withinTether);
+  // A teleporter swings from beside its victim, where it comes back.
+  const getsAt = (candidate) => {
+    const bodies = contact(actor, candidate.actor);
+    return teleportsOnCycle(actor)
+      ? withinTether(candidate.position)
+      : canGetAt(navigation, actor, candidate, reachOf(ai, bodies), withinTether, walkEndsAt(actor, bodies, false));
+  };
   for (const candidate of candidates) {
     if (getsAt(candidate)) return lockOn(ai, candidate, now);
     ai.passedOver.add(candidate.doid);

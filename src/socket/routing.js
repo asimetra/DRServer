@@ -274,24 +274,34 @@ export const routeToTarget = (session, actor, target, now, heroes = [], reach = 
 
 /**
  * Whether `actor` can get at `candidate` (a candidate of the crowd: its
- * `actor` and `position`) from where it stands, to swing at it from
- * `reach`, keeping to the places `keepsTo` allows: it may swing from here,
- * it can walk straight at it, or a route search finds a way, through allowed
- * points only, that ends at it or ends short where it may swing from. The
- * route search is the one `routeToTarget` makes (`bodyRoute`, and its memo),
- * from the same place to the same point, so the walk that follows a yes
- * does not search again. A body in the scenery is not asked: the way out
- * comes first, and from inside a collider no search finds anything.
+ * `actor` and `position`) to swing at it from `reach`, swinging from a place
+ * `keepsTo` allows: it may swing from here, it can walk straight at it, or a
+ * route search finds a way, through allowed points only, that ends at it or
+ * ends short where it may swing from. Where a walk at it ends — `stopAt`
+ * short of it, its walk's end (behaviours/chase.js `walkEndsAt`) — is the
+ * place it swings from, and that place, not the candidate, is what
+ * `keepsTo` is asked of. The route search is the one `routeToTarget` makes
+ * (`bodyRoute`, and its memo), from the same place to the same point, so the
+ * walk that follows a yes does not search again. A body in the scenery is
+ * not asked: the way out comes first, and from inside a collider no search
+ * finds anything. With no scenery, the straight walk's end is all it asks.
  */
-export const canGetAt = (navigation, actor, candidate, reach, keepsTo = () => true) => {
-  if (!navigation) return true;
+export const canGetAt = (navigation, actor, candidate, reach, keepsTo = () => true, stopAt = 0) => {
   const { actor: victim, position: target } = candidate;
+  const aim = aimAt(actor, victim, target);
+  /** Where a walk from `from` straight at it ends. */
+  const endsAt = (from) => {
+    const apart = Math.sqrt(squaredDistanceTo(from, aim));
+    if (apart <= stopAt || apart < 0.001) return from;
+    return { x: aim.x + ((from.x - aim.x) / apart) * stopAt, y: aim.y + ((from.y - aim.y) / apart) * stopAt };
+  };
+  if (!navigation) return keepsTo(endsAt(actor.position));
   const radius = bodyRadius(actor);
   if (bodyBlocked(navigation, actor, actor.position, radius)) return true;
   if (swingsAt(navigation, actor, actor.position, victim, target, reach)) return true;
-  const aim = aimAt(actor, victim, target);
-  if (keepsTo(aim) && bodyWalkClear(navigation, actor, actor.position, aim, radius)) return true;
+  if (keepsTo(endsAt(actor.position)) && bodyWalkClear(navigation, actor, actor.position, aim, radius)) return true;
   const points = bodyRoute(actor.ai, navigation, actor, actor.position, aim, radius);
-  if (!points.length || !points.every(keepsTo)) return false;
-  return !points.endsShort || swingsAt(navigation, actor, points.at(-1), victim, target, reach);
+  if (!points.length) return false;
+  if (points.endsShort) return points.every(keepsTo) && swingsAt(navigation, actor, points.at(-1), victim, target, reach);
+  return points.slice(0, -1).every(keepsTo) && keepsTo(endsAt(points.at(-2) ?? actor.position));
 };

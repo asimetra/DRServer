@@ -661,3 +661,27 @@ test("letting go of a target forgets the pin, the passed-over and the wait", asy
   await tickNpcAi(session, 1250, 0.25);
   assert.notEqual(pet.ai.targetDoid, blocker, "the old blocker 1500 off is not locked on");
 });
+
+/**
+ * A pet takes on what it can fight from inside its tether, not only what
+ * stands inside it (behaviours/pet.js `petPick`, routing.js `canGetAt`):
+ * archers park at their keep distance of 300 from the owner, on the
+ * dragon's TetherDist of 300 exactly, and the dragon sat by its owner while
+ * he was shot. The official dragon swung at targets past its tether 31% of
+ * the time (n 13).
+ */
+const DRAGON = 3302;
+test("a dragon takes an archer it can shoot from inside its tether, though the archer stands outside it", async (t) => {
+  const { session, pet } = await petOnFloor(t, DRAGON, { owner: { x: 1000, y: 1000 }, at: { x: 1000, y: 1060 } });
+  const archer = enemyAt(session, { x: 1340, y: 1000 });
+  await ticks(session, 1000, 2);
+  assert.equal(pet.ai.targetDoid, archer);
+});
+
+test("a wolf still leaves alone a monster it could only bite from outside its tether", async (t) => {
+  const { session, pet } = await petOnFloor(t, WOLF, { owner: { x: 1000, y: 1000 }, at: { x: 1300, y: 1000 } });
+  // 300 from the wolf, 600 from its owner: the bite is from 546, past TetherDist 500.
+  enemyAt(session, { x: 1600, y: 1000 });
+  await ticks(session, 1000, 4);
+  assert.equal(pet.ai.targetDoid, null);
+});
