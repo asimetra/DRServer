@@ -22,6 +22,9 @@
  *   behind owner  the share of its time it stood and had not swung, as for
  *              staring, with a monster for a target in its sight and its
  *              owner's body across the line to it
+ *   snaps      the times it was put back beside its owner from afar
+ *              (behaviours/pet.js `snapBackSpot`): over 1000 in one tick,
+ *              which a teleporting pet's come-back beside its victim is too
  *   overlap    of the quarter seconds it moved 5 or more, the share it
  *              ended more than 5 inside its owner's body; and of those it
  *              stood (as for rest), the share it stood so
@@ -31,7 +34,7 @@
  * back 66%, 87%, 85-95%; swings beyond TetherDist 4%, 8%, 31% (n 401, 117,
  * 13); rest p50 0.61, 0.68, 0.55 of ReturnDist, in 7, 17 and 5 stands;
  * overlapping its owner moving 2.2%, 1.4%, 1.8% (radius 29.4 against the
- * hero's 25.87).
+ * hero's 25.87); snaps 1, 13, 0, from 1996-2205.
  */
 
 const CHOREOGRAPHY = 143;
@@ -51,11 +54,15 @@ const emptyRow = () => ({
   swingsBeyond: 0,
   rest: [],
   behindOwner: 0,
+  snaps: 0,
   moving: 0,
   overlapMoving: 0,
   standing: 0,
   overlapStanding: 0,
 });
+
+/** A move longer than this in one tick is no walk: a snap back. */
+const SNAP_TRAVEL = 1000;
 
 /** How far inside its owner's body a pet has to be to count as overlapping him. */
 const OVERLAP_SLACK = 5;
@@ -125,6 +132,7 @@ export const createPetMetrics = ({ rowsByConstant, sees, bodyOf }) => {
         row.behindOwner++;
       }
       const inside = ownerDistance < Math.max(12, ai.collisionRadius ?? 35) + ownerRadius - OVERLAP_SLACK;
+      if (span >= 1 && hypot(track.pet[span - 1], actor.position) > SNAP_TRAVEL) row.snaps++;
       if (span >= 1 && hypot(track.pet[span - 1], actor.position) >= 5) {
         row.moving++;
         if (inside) row.overlapMoving++;
@@ -192,7 +200,7 @@ export const describePets = (rows) =>
   Object.entries(rows ?? {}).map(
     ([constant, row]) =>
       `  pet ${constant.padEnd(22)} ${(row.ticks / TICKS_PER_SECOND).toFixed(0).padStart(6)} s  ` +
-      `staring ${share(row.staring, row.ticks).padStart(6)}  leash >15 s ${row.leashStretches} (farthest ${row.farthest.toFixed(0)})  ` +
+      `staring ${share(row.staring, row.ticks).padStart(6)}  leash >15 s ${row.leashStretches} (farthest ${row.farthest.toFixed(0)}, snaps ${row.snaps})  ` +
       `heading back ${share(row.backs, row.backChances)} of ${row.backChances}  ` +
       `swings ${row.swings}, beyond TetherDist ${share(row.swingsBeyond, row.swings)}  ` +
       `rest/ReturnDist p10/50/90 ${quantile(row.rest, 0.1)}/${quantile(row.rest, 0.5)}/${quantile(row.rest, 0.9)} (n ${row.rest.length})  ` +

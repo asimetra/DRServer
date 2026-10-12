@@ -318,3 +318,33 @@ test("a wolf walks through another player in its way as through its owner", asyn
   await walksThroughToBite(world.contextFor(host), pet, skeleton);
 });
 
+
+/** The positions sent for `doid` since `from`, as the wire has them. */
+const sentPositions = (session, doid, from = 0) =>
+  session.sent.slice(from).filter(
+    (frame) => frame.length >= 18 && frame.readUInt16LE(2) === 124 && frame.readUInt32LE(4) === doid && frame.readUInt16LE(8) === 132
+  ).map((frame) => ({ x: frame.readFloatLE(10), y: frame.readFloatLE(14) }));
+
+/**
+ * Official pets out past 2000 from their owner are put back beside him in
+ * one position update: 14 times in the solo captures, from 1996-2205 to
+ * 55-225 (wolf 92, ReturnDist 100). Ours trailed behind, out to 5008.
+ */
+test("a pet beyond the snap-back distance lands beside its owner, its target dropped", async (t) => {
+  for (const [npcId, returnDistance] of [[WOLF, 100], [RHINO, 150]]) {
+    const { session, pet, petDoid } = await petOnFloor(t, npcId, { owner: { x: 1000, y: 1000 }, at: { x: 3010, y: 1000 } });
+    pet.ai.targetDoid = enemyAt(session, { x: 3100, y: 1000 });
+    const before = session.sent.length;
+    await tickNpcAi(session, 1000, 0.25);
+    assert.ok(Math.abs(distance(pet.position, session.heroPosition) - returnDistance) < 1, `npc ${npcId} at its ReturnDist: ${Math.round(pet.position.x)},${Math.round(pet.position.y)}`);
+    assert.ok(pet.position.x > 1000, "on the side it came from");
+    assert.deepEqual(sentPositions(session, petDoid, before).map(({ x, y }) => [Math.round(x), Math.round(y)]), [[Math.round(pet.position.x), Math.round(pet.position.y)]]);
+    assert.equal(pet.ai.targetDoid, null);
+  }
+});
+
+test("a pet short of the snap-back distance walks back", async (t) => {
+  const { session, pet } = await petOnFloor(t, RHINO, { owner: { x: 1000, y: 1000 }, at: { x: 2990, y: 1000 } });
+  await tickNpcAi(session, 1000, 0.25);
+  assert.ok(Math.abs(pet.position.x - (2990 - 200 * 0.25)) < 1, `a step: ${pet.position.x}`);
+});

@@ -1,4 +1,4 @@
-import { contact } from "../body.js";
+import { bodyClearSpot, bodyRadius, bodyWalkClear, contact } from "../body.js";
 import { inBand } from "../npc-act.js";
 import { collectNearbyForPet } from "../pickups.js";
 import { STILL, walkEndsAt, walkTowards } from "./chase.js";
@@ -10,7 +10,8 @@ import { backsOffFrom } from "./kite.js";
  *
  * It picks its own target (`petTarget`, npc-targeting.js) — a monster near
  * it and its owner that it can get at, or its owner to walk back to — and
- * picks up for its owner on the way (`pickUpFor`). It walks at its
+ * picks up for its owner on the way (`pickUpFor`). Fallen too far behind,
+ * it is put back beside him (`snapBackSpot`). It walks at its
  * full speed, without the ramp a monster's walk has (`npcWalkingSpeed`),
  * and a ranged one backs out of a gap where none of its attacks can go
  * (`petRetreat`). Two of its rules live where the thing they change is: a
@@ -130,6 +131,57 @@ export const petRetreat = (actor, { target, route, distance, stopAt, bodies, top
     x: ((actor.position.x - target.x) / distance) * retreat,
     y: ((actor.position.y - target.y) / distance) * retreat,
   };
+};
+
+/**
+ * How far behind its owner a pet may fall before it is put back beside him
+ * (`snapBackSpot`): 2000.
+ *
+ * The official's pets do not trail a running owner across the floor. In the
+ * solo captures a pet's position jumped, in one update and with no
+ * TELEPORT timeline, from 1996-2205 off its owner to 55-225 off him 14
+ * times (13 RHINO_PET, 1 WOLF_PET); the farthest one got without that was
+ * 1751 (rhino), and in a 250 ms sample at 1985 it had not. No row holds the
+ * number: DisengageDist is 1600 for all three, and the time past 1600 before
+ * the jump, 0.5-1.75 s (one 3.75 s), is no timer on top of it. Ours walked
+ * back from as far as 5008 (dragon), 3732 (rhino) and 3436 (wolf), past
+ * 2000 for 3.4%, 2.6% and 0.5% of their time (68, 70 and 109 pet-minutes
+ * of our played captures), in stretches up to 87 s.
+ *
+ * Asked every tick. Of the 13 rhino jumps, 10 came on the first quarter
+ * second sampled past 2000, 2 on the second and 1 on the third: a slower
+ * clock, a second's, would spread them over four. The overshoot to 2205 is
+ * the owner's pace — a rhino walks 200 a second behind a running hero — and
+ * the lag of the owner's reports, not the clock.
+ */
+export const SNAP_BACK_DISTANCE = 2000;
+
+/**
+ * Where a pet beyond `SNAP_BACK_DISTANCE` from its `owner` (a crowd
+ * candidate) is put, or null when it is not.
+ *
+ * Beside him, at his ReturnDist, on the side it came from: the official
+ * landed 55-225 from him (p50 131 for the rhino, ReturnDist 150; the wolf
+ * 92, ReturnDist 100), 10 of 14 within 60 degrees of the way back to where
+ * it had been. The nearest clear spot to that, as the spawn finds one
+ * (floor-population.js `spawnEquippedPet`), that he could walk to straight.
+ */
+export const snapBackSpot = (navigation, actor, owner) => {
+  const away = Math.hypot(actor.position.x - owner.position.x, actor.position.y - owner.position.y);
+  if (!(away > SNAP_BACK_DISTANCE)) return null;
+  const returnDistance = walkEndsAt(actor, contact(actor, owner.actor), true);
+  const desired = {
+    x: owner.position.x + ((actor.position.x - owner.position.x) / away) * returnDistance,
+    y: owner.position.y + ((actor.position.y - owner.position.y) / away) * returnDistance,
+  };
+  const radius = bodyRadius(actor);
+  return (
+    bodyClearSpot(navigation, actor, desired, radius, {
+      reach: 220,
+      towards: owner.position,
+      accept: (spot) => bodyWalkClear(navigation, actor, owner.position, spot, radius),
+    }) ?? desired
+  );
 };
 
 /** A pet walks, at its full speed, unless it is backing out. */

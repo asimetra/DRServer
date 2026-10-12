@@ -13,7 +13,7 @@ import { describeRoute, NO_ROUTE_ASKED, routeToTarget } from "./routing.js";
 import { chase, walkEndsAt } from "./behaviours/chase.js";
 import { kite, backingOff } from "./behaviours/kite.js";
 import { heldByHit, swingIntent, whatItMayDo } from "./behaviours/overrides.js";
-import { pet } from "./behaviours/pet.js";
+import { pet, snapBackSpot } from "./behaviours/pet.js";
 import { isStationary, stationary } from "./behaviours/stationary.js";
 import { comeBack, teleportAttacked, teleportsOnCycle, teleportTurn } from "./behaviours/teleport.js";
 
@@ -232,6 +232,17 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
   // Off the floor between teleports: nothing else of the tick is its own.
   if (actor.teleportHidden) {
     return cycle && comeBack(session, doid, actor, target, bodies, now) ? "teleport-in" : said;
+  }
+
+  // Too far behind the one it follows, it is put back beside him, and has
+  // nothing to do with what it fought or the way it was going
+  // (behaviours/pet.js `snapBackSpot`). Every pet row's TetherDist is well
+  // inside the distance, so one that far off is always following.
+  const snapped = following ? snapBackSpot(state.navigation, actor, victim) : null;
+  if (snapped) {
+    clearNpcTarget(actor);
+    placeNpc(session, doid, actor, { next: snapped, travel: distanceTo(actor.position, snapped) });
+    return said;
   }
 
   const release = advanceNpcRelease(session, doid, actor, now, deltaSeconds, crowd.spatialIndex, crowd.heroes);
