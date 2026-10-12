@@ -155,22 +155,24 @@ test("an Iron Legion clone is a levelled mobile summon with its full attack kit"
   );
 });
 
-/** The three Iron Legion clones, placed by the hero and then set down on one spot. */
-const legionOnOneSpot = async (t, spot) => {
+/** The three Iron Legion clones of one cast, set down on one spot (`spot`), or where the cast put them. */
+const legionOnOneSpot = async (t, spot = null) => {
   const session = sessionWith({ dungeonAvatar: { avatar_id: 106, experience: 10_000_000 } });
   session.actors.set(session.heroDoid, {
     hitPoints: 1e6, maxHitPoints: 1e6, collisionRadius: 26, position: { ...session.heroPosition }, team: TEAM.PLAYERS,
   });
   const clones = [];
+  // One cast: one placement group, as schedulePlaceables gives its actions.
+  const placementGroup = { positions: [] };
   for (const action of await spawnNpcActions("TM_DBUSTER_IRON_LEGION")) {
-    clones.push(await spawnPlaceable(session, { action, origin: session.heroPosition, heading: 0, weaponPower: 10 }));
+    clones.push(await spawnPlaceable(session, { action, origin: session.heroPosition, heading: 0, weaponPower: 10, placementGroup }));
   }
   t.after(() => {
     clearDungeonPlaceables(session);
     for (const stop of session.hazardBeats?.values?.() ?? []) stop();
   });
-  for (const doid of clones) session.actors.get(doid).position = { ...spot };
-  return { session, clones: clones.map((doid) => session.actors.get(doid)) };
+  if (spot) for (const doid of clones) session.actors.get(doid).position = { ...spot };
+  return { session, doids: clones, clones: clones.map((doid) => session.actors.get(doid)) };
 };
 
 /** How close the nearest two of `actors` stand, middle to middle. */
@@ -217,6 +219,65 @@ test("three clones set down on one spot fight their monster from three spots", a
   for (let tick = 0; tick < 20; tick++, now += 250) await tickNpcAi(session, now, 0.25);
   assert.ok(closestPair(clones) >= contact - 1, `the nearest two stand ${closestPair(clones).toFixed(1)} apart`);
   for (const clone of clones) assert.equal(clone.ai.targetDoid, brute);
+});
+
+/** A monster standing where it is put, swinging at nobody. */
+const standingBrute = (session, doid, position) => {
+  session.objects.set(doid, CLID.DistributedNPCGameObject);
+  session.actors.set(doid, {
+    hitPoints: 1e9, maxHitPoints: 1e9, collisionRadius: 25, constant: "BRUTE", isEnemy: true,
+    position: { ...position }, heading: 0, team: TEAM.ENEMIES,
+    ai: { state: "idle", engaged: false, aggroRadius: 0, disengageDistance: 1600, moveSpeed: 0, attackRange: 80, attackTimerMs: 1000, attackRandMs: 0, nextAttackAt: Infinity },
+  });
+};
+
+/**
+ * A cast is a burst (npc-move.js `bodyRule`): the clones of one cast are
+ * bodies to one another. Walking through one another, ours went to a
+ * monster 38-41 apart, in contact on 71-77% of pairs, and stood round it on
+ * one side; the official's 128 apart, under contact on 8%, never under 20.
+ */
+test("the clones of one cast walk to one monster without overlapping, and stand round it apart", async (t) => {
+  const { session, clones } = await legionOnOneSpot(t);
+  assert.ok(clones[0].spawnGroup && clones.every((clone) => clone.spawnGroup === clones[0].spawnGroup), "one cast, one group");
+  // Within the clones' TetherDist (480) of the hero at 1000,1000.
+  standingBrute(session, 9900, { x: 1400, y: 1000 });
+  const contact = clones[0].collisionRadius * 2;
+  let closest = Infinity;
+  let now = 1000;
+  for (let tick = 0; tick < 24; tick++, now += 250) {
+    await tickNpcAi(session, now, 0.25);
+    closest = Math.min(closest, closestPair(clones));
+  }
+  assert.ok(closest >= contact - 1, `never inside one another: the nearest two came ${closest.toFixed(1)} apart`);
+  for (const clone of clones) assert.equal(clone.ai.targetDoid, 9900);
+});
+
+/**
+ * Two clones of one cast in a line: the one behind waits as a monster waits
+ * behind a monster of its side, then goes round (npc-move.js `afterStep`).
+ * No capture has two in a corridor; this is the rule as monsters have it.
+ */
+test("a clone behind another of its cast waits behind it, as a monster does", async (t) => {
+  const { session, doids, clones } = await legionOnOneSpot(t);
+  const [front, behind] = clones;
+  session.actors.delete(doids[2]);
+  // The front one takes nothing on and stands in the way.
+  front.ai.aggroRadius = 0;
+  front.ai.moveSpeed = 0;
+  front.position = { x: 1220, y: 1000 };
+  behind.position = { x: 1110, y: 1000 };
+  standingBrute(session, 9900, { x: 1350, y: 1000 });
+  // A wait drawn would not run out within the test (`waitFor`, npc-move.js).
+  session.random = () => 0.999999;
+  let waited = false;
+  let now = 1000;
+  for (let tick = 0; tick < 8; tick++, now += 250) {
+    await tickNpcAi(session, now, 0.25);
+    waited ||= behind.ai.waitEndsAt != null;
+  }
+  assert.ok(waited, "the one behind drew a wait");
+  assert.ok(Math.hypot(front.position.x - behind.position.x, front.position.y - behind.position.y) >= front.collisionRadius * 2 - 1);
 });
 
 test("the poison pot schedules its cloud instead of charging Mana for nothing", async () => {

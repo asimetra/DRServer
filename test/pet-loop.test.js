@@ -423,6 +423,27 @@ test("a pet walks through an ally standing in its way", async (t) => {
 });
 
 /**
+ * A clone is a body to the other clones of its cast (npc-move.js
+ * `bodyRule`, a cast is a burst), not to a pet: a pet born alone has no
+ * sibling, and passes through the clone as through any body of its side.
+ */
+test("a pet walks through its owner's clone standing in its way", async (t) => {
+  const { session, pet } = await petOnFloor(t, WOLF, { owner: { x: 700, y: 1000 }, at: { x: 1000, y: 940 } });
+  const skeleton = enemyAt(session, { x: 1000, y: 1140 });
+  const clone = 8903;
+  session.objects.set(clone, CLID.DistributedNPCGameObject);
+  session.actors.set(clone, {
+    hitPoints: 500, maxHitPoints: 500, collisionRadius: 26, team: TEAM.PLAYERS, isPet: true,
+    spawnGroup: { positions: [] }, masterId: session.heroDoid,
+    position: { x: 1010, y: 1015 }, heading: 0,
+    // Takes nothing on: it stands.
+    ai: { kind: "pet", ownerDoid: session.heroDoid, state: "idle", engaged: false, aggroRadius: 0, disengageDistance: 1600, moveSpeed: 0, attackRange: 80, attackTimerMs: 1000, attackRandMs: 0, nextAttackAt: Infinity },
+  });
+  assert.equal(pet.spawnGroup ?? null, null, "a pet is born alone");
+  await neverHeldOnTheWay(session, pet, skeleton);
+});
+
+/**
  * A wait is a queue, and a pet is not in one behind a monster: of the
  * official wolf's quarter seconds walking back past TetherDist with a
  * monster touching it in its way, it stood the next second on 10.6% (n 189),

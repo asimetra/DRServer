@@ -44,7 +44,7 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  *
  *   PASS      on the players' side, both, and neither row says
  *             `CollideWithTeam`: they walk through each other, as heroes
- *             always have.
+ *             always have — unless the two were born of one cast.
  *   STOP_AT   the same, but the player it walks at: its walk ends at his
  *             body, whoever's side it is on (`keptOutOfHeroes`). A pet's
  *             walk back to its owner along a route, whose last waypoint is
@@ -55,8 +55,9 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  *             (`keptOutOfHeroes`, `withoutDrivingIntoContacts`).
  *   ROUND     a monster of another side: gone round at its body, with no
  *             wait (`heldByBodies`).
- *   QUEUE     a monster of its own side: waited behind, then passed
- *             (`heldByBodies`, `afterStep`).
+ *   QUEUE     a monster of its own side, or a body born of the same
+ *             cast: waited behind, then passed (`heldByBodies`,
+ *             `afterStep`).
  *
  * The client builds every actor's collision filter from its team
  * (`ActorGameObject.buildFilter`): it collides with every other team, and
@@ -89,6 +90,19 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  * at contact (`separationDisplacement`), and a pet's walk to its owner ends
  * at its ReturnDist (behaviours/chase.js `walkEndsAt`).
  *
+ * A cast is a burst. The bodies one cast puts down together — the three
+ * Iron Legion clones of one TM_DBUSTER_IRON_LEGION, placed through one
+ * `placementGroup` (placeables.js `schedulePlaceables`, carried on each as
+ * `spawnGroup`) — are bodies to one another, as the monsters of one burst
+ * are: they may stand shoulder to shoulder, not inside one another. The
+ * official's clones keep apart walking to a monster and back, p50 128 and
+ * 121, under contact on 8% and 4% of pairs and never under 20 (n 380, 322
+ * pairs, 7 floors), and round one monster p50 76, spread 39 degrees. Ours,
+ * walking through one another, kept 38-41 apart, in contact on 71-77%, and
+ * stood round one monster 38 apart on one side of it. Anything born alone —
+ * a pet, one placeable — has no sibling, and passes as above. Two clones in
+ * a corridor wait behind each other as two monsters do; no capture has one.
+ *
  * A wait is a queue, and one queues only behind its own side: all the
  * measure behind `afterStep` is of monsters behind monsters. The official's
  * pets do not queue behind monsters: a wolf walking back past its
@@ -100,6 +114,9 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  * An actor built without a team, as most tests build a monster, collides,
  * and queues behind another without one.
  */
+/** Whether the two were put down by one cast (`spawnGroup`, placeables.js). */
+const bornTogether = (walker, other) => walker?.spawnGroup != null && walker.spawnGroup === other?.spawnGroup;
+
 export const BODY = Object.freeze({
   PASS: "pass",
   STOP_AT: "stop-at",
@@ -117,7 +134,7 @@ export const bodyRule = (walker, other, { player = false, playersSide = null, wa
     !walker.collidesWithTeam &&
     !other.collidesWithTeam;
   if (player) return friendly ? (doid === walkingAt ? BODY.STOP_AT : BODY.PASS) : BODY.KEEP_OUT;
-  if (friendly) return BODY.PASS;
+  if (friendly) return bornTogether(walker, other) ? BODY.QUEUE : BODY.PASS;
   return other?.team === walker?.team ? BODY.QUEUE : BODY.ROUND;
 };
 

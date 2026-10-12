@@ -634,6 +634,9 @@ export const spawnPlaceable = async (
       [npc.Ability1, npc.Ability2, npc.Ability3, npc.Ability4, npc.Ability5].filter(Boolean)
     ),
     ...rolesOfPlaceable(npc, session.heroDoid, mobileSummon),
+    // The cast it was put down by, shared with whatever else that cast put
+    // down: bodies to one another (npc-move.js `bodyRule`).
+    spawnGroup: placementGroup ?? null,
     masterId: mobileSummon ? session.heroDoid : 0,
     team,
     // Whether the players on its side are in its way (npc-move.js `bodyRule`).

@@ -96,6 +96,11 @@ export const HERO_SCRIPTS = ["loadsim", "walls", "walker", "brawler", "smasher",
  * defence, whose monsters go for her barricades and orbs and now and then
  * break one themselves.
  *
+ * `clones` is several bodies the server moves on the players' side at once:
+ * the hero casts the ghost samurai's Iron Legion as a maxed samurai, three
+ * clones of one cast (placeables.js, one `placementGroup`), and casts it
+ * again as they expire, so they follow him, rest, fight and walk back.
+ *
  * `brawler` is the hero for the overrides: it walks and hits as `loadsim`
  * does, and every two seconds does one more thing to the monster it hits —
  * stuns it, shoves it, staggers it, slows it, in turn.
@@ -116,6 +121,7 @@ export const SCENARIOS = {
     heroes: ["walker", "walls", "brawler", "smasher"],
   },
   smashing: { library: "castle/catacombs", heroes: ["smasher", "walls"] },
+  clones: { library: "jungle/tribal", legion: "TM_DBUSTER_IRON_LEGION", avatar: { avatar_id: 106, experience: 10_000_000 } },
 };
 
 /** The heroes a scenario runs with, unless it names its own: one that leaves monsters alive, one that keeps to the floor, the brawler. */
@@ -148,6 +154,8 @@ const BRAWL_EVERY = 8;
 const BRAWLS = ["stun", "shove", "stagger", "slow"];
 /** A shove the size and duration of a strong knockback (impact.js). */
 const BRAWL_SHOVE = { distance: 150, durationMs: 400 };
+/** How often the clones scenario casts its legion again: as its clones expire (`timetolive` 30 s). */
+const LEGION_RECAST_TICKS = 120;
 /** How far round the hero's spawn a scenario's cast is put. */
 const CAST_RING = 350;
 const PET_LEVEL = 10;
@@ -158,7 +166,7 @@ const DEFAULT_MAP_NODE = 50002;
 
 /** The modules a run needs, from one root. */
 export const loadRoot = async (root) => {
-  const [gamemaster, floors, navigation, dungeon, opcodes, ai, combat, npcSpawn, buffs, impact, hitPricing] =
+  const [gamemaster, floors, navigation, dungeon, opcodes, ai, combat, npcSpawn, buffs, impact, hitPricing, placeables] =
     await Promise.all([
       importFrom(root, "src/gamemaster.js"),
       importFrom(root, "src/socket/floors.js"),
@@ -171,11 +179,12 @@ export const loadRoot = async (root) => {
       importFrom(root, "src/socket/buffs.js"),
       importFrom(root, "src/socket/impact.js"),
       importFrom(root, "src/socket/hit-pricing.js"),
+      importFrom(root, "src/socket/placeables.js"),
     ]);
   await navigation.loadNavigationLibrary();
   const gm = await gamemaster.loadGameMaster();
   const rows = new Map((gm.raw.Npc ?? []).map((row) => [row.Constant, row]));
-  return { root, gamemaster, floors, navigation, dungeon, opcodes, ai, combat, npcSpawn, buffs, impact, hitPricing, rows };
+  return { root, gamemaster, floors, navigation, dungeon, opcodes, ai, combat, npcSpawn, buffs, impact, hitPricing, placeables, rows };
 };
 
 /**
@@ -290,6 +299,7 @@ const stageScenario = async (modules, session, scenario) => {
     gm: await modules.gamemaster.loadGameMaster(),
     isActive: () => true,
   };
+  if (scenario.avatar) session.dungeonAvatar = { ...scenario.avatar };
   const cast = scenario.cast ?? [];
   for (const [index, constant] of cast.entries()) {
     const angle = (index / cast.length) * Math.PI * 2;
@@ -305,6 +315,19 @@ const stageScenario = async (modules, session, scenario) => {
   }
   if (scenario.generators) {
     for (const start of session.generatorHandlers?.values() ?? []) start();
+  }
+};
+
+/**
+ * The hero's legion, cast where he stands: each of its `spawnnpc` actions
+ * placed through one placement group, as one cast places them
+ * (placeables.js `schedulePlaceables`), all on this tick.
+ */
+const castLegion = async (modules, session, timeline) => {
+  const placementGroup = { positions: [] };
+  const origin = { ...session.heroPosition };
+  for (const action of await modules.gamemaster.spawnNpcActions(timeline)) {
+    await modules.placeables.spawnPlaceable(session, { action, origin, heading: 0, weaponPower: 10, placementGroup });
   }
 };
 
@@ -484,7 +507,9 @@ export const runSpec = async (modules, spec, emit, { detail = new Set() } = {}) 
       const frames = [];
       session.send = (frame) => frames.push(frame);
       const census = spec.stats ? await createCensus(modules) : null;
+      const scenario = spec.scenario ? SCENARIOS[spec.scenario] : null;
       for (let tick = 0; tick < spec.ticks; tick++) {
+        if (scenario?.legion && tick % LEGION_RECAST_TICKS === 0) await castLegion(modules, session, scenario.legion);
         frames.length = 0;
         const randomBefore = mathRandom.calls;
         const sessionBefore = sessionRandom.calls;
