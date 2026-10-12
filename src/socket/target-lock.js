@@ -1,3 +1,4 @@
+import { isHuntable } from "./actor-roles.js";
 import { isStationary } from "./behaviours/stationary.js";
 
 /**
@@ -73,3 +74,37 @@ export const stillLocked = (ai, now) => now < (ai.nextTargetAt ?? 0);
 
 /** A target to fight, as a selector answers it: `{ victim, following: false }`, or null for none. */
 export const fighting = (victim) => (victim ? { victim, following: false } : null);
+
+/**
+ * Who may be held as a target, by whom: the one place it is said. The crowd
+ * senses who is on the floor (npc-crowd.js `senseCrowd`: heroes, pets,
+ * enemies, beasts, allies); these are the sets the selectors pick from and
+ * hold in, built once a tick and kept on the crowd.
+ *
+ *   held      a monster's target, held while it is on the floor: a hero,
+ *             a pet, a beast or an ally, looked up in that order;
+ *   huntable  the enemies a pet, a beast or an ally may pick: those that
+ *             may be hit (actor-roles.js `isHuntable`);
+ *   byPet     what a pet picks from: the huntable enemies, then the beasts;
+ *   byBeast   what a beast fights: everyone outside its team 7.
+ */
+export const targetsOf = (crowd) => {
+  if (crowd.targets) return crowd.targets;
+  const { heroes, pets, enemies, beasts, allies } = crowd;
+  const byDoid = (candidates) => new Map(candidates.map((candidate) => [candidate.doid, candidate]));
+  const heroByDoid = byDoid(heroes);
+  const petByDoid = byDoid(pets);
+  const beastByDoid = byDoid(beasts);
+  const allyByDoid = byDoid(allies);
+  const huntable = enemies.filter(({ actor }) => isHuntable(actor));
+  const byBeast = [...heroes, ...pets, ...allies, ...huntable];
+  const byBeastDoid = byDoid(byBeast);
+  crowd.targets = {
+    held: (doid) => heroByDoid.get(doid) ?? petByDoid.get(doid) ?? beastByDoid.get(doid) ?? allyByDoid.get(doid) ?? null,
+    heldByBeast: (doid) => byBeastDoid.get(doid) ?? null,
+    huntable,
+    byPet: [...huntable, ...beasts],
+    byBeast,
+  };
+  return crowd.targets;
+};

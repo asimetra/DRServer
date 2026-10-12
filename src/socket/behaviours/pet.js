@@ -4,7 +4,7 @@ import { squaredDistanceTo } from "../npc-crowd.js";
 import { touchingInTheWay } from "../npc-move.js";
 import { collectNearbyForPet } from "../pickups.js";
 import { canGetAt } from "../routing.js";
-import { disengage, fighting, letGoOfTarget, lockOn, stillLocked } from "../target-lock.js";
+import { fighting, letGoOfTarget, lockOn, stillLocked, targetsOf } from "../target-lock.js";
 import { STILL, walkEndsAt, walkTowards } from "./chase.js";
 import { backsOffFrom } from "./kite.js";
 import { returnsBesideVictim } from "./teleport.js";
@@ -262,7 +262,9 @@ const pinnedBy = (turn, intent, before) => {
  * after it last picked (`lockOn`): the search for a way to it is not made
  * every tick, and one that becomes reachable is taken then. Null for none.
  */
-const petPick = ({ petTargets, navigation }, actor, owner, now) => {
+const petPick = (crowd, actor, owner, now) => {
+  const { navigation } = crowd;
+  const petTargets = targetsOf(crowd).byPet;
   const { ai } = actor;
   if (!stillLocked(ai, now) || !ai.passedOver) ai.passedOver = new Set();
   const tether = ai.tetherDistance > 0 ? ai.tetherDistance : Infinity;
@@ -326,13 +328,11 @@ export const petTarget = (crowd, actor, now) => {
   if (blocker) return fighting(blocker);
   if (leashed(actor, owner, ownerDistance)) {
     letGoOfTarget(ai);
-    disengage(ai);
     return following;
   }
-  const locked = crowd.petTargets.find(({ doid }) => doid === ai.targetDoid);
+  const locked = targetsOf(crowd).byPet.find(({ doid }) => doid === ai.targetDoid);
   const victim = locked && stillLocked(ai, now) ? locked : petPick(crowd, actor, owner, now);
   if (victim) return fighting(victim);
-  disengage(ai);
   return backAt(actor, owner, ownerDistance) ? null : following;
 };
 
@@ -348,10 +348,11 @@ export const petTarget = (crowd, actor, now) => {
  * find it shut every time. One that falls, or leaves the floor, is let go
  * at once. Null when nothing pins it.
  */
-const clearing = ({ petTargets, navigation }, actor, now) => {
+const clearing = (crowd, actor, now) => {
   const { ai } = actor;
   if (ai.pinnedBy == null) return null;
-  const blocker = petTargets.find(({ doid }) => doid === ai.pinnedBy);
+  const { navigation } = crowd;
+  const blocker = targetsOf(crowd).byPet.find(({ doid }) => doid === ai.pinnedBy);
   const holding = blocker && ai.targetDoid === blocker.doid;
   const sceneryChanged = navigation && ai.pinnedRevision !== navigation.revision;
   if (!blocker || (holding && (!stillLocked(ai, now) || sceneryChanged))) {

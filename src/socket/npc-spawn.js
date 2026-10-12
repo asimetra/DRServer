@@ -1,4 +1,5 @@
 import { npcGenerate, layerFor } from "./objects.js";
+import { kindOfRow, rolesOfRow } from "./actor-roles.js";
 import { runRulesOf } from "./run-rules.js";
 import { npcForConstant, resolveSpawnConstant, weaponForConstant, attackForConstant, attackColliders, projectileLaunches, projectileForConstant, deathRewardDataForNpc, isArrivalAnimation, FRAMES_PER_SECOND } from "../gamemaster.js";
 import { maxHitPoints } from "../hero-stats.js";
@@ -355,6 +356,7 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
   // damageable would let a stray hit mark them dead.
   if (hitPoints > 0) {
     if (npc.CharType === "ENEMY") noteFloorEnemy(session, hitPoints);
+    const roles = rolesOfRow(npc, options);
     session.actors.set(npcDoid, {
       hitPoints,
       maxHitPoints: hitPoints,
@@ -395,35 +397,8 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
               session.send(npcCreateFrame(position, heading, current?.hitPoints ?? hitPoints));
             }
           : null,
-      /**
-       * Two questions, and they used to share one answer. Whether this is an
-       * enemy is what pets hunt, what the hero's bombs and fissures catch, what
-       * FLOOR_KILL_ALL_NPCS takes and what counts on the report. Whether it
-       * holds the floor open is only the floor's question — a boss's clones and
-       * an Infinite modifier's spawns are enemies it did not stock.
-       *
-       * Answered together, a summoned clone was nobody's target but the hero's
-       * sword. The official counts it: its solo samurai run reports 29 kills,
-       * which is the 28 ordinary enemies and the one clone the hero killed,
-       * and not the two its pet killed.
-       */
-      isEnemy: npc.CharType === "ENEMY",
-      isProp: npc.CharType === "PROP",
-      holdsFloor: npc.CharType === "ENEMY" && options.countsForFloor !== false,
-      /**
-       * And a third: whether anything may pick it as a target. `IsAttackable`
-       * is the client's own answer — `isAttackable = IsAttackable &&
-       * triggerState` — so a hero is never offered one to hit. Thirty ENEMY
-       * rows say no: every placeable, Infinite's ice bombs and lightning orbs,
-       * and the lava golem boss. A pet chasing an orb, or a hero's bomb putting
-       * out an ice bomb before it goes off, is this server choosing a target
-       * the client never could.
-       */
-      attackable: Boolean(npc.IsAttackable),
-      // A moving BEAST is a neutral third-party combatant. Static BEAST rows
-      // are traps/placeables and must never enter NPC target selection.
-      isBeast: npc.CharType === "BEAST" && Boolean(npc.IsMover),
-      isPet: npc.CharType === "PET" && Boolean(options.petOwnerDoid),
+      // Which side it is on and who may pick it (actor-roles.js `rolesOfRow`).
+      ...roles,
       masterId: Number(options.masterId ?? 0),
       /**
        * How long this one is still worth drawing after it dies.
@@ -550,27 +525,12 @@ export const spawnNpc = async (context, constant, position, scale, options = {})
       // The scale it is drawn at, and so where its body sits (`bodyOffsetOf`, navigation.js).
       scale: generatedScale,
       heading: spawnHeading,
-      /**
-       * `isAlly`: on the players' side without being a player — the chef to be
-       * saved, a princess, a barricade, a defence orb. The official's monsters
-       * go for these as for anybody: Battleheim's warhogs land 517 hits on
-       * barricades and 308 on defence orbs, and the Cretaceous sorcerers put
-       * 20 on the chef. Targeted by distance like a hero (npc-targeting.js),
-       * and the one that walks (the chef) fights back with an AI of its own.
-       */
-      isAlly: npc.CharType === "HERO" && !options.petOwnerDoid && Boolean(npc.IsAttackable),
       ai:
         (["ENEMY", "BEAST", "HERO"].includes(npc.CharType) || options.petOwnerDoid) &&
         (npc.IsMover || (npc.IsBoss && npc.Aggro_AI_Type === "STATIONARY_AI")) &&
         nativeAttack
           ? {
-              kind: options.petOwnerDoid
-                ? "pet"
-                : npc.CharType === "BEAST"
-                  ? "beast"
-                  : npc.CharType === "HERO"
-                    ? "ally"
-                    : "enemy",
+              kind: kindOfRow(npc, options),
               ownerDoid: Number(options.petOwnerDoid ?? 0),
               ...petAiOf(npc),
               targetTimerMs: Math.max(0, Number(npc.ChangeTargetT ?? 2) * 1000),

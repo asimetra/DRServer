@@ -8,8 +8,7 @@ import { boundedPush, nobodyToFight, senseCrowd, separateIdleNpc, separationDisp
 import { face } from "./npc-facing.js";
 import { afterStep, bodiesMet, passingNow, placeNpc, stepNpc } from "./npc-move.js";
 import { advanceNpcRelease } from "./npc-release.js";
-import { clearNpcTarget, LET_GO, pickTarget } from "./npc-targeting.js";
-import { engage } from "./target-lock.js";
+import { clearNpcTarget, LET_GO, notice, pickTarget } from "./npc-targeting.js";
 import { describeRoute, NO_ROUTE_ASKED, routeToTarget } from "./routing.js";
 import { chase, restWalk, walkEndsAt } from "./behaviours/chase.js";
 import { isKiter, kite, backingOff } from "./behaviours/kite.js";
@@ -242,30 +241,17 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     if (release === "out") return said;
   }
 
-  /**
-   * The notice: within its AggroRadius it engages, past its DisengageDist it
-   * lets go. By distance alone, through walls too: the official attacks with
-   * its target out of sight (36% of first moves within AggroRadius), so a
-   * monster in a sealed pocket engages through the wall and stands pressed
-   * to it facing the hero ("blocked") until he is DisengageDist off in a
-   * straight line. Known, and left so.
-   */
-  if (!following) {
-    const distance = distanceTo(actor.position, target);
-    if (!ai.engaged) {
-      if (distance > ai.aggroRadius) {
-        // Release AI already returned above while a cage exit was active.
-        // Outside awareness the only permitted motion is resolving a body
-        // overlap; no route, facing change or chase state is created.
-        separateIdleNpc(session, doid, actor, crowd.spatialIndex, crowd.heroDoids, crowd.heroes, deltaSeconds);
-        return said;
-      }
-      engage(ai);
-      said = "chase";
-    } else if (distance > ai.disengageDistance) {
-      return letGo(session, doid, actor);
-    }
+  // Aggro and disengagement (npc-targeting.js `notice`).
+  const noticed = following ? null : notice(actor, target);
+  if (noticed === "idle") {
+    // Release AI already returned above while a cage exit was active.
+    // Outside awareness the only permitted motion is resolving a body
+    // overlap; no route, facing change or chase state is created.
+    separateIdleNpc(session, doid, actor, crowd.spatialIndex, crowd.heroDoids, crowd.heroes, deltaSeconds);
+    return said;
   }
+  if (noticed === "noticed") said = "chase";
+  if (noticed === "let-go") return letGo(session, doid, actor);
 
   // Off the floor between teleports, still in its fight: nothing else of the
   // tick is its own. Following its owner, its fight is over (`standDown`).

@@ -1,4 +1,4 @@
-import { isHuntable } from "./actor-roles.js";
+import { candidateSetOf } from "./actor-roles.js";
 import { bodyPointOf, bodyRadius } from "./body.js";
 import { heroMembersOf } from "./match-world.js";
 import { placeNpc, stepNpc } from "./npc-move.js";
@@ -246,22 +246,14 @@ export const senseCrowd = (session, actors, deltaSeconds) => {
     .filter(({ actor, position }) => actor && !actor.dead && actor.hitPoints > 0 && position);
   const heroDoids = new Set(heroes.map(({ doid }) => doid));
   const spatialIndex = buildNpcSpatialIndex(actors, deltaSeconds, heroDoids);
-  const pets = [];
-  const enemies = [];
-  const beasts = [];
-  /** On the players' side without being players: the chef, a princess, a barricade (dungeon.js `isAlly`). */
-  const allies = [];
+  const sets = { pets: [], enemies: [], beasts: [], allies: [] };
+  const { pets, enemies, beasts, allies } = sets;
   for (const [doid, actor] of actors) {
     if (actor.dead || actor.teleportHidden || !(actor.hitPoints > 0) || !actor.position) continue;
-    const candidate = { doid, actor, position: actor.position, member: null };
-    if (actor.isPet) pets.push(candidate);
-    else if (actor.isEnemy) enemies.push(candidate);
-    else if (actor.isBeast) beasts.push(candidate);
-    else if (actor.isAlly) allies.push(candidate);
+    const set = candidateSetOf(actor);
+    if (set) sets[set].push({ doid, actor, position: actor.position, member: null });
   }
-  const byDoid = (candidates) => new Map(candidates.map((candidate) => [candidate.doid, candidate]));
-  const petByDoid = byDoid(pets);
-  const huntable = enemies.filter(({ actor }) => isHuntable(actor));
+  // Who may target whom is target-lock.js's to say (`targetsOf`).
   return {
     navigation: session.navigation ?? null,
     heroes,
@@ -271,13 +263,6 @@ export const senseCrowd = (session, actors, deltaSeconds) => {
     enemies,
     beasts,
     allies,
-    huntable,
-    heroByDoid: byDoid(heroes),
-    petByDoid,
-    beastByDoid: byDoid(beasts),
-    allyByDoid: byDoid(allies),
-    petTargets: [...huntable, ...beasts],
-    beastTargets: [...heroes, ...pets, ...allies, ...huntable],
   };
 };
 

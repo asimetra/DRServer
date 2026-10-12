@@ -32,3 +32,52 @@ export const holdsFloor = (actor) => Boolean(actor?.isEnemy) && actor.holdsFloor
  * enemies and the one clone the hero killed.
  */
 export const countsAsKill = (actor) => Boolean(actor?.isEnemy);
+
+/**
+ * Its roles, from its row and whether a player owns it as a pet: the flags
+ * the crowd sorts it by (`candidateSetOf`) and the questions above answer.
+ *
+ * Two questions, and they used to share one answer. Whether this is an
+ * enemy is what pets hunt, what the hero's bombs and fissures catch, what
+ * FLOOR_KILL_ALL_NPCS takes and what counts on the report. Whether it holds
+ * the floor open is only the floor's question — a boss's clones and an
+ * Infinite modifier's spawns are enemies it did not stock. Answered
+ * together, a summoned clone was nobody's target but the hero's sword. The
+ * official counts it: its solo samurai run reports 29 kills, which is the
+ * 28 ordinary enemies and the one clone the hero killed, and not the two
+ * its pet killed.
+ *
+ * And a third: whether anything may pick it as a target. `IsAttackable` is
+ * the client's own answer — `isAttackable = IsAttackable && triggerState`
+ * — so a hero is never offered one to hit. Thirty ENEMY rows say no: every
+ * placeable, Infinite's ice bombs and lightning orbs, and the lava golem
+ * boss. A pet chasing an orb, or a hero's bomb putting out an ice bomb
+ * before it goes off, is this server choosing a target the client never
+ * could.
+ *
+ * A moving BEAST is a neutral third-party combatant; static BEAST rows are
+ * traps and placeables and never enter target selection. `isAlly`: on the
+ * players' side without being a player — the chef to be saved, a princess,
+ * a barricade, a defence orb. The official's monsters go for these as for
+ * anybody: Battleheim's warhogs land 517 hits on barricades and 308 on
+ * defence orbs, and the Cretaceous sorcerers put 20 on the chef. Targeted by
+ * distance like a hero (npc-targeting.js), and the one that walks (the
+ * chef) fights back with an AI of its own.
+ */
+export const rolesOfRow = (npc, { petOwnerDoid = 0, countsForFloor } = {}) => ({
+  isEnemy: npc.CharType === "ENEMY",
+  isProp: npc.CharType === "PROP",
+  holdsFloor: npc.CharType === "ENEMY" && countsForFloor !== false,
+  attackable: Boolean(npc.IsAttackable),
+  isBeast: npc.CharType === "BEAST" && Boolean(npc.IsMover),
+  isPet: npc.CharType === "PET" && Boolean(petOwnerDoid),
+  isAlly: npc.CharType === "HERO" && !petOwnerDoid && Boolean(npc.IsAttackable),
+});
+
+/** The selector its AI picks with (npc-targeting.js `pickTarget`): a player's pet, a beast, an ally, or an enemy. */
+export const kindOfRow = (npc, { petOwnerDoid = 0 } = {}) =>
+  petOwnerDoid ? "pet" : npc.CharType === "BEAST" ? "beast" : npc.CharType === "HERO" ? "ally" : "enemy";
+
+/** The crowd's set it is a candidate in (npc-crowd.js `senseCrowd`), or null for none. */
+export const candidateSetOf = (actor) =>
+  actor.isPet ? "pets" : actor.isEnemy ? "enemies" : actor.isBeast ? "beasts" : actor.isAlly ? "allies" : null;

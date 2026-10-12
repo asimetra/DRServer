@@ -6,7 +6,7 @@ import { restWalk } from "./behaviours/chase.js";
 import { forgetBackOff } from "./behaviours/kite.js";
 import { forgetPetTarget, petTarget } from "./behaviours/pet.js";
 import { forgetQueue } from "./npc-move.js";
-import { disengage, fighting, letGoOfTarget, lockOn, stillLocked, take } from "./target-lock.js";
+import { disengage, engage, fighting, letGoOfTarget, lockOn, stillLocked, take, targetsOf } from "./target-lock.js";
 
 /**
  * Who each one goes for this tick, one selector per kind.
@@ -101,7 +101,7 @@ export const clearNpcTarget = (actor) => {
  * monster of another side.
  */
 const enemyTarget = (crowd, actor) => {
-  const held = heldTarget(crowd, actor);
+  const held = heldTarget(targetsOf(crowd).held, actor);
   if (held) return fighting(held);
   // Engaged with one that fell or left the floor: dropped and forgotten, as
   // past its DisengageDist (ai.js); its next pick is a fresh one, of what is
@@ -112,11 +112,7 @@ const enemyTarget = (crowd, actor) => {
 };
 
 /** The one it holds: on the floor, alive, and it engaged (past its DisengageDist ai.js lets go). */
-const heldTarget = ({ heroByDoid, petByDoid, beastByDoid, allyByDoid }, { ai }) => {
-  if (!ai.engaged) return null;
-  return heroByDoid.get(ai.targetDoid) ?? petByDoid.get(ai.targetDoid) ??
-    beastByDoid.get(ai.targetDoid) ?? allyByDoid.get(ai.targetDoid) ?? null;
-};
+const heldTarget = (held, { ai }) => (ai.engaged ? held(ai.targetDoid) : null);
 
 /** Its pick with nothing held: the nearest player, a pet in reach with no player in it, a nearer beast. */
 const firstPick = ({ heroes, pets, beasts, allies }, actor) => {
@@ -144,12 +140,13 @@ const firstPick = ({ heroes, pets, beasts, allies }, actor) => {
  * Team 7 fights every living combatant outside team 7, the nearest when it
  * picks, and holds it as a monster does (`enemyTarget`).
  */
-const beastTarget = ({ beastTargets }, actor) => {
+const beastTarget = (crowd, actor) => {
   const { ai } = actor;
-  const held = beastTargets.find(({ doid }) => doid === ai.targetDoid);
-  if (held && ai.engaged) return fighting(held);
+  const { heldByBeast, byBeast } = targetsOf(crowd);
+  const held = heldTarget(heldByBeast, actor);
+  if (held) return fighting(held);
   if (ai.engaged && ai.targetDoid != null) return LET_GO;
-  return fighting(take(ai, nearestTo(actor.position, beastTargets)));
+  return fighting(take(ai, nearestTo(actor.position, byBeast)));
 };
 
 /**
@@ -158,8 +155,9 @@ const beastTarget = ({ beastTargets }, actor) => {
  * seconds; it does not follow the hero (stood 9 s at spawn, 150-600
  * away, until an enemy appeared).
  */
-const allyTarget = ({ huntable }, actor, now) => {
+const allyTarget = (crowd, actor, now) => {
   const { ai } = actor;
+  const { huntable } = targetsOf(crowd);
   const locked = huntable.find(({ doid: enemyDoid }) => enemyDoid === ai.targetDoid);
   const victim = locked && stillLocked(ai, now)
     ? locked
@@ -167,11 +165,40 @@ const allyTarget = ({ huntable }, actor, now) => {
   return victim ? fighting(victim) : LET_GO;
 };
 
+/**
+ * The notice, for a target it fights (not one it follows): within its
+ * AggroRadius an idle one engages ("noticed"), outside it stays idle
+ * ("idle"); an engaged one past its DisengageDist lets go ("let-go");
+ * otherwise null, the fight goes on. By distance alone, through walls too:
+ * the official attacks with its target out of sight (36% of first moves
+ * within AggroRadius), so a monster in a sealed pocket engages through the
+ * wall and stands pressed to it facing the hero ("blocked") until he is
+ * DisengageDist off in a straight line. Known, and left so. Engagement is
+ * decided here and in the pet's walk back (`pickTarget`) alone; a hit wakes
+ * one too (target-lock.js `wakeOnHit`).
+ */
+export const notice = (actor, target) => {
+  const { ai } = actor;
+  const distance = distanceTo(actor.position, target);
+  if (!ai.engaged) {
+    if (distance > ai.aggroRadius) return "idle";
+    engage(ai);
+    return "noticed";
+  }
+  return distance > ai.disengageDistance ? "let-go" : null;
+};
+
 /** One selector per `ai.kind`; anything else picks as an enemy does. */
 const SELECTORS = new Map([
   ["enemy", enemyTarget],
   ["beast", beastTarget],
-  ["pet", (crowd, actor, now) => petTarget(crowd, actor, now) ?? LET_GO],
+  ["pet", (crowd, actor, now) => {
+    // Walking back to its owner, or nobody to fight: engaged with nothing.
+    const picked = petTarget(crowd, actor, now);
+    if (!picked) return LET_GO;
+    if (picked.following) disengage(actor.ai);
+    return picked;
+  }],
   ["ally", allyTarget],
 ]);
 
