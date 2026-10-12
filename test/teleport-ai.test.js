@@ -244,3 +244,32 @@ test("a shadow wolf hidden when its fight ends comes back on the floor", async (
   await run(session, now + 250, now + 1500);
   assert.equal(wolf.teleportHidden, false, "left off the floor when its fight ended");
 });
+
+/** Following its owner, a teleporting pet walks: its cycle is its fight's. */
+test("a shadow wolf walking back to its owner does not teleport", async () => {
+  const heroDoid = 10;
+  const hero = { hitPoints: 200, maxHitPoints: 200, collisionRadius: 26, position: { x: 0, y: 0 }, team: TEAM.PLAYERS };
+  const wolf = {
+    hitPoints: 999, maxHitPoints: 999, collisionRadius: 25, team: TEAM.PLAYERS, isPet: true, position: { x: 700, y: 0 }, heading: 0,
+    teleportRegenerate: () => {},
+    ai: {
+      kind: "pet", behavior: "TELEPORT_AI", ownerDoid: heroDoid, state: "idle", engaged: false, aggroRadius: 300, disengageDistance: 1000,
+      tetherDistance: 400, returnDistance: 250, collects: {}, moveSpeed: 312, attackRange: 120, keepDistance: 0, targetTimerMs: 1000,
+      targetRandMs: 0, nextAttackAt: Infinity, attacks: [{ attackType: 1, range: 120, minRange: 0, rechargeMs: 0, readyAt: 0 }],
+      teleportRange: 75, teleportRecurMs: 200, teleportRecurRandMs: 300, preTeleportAttackMs: 200, postTeleportAttackMs: 1200,
+      teleportOutDelayMs: 1000, teleportPhase: "visible",
+    },
+  };
+  const session = {
+    id: 72, heroDoid, heroPosition: hero.position, random: () => 0.5, send: () => {},
+    objects: new Map([[heroDoid, CLID.HeroGameObject], [30, CLID.DistributedNPCGameObject]]),
+    actors: new Map([[heroDoid, hero], [30, wolf]]),
+  };
+  let hid = false;
+  for (let now = 1250; now <= 4000; now += 250) {
+    await tickNpcAi(session, now, 0.25);
+    hid ||= Boolean(wolf.teleportHidden);
+  }
+  assert.equal(hid, false, "it teleported on its way back");
+  assert.ok(wolf.position.x < 400, `it walked back: ${Math.round(wolf.position.x)}`);
+});

@@ -278,7 +278,8 @@ const tickActor = async (session, state, crowd, doid, actor, now, deltaSeconds) 
     return cycle && comeBack(session, doid, actor, target, bodies, now) ? "teleport-in" : said;
   }
 
-  if (cycle) {
+  // Its cycle is its fight's: following its owner, a teleporting pet walks.
+  if (cycle && !following) {
     const phase = teleportTurn(session, doid, actor, now);
     if (phase) return phase.said ?? said;
   }
