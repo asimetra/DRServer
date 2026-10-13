@@ -741,12 +741,15 @@ const spendStackable = (session, stackId, slot) => {
  * authored at DamageMod zero, so the attack itself is not the weapon — their
  * timelines place a bomb, and the bomb's DeathAttack is the bang. Throwing one
  * did nothing at all while this path returned before the placeable scheduler.
+ *
+ * Answers whether the powerup was spent, which is what decides whether the
+ * party is shown the drink.
  */
 const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
   const equipped = session.heroConsumables?.[slot];
   if (!equipped?.type || !(equipped.count > 0)) {
     warn(`[${session.id}] rejected ${attack.Constant}: powerup slot ${slot} is empty`);
-    return true;
+    return false;
   }
 
   const stackable = await stackableById(equipped.type);
@@ -755,12 +758,12 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
       `[${session.id}] rejected ${attack.Constant}: slot ${slot} holds ` +
         `${stackable?.Constant ?? equipped.type}, whose use is ${stackable?.UsageAttack ?? "nothing"}`
     );
-    return true;
+    return false;
   }
 
   if (!spendStackable(session, equipped.type, slot)) {
     warn(`[${session.id}] rejected ${attack.Constant}: powerup slot ${slot} no longer holds it`);
-    return true;
+    return false;
   }
   equipped.count -= 1;
 
@@ -863,7 +866,13 @@ export const handleProposeAttackChoreography = async (
     await auditHeroPlaySpeedSafely(session, attack, weaponSlot, playSpeed, {
       isConsumable: true,
     });
-    return useConsumable(session, attack, weaponSlot, { playSpeed });
+    /**
+     * And the party sees it drunk, as it sees any other cast: the peers' field
+     * 159 carries the consumable flag the drinker sent, so the client is built
+     * to be told. Only a drink that was spent is shown.
+     */
+    if (await useConsumable(session, attack, weaponSlot, { playSpeed })) onAccepted?.();
+    return true;
   }
 
   /**

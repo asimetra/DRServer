@@ -132,13 +132,22 @@ test("the prank potion puts its buff on the enemies inside its 3000, with no hit
 });
 
 /**
- * A drink is not relayed to the other players. Across 22 official sessions
- * with more than one hero, 2666 of the other heroes' choreographies arrived and
- * not one was a consumable's.
+ * A drink is shown to the party as any other cast is: the peers' field 159
+ * carries the consumable flag the drinker sent. One that is refused is not.
  */
-test("a consumable's choreography is not relayed to the party", async () => {
+test("a consumable's choreography is relayed to the party once it is spent", async () => {
   const { session } = party();
   let relayed = 0;
   await drink(session, 70011, { onAccepted: () => (relayed += 1) });
-  assert.equal(relayed, 0);
+  assert.equal(relayed, 1);
+
+  // A slot that holds something else is refused, and nothing is relayed.
+  session.heroConsumables = [{ type: 70001, count: 3 }, {}];
+  const gm = await loadGameMaster();
+  const usage = gm.raw.Attack.find((row) => row.Constant === "CONSUMABLE_STAT_ATTACK_POTION_PARTY_ATTACK");
+  const proposal = new PacketWriter().u8(0).u8(1).u32(usage.Id).u32(0).u8(0).f32(1).f32(1).body();
+  await handleProposeAttackChoreography(session, new PacketReader(proposal), {
+    onAccepted: () => (relayed += 1),
+  });
+  assert.equal(relayed, 1);
 });
