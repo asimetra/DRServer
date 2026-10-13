@@ -28,9 +28,8 @@ test("the authored regen is the hero's own, and training feeds three of them", a
  *
  * It is authored nowhere and was guessed at a second, so the bar refilled five
  * times faster than the game's — a spell's cost was back before its animation
- * finished. Field 163 across 49 official captures says otherwise: 409
- * unprompted rises, median gap 4.999s, p75 5.008s, and every amount is one
- * hero's own MP_REGEN.
+ * finished. The game's period is five seconds: field 163 rises unprompted
+ * every five seconds, each time by one hero's own MP_REGEN.
  *
  * Driven by mock timers rather than by sleeping, so the assertion is the period
  * itself — nothing at 4.9 seconds, exactly one hero's worth at 5.

@@ -1,5 +1,5 @@
 /**
- * Where our server and the official one disagree, read off the wire.
+ * Where our server and a reference capture disagree, read off the wire.
  *
  *   DR_CAPTURE=ours.jsonl node tools/probe.js request-entry
  *   node tools/capture-diff.js theirs.jsonl ours.jsonl
@@ -59,7 +59,7 @@ const loadNames = async (clientPath) => {
  * drown the output:
  *
  * The client logs both directions and `DR_CAPTURE` records only what the probe
- * receives, so every client->server message would read as one the official
+ * receives, so every client->server message would read as one the reference
  * sends and we never do. Only the server's own half is compared unless --both
  * is asked for.
  *

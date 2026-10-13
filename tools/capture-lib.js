@@ -162,19 +162,18 @@ const isSelfHosted = (url) =>
   SELF_HOSTED.test(url) || selfHosts.some((host) => url.toLowerCase().includes(host));
 
 /**
- * Which recordings are of a server that is not this one.
+ * Which recordings are reference recordings rather than this server's own.
  *
  * The client records its traffic wherever it is pointed, so one directory can
- * hold sessions against a third-party service and sessions against a local
- * build side by side, in the same format. Treating the second kind as evidence
+ * hold reference sessions and sessions against a local build side by side, in
+ * the same format. Treating the second kind as evidence
  * means comparing this server against itself: the tutorial's knights
  * "disagreed" with npc-stats 107 times and every one of those recordings was
  * ours, from a build that priced them differently.
  *
- * Decided by exclusion rather than by naming a vendor. Anything that is not one
- * of our own addresses belongs to somebody else, which is both the honest test
- * and the one that keeps a third party's infrastructure out of this file. A URL
- * that is missing or unreadable is left out entirely: unknown is not evidence.
+ * Decided by exclusion rather than by naming a host: anything that is not one
+ * of our own addresses counts as a reference session. A URL that is missing or
+ * unreadable is left out entirely: unknown is not evidence.
  */
 const officialSessions = async (target, names) => {
   const rpcs = names.filter((name) => name.startsWith("rpc-") && name.endsWith(".jsonl"));

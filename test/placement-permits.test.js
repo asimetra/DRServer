@@ -16,12 +16,9 @@ import { PacketWriter, PacketReader } from "../src/socket/packet.js";
  * — `PROJ_GARLIC`, `PROJ_MINES`, `PROJ_FIREBOMB` — so those three placeables
  * are the whole of what this field can honestly ask for.
  *
- * An earlier version of this comment credited the official recordings with 32
- * such placements. They contain none: across all 66 captures there is not one
- * outbound field 177 and not one of those three ever generated. What the
- * behaviour is measured against instead is a session played against this server
- * with the same unmodified client, which placed five — three garlics, a mine
- * and a firebomb.
+ * The behaviour is measured against a session played against this server with
+ * the unmodified client, which placed five — three garlics, a mine and a
+ * firebomb.
  */
 test("a placeable lands only where a throw of it was allowed", async () => {
   const mine = await npcForConstant("STICKY_MINE_PLACEABLE");
@@ -61,7 +58,7 @@ test("a placeable lands only where a throw of it was allowed", async () => {
     await handleProposeCreateNPC(honest, landIt());
     assert.equal(honest.objects.size, landed, "the same permit does not pay twice");
 
-    // The slot is part of it: 32 of 32 official placements matched their cast's.
+    // The slot is part of it: a placement comes from the slot that cast it.
     const wrongSlot = world();
     await notePlacementPermit(wrongSlot, throwMine, 0);
     await handleProposeCreateNPC(wrongSlot, landIt());
@@ -77,9 +74,9 @@ test("a placeable lands only where a throw of it was allowed", async () => {
  * where the thing landed, and nothing read the coordinate — so one honest
  * throw could put a mine at NaN, Infinity, and this server built it there.
  *
- * The hero's own position has been refused on this rule since it was measured:
- * 34850 official coordinates, none non-finite, none past a million. The same
- * claim on a different field gets the same answer.
+ * The hero's own position has long been refused on this rule: an honest
+ * coordinate is finite and nowhere near a million. The same claim on a
+ * different field gets the same answer.
  */
 test("a placeable needs a coordinate that is one", async () => {
   const mine = await npcForConstant("STICKY_MINE_PLACEABLE");

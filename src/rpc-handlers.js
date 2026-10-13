@@ -134,8 +134,8 @@ register("account/AlterAttribute", async ([accountId, , rawName, rawValue]) => {
  * Which is not a cosmetic loss. `MainStateMachine.start` reads bit 5 to decide
  * where a session begins: a hero holding a weapon with that bit clear is sent
  * into the tutorial dungeon, every launch, however many hundreds of runs are
- * behind them. The captured official account carries 1050622 — bits 1 through
- * 10 and one more — against the zero this server was handing back.
+ * behind them. A seasoned account has bits 1 through 10 and more set, against
+ * the zero this server was handing back.
  *
  * `add` is meant literally: the incoming value is OR'd rather than assigned, so
  * a client that is behind on what it knows cannot clear a lesson somebody has
@@ -189,9 +189,8 @@ const dailyRewardClaimed = (account) => daysSinceReward(account) === 0;
 
 /**
  * Seconds until the daily reward is available again, or zero when it already
- * is. The live values decode cleanly as a countdown to the next UTC midnight —
- * 83129 seconds recorded just before 01:00 UTC — which is also what the client
- * reads: the box screen appears only while this is zero.
+ * is: a countdown to the next UTC midnight, which is what the client reads —
+ * the box screen appears only while this is zero.
  */
 const secondsUntilDailyReset = (account) => {
   if (!dailyRewardClaimed(account)) return 0;
@@ -203,7 +202,7 @@ const secondsUntilDailyReset = (account) => {
 /**
  * The streak the next claim will stand at.
  *
- * Counted in calendar days, as the official counts it: claimed yesterday is one
+ * Counted in calendar days: claimed yesterday is one
  * more, anything older starts again at one. An account eleven days in that
  * skipped a single day was shown, and paid, day one.
  */
@@ -211,13 +210,12 @@ const nextStreak = (account) =>
   daysSinceReward(account) === 1 ? Math.max(0, Number(account.concurrent_days ?? 0)) + 1 : 1;
 
 /**
- * The day of the streak, which runs 1..3 and then stays there. Two accounts pin
- * it: one on its first consecutive day reported 1, one on its sixth reported 3.
+ * The day of the streak, which runs 1..3 and then stays there: the reward
+ * screen has three tiers.
  *
  * Before today's claim it is the day about to be paid, not the one last paid.
- * The official's question and its payout agree on every recorded first spin —
- * `[2, 3, …]` asked, 10 × 3 paid — and they only can if the question looks
- * ahead.
+ * UIDailyRewards shows the day it is told and the claim pays that day's tier,
+ * so the two only agree if the question looks ahead.
  */
 const dailyRewardDay = (account) => {
   const streak = dailyRewardClaimed(account) ? Number(account.concurrent_days ?? 1) : nextStreak(account);
@@ -226,15 +224,14 @@ const dailyRewardDay = (account) => {
 
 /**
  * The multiplier is the number of heroes on the account, not the streak — the
- * reward scales with how many characters you own. Both captures agree: two
- * avatars reported 2, six reported 6.
+ * reward scales with how many characters you own: two avatars are 2, six
+ * are 6.
  */
 const heroCount = (account) => Math.max(1, (account.account_avatars ?? []).length);
 
 /**
  * What the day pays, by the client's own arithmetic in UIDailyRewards:
- * `tiers[day - 1] * multiplier`. The captured account — day 1, two heroes —
- * works out at 5 × 2 = 10, exactly the gems it received.
+ * `tiers[day - 1] * multiplier`. Day 1 with two heroes is 5 × 2 = 10.
  */
 const dailyRewardAmount = (account) =>
   config.dailyRewardTiers[dailyRewardDay(account) - 1] * heroCount(account);
@@ -250,11 +247,9 @@ const dailyRewardStatus = (account) => [
 
 /**
  * The tiers and the replay price are settings (`dailyRewardTiers`,
- * `dailyReplayCost`), because no table authors them. Their defaults are what
- * the live server was seen to use: three tiers worth 5/10/15 gems, and five
- * gems to spin the boxes again — gems, not gold. The capture is unambiguous:
- * across four redeems the account's gold never moved while its gems went +10
- * once and then -5 per replay.
+ * `dailyReplayCost`), because no table authors them. Their defaults are three
+ * tiers worth 5/10/15 gems, and five gems to spin the boxes again — gems, not
+ * gold.
  */
 
 /** Constant tail element of the redeem response; its meaning is unknown. */
@@ -290,9 +285,9 @@ register("store/AskAboutDailyReward", async ([accountId]) =>
  * A mutation answers with the account's scalar fields plus the lists it
  * actually changed — nothing more.
  *
- * The live server is precise about this: setActiveAvatar returns 25 fields and
- * no lists, while equipItemOnAvatar and SellWeapon return 26, the extra one
- * being account_items. Sending everything would overwrite parts of the client's
+ * setActiveAvatar answers with the scalar fields and no lists, while
+ * equipItemOnAvatar and SellWeapon add account_items. Sending everything would
+ * overwrite parts of the client's
  * view it just updated itself; sending nothing leaves the inventory screen
  * showing the old gear, because the client refreshes from this response.
  *
@@ -492,13 +487,12 @@ register("account/DropChest", async ([accountId, chestInstanceId]) => {
  * Inventory mutations.
  *
  * Equipping is not a flag on the item — it is the pair (avatar_id, avatar_slot)
- * being set, and unequipping is those two going back to null. That is exactly
- * how the live server represents it, so these handlers do the same thing and
- * persist it.
+ * being set, and unequipping is those two going back to null. That is how the
+ * client reads an item row, so these handlers do the same thing and persist it.
  *
- * All of them answer with the account header, matching the live server: the
- * client has already applied the change locally, and sending our full account
- * back would overwrite its view.
+ * All of them answer with the account header: the client has already applied
+ * the change locally, and sending our full account back would overwrite its
+ * view.
  */
 
 const findItem = (account, itemInstanceId) =>
@@ -929,7 +923,7 @@ register("friendrequests/DRFriendRequestPending", async ([accountId]) => {
   const rows = pendingFriendRequestsOf(account)
     .filter((row) => !blocked.has(Number(row.account_id)))
     .map((row) => requestRowOf(row, Number(accountId)));
-  // Nothing pending is `false`, as the official answers it. The client tests
+  // Nothing pending is `false`. The client tests
   // this for truth and an empty array passes, raising its pending flag over an
   // empty tab.
   return rows.length ? rows : false;
@@ -944,8 +938,8 @@ register("friendrequests/DRFriendRequestPending", async ([accountId]) => {
  * to type on that screen. `UIInvite` passes whatever is in its text box.
  *
  * Reading both as base 32 is why adding a friend off the summary did nothing.
- * That alphabet holds the digits, so an account id is a *valid* code — 1000000006
- * reads as a number in the trillions — and the lookup came back "not found"
+ * That alphabet holds the digits, so an account id is a *valid* code — a
+ * ten-digit id reads as a number in the trillions — and the lookup came back "not found"
  * rather than failing in a way anybody would notice.
  *
  * What the text box will let through is worth knowing, because it decides what
@@ -1033,16 +1027,16 @@ register("friendrequests/DRFriendRequest", async (params) => {
     if (existing) return null;
 
     /**
-     * They asked first. Asking them back is saying yes: the live server made the
-     * friendship there and then, used their request up, and answered with the
-     * two-part shape `parseJson` in both invite paths recognises — the new
-     * friend's row, then the request that had been waiting. Only when there is
-     * such a request; otherwise this is an ordinary request that waits.
+     * They asked first. Asking them back is saying yes: the friendship is made
+     * there and then, their request is used up, and the answer is the two-part
+     * shape `parseJson` in both invite paths recognises — the new friend's
+     * row, then the request that had been waiting. Only when there is such a
+     * request; otherwise this is an ordinary request that waits.
      *
-     * The live server's first part was the asker's own row. `parseJson` hands
-     * it to `addFriendCallback`, which files each row under its account id —
-     * the asker's own — so the new friend reached the panel only if their
-     * coming online happened to prompt a refetch. Their row is what it needs.
+     * The first part is the new friend's row, not the asker's own. `parseJson`
+     * hands it to `addFriendCallback`, which files each row under its account
+     * id — so the asker's own row would put the new friend on the panel only if
+     * their coming online happened to prompt a refetch.
      */
     const waiting = pendingFriendRequestsOf(account);
     const theirs = waiting.find((row) => Number(row.account_id) === wantedId);
@@ -1055,7 +1049,7 @@ register("friendrequests/DRFriendRequest", async (params) => {
     const request = await newRequest();
     recipient.friend_requests = [...pending, request];
     await saveAccount(recipient);
-    // The live server answered with the request itself; the invite panel draws
+    // Answered with the request itself; the invite panel draws
     // its icon from `active_skin` and logs `to_account_id`.
     return request;
   });
@@ -1233,9 +1227,8 @@ register("store/GetAllGifts", async ([accountId]) =>
  * identifier of a row on somebody else's account is a sender who can overwrite
  * one. The offer is checked against the three the table calls free gifts.
  *
- * The answer is the exclude list, which is what the recording shows the real
- * server returning — it grows by one recipient per call, sorted, and the client
- * uses it to grey out who it can no longer send to.
+ * The answer is the exclude list — it grows by one recipient per call, sorted,
+ * and the client uses it to grey out who it can no longer send to.
  *
  * One bad recipient does not sink the rest. The client sends them one at a time
  * anyway, so a batch here is already unusual; refusing the whole call because
@@ -1398,11 +1391,10 @@ register("championsboard/getTopTwenty", async ([accountId, mapNodeId]) =>
 
 /**
  * params: [networkId] — the notices the client shows on its way into town, one
- * popup each (src/notices.js, config/notices.json). The live server answered
- * with an empty list; this one answers with the board, which is empty until an
- * operator writes to it.
+ * popup each (src/notices.js, config/notices.json). Answered with the board,
+ * which is empty until an operator writes to it.
  */
 register("modrpc/getmod", ([networkId]) => noticeBoard.rows({ networkId: Number(networkId) }), { account: null });
 
-/** params: [accountId] — timed store offers; empty in every capture. */
+/** params: [accountId] — timed store offers; this server has none. */
 register("store/GetLimitedOfferStatus", () => [], { account: null });

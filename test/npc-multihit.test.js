@@ -7,10 +7,10 @@ import { npcAttackChoices } from "../src/socket/npc-attacks.js";
 import { CLID, TEAM } from "../src/socket/opcodes.js";
 
 /**
- * How many times one monster cast lands on one hero, against the official.
+ * How many times one monster cast lands on one hero.
  *
- * The most hits one cast landed on one hero equals the attack's collider frame
- * count for all 40 monster attacks the corpus has: BABY_YETI_SCRATCH three,
+ * The most hits one cast can land on one hero is the attack's collider frame
+ * count: BABY_YETI_SCRATCH three,
  * YETI_PUNCH two, SHADOW_SLASH six, every single-frame swing one. This server
  * allowed one per cast, which is most of why a boss or a miniboss "barely hit".
  */
@@ -61,7 +61,7 @@ const cast = async (
 
 test("a baby yeti's three-frame scratch lands three times on a hero standing in it", async () => {
   const { results } = await cast("BABY_YETI", "EN_BABY_YETI_SCRATCH");
-  assert.equal(results, 3, "the official's scratch: 349 casts once, 119 twice, 152 three times");
+  assert.equal(results, 3, "the scratch can land once, twice or three times, and here all three");
 });
 
 test("a single-frame swing still lands once", async () => {
@@ -109,7 +109,7 @@ test("a late hit starts its own re-hit delay instead of using global frame windo
 
 /**
  * The Mini Boss Imp's pulse authors a 500-unit circle on frame 0 and sixteen
- * bolts after it; the official's hero took up to seventeen hits from one cast.
+ * bolts after it, so one cast can land up to seventeen hits on a hero.
  */
 test("an attack that authors a collider and projectiles does both", async () => {
   const { results, session } = await cast("MINI_BOSS_IMP", "EN_AREA_PULL_PULSE_ATTACK", {

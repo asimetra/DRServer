@@ -21,7 +21,7 @@ import { claimedReachOf } from "./hit-pricing.js";
  *
  * `HEALTH_BOMB_ATTACK` and `PARTY_BOMB_ATTACK` go out through the revive path
  * rather than through a choreography. They are the whole of the exception: of
- * 5447 hero hit claims in the official recordings, 4998 follow a choreography
+ * 5447 observed hero hit claims, 4998 follow a choreography
  * of the same attack and the 449 that do not are these two and nothing else.
  */
 export const CASTLESS_ATTACKS = new Set(["HEALTH_BOMB_ATTACK", "PARTY_BOMB_ATTACK"]);

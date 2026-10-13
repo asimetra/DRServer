@@ -1,11 +1,11 @@
 /**
  * Rooms the floor does not admit to having until something is broken open.
  *
- * A secret room is not merely shut, it is *absent*. The official does not send
- * its tile with the floor at all: in 118 recorded floor births carrying 22
+ * A secret room is not merely shut, it is *absent*. The game does not send
+ * its tile with the floor at all: in 118 observed floor births carrying 22
  * secret rooms, 10 of the rooms reached the client only in a later `floorTiles`
  * update, and every one of those 10 arrived within a frame of a `hitPoints = 0`
- * — the wall in its doorway giving way. Nothing else in the capture appends a
+ * — the wall in its doorway giving way. Nothing else observed appends a
  * tile to a live floor.
  *
  * One run reads end to end. Node 50088, a prison floor, opens with 8 tiles and

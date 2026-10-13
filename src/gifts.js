@@ -9,8 +9,7 @@ import { occupiedSlots, storageLimit } from "./inventory-space.js";
  *
  * The whole feature is three offers wide. Of the 3169 rows in `Offers`, exactly
  * three are free gifts — Health Bomb, Health Shot and Mana Shot, all priced 0 —
- * and each grants one stackable. Every gift in the recordings is one of them:
- * eight of offer 51301 and one of 51399.
+ * and each grants one stackable.
  *
  * That narrowness is what makes this safe to build. The sender names an offer,
  * and an offer id is the one thing here a modified client picks freely — so if
@@ -26,9 +25,9 @@ import { occupiedSlots, storageLimit } from "./inventory-space.js";
  *   NOT       what the gift contains. `AcceptGift` carries a request id and
  *             nothing else, so what arrives is whatever this server wrote down
  *             when the gift was made, never what the receiver claims it was.
- *   NOT       the request id of a gift it is creating. The official client
- *             invents one — `0_1787354382405.14_1000164031`, its own clock and
- *             the recipient — and a sender choosing the identifier of a row on
+ *   NOT       the request id of a gift it is creating. The client invents
+ *             one — `<counter>_<its own clock>_<recipient id>` — and a sender
+ *             choosing the identifier of a row on
  *             somebody else's account is a sender who can overwrite one. Minted
  *             here instead; the client's is read and discarded.
  */
@@ -39,15 +38,12 @@ export const GIFT_COOLDOWN_MS = 24 * HOUR;
 const giftCooldownMs = () => (config.giftCooldownHours ?? 24) * HOUR;
 
 /**
- * How long the cooldown really is, as far as the recordings can say.
+ * How long the cooldown is.
  *
- * They show it is per recipient and clears on about a one-day scale: sixteen
- * accounts sat on one player's exclude list from 2026-08-15 19:34 and were gone
- * by 2026-08-16 20:11, some twenty-five hours later. That is consistent with a
- * rolling day and with a reset at some daily boundary both, and there are not
- * enough transitions in the captures to tell those apart. A rolling day is the
- * one chosen, because it is the one that cannot be gamed by sending just before
- * the boundary and again just after.
+ * Per recipient, and about a day: a rolling day or a reset at some daily
+ * boundary would both fit that. A rolling day is the one chosen, because it is
+ * the one that cannot be gamed by sending just before the boundary and again
+ * just after.
  */
 
 /** Bounds the sent-log so an account cannot grow one without limit. */
@@ -98,10 +94,9 @@ export const canGiftTo = (account, toId, now = Date.now()) =>
 export const pendingGiftsFor = (account) => (Array.isArray(account?.gifts) ? account.gifts : []);
 
 /**
- * The shape `GetAllGifts` answers with, matching the official one field for
- * field. The client reads only `from_account_id`, `offer_id` and `request_id`
- * off a row, and the rest is here because the recording carries it and somebody
- * modding this later should find the same thing the real server sent.
+ * The shape `GetAllGifts` answers with. The client reads only
+ * `from_account_id`, `offer_id` and `request_id` off a row; the rest is here
+ * so that somebody modding this later finds the whole row in one place.
  */
 export const giftsFor = (account, now = Date.now()) => ({
   // A weapon gift's weapon is the server's to hand over, not the client's to read.

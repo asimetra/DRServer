@@ -11,7 +11,7 @@ import { weaponPowerAt } from "../src/weapon-power.js";
  *
  * Chests used to roll `Power × level × BasePowerScale + BasePowerConstant`,
  * which meets it only at level 100 for a 1.5 weapon: a level-10 roll came out
- * 2.4 times the official's, a scroll nine times.
+ * 2.4 times the curve's, a scroll nine times.
  */
 
 const weaponNamed = (gm, constant) => gm.raw.WeaponItem.find((row) => row.Constant === constant);
@@ -19,18 +19,18 @@ const rarityOf = (gm, id) => gm.raw.Rarity.find((row) => row.Id === id);
 const powerOf = (gm, constant, level, rarity) =>
   weaponPowerAt(weaponNamed(gm, constant), rarityOf(gm, rarity), level);
 
-test("the curve gives the official accounts' own weapons", async () => {
+test("the curve gives the reference weapon powers", async () => {
   const gm = await loadGameMaster();
-  // Straight off official account rows: a scroll (ScalingFactor 1), a starter
-  // band sword and a top-level bow (1.5).
+  // Reference rows: a scroll (ScalingFactor 1), a starter band sword and a
+  // top-level bow (1.5).
   assert.equal(powerOf(gm, "HERO_SCROLL_HEAL", 98, 4), 271);
   assert.equal(powerOf(gm, "HERO_REGULAR_SWORD", 4, 1), 12);
   assert.equal(powerOf(gm, "HERO_REGULAR_BOW", 100, 4), 1631);
-  // And within the official's own spread of a percent or two.
+  // And within the game's own spread of a percent or two.
   const bow = powerOf(gm, "HERO_SHORT_BOW", 99, 4);
-  assert.ok(Math.abs(1157 / bow - 1) < 0.02, `official 1157 against ${bow}`);
+  assert.ok(Math.abs(1157 / bow - 1) < 0.02, `reference 1157 against ${bow}`);
   const sword = powerOf(gm, "HERO_SHORT_SWORD", 99, 3);
-  assert.ok(Math.abs(739 / sword - 1) < 0.02, `the captured chest award, 739 against ${sword}`);
+  assert.ok(Math.abs(739 / sword - 1) < 0.02, `a chest award, 739 against ${sword}`);
 });
 
 /** Every shop weapon at its own level, rarity and power, as a bag row. */

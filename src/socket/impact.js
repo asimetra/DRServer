@@ -21,10 +21,8 @@ const distanceTo = (from, to) => Math.hypot(to.x - from.x, to.y - from.y);
  * (`ActorGameObject.receiveDamage`): knockback plays
  * `GENERIC_SUFFER_KNOCKBACK`, suffer alone plays `GENERIC_STUN`. Its own
  * resolver writes them the same way it reads them (`CombatGameObject`) — roll
- * the stagger, and only consider a knockback if that roll won:
- *
- *     suffer = Math.random() <= StunChance ? 1 : 0;
- *     if (suffer == 1 && Knockback != 0) knockback = 1;
+ * the stagger against `StunChance`, and only consider a knockback if that roll
+ * won and the attack authors one.
  *
  * Which is what the wire shows, once it is read at the right offset. Every
  * damaging trap result carries both, near enough always: 123 of 123 cave mace
@@ -53,7 +51,7 @@ const npcPositionUpdate = (doid, position) =>
 /**
  * Moving what a hit knocked back, which the server does and this one did not.
  *
- * The flag was published and nothing followed it. Measured on official NPC
+ * The flag was published and nothing followed it. Measured on NPC
  * victims, holding the attack constant and comparing hits that carry the flag
  * against hits that do not: `TRAP_ARROWS`, whose row authors 30, moves its
  * victim a median 27 with the flag and 0 without it across 437 and 61 samples;

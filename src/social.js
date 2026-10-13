@@ -7,27 +7,25 @@ import { modeHooks } from "./modes/hooks.js";
 /**
  * Friends, gifts and the two leaderboards.
  *
- * Between them these are the most-called endpoints the client has — roughly two
- * hundred calls across the recorded sessions — and none of them had a handler,
- * so every one fell through to the permissive empty-array reply. An empty array
- * is the wrong shape for most of them: three answer with an object, and the
- * client indexes into fields that simply were not there.
+ * Between them these are among the most-called endpoints the client has, and
+ * none of them had a handler, so every one fell through to the permissive
+ * empty-array reply. An empty array is the wrong shape for most of them: three
+ * answer with an object, and the client indexes into fields that simply were
+ * not there.
  *
- * Every shape below is the recorded response from the official server, and the
- * fields are the ones the client is seen to read. Two would have been missed by
- * reading a truncated log instead of the whole body:
+ * Every shape below is the one the client's parsers read (DBAccountInfo's
+ * parse callbacks, FriendPopulater, UIInvite). Two are easy to miss:
  * `getAllMapnodeScores.avatar_scores`, which DBAccountInfo.parseScoreResponse
  * reads for the player's own account, and `GetAllGifts.excludeIds`.
  *
- * What is deliberately *not* copied is the content. The official rows describe
- * a population of millions; a custom server's population is whoever plays on
- * it. So the friend endpoints resolve against the accounts this server holds,
- * and the boards answer honestly empty until something records a score.
+ * A custom server's population is whoever plays on it. So the friend endpoints
+ * resolve against the accounts this server holds, and the boards answer
+ * honestly empty until something records a score.
  */
 
 /**
- * `identifier` is the network and the account joined: every recorded row reads
- * `3_<account_id>`, and 3 is the networkId the client logs in with.
+ * `identifier` is the network and the account joined, `3_<account_id>`: 3 is
+ * the networkId the client logs in with.
  */
 const NETWORK_ID = 3;
 
@@ -311,11 +309,11 @@ export const friendRecordFor = (account) => ({
 });
 
 /**
- * A friend request, in the shape the live server answered `DRFriendRequest` and
- * `DRFriendRequestPending` with: who asked (`account_id`, `name`, `trophies`,
- * `active_skin`), whom (`to_account_id`), and `curr_state` 0 for waiting. The
- * two fields this server added before it had a recording — `identifier` and
- * `friend_code` — stay, since the panel has been reading them.
+ * A friend request, in the shape `DRFriendRequest` and `DRFriendRequestPending`
+ * answer with: who asked (`account_id`, `name`, `trophies`, `active_skin`),
+ * whom (`to_account_id`), and `curr_state` 0 for waiting. Two fields of this
+ * server's own — `identifier` and `friend_code` — stay, since the panel has
+ * been reading them.
  *
  * Also what a request stored before those fields existed is widened to on the
  * way out, so an old pending row answers in the same shape as a new one.
@@ -343,8 +341,8 @@ export const ignoredDataFor = async (account) =>
  *
  * The whole client stack behind them is namespaced for it — II_UIMapBattlePopup
  * asks for the top twenty, II_AccountTopScoreInfo reads `top_scores` keyed by
- * account, II_AvatarMapnodeScore reads `avatar_scores` — and every map node id
- * in the captured rows is one of the nine INFINITE_* nodes: 50158 is
+ * account, II_AvatarMapnodeScore reads `avatar_scores` — and the map node ids
+ * they rank are the nine INFINITE_* nodes: 50158 is
  * INFINITE_TEMPLE, 50150 INFINITE_ARENA, 50162 INFINITE_TRIBAL. So the `score`
  * a row carries is that mode's deepest room reached in the current weekly
  * epoch. The selection popup also uses `avatar_scores` to decide which four

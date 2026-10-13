@@ -299,11 +299,10 @@ export const triggerStateUpdate = (doid, value) =>
  * explosion is an authored attack that no client proposal covers, because the
  * hero was down when it went off.
  *
- * Both captured uses send an empty state and no combat results. The trailing
- * bytes the official server puts in `isConsumableWeapon`, `targetActorDoid` and
- * `loop` look like whatever was in memory — 252, 48, a doid from no known range
- * — and the client reads the timeline from `attackType` alone, so they are left
- * at zero here rather than reproduced.
+ * Both observed uses send an empty state and no combat results. The trailing
+ * `isConsumableWeapon`, `targetActorDoid` and `loop` carry no meaning here —
+ * the client reads the timeline from `attackType` alone — so they are left at
+ * zero.
  */
 export const heroStateAndChoreography = ({
   doid,
@@ -330,7 +329,7 @@ export const heroStateAndChoreography = ({
 /**
  * Burning, poison and the rest of the `DAMAGE_OVER_TIME` buffs.
  *
- * Captured against the official server, a mob that survived a firebomb lost
+ * Observed in play, a mob that survived a firebomb lost
  * hit points once a second for five seconds — 4513, 3454, 2395, 1336, 277 —
  * which is FIRE_L5's authored `Duration` of five, one tick a second.
  *

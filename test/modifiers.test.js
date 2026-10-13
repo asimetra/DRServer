@@ -26,10 +26,8 @@ const rolls = (...values) => {
 
 test("Critical doubles the hit, which is what the wire shows", async () => {
   /**
-   * `CRIT_DAMAGE` is the *extra*, so 1 means twice. Grouping the official's
-   * echoes by attack and comparing the median crit against the median ordinary
-   * hit gives exactly 2.00 on six attacks, including `KATANA_SOUL_BANG` over
-   * 1600 crits.
+   * `CRIT_DAMAGE` is the *extra*, so 1 means twice: a Critical hit is exactly
+   * two ordinary ones, whatever the attack.
    */
   const gm = await loadGameMaster();
   const weapon = { modifier1: CRITICAL_L1, modifier2: 0 };
@@ -58,12 +56,9 @@ test("two crit modifiers each roll, and together they multiply", async () => {
    * "Stacks with Vicious!" and "Stacks with Critical!" — each brings its own
    * chance and its own damage, and when both come up the two multiply.
    *
-   * Measured, and it overturned the first reading. Grouping the official's
-   * crits by session and attack and dividing by the modal ordinary hit of the
-   * same group, two groups carry three magnitudes on one weapon: x2, x4 and x8
-   * — `AXE_COMBO_1` at 6/4/4 and `KATANA_SOUL_BANG` at 53/44/18. Summing the
-   * extras would put the third tier at x5; taking the larger would never
-   * produce it.
+   * This overturned the first reading. One weapon carrying both shows three
+   * magnitudes: x2, x4 and x8. Summing the extras would put the third tier at
+   * x5; taking the larger would never produce it.
    */
   const gm = await loadGameMaster();
   const weapon = { modifier1: CRITICAL_L1, modifier2: VICIOUS_L5 };
@@ -89,8 +84,7 @@ test("a modifier with no crit columns never crits", async () => {
 test("the chances are the ones the table authors", async () => {
   /**
    * Measured rather than asserted one roll at a time: `Critical` runs 10% to
-   * 25% by level and `Vicious` is a flat 5%, and the official's overall rate
-   * across a mixed corpus was 7.87%.
+   * 25% by level and `Vicious` is a flat 5%.
    */
   const gm = await loadGameMaster();
 
@@ -277,8 +271,8 @@ test("a Noxious weapon poisons what it hits", async () => {
 
 test("poison stacks to six and stops, as the table says", async () => {
   /**
-   * `MaxStacks` is 6 on every poison level, and the official reaches exactly
-   * six concurrent poisons on one victim and never a seventh. Past the limit
+   * `MaxStacks` is 6 on every poison level: six concurrent poisons on one
+   * victim and never a seventh. Past the limit
    * the grant is discarded, so neither count nor lifetime grows without end.
    */
   const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: NOXIOUS_L1 });
@@ -301,8 +295,8 @@ test("a buff authored MaxStacks 1 never doubles", async () => {
 
 test("an immune NPC still receives the modifier buff object but ignores its effect", async () => {
   /**
-   * The official does exactly this: ROOT_IMMUNE Raptors receive visible
-   * STOP_L4 objects and continue sending movement throughout all six seconds.
+   * ROOT_IMMUNE Raptors receive visible STOP_L4 objects and keep moving
+   * throughout all six seconds.
    * Immunity suppresses gameplay, not the distributed buff/VFX.
    */
   const ROOTING_L5 = 70045;
@@ -315,7 +309,7 @@ test("an immune NPC still receives the modifier buff object but ignores its effe
   const roots = [...session.activeBuffs.values()].filter(
     (active) => active.affectedActor === ENEMY && active.buff?.Constant === "STOP_L4"
   );
-  assert.equal(roots.length, 1, "the official-visible root object was suppressed entirely");
+  assert.equal(roots.length, 1, "the visible root object was suppressed entirely");
   assert.equal(roots[0].effectAbility, "ROOT");
   assert.equal(buffMultiplierFor(session, ENEMY, "MOVEMENT"), 1, "ROOT_IMMUNE stopped moving");
 });
@@ -634,10 +628,8 @@ test("repeated hits do not pile up poison clocks", async () => {
 test("a body takes its buffs with it", async () => {
   /**
    * The report: poison still showing on a monster that is gone. `removeActor`
-   * deleted the actor and disabled its object and left the buffs running. The
-   * official takes them together — of 3048 poison and fire buffs whose victim
-   * was disabled in the recordings, 2176 are disabled within 250ms of it and
-   * only 8 outlive their host.
+   * deleted the actor and disabled its object and left the buffs running. A
+   * victim's poison and fire buffs go with it, within moments of its disable.
    */
   const { session, ENEMY } = await arena({ type: 12502, power: 30, modifier1: NOXIOUS_L1 });
   await swing(session, ENEMY);
@@ -651,12 +643,11 @@ test("a body takes its buffs with it", async () => {
   for (const timer of session.damageOverTimeTimers ?? []) clearInterval(timer);
 });
 
-test("the crit ladder the official shows is reproducible", async () => {
+test("the crit ladder of two stacked modifiers is reproducible", async () => {
   /**
-   * The whole of what the measurement found, asserted as one shape: a weapon
-   * carrying `Critical` and a `Vicious` worth x4 produces x2 when the first
-   * fires alone, x4 when the second does, x8 when both do, and nothing when
-   * neither. Two recorded groups carry exactly that ladder on a single weapon.
+   * The whole rule, asserted as one shape: a weapon carrying `Critical` and a
+   * `Vicious` worth x4 produces x2 when the first fires alone, x4 when the
+   * second does, x8 when both do, and nothing when neither.
    */
   const gm = await loadGameMaster();
   const VICIOUS_X4 = 70123; // CRIT_DAMAGE 3, so 1 + 3
@@ -998,9 +989,9 @@ test("a placed bomb burns with the modifiers of the weapon that threw it", async
 
 test("a bomb crits when the weapon that threw it can, and not otherwise", async () => {
   /**
-   * Thrown weapons crit officially — `THROW_GARLIC` 13, `THROW_FIREBOMB` 11,
-   * `THROW_MINE` 7 — while `HEALTH_BOMB_ATTACK` and `PARTY_BOMB_ATTACK` carry
-   * none across 623 recorded hits, and no floor trap does either. A crit comes
+   * Thrown weapons crit — `THROW_GARLIC`, `THROW_FIREBOMB`, `THROW_MINE` —
+   * while `HEALTH_BOMB_ATTACK` and `PARTY_BOMB_ATTACK` never do, and no floor
+   * trap does either. A crit comes
    * off a weapon's modifiers, so the thing without a weapon does not get one.
    */
   const { performPlaceableAttack } = await import("../src/socket/combat.js");
@@ -1267,10 +1258,9 @@ test("a muzzled monster swings slowly, not just seldom", async () => {
    * often it strikes and a different thing again from how fast it walks.
    *
    * `playSpeed` on `ReceiveAttackChoreography` is what the client plays the
-   * swing at, and the official scales it by exactly the attack-speed multiplier
-   * the actor carries — 57 of its packets sit on 0.20 while the monster holds a
-   * `CRIPPLE_L3` or `CRIPPLE_L4`, both authoring `MELEE_SPD` 0.2, and 3 on 0.85
-   * under `CHILL_L1`, which authors 0.85.
+   * swing at, and it scales by exactly the attack-speed multiplier the actor
+   * carries — 0.20 while the monster holds a `CRIPPLE_L3` or `CRIPPLE_L4`, both
+   * authoring `MELEE_SPD` 0.2, and 0.85 under `CHILL_L1`, which authors 0.85.
    */
   const { buildFloor } = await import("./helpers/floor.js");
   const { tickNpcAi } = await import("../src/socket/ai.js");
@@ -1336,12 +1326,11 @@ test("the knockback modifiers name a distance, and a pull is a negative one", as
 test("a knocked-back monster is actually moved, and a Trapper pulls it in", async () => {
   const { knockbackFor } = await import("../src/socket/modifiers.js");
   /**
-   * The flag was published and nothing followed it. Measured on official NPC
-   * victims with the attack held constant: `TRAP_ARROWS` authors 30 and moves
-   * its victim a median 27 when the flag is set against 0 when it is not, over
-   * 437 and 61 samples; `TRAP_FLAME_JET` authors 60 and moves it 57 against 5.
+   * The flag was published and nothing followed it. With the attack held
+   * constant, a flagged victim moves about the authored distance — 30 for
+   * `TRAP_ARROWS`, 60 for `TRAP_FLAME_JET` — and an unflagged one hardly at all.
    * So the displacement is real, it is the server's, and it is the authored
-   * distance — which is what "the same client works on the official" meant.
+   * distance: the client does not move the victim itself.
    */
   const { pushVictim } = await import("../src/socket/combat.js");
   const { CLID } = await import("../src/socket/opcodes.js");
@@ -1444,7 +1433,7 @@ test("swinging a Trapper weapon drags the monster in", async () => {
   const blastback = await swungWithPull({ type: 12502, power: 30, modifier1: BLASTBACK });
   assert.equal(blastback, 250, "Blastback did not throw it away");
 
-  // The official flags 27 prop hits behind a KNOCKBACK weapon and moves none.
+  // A prop hit behind a KNOCKBACK weapon is flagged and not moved.
   const crate = await swungWithPull({ type: 12502, power: 30, modifier1: BLASTBACK }, { moveSpeed: 0 });
   assert.equal(crate, 0, "a Blastback swing moved a crate");
 
@@ -1563,8 +1552,8 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
   assert.equal(victim.position.x - 1200, 250, "the fissure left the monster where it stood");
 
   /**
-   * Away from the crack, not from the hero. The official names the placeable
-   * as the attacker on these hits; a mine that threw everything away from a
+   * Away from the crack, not from the hero. The placeable is the attacker on
+   * these hits; a mine that threw everything away from a
    * hero standing elsewhere would throw sideways.
    */
   const CRACK = 700;

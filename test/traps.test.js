@@ -41,8 +41,8 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 /**
  * A sustained trap tests contact on a 100ms tick and no longer fires on the
- * instant it rises — the official's earliest recorded hit is 60ms after the
- * switch-on and its commonest 100ms. Tests that raise one have to wait for it.
+ * instant it rises — the first hit comes no sooner than about 60ms after the
+ * switch-on, and most often at 100ms. Tests that raise one have to wait for it.
  */
 const contactTick = async () => {
   await new Promise((resolve) => setTimeout(resolve, 180));
@@ -280,8 +280,7 @@ test("an active trap collider deals its authored percent-health damage", async (
   /**
    * The trigger state, the health it left, and then the result explaining it.
    * No choreography — a spike bed does not animate, it changes state — and the
-   * health goes first, which is the order the official server publishes in:
-   * hit points immediately before the result, 1181 times against one.
+   * health goes first: hit points immediately before the result.
    */
   assert.equal(sent.length, 3);
   assert.equal(readUpdateHead(sent[0]).fieldId, 141);
@@ -1179,8 +1178,8 @@ test("a held trap that catches a monster announces every bite", async (t) => {
  * `|DamageMod|`, which is 1 on every one of them, so a disk that should carve
  * you took a single point — the reported "the disk traps hit for -1".
  *
- * The official is not doing that: `FLAME_BURN` lands between 6 and 22 in one
- * session. And the rows say how — each carries a `Weapon1` of its own, so they
+ * A slicer is meant to carve, and `FLAME_BURN` lands well above one point a
+ * tick. The rows say how — each carries a `Weapon1` of its own, so they
  * are priced like any other actor's swing.
  */
 test("a slicer is priced by its own weapon, not by DamageMod", async () => {
@@ -1284,13 +1283,9 @@ test("the boss lava keeps its levelled offence when its weapon power is one", as
  * of twelve `NORDIC_CAVE_GARGOYLE_EMITTER_C` on a laid-out floor killed their
  * arrow on the first tick and going silent looked wrong.
  *
- * Silent was right, and the official says so once its own vertical gargoyles
- * are split by whether the muzzle sits in rock:
- *
- *   buried   11 emitters   135 shots    0 hits on the hero
- *   clear    10 emitters   144 shots   13 hits
- *
- * Not one hit in a hundred and thirty-five. Their bolt dies in the wall, which
+ * Silent was right: split the vertical gargoyles by whether the muzzle sits in
+ * rock, and the buried ones never hit the hero while the clear ones do. Their
+ * bolt dies in the wall, which
  * is also why nothing is drawn there — the client builds its projectile in the
  * same rock and loses it. Carrying ours through was the reported arrow you
  * cannot see taking a hundred and six health off you, on the tiles where the
@@ -1449,9 +1444,9 @@ test("a smashable gate stands broken only where its row says PermCorpse", async 
 /**
  * A moving trap announces its swing before its state goes on.
  *
- * The official pairs them in the same millisecond and always in that order — a
- * cave mace reads `SWING, state->1 ... state->0, SWING, state->1` for the whole
- * session. A spike bed, which does not move, gets no animation at all.
+ * The two go out in the same millisecond and always in that order — a cave
+ * mace reads `SWING, state->1 ... state->0, SWING, state->1` for as long as it
+ * runs. A spike bed, which does not move, gets no animation at all.
  */
 test("a swinging trap sends its animation before its trigger state", async () => {
   const { attackForConstant, npcForConstant, attackColliders } = await import(
@@ -1528,8 +1523,8 @@ test("a tar pit is armed on arrival and never sent a trigger state", async () =>
     ]),
     triggerableDoids: new Map([["pit", 9910]]),
     triggerableAttacks: new Map([["pit", attack.Id]]),
-    // Deliberately absent from triggerableStatefulAttacks: the official sends
-    // this trap no trigger state at all.
+    // Deliberately absent from triggerableStatefulAttacks: this trap is sent
+    // no trigger state at all.
     triggerableStatefulAttacks: new Set(),
     triggerableHazards: new Map([
       [
@@ -1932,8 +1927,7 @@ test("a stationary burner is live and its twin waits to be switched", async () =
 /**
  * A barrel explodes with its own strength, not the strength of whoever broke
  * it. computeDamage falls back to session.weaponPower when given none, which is
- * the hero's — and the official charges 3: 140 results against monsters at -3
- * and -6, 8 against the hero at -3, from an attack with DamageMod -3, no
+ * the hero's — and a barrel charges 3: an attack with DamageMod -3, no
  * percent-health line, and a barrel whose weapon is Power 1.
  */
 test("a barrel's bang is priced by the barrel", async () => {
@@ -1977,18 +1971,18 @@ test("a barrel's bang is priced by the barrel", async () => {
   for (let drain = 0; drain < 4; drain += 1) await settle();
 
   const dealt = 5000 - session.actors.get(7001).hitPoints;
-  assert.equal(dealt, 3, `a barrel stings rather than mauls; the official charges 3, took ${dealt}`);
+  assert.equal(dealt, 3, `a barrel stings rather than mauls; it charges 3, took ${dealt}`);
 });
 
 /**
  * `DefaultLayer` on an NPC row is not a fallback for a placement that names no
- * layer — the official never reads it, and treating it as one puts two props
- * under the floor.
+ * layer — the game never reads it that way, and treating it as one puts two
+ * props under the floor.
  *
  * Exactly two constants in the game's tile data can tell the rules apart:
  * `NORDIC_CAVE_EMITTER` and `CASTLE_ARENA_TRAP_SPIKES_A`, whose rows say
- * `background` while none of their placements names a layer. The corpus
- * generates them 73 times between them and every one arrives on layer 20.
+ * `background` while none of their placements names a layer. Both belong on
+ * layer 20.
  */
 test("a placement with no layer is sorted, not the row's default", async () => {
   const { npcForConstant } = await import("../src/gamemaster.js");
@@ -2208,9 +2202,8 @@ test("a statue aims before it shoots, not on its own clock", async () => {
    * had up to a quarter-second to move between the angle the client was told
    * and the angle that was simulated.
    *
-   * The corpus is unambiguous about the order: the official sends a heading
-   * immediately before 71 of its 84 recorded shots. This server managed 40 of
-   * 838.
+   * The order is the point: a heading immediately before the shot it belongs
+   * to. This server rarely managed it.
    */
   const { npcForConstant, attackForConstant, projectileForConstant, projectileLaunch } =
     await import("../src/gamemaster.js");
@@ -2376,8 +2369,8 @@ test("a statue does not track a hero it cannot reach", async () => {
    * "They aggro from outside their range."
    *
    * A turret fires on its own `AttackTimer` and turns to follow the hero, and
-   * this server did both at any distance — 166 heading updates per statue
-   * against the official's 17. Every statue on the floor visibly aimed at the
+   * this server did both at any distance, sending heading updates for every
+   * statue on the floor. Every statue on the floor visibly aimed at the
    * player from across it, which reads as being targeted from somewhere the
    * fireball could never land.
    *
@@ -2440,9 +2433,8 @@ test("a bomb that has gone off is taken off the floor", async () => {
    * Giving trap damage a team rule stopped that, correctly, and left nothing at
    * all ending them. The bomb detonated, fell out of its hazard loop, and stayed.
    *
-   * The official closes one in three messages, in this order, and the corpus
-   * shows every dying mine taking all three: hit points to zero, the state
-   * string, then the disable. Zero on its own is a corpse standing up, because
+   * A dying mine is closed in three messages, in this order: hit points to
+   * zero, the state string, then the disable. Zero on its own is a corpse standing up, because
    * `ActorGameObject.determineState` switches on the string.
    */
   const { npcForConstant, attackForConstant, attackColliders, attackTimelineFrames } =
@@ -2495,9 +2487,8 @@ test("a bomb that has gone off is taken off the floor", async () => {
     /**
      * The bang lands first and the object is still there.
      *
-     * The official puts a median of 1150ms between the two — its explosion is
-     * 25 frames at 24 a second — and disables in the same millisecond as the
-     * death. Doing all three at once took the mine away before the client could
+     * About 1150ms lies between the two — the explosion is 25 frames at 24 a
+     * second — and the disable goes in the same millisecond as the death. Doing all three at once took the mine away before the client could
      * draw any of it: the bomb vanished without exploding.
      */
     assert.ok(
@@ -2639,8 +2630,8 @@ test("a hero whose late-join snapshot is pending is not yet a trap victim", asyn
  *
  * `targetActorDoid` is where the client plays a "play at target" effect, and a
  * zero is not a neutral choice: `PlayEffectTimelineAction` returns without
- * playing anything when the target is missing. The official names one 20852
- * times out of 25003, so this is a field it uses rather than one it ignores.
+ * playing anything when the target is missing, so this is a field the client
+ * uses rather than one it ignores.
  *
  * It was read as "did this catch *my* hero", which in a party is only true for
  * whichever member's context the timer belongs to — so a trap that caught the
@@ -2825,8 +2816,8 @@ test("a monster's corpse does not shield the hero from a trap arrow", async () =
 
 test("a bomb with a wire waits on it: flat until the pad is crossed, disarmed when the signal drops", async (t) => {
   /**
-   * The official's Frostgaard boss floor (socket-20261005-172249) generates
-   * its two mines and two firebombs at trigger state 0, raises them to 1 when
+   * The Frostgaard boss floor wires its two mines and two firebombs: they are
+   * generated at trigger state 0, raised to 1 when
    * the hero crosses the pad in front of the troll — an AND of the pad and
    * the troll's life — and lowers the mine still lying there at his death.
    * Here every bomb was armed on arrival, so the hero or the troll stepping
@@ -2846,7 +2837,7 @@ test("a bomb with a wire waits on it: flat until the pad is crossed, disarmed wh
 
   const bombs = [...npcsNamed(world, "MINE_PLACEABLE_ALL"), ...npcsNamed(world, "FIREBOMB_PLACEABLE_ALL")];
   assert.equal(bombs.length, 4);
-  assert.deepEqual(bombs.map((b) => b.triggerState), [0, 0, 0, 0], "generated flat, as the official's");
+  assert.deepEqual(bombs.map((b) => b.triggerState), [0, 0, 0, 0], "generated flat");
   const bombIds = [...floor.placements.triggerable].filter((p) => /MINE_PLACEABLE_ALL|FIREBOMB_PLACEABLE_ALL/.test(p.constant)).map((p) => p.id);
   assert.equal(bombIds.length, 4);
   for (const id of bombIds) assert.ok(!session.hazardContactZones?.has(id), `${id} armed on arrival`);

@@ -142,11 +142,10 @@ test("settling twice is refused rather than repeated", async () => {
 /**
  * The two halves of a run, and they do not survive the same way.
  *
- * Reported from play and confirmed against the captures: gold picked up off the
- * floor is banked as it is picked up, so quitting mid-run keeps it. A treasure
- * is only a claim on a chest until the report screen, so quitting mid-run
- * loses it — every increase in `account_chests` across the official recordings
- * follows a TakeChest or an OpenChest.
+ * Reported from play: gold picked up off the floor is banked as it is picked
+ * up, so quitting mid-run keeps it. A treasure is only a claim on a chest until
+ * the report screen, so quitting mid-run loses it — a chest reaches
+ * `account_chests` only through a TakeChest or an OpenChest.
  *
  * That asymmetry is the point rather than an accident: finishing a run is what
  * the chest is for.

@@ -1,13 +1,13 @@
 /**
  * Dungeon instance allocation, independent from the wire/building code.
  *
- * The original protocol asks with one of three identities:
+ * The protocol asks with one of three identities:
  *
  * - `mapNodeId`: public/private matchmaking for that node;
  * - `friendId`: the target player's account id, not a dungeon id;
  * - `mapId`: an explicit existing instance id.
  *
- * Original captures prove four players and also prove explicit late joins
+ * The client supports four players and explicit late joins
  * after floor one. Random/public matching is intentionally narrower here: it
  * fills an existing instance only while that instance is on floor index zero.
  */
@@ -248,7 +248,7 @@ export class DungeonMatchRegistry {
     // one of the four native party slots. At most one such member is admitted,
     // regardless of whether it arrived before or after the ordinary party.
     if (privileged ? privilegedCount >= 1 : ordinaryCount >= this.maxPlayers) return false;
-    // Original captures allow explicit late join on later floors. The requested
+    // The client allows explicit late join on later floors. The requested
     // simplification applies only to random/public filling: the first floor, or
     // as many of the first floors as the run's mode says (run-rules.js, strangersUntil).
     return privileged || !publicSearch || !this.publicFloorZeroOnly || match.floorIndex < strangersFloors(match.mode);

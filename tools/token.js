@@ -8,8 +8,8 @@
  *   node tools/token.js --revoke 1000000005
  *
  * This is the whole of "signing up" for this server. The client has no login
- * screen — `DBFacade` reads `AccountId` and `API_ValidationToken` out of its
- * own configuration and presents them from then on — so whoever hands those
+ * screen — it reads `AccountId` and `API_ValidationToken` out of its own
+ * configuration and presents them from then on — so whoever hands those
  * two values to a player has performed the authentication, and this is the
  * tool that does it. Anything issuing tokens with the same secret works just
  * as well: a web page, a bot, a spreadsheet. The game server only verifies.

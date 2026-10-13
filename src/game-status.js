@@ -5,14 +5,14 @@
  * and reads one field, `publicDungeonActivityLevel`: a level per node id, drawn
  * as a glow on the node and as the "POPULATION:" line in its popup. Answered
  * with a fixed `{ players: 1 }` before this, every node read UNKNOWN and none
- * glowed. The shape is the official server's, read live:
+ * glowed. The answer's shape:
  *
- *   {"environmentName":"blue","statsAvailable":true,"currentHeroesInDungeons":122,
- *    "publicDungeonActivityLevel":{"50002":"Quiet","50003":"Active",…,"50158":"Bustling"}}
+ *   { environmentName, statsAvailable, currentHeroesInDungeons,
+ *     publicDungeonActivityLevel: { "<nodeId>": "<level>", … } }
  *
  * Every node is listed, the empty ones as Quiet. The levels are the client's
- * five; the thresholds behind them are not in anything the official sends, so
- * they are this server's, set by party size and configurable.
+ * five; the thresholds behind them are not defined by the client, so they are
+ * this server's, set by party size and configurable.
  *
  * Counted from the main thread's registry, which admits every run whether or
  * not match workers play them, so one count serves both.

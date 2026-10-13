@@ -188,8 +188,8 @@ export const buildDungeonReport = (session, success = false) => {
      * DistributedDungeonSummary computes its running total as
      * `report.xp + bonusTick`.
      *
-     * It is not the baseline the run entered with: a captured defeat reported
-     * 366773 while the account went 366408 → 366773 across the same run, so the
+     * It is not the baseline the run entered with: a defeat reported the
+     * account's total after the run, not before it, so the
      * floor's own experience is inside this figure. A successful report starts
      * immediately before the separately animated completion rewards.
      */
@@ -389,7 +389,7 @@ export const sendDungeonSummary = (session, success) => {
   const members = [...membersOf(session)];
   /**
    * Finishing the node is paid here, with the report, and only to whoever is
-   * still in the run to receive it — as the original did. Paid at the win
+   * still in the run to receive it — as the game does. Paid at the win
    * banner instead, walking out in the seconds before the report kept the
    * completion and left the party no row to report the leaver from.
    *
@@ -471,7 +471,7 @@ export const cancelDungeonSummary = (session) => {
   return true;
 };
 
-/** Production waits about five seconds between dungeonEnding and the summary. */
+/** The summary follows dungeonEnding by about five seconds. */
 export const scheduleDungeonSummary = (session, success) => {
   cancelDungeonSummary(session);
   /**

@@ -2,7 +2,7 @@
 /**
  * Which traps this server puts on the floor in the wrong state.
  *
- *   node tools/resting-state.js <ours-dir> [<official-dir>]
+ *   node tools/resting-state.js <ours-dir> [<reference-dir>]
  *   node tools/resting-state.js --layouts --seeds=20
  *
  * A trap's resting state is the first thing a player sees of it and the last
@@ -13,9 +13,9 @@
  *
  * That was the shape of the last three bugs found by playing:
  *
- *   fires generated lit that the official generates dark;
+ *   fires generated lit that the reference generates dark;
  *   mines armed the wrong way round in a corpus read with a shifted offset;
- *   thirty stranded spikes forced retracted that the official leaves up.
+ *   thirty stranded spikes forced retracted that the reference leaves up.
  *
  * Each of them is one number against another number, and none of them showed up
  * in anything that counted messages. This compares the numbers.
@@ -23,7 +23,7 @@
  * The comparison is per constant across whole corpora rather than per object on
  * a matched floor, which is the weaker of the two and honest about it: a rate is
  * meaningful here because the resting state is mostly a property of the row and
- * its wiring, and the official's own rates are stable — NORDIC_TEMPLE_TRAP_SPIKE
+ * its wiring, and the reference rates are stable — NORDIC_TEMPLE_TRAP_SPIKE
  * is raised 730 times against 193 across fifty-four recordings. Where a floor
  * can be matched exactly, `replay-floor.js` is the better oracle.
  */
@@ -44,7 +44,7 @@ import { isInert, restingTriggerState } from "../src/socket/dungeon.js";
 
 const REFERENCE_CAPTURES = process.env.ODS_REFERENCE_CAPTURES ?? "";
 
-/** Below this many sightings a rate is noise; the official's own vary by a few. */
+/** Below this many sightings a rate is noise; the reference's own vary by a few. */
 const MIN_SAMPLE = 6;
 
 /** How far two rates may drift before it is worth a person's attention. */
@@ -138,7 +138,7 @@ const main = async () => {
   const positional = process.argv.slice(2).filter((arg) => !arg.startsWith("--seeds="));
   const [ours, official = REFERENCE_CAPTURES] = positional;
   if (!ours || !official) {
-    console.error("usage: node tools/resting-state.js <ours-dir> [<official-dir>]");
+    console.error("usage: node tools/resting-state.js <ours-dir> [<reference-dir>]");
     console.error("or set ODS_REFERENCE_CAPTURES for the second directory");
     process.exit(2);
   }
@@ -178,7 +178,7 @@ const main = async () => {
   rows.sort((a, b) => b.drift - a.drift);
 
   console.log(
-    `${theirs.captures} official capture(s) against ${mine.captures} of ours; ` +
+    `${theirs.captures} reference capture(s) against ${mine.captures} of ours; ` +
       `${theirs.seen.size} switchable constants there, ${mine.seen.size} here.\n`
   );
 
@@ -186,7 +186,7 @@ const main = async () => {
     console.log("no constant rests differently on the two servers by more than " +
       `${Math.round(TOLERANCE * 100)} points.`);
   } else {
-    console.log("   official armed/idle    ours armed/idle    constant");
+    console.log("   reference armed/idle    ours armed/idle    constant");
     for (const row of rows) {
       const say = (entry) =>
         `${String(entry.armed).padStart(5)}/${String(entry.idle).padEnd(5)} ${String(Math.round(rate(entry) * 100)).padStart(3)}%`;

@@ -2,11 +2,9 @@
  * How long somebody is kept out, and what it takes to get there.
  *
  * The point of a suspension here is not to identify a cheater — this server
- * cannot, and should be honest about why. The client sends a fixed placeholder
- * where a credential belongs (its own build calls it "FakeToken This Should Use
- * Steam And Populate From The Server Instead"), and `loadAccount` hands out
- * whatever account id is asked for, creating one if it has never seen it. So an
- * account id is a claim, not an identity.
+ * cannot, and should be honest about why. An account is all a session proves:
+ * the person behind it can always ask the host for another one, and nothing
+ * ties the two together. So an account is a handle, not an identity.
  *
  * What a suspension does instead is take away the only thing a cheater actually
  * values, which is the account they built. Changing the id to escape one drops

@@ -30,8 +30,8 @@ import { membersOf } from "./match-world.js";
  * until this screen; the chest reaches the account when the player keeps it,
  * and Abandon removes nothing because nothing was ever added.
  *
- * That is measured, and it replaced the opposite assumption. Across the
- * official captures all seven increases in `account_chests` follow a TakeChest
+ * That is measured, and it replaced the opposite assumption. In observed
+ * sessions all seven increases in `account_chests` follow a TakeChest
  * or an OpenChest and nothing else — one run collected four treasures, kept one
  * and dropped three, and the account went 6 → 7 rather than to 10 and back. The
  * report being drawn does not do it either: the account still read 6 while it
@@ -53,8 +53,8 @@ const REPORT_TREASURE_SLOTS = 4;
 /**
  * Who hears the answer, and why it is everybody.
  *
- * The captured sessions received responses addressed to five other accounts —
- * party members opening and keeping their own chests — so the official sends
+ * Observed sessions received responses addressed to five other accounts —
+ * party members opening and keeping their own chests — so the game sends
  * this to the whole summary rather than to the asker. That is what the client's
  * own `mDBFacade.accountId != account_id` guard exists to ignore, and matching
  * it means a modified client cannot learn anything it was not already told.
@@ -124,7 +124,7 @@ const treasureAt = (session, slot) => {
 /**
  * Puts the chest on the account, which is what Keep and Open actually do.
  *
- * `is_new` is sent by the official — every chest row in a captured payload
+ * `is_new` is sent by the game — every chest row in an observed payload
  * carries it, and every one of them is 1. It was left out of this server's
  * schema once, on the reasoning that the client diffs against the list it last
  * held; the captures say otherwise.
@@ -225,7 +225,7 @@ export const handleTakeChest = async (session, reader) => {
 /**
  * Abandon. The chest goes back off the account.
  *
- * **No answer, and that is measured.** Across the official captures the client
+ * **No answer, and that is measured.** In observed sessions the client
  * sent six drops and not one was replied to, while all six takes were answered
  * within 351-397ms. The client agrees: `abandonChestCallback` clears its own
  * slot in the confirm handler and never waits. Sending 285 here would push it
@@ -262,8 +262,8 @@ export const handleDropChest = async (session, reader) => {
  *
  * No capture covers this: the recorded runs never had a key in hand at the
  * report. What settles the reply's shape is the other side of those captures —
- * party members' opens came back carrying an offer (75004) or a weapon
- * (6313632) in the fields a keep leaves zero.
+ * party members' opens came back carrying an offer id or a weapon
+ * id in the fields a keep leaves zero.
  */
 export const handleOpenChest = async (session, reader) => {
   const request = readRequest(session, reader);

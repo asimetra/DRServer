@@ -10,12 +10,10 @@ import { readFile } from "node:fs/promises";
 /**
  * A secret room is absent from the floor until its door is broken.
  *
- * The official does not merely wall one off, it withholds the tile: node 50088
- * opens with 8 tiles and no `SECRET_TILE`, and 60ms after the wall at
- * (4050, 6330) loses its last hit point the same floor is handed 9 tiles with
- * one, followed by the creates for everything inside. Ten of the twenty-two
- * secret rooms in the corpus arrive that way and every one of them within a
- * frame of a death. See src/socket/secrets.js.
+ * The room is not merely walled off, its tile is withheld: the floor opens
+ * without the `SECRET_TILE`, and as soon as the wall loses its last hit point
+ * the same floor is handed its tile list again with the room in it, followed by
+ * the creates for everything inside. See src/socket/secrets.js.
  */
 
 const PRISON = "castle/prison/tiles.json";
@@ -243,7 +241,7 @@ test("the way out is never behind a secret room", async () => {
    *
    * Adjacency is not connection and is not checked: an `EXIT_TILE` may sit on
    * the far side of a secret room's wall, and does on three of the generated
-   * test maps. The official places neighbours on all four sides too. What
+   * test maps, and a room may have neighbours on all four sides. What
    * matters is that nothing is reachable *through* the room.
    */
   const STEP = [

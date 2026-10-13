@@ -6,8 +6,8 @@ import { xpWeightOf } from "./run-xp.js";
  * The monsters a floor is stocked with, which its tiles do not name.
  *
  * A tile authors its props, its traps and its wiring, and almost none of its
- * monsters. Rebuilding every floor whose layout the official sent, from our own
- * copy of the tile data, matched 8,738 objects by exact position and constant —
+ * monsters. Rebuilding observed floor layouts from the tile data matched
+ * 8,738 objects by exact position and constant —
  * and left **10,169** generated actors with no placement to match, every one of
  * them an enemy: 980 ice imps, 879 baby yetis, 752 freeze imps, 602 knights.
  *
@@ -21,9 +21,9 @@ import { xpWeightOf } from "./run-xp.js";
  *
  * The corpus agrees closely once respawns are excluded by looking only at a
  * floor's opening two seconds. `CASTLE_TIER1` authors exactly six bruisers and
- * the official sends exactly six; `ARENA_D` authors 55-65 fodder and every
- * recorded floor lands in it. Of 130 floors, 81 sit inside both quotas and the
- * rest fall short because the recording stops mid-build.
+ * the game sends exactly six; `ARENA_D` authors 55-65 fodder and every
+ * observed floor lands in it. Of 130 floors, 81 sit inside both quotas and the
+ * rest fall short because the session stops mid-build.
  *
  * Until this, a floor here carried only what its tiles named — which for the
  * arena is nothing. Four generated arena floors held 0, 4, 1 and 0 enemies
@@ -191,7 +191,7 @@ export const populationFor = (
  * 312, a SKELETON_WARRIOR 118; where it says `BRUISER`, a FREEZE_IMP or a
  * CRAZED_YETI.
  *
- * They are not placed one to a marker. Across 108 recorded layouts, 9,195
+ * They are not placed one to a marker. Across 108 observed layouts, 9,195
  * enemies stand against 3,370 markers — about 2.7 apiece — and they gather:
  * 13% land exactly on one, 62% within 80 units, 78% within 150.
  *
@@ -302,7 +302,7 @@ export const stockFloor = (
    * off the tiles' order. The quota is usually short of the markers for
    * minibosses (two to five against three to six on a Catacombs floor) and
    * for fodder (25-30 against 43-58), and the official's choice of which
-   * stand empty shows no order: on 109 captured floors the empty ones are
+   * stand empty shows no order: on 109 observed floors the empty ones are
    * anywhere. Dealt in tile order, the markers of the tile laid last — the
    * exit tile, often — were empty on every floor of this server, and a room
    * the tiles meant to be guarded never was. A floor's tiles are its seed's,

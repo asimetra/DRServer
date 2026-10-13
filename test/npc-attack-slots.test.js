@@ -51,10 +51,9 @@ test("NPC attack choices retain the last authored damage frame as movement lock"
 
 test("each attack names the weapon it is swung with: a rival sorcerer's staff and three books", async () => {
   /**
-   * The official's RIVAL_SORCERER choreographies carry slot 0 for
-   * LIGHTNING_SHOT, 1 for CHAIN_LIGHTNING, 2 for BALL_LIGHTNING and 3 for
-   * THUNDERBOLT — the index of the weapon whose own attack list names the
-   * attack (Cretaceous Park Boss recording, 41 of 41).
+   * RIVAL_SORCERER's choreographies carry slot 0 for LIGHTNING_SHOT, 1 for
+   * CHAIN_LIGHTNING, 2 for BALL_LIGHTNING and 3 for THUNDERBOLT — the index of
+   * the weapon whose own attack list names the attack.
    */
   const npc = await npcForConstant("RIVAL_SORCERER");
   const weapons = await Promise.all(["Weapon1", "Weapon2", "Weapon3", "Weapon4"].map((k) => npc[k] ? weaponForConstant(npc[k]) : null));

@@ -17,10 +17,10 @@ client:
 
 | The client is told about… | …and its GameMaster | Result |
 |---|---|---|
-| a hero in a skin | lacks the `Skins` row | **segfault** in `HeroGameObject.set_skinType` — its own fall-back to the hero's default skin reads the hero row before the object has one |
+| a hero in a skin | lacks the `Skins` row | **segfault** while applying the skin — its own fall-back to the hero's default skin reads the hero row before the object has one |
 | a friend wearing a skin | lacks the row | **segfault** drawing the friend list icon |
 | its own account wearing a skin | lacks the row | **segfault** about a second after login |
-| a hero in a skin | has the row, but not the skin's `lib/` bundles | no crash; the loads fail through `handleIOError` and nothing is drawn |
+| a hero in a skin | has the row, but not the skin's `lib/` bundles | no crash; the loads fail and nothing is drawn |
 
 So an id is only safe to send to a client whose GameMaster has it, and the
 server cannot see the client's GameMaster. It has to be told.
@@ -36,8 +36,8 @@ pack's rows and bundles, one line into the client's
 ```
 
 The client forwards its `Demographics` object unread — no client change — with
-every dungeon entry request (`MatchMaker.hx:81`) and with
-`AskAboutDailyReward`, `getFriendData` and `PurchaseOffer`. A client without the
+every dungeon entry request and with `AskAboutDailyReward`, `getFriendData` and
+`PurchaseOffer`. A client without the
 line sends `{}`, which says it has no packs. That is the same idea as Forge's
 mod list and Polymer's handshake in Minecraft.
 
@@ -112,9 +112,9 @@ and `CardName`. To sell it, an `Offers` row (`Tab: "SKIN"`,
 `Location: "STORE"`) and an `OfferDetails` row carrying its `SkinId`.
 
 The hero's own attack animations are already per skin. The client loads the
-hero holding a weapon from `<skin SwfFilepath minus .swf>_<weapon ModelName>.swf`
-(`WeaponRenderer.hx`), so the skin's bundles include one per weapon model the
-hero can hold, and those frames can look however the skin wants.
+hero holding a weapon from `<skin SwfFilepath minus .swf>_<weapon ModelName>.swf`,
+so the skin's bundles include one per weapon model the hero can hold, and those
+frames can look however the skin wants.
 
 ### A skin's summons
 

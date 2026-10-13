@@ -12,8 +12,8 @@ import { removeHeroFromFloor } from "../src/socket/summary.js";
  *
  * Walking out of an ordinary dungeon takes the hero off the floor at once,
  * five seconds before the report, and the floor goes on running underneath.
- * The official server sends that hero nothing more: 80439 objects disabled
- * across its recordings and not one field update for any of them afterwards.
+ * The original game sends that hero nothing more: once an object is disabled,
+ * no field update for it follows.
  * This server sent three kinds — the next Mana tick, a burning monster's
  * floater and the completion experience — and the client logged each as an
  * update for an object it did not have.
@@ -146,9 +146,8 @@ test("a kill the hero is not there for pays it no Buster and no Mana", async (t)
 });
 
 /**
- * The completion bonus is the report's to show. Across 47 recorded endings the
- * official sends no experience update after `dungeonEnding` on either kind of
- * node — the report carries the bonus as its own line and the client counts the
+ * The completion bonus is the report's to show. The original game sends no
+ * experience update after `dungeonEnding` on either kind of node — the report carries the bonus as its own line and the client counts the
  * bar up from the total before it.
  */
 for (const [title, onFloor] of [

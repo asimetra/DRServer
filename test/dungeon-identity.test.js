@@ -11,8 +11,7 @@ test("the owner hero doid is the active avatar instance id", () => {
    *
    *   getReferenceFromId(dbAccountInfo.activeAvatarInfo.id)
    *
-   * The official server therefore generates HeroGameObjectOwner with that same
-   * id. Allocating an unrelated doid leaves the lookup null and the native
+   * So HeroGameObjectOwner has to be generated with that same id. Allocating an unrelated doid leaves the lookup null and the native
    * client segfaults when it dereferences `distributedDungeonFloor`.
    */
   assert.equal(heroDoidForAvatar({ id: 1_101_000_055 }), 1_101_000_055);
@@ -35,7 +34,7 @@ test("an invalid avatar id is refused before a malformed owner generate", () => 
   }
 });
 
-test("the owner hero generate uses the production dungeon zone", () => {
+test("the owner hero generate uses the dungeon zone the client expects", () => {
   const generated = decodeGenerate(
     heroOwnerGenerate({
       doid: 1_101_000_055,

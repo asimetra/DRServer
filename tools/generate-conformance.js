@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Every field the official sends about a prop, against every value this server
+ * Every field the reference sends about a prop, against every value this server
  * could send for it.
  *
  *   node tools/generate-conformance.js <logs-dir>
@@ -18,16 +18,16 @@
  * for all of them at once, and it is only possible because both halves are
  * knowable ahead of time:
  *
- *   - what the official sent is in the corpus, one generate per placement;
+ *   - what the reference sent is in the corpus, one generate per placement;
  *   - what *we* would send is a pure function of the NPC row and the tile
  *     object, so every placement in every library can be evaluated without
  *     running a dungeon.
  *
- * So the test is a containment check. Collect the official's observed values
+ * So the test is a containment check. Collect the reference's observed values
  * for a field, collect the values our rules can produce across every placement
- * of that constant, and report anything the official sent that we cannot. That
+ * of that constant, and report anything the reference sent that we cannot. That
  * asymmetry matters: we may legitimately produce values the corpus never
- * happened to show, but a value the official sent and we can never reach is a
+ * happened to show, but a value the reference sent and we can never reach is a
  * rule that is wrong.
  *
  * Fields are limited to the ones a placement settles on its own. `hitPoints`
@@ -62,7 +62,7 @@ const CLID_NPC = 27;
  *
  * `LEProp` looks like client-only scenery and mostly is, but not always: the
  * ice caves place `NORDIC_CAVE_GROUND_ICESTALAGMITE_A` as a prop and the
- * official generates it as an NPC all the same. Leaving it out made this tool
+ * reference generates it as an NPC all the same. Leaving it out made this tool
  * report the stalagmite's scales as unreachable when the tile data holds every
  * one of them — a false alarm from the filter, not a bug in the server.
  */
@@ -148,7 +148,7 @@ const placementsByConstant = async (levelsDir) => {
  * does before spawnNpc ever sees a placement. Handing the raw tile object to
  * `headingFor` asks it for a `heading` property that only exists downstream of
  * that call, so it fell through to zero for every prop in the game — and this
- * tool then reported the official's rotations as values "this server can never
+ * tool then reported the reference's rotations as values "this server can never
  * produce". Sixty constants, all of them phantoms.
  */
 const oursFor = (npc, placement) => ({
@@ -168,12 +168,12 @@ const FIELDS = ["layer", "heading", "scale", "flip"];
  * every generate as a solo first floor made whole dungeons look wrong.
  *
  * How wrong is answerable, though, because the level term is the only thing
- * depth touches. Take the health the official charged, divide out the flat and
+ * depth touches. Take the health the reference charged, divide out the flat and
  * the per-level rate, and ask what level would have justified it: in every
  * ordinary dungeon in the corpus — ICE_CAVES_5, CATACOMBS_9, TEMPLE_4,
  * VILLAGE_GRINDER_II, TRIBAL_GRINDER_II, TUTORIAL — the answer is the level on
  * the wire, to three decimal places. `flat + rate * 10 * level^1.5` is exactly
- * what the official charges. Only INFINITE_* runs come out above 1, and they
+ * what the reference charges. Only INFINITE_* runs come out above 1, and they
  * come out above 1 because they are deeper.
  *
  * So the honest comparison is the ordinary floors, where depth is zero by
@@ -219,14 +219,14 @@ const main = async () => {
   const levels = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "local-data", "Resources", "Levels");
   const placements = await placementsByConstant(levels);
 
-  /** constant -> field -> Set of values the official sent. */
+  /** constant -> field -> Set of values the reference sent. */
   const official = new Map();
   const seen = new Map();
   /**
-   * Only the recordings of the official server. The client logs its traffic
-   * wherever it is pointed and this directory holds both, so without the filter
-   * the sweep compares this server against its own past output — which is how
-   * the tutorial's knights came to "disagree" 107 times.
+   * Only the reference recordings, not this server's own. The client logs its
+   * traffic wherever it is pointed and this directory holds both, so without
+   * the filter the sweep compares this server against its own past output —
+   * which is how the tutorial's knights came to "disagree" 107 times.
    */
   const files = (await captureFiles(dir, { officialOnly: true })).map((f) => path.basename(f));
 
@@ -290,9 +290,9 @@ const main = async () => {
 
   console.log(`${checked} constants had both a placement and a generate to compare\n`);
   if (!findings.length) {
-    console.log("no field the official sent is out of this server's reach.");
+    console.log("no field the reference sent is out of this server's reach.");
   } else {
-    console.log("the official sent a value this server can never produce:\n");
+    console.log("the reference sent a value this server can never produce:\n");
     console.log(`${"constant".padEnd(38)} ${"field".padEnd(8)} ${"sent".padEnd(10)} ours`);
     for (const f of findings.sort((a, b) => b.count - a.count)) {
       console.log(
@@ -345,7 +345,7 @@ const main = async () => {
       const mine = reachableHealth(gm, row, npc.level, npc.hitPoints);
       if (mine === npc.hitPoints) agree += 1;
       else if (npc.hitPoints < mine) wounded += 1;
-      else disagree.push(`${constant} L${npc.level}: official ${npc.hitPoints}, ours ${mine}`);
+      else disagree.push(`${constant} L${npc.level}: reference ${npc.hitPoints}, ours ${mine}`);
     }
   }
   const worst = new Map();

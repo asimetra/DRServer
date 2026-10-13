@@ -6,12 +6,12 @@ import { attackForConstant, npcForConstant } from "../src/gamemaster.js";
 import { CLID } from "../src/socket/opcodes.js";
 
 /**
- * When a trap staggers the hero, against the official corpus.
+ * When a trap staggers the hero.
  *
- * Every damaging spike hit carried suffer and knockback here. The official's
- * 332 damaging `TRAP_SPIKES` hits on heroes carry them 78% of the time, and
- * what decides it is how soon the hit follows the hero's previous trap hit:
- * within 0.3s, 15% of 95 hits are staggered; after longer, 81 to 88%.
+ * Every damaging spike hit carried suffer and knockback here. A damaging
+ * `TRAP_SPIKES` hit on a hero usually carries them, and what decides it is how
+ * soon the hit follows the hero's previous trap hit: within 0.3s it rarely
+ * staggers; after longer, it nearly always does.
  *
  * It is what a row of spike beds is made of: standing against one, the beds
  * hit together, and here a knockback from each threw the hero every time.

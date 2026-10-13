@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * What each prop *does* over its life, official against ours.
+ * What each prop *does* over its life, reference against ours.
  *
- *   node tools/behaviour-conformance.js <official-logs> [our-logs]
- *   node tools/behaviour-conformance.js <official-logs> logs --constant NORDIC_TEMPLE_TRAP_STATUE_LOKI
- *   node tools/behaviour-conformance.js <official-logs> logs --only-differences
+ *   node tools/behaviour-conformance.js <reference-logs> [our-logs]
+ *   node tools/behaviour-conformance.js <reference-logs> logs --constant NORDIC_TEMPLE_TRAP_STATUE_LOKI
+ *   node tools/behaviour-conformance.js <reference-logs> logs --only-differences
  *
  * `generate-conformance.js` checks the moment a prop arrives — its layer, its
  * facing, its size. That found the layer rule and the rotation field, and it
@@ -25,10 +25,10 @@
  *
  * Given two directories it diffs them, and the asymmetry is deliberate: a
  * constant the corpus never exercised says nothing about ours, but a constant
- * the official animates and we never do is a trap that does not go off, and one
- * we send a field the official never sends is something we invented.
+ * the reference animates and we never do is a trap that does not go off, and one
+ * we send a field the reference never sends is something we invented.
  *
- * The corpus is the official's own play, so counts vary with how long a floor
+ * The corpus is reference play, so counts vary with how long a floor
  * was stood on. Only the *shape* is compared — does it ever fire, does it ever
  * toggle, is its beat within a quarter of theirs — because that is what
  * survives a different session.
@@ -166,10 +166,10 @@ const profile = async (dir, nameOf, onlyConstant) => {
 const differences = (official, ours) => {
   const found = [];
   if (official.everFires && !ours.everFires) {
-    found.push("never animates — the official sends it an attack choreography and we send none");
+    found.push("never animates — the reference sends it an attack choreography and we send none");
   }
   if (!official.everFires && ours.everFires) {
-    found.push("animates when the official never does");
+    found.push("animates when the reference never does");
   }
   if (official.beat && ours.beat) {
     const ratio = ours.beat / official.beat;
@@ -178,22 +178,22 @@ const differences = (official, ours) => {
     }
   }
   if (official.everFires && ours.everFires && official.fires > 1 && ours.fires <= 1) {
-    found.push(`fires once and stops — the official's instances fire ${official.fires} times`);
+    found.push(`fires once and stops — the reference's instances fire ${official.fires} times`);
   }
   if (official.everToggles && !ours.everToggles) {
-    found.push("never switches — the official toggles its trigger state");
+    found.push("never switches — the reference toggles its trigger state");
   }
   if (!official.everToggles && ours.everToggles) {
-    found.push("switches when the official leaves it alone");
+    found.push("switches when the reference leaves it alone");
   }
   if (official.shape && ours.shape && official.shape !== ours.shape) {
     found.push(`switch pattern "${ours.shape}" against "${official.shape}"`);
   }
   if (!official.states && ours.states) {
-    found.push("sent a death state the official never sends it");
+    found.push("sent a death state the reference never sends it");
   }
   if (official.aims && !ours.aims) {
-    found.push("never turns — the official sends it heading updates");
+    found.push("never turns — the reference sends it heading updates");
   }
   return found;
 };
@@ -203,7 +203,7 @@ const main = async () => {
   const ourDir = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : null;
   if (!officialDir) {
     console.error(
-      "usage: node tools/behaviour-conformance.js <official-logs> [our-logs] [--constant C] [--only-differences]"
+      "usage: node tools/behaviour-conformance.js <reference-logs> [our-logs] [--constant C] [--only-differences]"
     );
     process.exit(2);
   }
@@ -258,7 +258,7 @@ const main = async () => {
   console.log(`\n${flagged} of ${shared.length} shared constants differ.`);
   if (untested.length) {
     console.log(
-      `${untested.length} the official exercised and our capture did not reach — ` +
+      `${untested.length} the reference exercised and our capture did not reach — ` +
         "play those floors, or generate them with tools/trap-map.js."
     );
   }

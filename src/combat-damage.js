@@ -1,14 +1,14 @@
 import { statVector, STAT_NAMES } from "./hero-stats.js";
 
 /**
- * Attack damage, ported from the client's own calculation.
+ * Attack damage, by the formula the client itself describes.
  *
  * The client still carries the whole formula in
  * DistributedDungionArea.calculateNetAttackDamage — but nothing calls it. That
  * is the shape of the cancellation: the arithmetic was left in place and the
  * call sites removed, so the client proposes who hit whom and leaves the number
- * at zero for the server to fill in. Reading it back out is therefore not
- * guesswork; it is the original function.
+ * at zero for the server to fill in. Following that formula is therefore not
+ * guesswork; it is the game's own arithmetic.
  *
  *   offence = (power × Bonus[offenceStat] + attacker[offenceStat]) × attackerBuff
  *   offence = offence × DamageMod
@@ -39,7 +39,7 @@ import { statVector, STAT_NAMES } from "./hero-stats.js";
  * That is a hero's defence. A monster's three ratings are not read through
  * these offsets at all: they are a category, read straight — melee against
  * MELEE_DEF — and applied as a half or a double (see `categoryFor` in
- * socket/combat.js), which is what the official's recorded hits fit.
+ * socket/combat.js).
  */
 const OFFSETS_BY_ATTACK_TYPE = {
   MELEE: { speed: 8, offence: 2, defence: 5, type: 0 },

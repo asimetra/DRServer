@@ -134,3 +134,10 @@ test("a desktop socket that cannot be handed to a client stops the server", () =
   assert.match(refusals({ ODS_DESKTOP_SOCKET_HOST: "0.0.0.0" })[0] ?? "", /ODS_DESKTOP_SOCKET_HOST/);
   assert.deepEqual(refusals({ ODS_DESKTOP_SOCKET_HOST: "game.example.net", ODS_DESKTOP_SOCKET_PORT: "7198" }), []);
 });
+
+test("a fallback port is read when given and refused when it is not a port", () => {
+  assert.equal(loadServerConfig({ ODS_SOCKET_FALLBACK_PORT: "80" }).socketFallbackPort, 80);
+  assert.equal(loadServerConfig({}).socketFallbackPort, null, "unset: the client is sent the port it already has");
+  assert.match(refusals({ ODS_SOCKET_FALLBACK_PORT: "0" })[0] ?? "", /ODS_SOCKET_FALLBACK_PORT/);
+  assert.deepEqual(refusals({ ODS_SOCKET_FALLBACK_PORT: "80" }), []);
+});

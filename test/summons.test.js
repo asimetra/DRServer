@@ -16,12 +16,12 @@ import { scheduleSummons } from "../src/socket/summons.js";
 import { HERO_DOID, buildFloor, readFrame, readNpc } from "./helpers/floor.js";
 
 /**
- * What an enemy's attack calls onto the floor, against the official captures.
+ * What an enemy's attack calls onto the floor.
  *
- * The Ghost Samurai (node 50014, 2026-09-26) played Iron Legion 1.1s after he
- * appeared and three ENEMY_GHOST_SAMURAI_CLONE came up 2493, 2749 and 2917ms
- * later on his own x, level 13 and 568 hit points each. Papa Yeti (node 50009)
- * called eight babies and died 909ms in; six came. On this server neither boss
+ * The Ghost Samurai (node 50014) plays Iron Legion, and three
+ * ENEMY_GHOST_SAMURAI_CLONE come up on its own frames on his own x, at his
+ * level and priced at it. Papa Yeti (node 50009) calls eight babies, and the
+ * ones due after he dies do not come. On this server neither boss
  * called anything, which is most of why both fights were easy.
  */
 
@@ -79,14 +79,14 @@ test("Iron Legion calls three clones on its own frames, where the samurai stands
   assert.deepEqual(
     setup.timers.map((timer) => Math.round(timer.delay)),
     [2417, 2667, 2833],
-    "frames 58, 64 and 68 at 24fps; the official's arrived 2493, 2749 and 2917"
+    "frames 58, 64 and 68 at 24fps"
   );
 
   await setup.runUntil(3000);
   assert.deepEqual(
     setup.spawned.map(({ constant, position, level }) => [constant, position.x, position.y, level]),
     Array(3).fill(["ENEMY_GHOST_SAMURAI_CLONE", 4016, 3768, 13]),
-    "its distance is spelled headingOffset, which the reading does not see — on the caster, as captured"
+    "its distance is spelled headingOffset, which the reading does not see — on the caster"
   );
 });
 
@@ -105,15 +105,13 @@ test("each one is placed from where the caster is at its own frame", async () =>
   assert.deepEqual(
     setup.spawned.map(({ position }) => position.y),
     [3768, 3790, 3790],
-    "the official's clones followed the samurai as he was shoved along y"
+    "the clones follow the samurai as he is shoved along y"
   );
 });
 
 /**
- * The pairs are measured: the official's frame-15 and frame-20 babies each
- * shared one spot. The distance is the authored `offset` read the hero's way;
- * the one recorded yeti was backing off through his cast, so it does not pin
- * the distance down.
+ * The babies come in pairs, each pair sharing one spot on its frame. The
+ * distance is the authored `offset` read the hero's way.
  */
 test("Papa Yeti's babies come a pair to a frame, at his authored offset", async () => {
   const setup = makeSession({ heading: 0, level: 8 });
@@ -134,7 +132,7 @@ test("a caster that dies before a frame calls nothing on it", async () => {
   await setup.runUntil(900);
   setup.session.actors.get(CASTER).dead = true;
   await setup.runUntil(2000);
-  assert.equal(setup.spawned.length, 6, "the official's yeti died 909ms in and six of eight came");
+  assert.equal(setup.spawned.length, 6, "a yeti dead 900ms in calls six of his eight");
 });
 
 test("a floor that has moved on takes its pending summons with it", async () => {
@@ -180,7 +178,7 @@ test("timetolive ends one without paying for it", async () => {
   assert.deepEqual(
     frames.map((frame) => (frame.kind === "field" ? `field ${frame.field}` : frame.kind)),
     ["field 136", "field 138", "disable"],
-    "hitPoints 0, state dead, disable — 43 of 43 official imps left alone"
+    "hitPoints 0, state dead, disable — an imp left alone goes this way"
   );
   assert.equal(frames[0].body.readUInt32LE(8), 0);
   assert.equal(paid, 0, "no death hook, so no experience and no gold");
@@ -205,10 +203,10 @@ test("an enemy's attack asks the floor for its summons", async () => {
 
 /**
  * The whole path on the real boss floor: the floor's own `spawnNpc`, so the
- * clone is generated as the official's was — the enemies' side, the caster's
- * level, its health priced at that level, and already hunting.
+ * clone is generated as it should be — the enemies' side, the caster's level,
+ * its health priced at that level, and already hunting.
  */
-test("on the Dark Barrows boss floor the clones arrive as the official's did", async () => {
+test("on the Dark Barrows boss floor the clones arrive as the boss's own", async () => {
   const world = await buildFloor("castle/catacombs/db_floor_CATACOMBS_GHOST_SAMURAI_RIVAL_BATTLE.json", {
     npcLevel: 13,
   });
@@ -237,11 +235,11 @@ test("on the Dark Barrows boss floor the clones arrive as the official's did", a
   for (const clone of clones) {
     assert.equal(clone.team, TEAM.ENEMIES);
     assert.equal(clone.level, 13);
-    assert.equal(clone.hitPoints, 568, "the official's clones read 568 at level 13");
+    assert.equal(clone.hitPoints, 568, "a clone reads 568 at level 13");
     const actor = session.actors.get(clone.doid);
     assert.equal(actor.isEnemy, true, "an enemy: pets hunt it and the hero's bombs catch it");
     assert.equal(actor.holdsFloor, false, "but not the floor's stock, so it does not hold the floor");
-    assert.equal(actor.ai?.engaged, true, "a clone swung 174ms after it appeared");
+    assert.equal(actor.ai?.engaged, true, "a clone swings within moments of appearing");
   }
   assert.deepEqual(lifetimes, [30_000, 30_000, 30_000], "timetolive 30");
 
@@ -327,8 +325,8 @@ const placeCaster = (session, position, constant) => {
 };
 
 /**
- * No recording has a red dragon, so this holds the enemy side to the hero
- * side's measured rule turned round: the caster's team and level, the caster
+ * This holds the red dragon, on the enemy side, to the hero side's rule turned
+ * round: the caster's team and level, the caster
  * as master, and what it burns is the other side.
  */
 test("a red dragon's line of fire is the dragon's, and burns the hero and not him", async () => {

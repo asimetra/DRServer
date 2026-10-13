@@ -142,8 +142,8 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
      *
      * This one is worth refusing rather than counting, because it is about the
      * shape of the message and not about our reading of the game: no amount of
-     * lag turns a position into NaN. The official client sent 34850 of them
-     * across 54 captures, none non-finite, none past a million, and all inside
+     * lag turns a position into NaN. The client sent 34850 of them
+     * across 54 observed sessions, none non-finite, none past a million, and all inside
      * 0..8946 — a floor is ten tiles of nine hundred.
      *
      * Left unchecked it poisons everything downstream at once, since this is
@@ -321,7 +321,7 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
      * And when it arrived, because how old this is decides how much room a
      * claim made against it deserves. `broadcastTelemetry` runs on a 0.2 second
      * schedule and only sends when the position changed: a median of 208ms
-     * apart across 54 official captures, but a p99 of 1043. See claimedReachOf.
+     * apart across 54 observed sessions, but a p99 of 1043. See claimedReachOf.
      */
     session.heroPositionAt = Date.now();
     session.heroPosition = position;
@@ -374,7 +374,7 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
    * on the field id alone, so a modified client could send hit results in
    * somebody else's name.
    *
-   * Deterministic, not a judgement: across 54 official captures the client
+   * Deterministic, not a judgement: across 54 observed sessions the client
    * sends 60993 owner fields — 34818 positions, 13604 headings, 7023
    * choreographies, 5447 combat results, 69 revives and 32 placements — and
    * every single one carries the hero's own doid. There is no honest traffic on
@@ -410,8 +410,8 @@ export const handleGameplayField = (member, doid, fieldId, reader) => {
 
   if (doid === session.heroDoid && fieldId === FLID_STOP_CHOREOGRAPHY) {
     // Charge controllers stop their holding timeline locally on button-up.
-    // Remote clients cannot observe that local call; the original server
-    // forwards this empty field so they stop before playing the release attack.
+    // Remote clients cannot observe that local call; the server forwards this
+    // empty field so they stop before playing the release attack.
     reader.rest();
     if (session.world) {
       session.broadcast(remoteStopChoreography(session.heroDoid), {

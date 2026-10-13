@@ -8,15 +8,15 @@ import { CLID } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
 
 /**
- * How well a hit lands on a monster, against the official corpus.
+ * How well a hit lands on a monster, as the original game judges it.
  *
  * Every NPC row rates itself against melee, shooting and magic at +1, 0 or -1,
- * and the official halves or doubles the hit by it and tells the client, which
+ * and the game halves or doubles the hit by it and tells the client, which
  * draws the pale or the orange number, the weak or the super flash and the
- * WeakAttack or StrongHit sound. 15717 of 15721 recorded hero hits carry it.
- * The same hero's AXE_COMBO_1 landed 944, 1887 and 3774 on resistant, neutral
- * and weak monsters; KATANA_SOUL_BANG 5237 and 10474 — exact, which is also
- * what says a rating is only a category and never a point of flat defence.
+ * WeakAttack or StrongHit sound. Observed: one hero's AXE_COMBO_1 landed 944,
+ * 1887 and 3774 on resistant, neutral and weak monsters; KATANA_SOUL_BANG 5237
+ * and 10474 — exact, which is also what says a rating is only a category and
+ * never a point of flat defence.
  */
 
 const HERO = 500;
@@ -80,7 +80,7 @@ test("a hero's hit is halved on a resistant monster and doubled on a weak one, a
 
 test("the columns are read straight: shooting against SHOOT_DEF, magic against MAGIC_DEF", async () => {
   // ICE_IMP: MELEE +1, SHOOT -1. The cross-wired reading halved its arrows,
-  // where the official doubles them.
+  // where the original game doubles them.
   const arrow = await heroHit("ICE_IMP", ATTACK.LONG_BOW_SHOT);
   const plain = await heroHit("BRUTE", ATTACK.LONG_BOW_SHOT);
   assert.equal(arrow.effectiveness, 1);
@@ -94,13 +94,12 @@ test("the columns are read straight: shooting against SHOOT_DEF, magic against M
 });
 
 /**
- * The first dungeons have no resistances. In the official's recordings every
- * rated hit on a monster of level 1 to 4 (map nodes 50002-50005) is neutral —
- * 63 of 63, knights and juggernauts rated +1 among them — and from level 7
- * (50008, Icewater Caverns) they count, 41 of 41. That is also where the client
- * first explains them: its RESISTANCES tutorial opens once seven dungeons are
- * done. Levels 5 and 6 are not in the recordings; the line is drawn at the
- * tutorial.
+ * The first dungeons have no resistances. Observed in the original game: every
+ * rated hit on a monster of level 1 to 4 (map nodes 50002-50005) is neutral,
+ * knights and juggernauts rated +1 among them, and from level 7 (50008,
+ * Icewater Caverns) they count. That is also where the client first explains
+ * them: its RESISTANCES tutorial opens once seven dungeons are done. Levels 5
+ * and 6 were not observed; the line is drawn at the tutorial.
  */
 test("a monster below level 7 takes every hit as neutral, whatever its rating", async () => {
   const neutral = await heroHit("BRUTE", ATTACK.AXE_COMBO_1, { level: 4 });
@@ -136,8 +135,8 @@ test("under the star mushroom every hit is neutral in size and told it landed we
 
 /**
  * A hit that does nothing says nothing about how well. A thrown garlic strikes
- * for zero before its cloud does the work, and the official's carries zero on
- * a KNIGHT_BOXERS weak to magic — eleven such hits on rated monsters, all zero.
+ * for zero before its cloud does the work, and in the original game it carries
+ * zero even on a KNIGHT_BOXERS weak to magic.
  */
 test("a hit that deals nothing carries no effectiveness", async () => {
   const gm = await loadGameMaster();
@@ -150,7 +149,7 @@ test("a hit that deals nothing carries no effectiveness", async () => {
 
 /**
  * The burn a weapon's own modifier leaves is the same burn: BURNING_1 is
- * FIRE_L1, the one the official ticks at 194 on every monster whatever its
+ * FIRE_L1, the one the original game ticks at 194 on every monster whatever its
  * rating. It is priced from the neutral hit like the attack's own debuffs.
  */
 test("a Burning weapon ticks the same on a neutral, a weak and a resistant monster", async (t) => {
@@ -167,7 +166,7 @@ test("a Burning weapon ticks the same on a neutral, a weak and a resistant monst
   assert.equal(resisted.ticked, neutral.ticked);
 });
 
-/** The floor's own traps and barrels are not judged: all of their 3000 recorded hits carry zero. */
+/** The floor's own traps and barrels are not judged: their hits always carry zero. */
 test("a floor's PROP trap is not judged by the monster's rating", async () => {
   const sent = [];
   const TRAP = 800;
@@ -194,7 +193,7 @@ test("a floor's PROP trap is not judged by the monster's rating", async () => {
 /**
  * A burn ticks the same on every monster — 194 on knights, lions, yetis and a
  * shaman imp rated exactly like an ice imp — except the rows weak to fire,
- * which take 387 and the +2 flash: 98 of 98.
+ * which take 387 and the +2 flash.
  */
 test("a burn ticks twice as hard on a monster weak to fire, and flashes", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });

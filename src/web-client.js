@@ -1,8 +1,9 @@
 /**
- * The browser build of the client, served under /play/.
+ * The browser build of the client, served under /play/ from a directory the
+ * operator supplies (ODS_WEB_CLIENT_DIR); this repository ships none of it.
  *
  * Kept apart from `/content/` (content.js) because it is a different kind of
- * thing: a whole game, 230 MB across ~450 bundles, where `/content/` is a few
+ * thing: a whole client build, hundreds of bundles, where `/content/` is a few
  * overrides read once and held in memory. So the bundles are streamed from
  * disk and never held (only compressed text is, below), and all of it skips
  * the per-address request budget and the request log,

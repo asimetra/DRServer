@@ -67,8 +67,8 @@ const blowOn = async (attackConstant, { buffs = [], weapons = [{ power: 10 }] } 
 };
 
 /**
- * The one recording of a gassed hero on the official shows the opposite — half
- * of every blow, marked resisted. It is a single floor of a single run, and a
+ * The one gassed hero observed in the original game showed the opposite — half
+ * of every blow, marked resisted. It was a single floor of a single run, and a
  * poison that shields is taken to be a row filled in by habit rather than a
  * rule worth copying. See `buffRatingFor`.
  */
@@ -107,8 +107,8 @@ test("a fraction in those columns is still a share taken off, and says nothing",
 });
 
 /**
- * The Berserker's rage authors 100, which was read as untouchable. The
- * official's is not: fifteen of the twenty-three hits recorded on a raging
+ * The Berserker's rage authors 100, which was read as untouchable. In the
+ * original game it is not: fifteen of twenty-three observed hits on a raging
  * Berserker land, at three where the same yeti scratched for four, each marked
  * resisted.
  */
@@ -165,9 +165,9 @@ test("a monster under Iron Armor resists a sword and not an arrow", async () => 
 });
 
 /**
- * And the gas itself, which did nothing at all. On the official it takes one
- * percent of the hero's full health every second for as long as it is on him:
- * 9 off a hero of 880, forty-two times running, a median 973ms apart.
+ * And the gas itself, which did nothing at all. In the original game it takes
+ * one percent of the hero's full health every second for as long as it is on
+ * him: 9 off a hero of 880, once a second.
  */
 test("the gas takes a hundredth of the hero's health every second", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
@@ -199,8 +199,8 @@ test("the gas takes a hundredth of the hero's health every second", async (t) =>
 });
 
 /**
- * Whether the official's gas can finish a hero is not something its recordings
- * settle — the one gassed hero was killed by a skeleton. Until one does, it
+ * Whether the original game's gas can finish a hero is not known — the one
+ * gassed hero observed was killed by a skeleton. Until that is settled, it
  * wears him down and leaves the killing to the monsters.
  */
 test("the gas does not take the last point", async (t) => {

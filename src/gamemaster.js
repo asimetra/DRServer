@@ -80,7 +80,7 @@ const load = async () => {
    * floors are, and absent on a server with no packs.
    *
    * Only names the game does not have are taken. A shipped timeline is the
-   * rules: a pack row by the same name would change how an official attack
+   * rules: a pack row by the same name would change how a shipped attack
    * hits for everybody, and every variant would then be checked against the
    * replacement instead of the original. A copy of a shipped row is passed
    * over; one that differs is refused, with a warning.
@@ -181,8 +181,8 @@ export const npcForConstant = async (constant) => {
 
 /**
  * LECollectable usually names a concrete row. Some actions instead name a
- * DooberType (`FOOD`, `FOOD_BUFF`), which the original server resolves to one
- * of that category's concrete rows before it creates the distributed object.
+ * DooberType (`FOOD`, `FOOD_BUFF`), which has to be resolved to one of that
+ * category's concrete rows before the distributed object is created.
  */
 export const dooberForConstant = async (constant, random = Math.random) => {
   const { dooberByConstant, doobers } = await load();

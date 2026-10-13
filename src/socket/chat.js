@@ -10,7 +10,7 @@
  *
  *   - the speaker's name is *in the message*. `PlayerGameObjectOwner
  *     .handleOutgoingChat` builds `screenName + ": " + text` and sends that, so
- *     the wire reads "Simetra: hehe". Nothing here needs to add a name and
+ *     the wire reads "Name: hello". Nothing here needs to add a name and
  *     nothing should reformat one.
  *   - the speaker has already seen their own line. The same method calls
  *     `this.Chat(text)` locally before sending, so an echo would double it.

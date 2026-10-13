@@ -235,7 +235,7 @@ const main = async () => {
    *
    * Growing outwards from the starting room puts rooms north and west of it, at
    * negative coordinates — and a floor does not live there. `Floor.buildWalls`
-   * runs the client's edges from the origin outwards, and across 216 official
+   * runs the client's edges from the origin outwards, and across 216 reference
    * tiles not one is at a negative coordinate: the smallest x is 900 and the
    * smallest y is 0. A room laid outside that draws its doorway and has no
    * ground behind it, which is a passage you can see and cannot walk through.

@@ -87,6 +87,14 @@ const sessionForRequest = (accountId, req) => {
   return session.token === req.headers?.["x-validation-token"] ? session : null;
 };
 
+/** Where the game socket is. A zero fallback port stops a client started with `--use-fallback-socket-port`. */
+const socketAnswer = (host, port, fallback = port) => ({
+  webServicesUrl: publicBaseUrl(),
+  gameSocketAddress: host,
+  gameSocketPort: port,
+  gameSocketFallbackPort: fallback,
+});
+
 /**
  * GET /game-status/service-discovery
  * config/ServiceDiscoveryLoader.hx requires webServicesUrl, gameSocketAddress
@@ -94,12 +102,7 @@ const sessionForRequest = (accountId, req) => {
  * DBFacade derives /rpc/, /api/ and /steam/ roots from webServicesUrl.
  */
 const serviceDiscovery = () =>
-  json({
-    webServicesUrl: publicBaseUrl(),
-    gameSocketAddress: config.publicSocketHost,
-    gameSocketPort: config.publicSocketPort,
-    gameSocketFallbackPort: 0,
-  });
+  json(socketAnswer(config.publicSocketHost, config.publicSocketPort));
 
 /**
  * GET /desktop/game-status/service-discovery — the same answer, for the
@@ -110,18 +113,17 @@ const serviceDiscovery = () =>
  * `/game-status/service-discovery` itself (ServiceDiscoveryLoader.hx), and
  * takes every other address from `webServicesUrl`, so nothing else moves.
  */
-const desktopServiceDiscovery = () =>
-  json({
-    webServicesUrl: publicBaseUrl(),
-    gameSocketAddress: config.desktopSocketHost ?? config.publicSocketHost,
-    gameSocketPort: config.desktopSocketHost ? config.desktopSocketPort : config.publicSocketPort,
-    gameSocketFallbackPort: 0,
-  });
+const desktopServiceDiscovery = () => {
+  const [host, port] = config.desktopSocketHost
+    ? [config.desktopSocketHost, config.desktopSocketPort]
+    : [config.publicSocketHost, config.publicSocketPort];
+  return json(socketAnswer(host, port, config.socketFallbackPort ?? port));
+};
 
 /** GET /game-status — how busy each dungeon is, for the world map (game-status.js). */
 const gameStatus = async () => json(await gameStatusFor());
 
-/** Midnight UTC today, which is all of a login the official keeps. */
+/** Midnight UTC today: a login is kept by the day. */
 const today = () => {
   const now = new Date();
   return new Date(
@@ -134,11 +136,11 @@ const today = () => {
  * launch.
  *
  * Nothing in the client reads the field, which is how it came to be written at
- * creation and never again. The official moves it to the current date, and it
- * is what whoever looks after a server reaches for to tell an account that left
- * months ago from one that was on last night.
+ * creation and never again. Moved to the current date, it is what whoever
+ * looks after a server reaches for to tell an account that left months ago
+ * from one that was on last night.
  *
- * By the day, as the official's is, so a launch is a write once and a read
+ * By the day, so a launch is a write once and a read
  * every other time. The write takes the account's lock like any other change —
  * a launch that lands while a purchase is settling must not save a copy read
  * from before it. An account in a dungeon on a match worker cannot be locked

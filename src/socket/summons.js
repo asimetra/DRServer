@@ -5,10 +5,10 @@
  * for them (see `spawnNpcActions`). The hero's side has been built for a long
  * time in placeables.js; an enemy's had nothing, so the Ghost Samurai played
  * Iron Legion and no clone came, and Papa Yeti called for babies that never
- * arrived. Those are the two bosses' hardest-hitting company: the official's
+ * arrived. Those are the two bosses' hardest-hitting company: the game's
  * clones land 16-31 a swing where the samurai himself lands 3-12.
  *
- * Everything here was read off the official captures:
+ * Everything here was observed:
  *
  *   - When: the action's own frame at 24fps and the cast's play speed. Iron
  *     Legion authors frames 58/64/68, 2417/2667/2833ms; the clones arrive at

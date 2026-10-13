@@ -162,7 +162,7 @@ const playSwing = (session, targetId, doid, hazard, beats) => {
  * .determineState` runs `enterDeadState` for the string and nothing else, so
  * all three messages are needed and in this order.
  *
- * And not at once. The official lets the explosion play first — 23 recorded
+ * And not at once. The game lets the explosion play first — 23 observed
  * mines put a median of 1150ms between the choreography and the death, and
  * then disable in the same millisecond as it. That 1150ms is the timeline:
  * `TM_TRAP_TRIPMINE` is 25 frames at 24 a second, which is 1042ms of fire and
@@ -321,10 +321,10 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
   /**
    * Not on the instant it rises.
    *
-   * Standing on a spike bed as it comes up costs the official a beat: across 88
-   * recorded first hits the earliest is 60ms after the switch-on, the commonest
+   * Standing on a spike bed as it comes up costs a beat in the game: across 88
+   * observed first hits the earliest is 60ms after the switch-on, the commonest
    * is 100ms and the median 266ms — never zero. Testing contact immediately put
-   * ours at zero, which is the "these went off later on the real server"
+   * ours at zero, which is the "these went off later in the game"
    * report, and it is also the difference between being able to step off
    * something you can see rising and not.
    *
@@ -555,8 +555,8 @@ const turned = (from, to) => Math.abs((((to - from) % 360) + 540) % 360 - 180);
  * whatever heading it last received — so the two only agree if the aim reaches
  * the client and the simulation in the same breath.
  *
- * They were not agreeing. The official sends a heading immediately before 71 of
- * its 84 recorded shots; ours managed 40 of 838, because the aim ran on its own
+ * They were not agreeing. The game sends a heading immediately before 71 of
+ * 84 observed shots; ours managed 40 of 838, because the aim ran on its own
  * quarter-second timer while the statue fired every four seconds. In between,
  * the hero moves. That is the flame passing beside a player who takes the
  * damage anyway — one direction drawn, another one hit.

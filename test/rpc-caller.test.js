@@ -95,7 +95,7 @@ test("a handler registered without saying where its account is defaults to the f
  * Every method the client actually calls now has an answer, which is what lets
  * the permissive fallback go.
  *
- * Across the official recordings the client calls 29 distinct RPC methods. This
+ * The client calls 29 distinct RPC methods. This
  * server registers 28 of them and serves `accountdetails` through the REST
  * layer; `GetFacebookId` was the last gap, and it is answered with the blank
  * the client is already built for — `PlayerGameObject` only raises its event

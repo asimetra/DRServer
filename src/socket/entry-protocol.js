@@ -56,7 +56,7 @@ export const buildEntryResponse = (doid, errorCode, value = 0) =>
     .u32(value)
     .frame();
 
-/** Production responds to RequestExit with ClientExitComplete(u16 1). */
+/** RequestExit is answered with ClientExitComplete(u16 1). */
 export const buildExitComplete = (doid, value = 1) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
     .u32(doid)

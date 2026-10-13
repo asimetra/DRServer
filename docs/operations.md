@@ -56,7 +56,7 @@ brackets it where it goes into a URL.
 By default the server advertises the ports it listens on. When players reach it
 through different ones — a router forwarding public port 9000 to 8080, or a
 tunnel that hands out a host and port of its own for each listener — say what
-they should be told instead. These three settings change only what is
+they should be told instead. These settings change only what is
 advertised; nothing listens on them:
 
 | Setting | Advertised as | Defaults to |
@@ -66,6 +66,7 @@ advertised; nothing listens on them:
 | `ODS_PUBLIC_SOCKET_HOST` | `gameSocketAddress` | `ODS_PUBLIC_HOST` |
 | `ODS_DESKTOP_SOCKET_HOST` | `gameSocketAddress`, to the desktop client only | what everybody is told |
 | `ODS_DESKTOP_SOCKET_PORT` | `gameSocketPort`, to the desktop client only | `ODS_SOCKET_PORT` |
+| `ODS_SOCKET_FALLBACK_PORT` | `gameSocketFallbackPort`, to the desktop client only: the port a client started with `--use-fallback-socket-port` (the DRH launcher's default) uses instead, for networks that let only common ports out. Forwarding it to the game port is the operator's. | the desktop client's `gameSocketPort` |
 
 ```bash
 # A router forwards 203.0.113.7:9000 -> 8080 and 203.0.113.7:9001 -> 7198

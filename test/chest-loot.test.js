@@ -73,7 +73,7 @@ test("a chest's death timeline drops what it authors, on its own frames", async 
   for (let flush = 0; flush < 40; flush++) await Promise.resolve();
 
   const spawned = frames.filter((frame) => readField(frame).op === OP.CLIENT_CREATE_OBJECT_REQUIRED_RESP);
-  assert.equal(spawned.length, 47, "forty-seven pickups, as the captures count them");
+  assert.equal(spawned.length, 47, "forty-seven pickups, one per authored action");
 });
 
 /**
@@ -133,12 +133,12 @@ test("the shower stops when the floor does", async (t) => {
  * `spawndoober` — so the choreography was never sent and the client kept a
  * closed chest on screen while six seconds of coins came out of it.
  *
- * Against the recorded run, on the chest's own object:
+ * What the chest's own object should be sent, against what this server sent:
  *
- *   theirs  CREATE, heading, position, choreography 910999, hitPoints,
- *           choreography 950144, result, result, state "dead"
- *   ours    CREATE,                                hitPoints,
- *                              result,             state "dead"
+ *   expected  CREATE, heading, position, choreography 910999, hitPoints,
+ *             choreography 950144, result, result, state "dead"
+ *   was       CREATE,                                hitPoints,
+ *                                result,             state "dead"
  *
  * 950144 is `LOOT_SPAWN_A1` and is the one this pins.
  */
@@ -182,7 +182,7 @@ test("a chest is told to play the animation it empties itself with", async () =>
   assert.equal(field, 143, "ReceiveAttackChoreography");
   reader.u8(); // weaponSlot
   reader.u8(); // isConsumableWeapon
-  assert.equal(reader.u32(), attack.Id, "naming LOOT_SPAWN_A1, as the capture does");
+  assert.equal(reader.u32(), attack.Id, "naming LOOT_SPAWN_A1");
 });
 
 /** A barrel still bangs: the damage half is gated on colliders, not the animation. */

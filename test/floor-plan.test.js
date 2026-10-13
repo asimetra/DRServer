@@ -7,7 +7,7 @@ import { floorPlanForMapNode, floorCountOf, loadFloorAt } from "../src/socket/fl
  * list — and a run is a sequence, not one kind or the other.
  *
  * `MapPage.CustomTileset` names a CustomMaps row carrying the authored files;
- * the node's tier says how many floors are laid out before them. A captured
+ * the node's tier says how many floors are laid out before them. An
  * Icewater Caverns Boss run is one of each.
  */
 
@@ -22,8 +22,7 @@ test("the tutorial is two authored floors and no approach", async () => {
 });
 
 /**
- * Measured, not guessed. socket-20260815-225311.jsonl holds one run of node
- * 50009 under a single area:
+ * Observed, not guessed: one run of node 50009 under a single area is:
  *
  *   floor 2000  nordic/caves/tiles.json, 14 tiles = ICE_CAVES_BOSS.NumTiles
  *   floor 2001  five tiles, byte for byte db_floor_ICE_CAVES_PAPA_YETI_BOSS
@@ -34,7 +33,7 @@ test("the tutorial is two authored floors and no approach", async () => {
 test("a boss node lays out an approach, then loads its authored map", async () => {
   const plan = await floorPlanForMapNode(50009, { seed: 1 });
 
-  assert.equal(floorCountOf(plan), 2, "the captured run was two floors");
+  assert.equal(floorCountOf(plan), 2, "the run is two floors");
   assert.deepEqual(kinds(plan), ["generated", "authored"]);
   assert.match(plan.floors[1].authored, /ICE_CAVES_PAPA_YETI_BOSS/);
 
@@ -47,11 +46,9 @@ test("a boss node lays out an approach, then loads its authored map", async () =
 });
 
 /**
- * Measured from an official Twisted Jungle Boss run. The opening floor carried
- * eight generated tiles from jungle/tribal/tiles.json. The next layout update
- * had the same 789-byte size as db_floor_LAVA_GOLEM_BOSS_1 and all nineteen
- * tile records retained by the client's 512-byte logger matched it exactly;
- * the final update retained all nine records and matched the final file.
+ * Observed in a Twisted Jungle Boss run: the opening floor carries eight
+ * generated tiles from jungle/tribal/tiles.json, the next is
+ * db_floor_LAVA_GOLEM_BOSS_1 and the last is the final authored file.
  *
  * Keep this explicit even though the generic boss census below also says GAA:
  * it locks the two authored files to their positions in the run rather than

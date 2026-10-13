@@ -77,10 +77,9 @@ test("generator pacing comes from each authored cage instead of one global relea
 
 test("a generator's clock: under a second is a tick, a whole second or more is kept", () => {
   /**
-   * Every official capture in the recorded corpus (1724 back-to-back spawns of one
-   * generator's first pack): 0, 0.1, 0.2, 0.3, 0.4, 0.5 and 0.6 all come out
-   * 80ms apart at the median; 1 and 2 at 1000 and 2000; the arena's lions,
-   * authored 4, 4.08s apart.
+   * Observed in the original game, a generator's first pack: 0, 0.1, 0.2,
+   * 0.3, 0.4, 0.5 and 0.6 all come out about 80ms apart; 1 and 2 at 1000 and
+   * 2000; the arena's lions, authored 4, about 4s apart.
    */
   for (const interval of [0, 0.1, 0.09999999999999935, 0.3, 0.5, 0.6]) {
     assert.equal(generatorCadenceFor({ spawnInterval: interval }).periodMs, 80, `${interval} is a tick`);
@@ -185,10 +184,10 @@ test("the Golem's toggled generators resume on a later SUMMON event", async (t) 
 
 test("a generator keeps up to maxPopulation standing: a whole pack on the input, then one for each death", () => {
   /**
-   * Every official capture (532 generator mouths, 2681 spawns): none ever
-   * stood more than its maxPopulation. The Battleheim boss's imp cave
-   * (socket-20261005-165901, population 10): ten out in 0.75s; five die
-   * together and five come back, not ten; four die and four come back.
+   * Observed in the original game: no generator ever stands more than its
+   * maxPopulation. The Battleheim boss's imp cave (population 10): ten out in
+   * 0.75s; five die together and five come back, not ten; four die and four
+   * come back.
    */
   const door = createPopulationDoor({ maxPopulation: 10, maxSpawns: 20 });
   let out = 0;
@@ -230,12 +229,12 @@ test("a spawn that never stood does not hold a place; a resumed wave counts who 
 
 test("a cave a reset gate's pulse starts pours its pack: the pulse taking itself off does not stop it", async (t) => {
   /**
-   * The Battleheim boss (socket-20261005-165901): every cave hangs off a
+   * The Battleheim boss: every cave hangs off a
    * RESET_TIMER_GATE with a resetTime of 0 — one tick, about 100ms — and pours
    * ten out in 0.75s, twenty in all. Stopped on the pulse's fall, each made
    * one, or two, and stood empty. A state that goes low still stops its
-   * generators: the tutorial's jails close when the minotaur dies (five
-   * official runs, no brute after it).
+   * generators: the tutorial's jails close when the minotaur dies (no brute
+   * comes after it).
    */
   const world = await buildFloor("nordic/village/db_floor_VILLAGE_PRINCESS_DEFENSE.json", { npcLevel: 10 });
   const { session } = world;
@@ -263,10 +262,9 @@ test("a cave a reset gate's pulse starts pours its pack: the pulse taking itself
 
 test("the arena's marksmen, killed one by one: two standing at most, all eight out, each refill a tick or two after its death", async (t) => {
   /**
-   * The official's arena (socket-20261007-163805): its jails keep their two
-   * standing, one for one; a refill's generate arrives 92 / 134 / 212ms (p10 /
-   * median / p90) after the death that made room — both frames from the
-   * server, so no link in it: the tick after the one that saw the death.
+   * The arena, as the original game runs it: its jails keep their two
+   * standing, one for one, and a refill arrives on the tick after the one that
+   * saw the death that made room.
    */
   const world = await buildFloor("arena_gauntlet", { npcLevel: 10 });
   const { session } = world;

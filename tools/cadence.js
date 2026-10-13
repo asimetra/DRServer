@@ -12,7 +12,7 @@
  * Two sides, because they are paced by different machines:
  *
  *   monsters, whose cadence this server owns — `AttackTimer` plus a fresh
- *   uniform roll of `AttackTimeRand` per swing, which is what the official's
+ *   uniform roll of `AttackTimeRand` per swing, which is what the reference's
  *   distributions show: the p05 of each constant sits on its timer and the
  *   spread matches its rand;
  *
@@ -21,7 +21,7 @@
  *   `AttackSpd x speed stat x buff x weapon speed`, and of those four the
  *   server supplies only the weapon's identity. So the hero's row here is not
  *   a thing to fix — it is a thing to compare, and a floor well under the
- *   official's for the same attack means the difference is in the data sent,
+ *   reference's for the same attack means the difference is in the data sent,
  *   not in any pacing decision.
  *
  * Percentiles rather than a mean: the tail is engagements interrupted by
@@ -166,7 +166,7 @@ const main = async () => {
     });
   }
   heroRows.sort((a, b) => b.n - a.n);
-  report("hero — paced by the client; compare p05 with the official's, per attack:", heroRows);
+  report("hero — paced by the client; compare p05 with the reference's, per attack:", heroRows);
 };
 
 main().catch((error) => {

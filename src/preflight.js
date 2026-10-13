@@ -249,7 +249,7 @@ export const reportAuth = () => {
   info("auth on, and this server has just made its signing secret.");
   info("  No client can connect until you give it one of this server's tokens:");
   info("");
-  info("      node tools/token.js 1000000001");
+  info("      node tools/token.js <accountId>");
   info("");
   info("  That prints an AccountId and an API_ValidationToken to paste into the");
   info("  client's configuration. Do the same, with a different number, for");

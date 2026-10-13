@@ -16,10 +16,8 @@ import { OP } from "../src/socket/opcodes.js";
 /**
  * The report's chest buttons.
  *
- * The expectations here are transcribed from official captures rather than
- * chosen: across nine recorded sessions the client sent six TakeChests and six
- * DropChests, every take was answered with succeeded=1 and both reward fields
- * zero, and not one drop was answered at all. Those two facts are what the
+ * A TakeChest is answered with succeeded=1 and both reward fields zero, and a
+ * DropChest is not answered at all. Those two facts are what the
  * client's own flow depends on — keep waits under a TAKING_ITEM popup, abandon
  * clears its slot and never listens — so they are asserted directly.
  */
@@ -83,7 +81,7 @@ const sessionWith = ({ chests, treasures, ...overrides } = {}) => {
   };
 };
 
-test("keep is answered, and answered the way the captures were", async () => {
+test("keep is answered, and answered the way the client expects", async () => {
   const session = sessionWith();
   await handleTakeChest(session, request(0));
 
@@ -97,10 +95,9 @@ test("keep is answered, and answered the way the captures were", async () => {
 });
 
 /**
- * Keep is the grant, not a confirmation. Measured: across the official captures
- * every increase in `account_chests` follows a TakeChest or an OpenChest, and a
- * run that collected four treasures and kept one moved the account by exactly
- * one.
+ * Keep is the grant, not a confirmation: a chest reaches `account_chests` only
+ * through a TakeChest or an OpenChest, and a run that collected four treasures
+ * and kept one moves the account by exactly one.
  */
 test("keep puts the chest on the account", async () => {
   const session = sessionWith();
@@ -109,7 +106,7 @@ test("keep puts the chest on the account", async () => {
   const chests = session.dungeonAccount.account_chests;
   assert.equal(chests.length, 1, "the account had none before");
   assert.equal(chests[0].chest_id, LEGENDARY_CHEST);
-  assert.equal(chests[0].is_new, 1, "which is what every captured chest row carries");
+  assert.equal(chests[0].is_new, 1, "which is what a new chest row carries");
 });
 
 /**
@@ -126,8 +123,8 @@ test("the account is saved before the answer goes out", async () => {
 });
 
 /**
- * And abandon removes nothing, because nothing was added. Three abandons in one
- * captured run left the account exactly where it was.
+ * And abandon removes nothing, because nothing was added: the account stays
+ * exactly where it was.
  */
 test("abandon leaves the account alone", async () => {
   const session = sessionWith();
@@ -138,7 +135,7 @@ test("abandon leaves the account alone", async () => {
 });
 
 /**
- * Six drops in the captures, zero replies. The client clears its own slot in
+ * A drop gets no reply. The client clears its own slot in
  * the confirm handler, so an answer would push it through a popup path it did
  * not ask for.
  */
@@ -195,9 +192,9 @@ test("a slot the run never filled is refused", async () => {
 });
 
 /**
- * The answer goes to the whole summary, not the asker: captured sessions
- * received responses addressed to five other accounts, which is why the client
- * carries a `mDBFacade.accountId != account_id` guard at all.
+ * The answer goes to the whole summary, not the asker: every member receives
+ * it, which is why the client carries a `mDBFacade.accountId != account_id`
+ * guard at all.
  */
 test("the answer reaches every member of the party", async () => {
   const owner = sessionWith();

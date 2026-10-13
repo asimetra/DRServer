@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 /**
- * A healing wave, as the official server actually delivers one.
+ * A healing wave, as the original game delivers one.
  *
  * Two things had to be measured to get this right, and the first attempt got
  * the second one wrong.
@@ -13,15 +13,13 @@ import assert from "node:assert/strict";
  * rows carrying one are negative, 280 of them exactly -1, and the eleven
  * positive rows are FRIENDLY and all heal.
  *
- * And a heal is *not proposed*. Of 7214 attack choreographies in the
- * recordings exactly two name a healing attack, and neither is followed by a
- * ProposeCombatResults — yet 25 healing results come back. The client asks to
- * cast; the server decides who is healed and for how much. One cast, from
- * `socket-20260816-145437`:
+ * And a heal is *not proposed*. A healing cast is never followed by a
+ * ProposeCombatResults, yet healing results come back: the client asks to
+ * cast; the server decides who is healed and for how much. One cast:
  *
- *     14:55:56.874  out  choreography   HEALING_PULSE_COOLDOWN, slot 2
- *     14:55:57.048  in   hit points     304 -> 420
- *     14:55:57.049  in   combat result  +282, when 255
+ *     out  choreography   HEALING_PULSE_COOLDOWN, slot 2
+ *     in   hit points     304 -> 420
+ *     in   combat result  +282, when 255
  */
 
 const HEALING_PULSE_COOLDOWN = 900082; // the Heal Scroll's cast
@@ -155,11 +153,11 @@ test("a heal goes down the wire positive, marked as the server's own", async () 
   const own = resultFor(sent, 500, 500);
   assert.ok(own, "the caster gets a combat result");
   assert.ok(own.damage > 0, `positive on the wire — got ${own.damage}`);
-  assert.equal(own.when, 255, "255 is what the official writes when nothing proposed it");
+  assert.equal(own.when, 255, "255 is what the client expects when nothing proposed it");
 });
 
 /**
- * 304 + 282 against a 420 bar is 586, and the recording still reports 282. The
+ * 304 + 282 against a 420 bar is 586, and the result still reports 282. The
  * result carries what was computed, not the part that fit.
  */
 test("the reported heal is the whole amount, not the part that fit", async () => {
@@ -188,14 +186,14 @@ test("a hostile attack is not routed into the healing path", async () => {
  * The tests above call the fan-out directly, which would still pass if every
  * guard in the choreography handler refused the cast — and a heal refused for
  * want of Mana or a cooldown is exactly as broken as one never computed. This
- * drives the same field-172 message the recording shows.
+ * drives the same field-172 message the client sends.
  */
 test("casting the scroll heals through the choreography handler, paying its Mana", async () => {
   const { session } = await woundedParty();
   const { handleProposeAttackChoreography } = await import("../src/socket/buster.js");
   const { PacketWriter, PacketReader } = await import("../src/socket/packet.js");
 
-  // HERO_SCROLL_HEAL in slot 2, which is the slot both recorded casts name.
+  // HERO_SCROLL_HEAL in slot 2, the slot the cast above names.
   session.heroWeapons = [null, null, { type: 24003, power: 120 }];
 
   const proposal = new PacketWriter()

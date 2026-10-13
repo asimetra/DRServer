@@ -1,5 +1,5 @@
 /**
- * Every trap in the game, against what the official was seen doing.
+ * Every trap in the game, against what the reference was seen doing.
  *
  *   node tools/trap-census.js <logdir>/socket-*.jsonl
  *   node tools/trap-census.js --all <logdir>/socket-*.jsonl   # unmeasured too
@@ -14,7 +14,7 @@
  * themes were blinked on and off.
  *
  * So the useful question is not "is this trap broken" but "does the rule we
- * apply to its kind match what the official did". This asks it of all 133 of
+ * apply to its kind match what the reference did". This asks it of all 133 of
  * them at once.
  *
  * The prediction under test is `togglesRenderer`: it says the trap receives

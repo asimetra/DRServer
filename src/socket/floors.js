@@ -41,8 +41,8 @@ const degreesToRadians = (degrees = 0) => (degrees * Math.PI) / 180;
  * — 74 of 284 — at the wall behind them, and they looked identical to the ones
  * that worked, because the mirroring is the only difference.
  *
- * The official server bakes it in: a capture generates the ice caves' flipped
- * gargoyle at `heading 180, flip 1` against a tile that says rotation 0. So the
+ * The game bakes it in: the ice caves' flipped gargoyle is generated at
+ * `heading 180, flip 1` against a tile that says rotation 0. So the
  * flip still crosses the wire for the artwork, and the heading carries the
  * facing. Mirroring across the vertical axis is `180 - rotation`, which leaves
  * the ones firing along Y untouched — as it should, since mirroring left for
@@ -916,8 +916,8 @@ export const floorPlanForMapNode = async (mapNodeId, { seed } = {}) => {
     /**
      * The row names its floors and we do not have them.
      *
-     * Every authored floor the boss nodes name ships in the Haxe client's own
-     * Resources, and game-data/manifest.json lists all fifteen for
+     * Every authored floor the boss nodes name ships with the client, and
+     * game-data/manifest.json lists all fifteen for
      * tools/sync-game-data.js to import; so this is a snapshot without them —
      * an incomplete import, or a client that does not carry them. Loading the
      * default in their place put the Knight Fortress arena under every boss —
@@ -997,7 +997,7 @@ export const floorPlanForMapNode = async (mapNodeId, { seed } = {}) => {
    * The level every NPC on this run is generated at.
    *
    * `ColiseumTiers` names it per tier, and the corpus agrees without exception:
-   * of the 21 distinct NPC levels the official sent across 54 captures, every
+   * of the 21 distinct NPC levels observed across 54 sessions, every
    * one is some tier's `MinLevel`. The arena run is the clean case — node 50150
    * is `ARENA_INFINITE`, whose MinLevel is 100, and its NPCs arrive at 100.
    *

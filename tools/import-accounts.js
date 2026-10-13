@@ -124,9 +124,9 @@ if (!accounts.length) {
  * notices when two of them are handed the same number. Postgres does, and
  * refuses the batch with a duplicate-key error that names neither account.
  *
- * Found once here, between account 1000000001's `optionsHudStyle` and account
- * 1000000005's `seenUltimatePopup`. Both are real preferences of different
- * players and neither can be dropped, so the second one is renumbered — the id
+ * Found once here, between one account's `optionsHudStyle` and another's
+ * `seenUltimatePopup`. Both are preferences of different accounts and neither
+ * can be dropped, so the second one is renumbered — the id
  * is bookkeeping and nothing reads it. A preference is found by its name:
  * `AlterAttribute` sends one and the handler matches on `row.name`.
  */

@@ -51,8 +51,8 @@ const isGold = (doober) => doober.DooberType === "GOLD" || doober.DooberType ===
 /**
  * The star a monster leaves, which its own row names.
  *
- * `XP_DOOBER_VISUAL` is the doober and `XP` is what it weighs. The official
- * never rolls it: every recorded kill at weight 1 dropped EXP_SMALL, at 3
+ * `XP_DOOBER_VISUAL` is the doober and `XP` is what it weighs. The game
+ * never rolls it: every observed kill at weight 1 dropped EXP_SMALL, at 3
  * EXP_MEDIUM and at 10 EXP_LARGE — 7151 kills, none otherwise. A row that
  * weighs nothing leaves no star whatever visual it carries; what counts as
  * weighing something is run-xp.js's to say.
@@ -67,7 +67,7 @@ export const xpDooberFor = (npc, allDoobers = []) => {
 };
 
 /**
- * Production emits a star and a coin for reward-bearing enemies and then
+ * The game emits a star and a coin for reward-bearing enemies and then
  * applies the NPC's authored probability/count to the CategoryProb/DooberDrop
  * matrix. All selection inputs here are GameMaster-authored rather than
  * hard-coded ids; what the star is worth is the run's — see run-xp.js.

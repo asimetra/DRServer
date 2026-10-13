@@ -7,7 +7,7 @@ import { ROLE, roleOf, withRole } from "../src/socket/roles.js";
 const sessionAs = (rank) => ({
   id: 3,
   accountId: 500,
-  dungeonAccount: { id: 500, name: "Simetra", admin_flags: String(withRole(0, rank)) },
+  dungeonAccount: { id: 500, name: "Rowan", admin_flags: String(withRole(0, rank)) },
 });
 
 const said = [];

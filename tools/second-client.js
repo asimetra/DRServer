@@ -8,9 +8,9 @@
  *   node tools/second-client.js --list
  *
  * Friends, presence and matchmaking all need two players, and until now testing
- * them meant one. The client does not have to be modified to get a second:
- * `DBConfigManager` opens `./DbConfiguration/Config.json` and `DBFacade` reads
- * `AccountId` out of it. So a directory with its own config and its own copy of
+ * them meant one. The client does not have to be modified to get a second: it
+ * reads `AccountId` from `./DbConfiguration/Config.json`. So a directory with
+ * its own config and its own copy of
  * the binary, linking the rest, is a whole second client for about fifty
  * megabytes against the original's gigabyte.
  *
@@ -27,11 +27,10 @@ import path from "node:path";
 /**
  * One: which client gets copied.
  *
- * There is more than one on this machine and they do not point at the same
- * place. A separate worktree may still be configured for a third-party service;
- * copying that one produces a second client that dutifully logs in somewhere
- * else, where a made-up account id means nothing. The one that points at
- * `127.0.0.1:8080` is the one worth copying.
+ * A machine can hold more than one client, and they need not point at the same
+ * place. Copying one configured for another server produces a second client
+ * that dutifully logs in somewhere else, where a made-up account id means
+ * nothing. The one that points at `127.0.0.1:8080` is the one worth copying.
  *
  * So the default is the local client, and a base whose config names anything
  * else is refused rather than quietly built — that mistake costs a run of the
@@ -46,25 +45,12 @@ const LAUNCHER = "run.sh";
 const LOCAL = /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])(:|\/|$)/i;
 
 /**
- * Two: Steam wins unless you tell it not to.
+ * Two: the client uses `AccountId` only when `UseSteamLogin` is false.
  *
- * `AccountId` in the config is only a default. If the Steam login succeeds the
- * client does `dbFacade.accountId = toInt(playerId)`, so the number this tool
- * writes is replaced by whichever Steam account is signed in and both instances
- * are the same player again. Not hypothetical: of the logins this server has
- * received, 131 carried the configured id and 4 carried the Steam one.
- *
- * The client has a switch for exactly this. `DBFacade` reads
- * `getConfigBoolean("UseSteamLogin", true)` — note the default, which is why an
- * absent key means Steam wins — and `SteamAccountInfo.getOrCreateAccount`
- * begins:
- *
- *     if (!dbFacade.mUseSteamLogin) { Logger.info("Skipping logging into Steam."); ... }
- *
- * So the instance sets it false and keeps the id it was given. That is a
- * documented switch rather than a trick, and it leaves the Steamworks API up —
- * overlay, achievements and the rest keep working, which removing
- * `steam_appid.txt` would have taken away along with the login.
+ * `UseSteamLogin` is an existing client option and defaults to true, in which
+ * case the account comes from Steam rather than from `AccountId` — and both
+ * instances would be the same player again. So the instance sets it false, and
+ * the client uses the `AccountId` this tool wrote.
  */
 const STEAM_LOGIN_OFF = { UseSteamLogin: false };
 
@@ -88,7 +74,7 @@ const listInstances = () => {
     if (!fs.existsSync(config)) continue;
     const { AccountId, ServiceDiscoveryUrl } = JSON.parse(fs.readFileSync(config, "utf8"));
     const { UseSteamLogin } = JSON.parse(fs.readFileSync(config, "utf8"));
-    const steam = UseSteamLogin === false ? "" : "  STEAM CAN OVERRIDE THE ACCOUNT";
+    const steam = UseSteamLogin === false ? "" : "  UseSteamLogin NOT FALSE: AccountId MAY BE IGNORED";
     console.log(`  ${entry.padEnd(20)} account ${AccountId}  ${ServiceDiscoveryUrl}${steam}`);
   }
 };
@@ -212,7 +198,7 @@ const main = async () => {
   console.log(`second client ready: ${root}`);
   console.log(`  from ${client} -> ${url}`);
   console.log(`  account ${accountId} (the original stays ${original})`);
-  console.log(`  UseSteamLogin false, so Steam cannot sign it in as somebody else`);
+  console.log(`  UseSteamLogin false, so the client uses the configured AccountId`);
 
   if (!args.includes("--run")) {
     console.log(`\nrun it with:\n  ${path.join(root, LAUNCHER)}`);

@@ -116,7 +116,7 @@ export const matchMakerGenerate = (doid, infiniteDetails = []) => {
 };
 
 /**
- * PlayerGameObjectOwner (clid 29). Production uses the account id as this
+ * PlayerGameObjectOwner (clid 29). The account id is used as this
  * object's doid; DungeonReport.id points back to it on the summary screen.
  */
 const playerFields = ({ screenName, basicCurrency = 0 }) =>
@@ -208,8 +208,8 @@ const FLID_AREA_FLOOR_ENDING = 215;
  *
  * The client decodes this as `totalFloors * 1000 + zeroBasedFloor`: its
  * getMaxFloorNum divides by 1000 and getCurrentFloorNum takes the remainder.
- * Captured two-floor runs therefore use 2000/2001, while an official Ultimate
- * Rampage capture uses 55000, 55001, ... for its 55 rooms. Hard-coding 2000
+ * Two-floor runs therefore use 2000/2001, while an Ultimate
+ * Rampage run uses 55000, 55001, ... for its 55 rooms. Hard-coding 2000
  * made every long run announce itself as "1 OF 2" despite building 55 floors.
  */
 export const FIRST_FLOOR_NUMBER = 2000;
@@ -233,7 +233,7 @@ export const dungeonFloorGenerate = ({
   const fields = new PacketWriter()
     .u32(mapNodeId)
     // MapPage.TierRank — CASTLE_TIER1 for the tutorial, ICE_CAVES_B for Ice
-    // Caverns 1-3. Empty here is another value the real server never sends.
+    // Caverns 1-3. Empty here is another value the game never sends.
     .utf(tierConstant)
     .utf(clientAssetPath(floor.tileLibrary))
     /**
@@ -271,7 +271,7 @@ export const infiniteRewardDataUpdate = (
 /**
  * Field updates a floor gets after it is generated.
  *
- * The generate already carries the tile list, but production sends it again as
+ * The generate already carries the tile list, but the game sends it again as
  * a field update on every floor after the first, followed by baseLining. The
  * client dedupes tiles by (x, y) — DistributedDungeonFloor.tiles only builds
  * placements it has not seen — so repeating it is harmless and keeps us on the
@@ -438,7 +438,7 @@ const writeDungeonReport = (writer, report = {}) => {
 /**
  * DistributedDungeonSummary (clid 38).
  *
- * Production always sends four DungeonReport slots: the local player followed
+ * The game always sends four DungeonReport slots: the local player followed
  * by empty/invalid party slots. The report vector is byte-length-prefixed.
  */
 export const dungeonSummaryGenerate = ({
@@ -532,7 +532,7 @@ const heroFields = ({
    * The size the client draws *and collides* the hero at.
    *
    * Every hero row authors `Scale` 1.176 against a `CollisionSize` of 22, and
-   * the official sends the product on the wire: 217 of its 221 hero generates
+   * the game sends the product: 217 of 221 observed hero generates
    * carry 1.176, and so do the 111 it sends for other players. This server sent
    * a flat 1, which is a hero 44 units across where the game's is 51.7.
    *
@@ -540,7 +540,7 @@ const heroFields = ({
    * neighbouring spike beds whose navigation boxes leave a gap between 44 and
    * 68 units — every one of those in the 44 to 51 band is a slot our hero fits
    * through and the game's does not. That is the reported "we squeeze between
-   * the traps and take damage, and on the original you simply cannot".
+   * the traps and take damage, where the game's own hero cannot".
    */
   scale = 1,
 }) => {

@@ -23,7 +23,7 @@ const BERSERKER = 101; // MELEE_ATK | FURY | HP_BOOST | MASTER_DEFENSE
 const onFloor = (overrides = {}) => ({
   id: 7,
   accountId: 500,
-  dungeonAccount: { id: 500, name: "Simetra" },
+  dungeonAccount: { id: 500, name: "Wren" },
   heroDoid: 500,
   floorDoid: 400,
   dungeonAvatar: {

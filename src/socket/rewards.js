@@ -61,7 +61,7 @@ const percentageAmount = (maximum, ratio) =>
  * The completion share the account's roster adds: a sixteenth of the node's
  * bonus for every hero owned past the second.
  *
- * Every solo run in the official corpus pays exactly this: a five-hero account
+ * Every observed solo run pays exactly this: a five-hero account
  * on five nodes (2325 -> 435, 2220 -> 416, 2015 -> 377, …), a six-hero one on
  * twenty, and nothing to accounts of one and two heroes. The client's battle
  * popup says five percent per hero past the first, which the six-hero runs
@@ -324,7 +324,7 @@ export const applyDooberReward = (session, doober) => {
 /**
  * Records the deepest Infinite room the hero actually entered.
  *
- * The score is depth reached, not floors cleared. In an official run whose
+ * The score is depth reached, not floors cleared. In an observed run whose
  * last generated floor was 55009, losing on that floor made the next
  * championsboard response report score 10. Recording only from
  * `awardInfiniteFloor` left that same run at 9 and also kept the floor-three
@@ -492,9 +492,9 @@ export const awardDungeonCompletion = async (session) => {
   /**
    * And a trophy comes with gems.
    *
-   * Reported from play on the official server: a boss beaten for the first
-   * time pays twenty-five gems beside its trophy and its key. Nothing here
-   * paid any — completing a node never touched the premium currency. Like the
+   * Reported by players: a boss beaten for the first time pays twenty-five
+   * gems beside its trophy and its key. Nothing here paid any — completing a
+   * node never touched the premium currency. Like the
    * trophy itself the amount is in no table: no MapPage column carries gems,
    * and the only gem figures in the game data are the shop's and the Infinite
    * dungeons' own gem floor, which is the same twenty-five. So it is the
@@ -523,8 +523,8 @@ export const awardDungeonCompletion = async (session) => {
   session.completionTeamXpBonus = teamExperience;
   /**
    * Banked, and not announced on the hero. The report carries both lines and
-   * the client counts the bar up from `completionXpBase`; the official sends no
-   * experience update after dungeonEnding on any of 47 recorded endings. By now
+   * the client counts the bar up from `completionXpBase`; the game sends no
+   * experience update after dungeonEnding on any of 47 observed endings. By now
    * a party that walked out has no hero on the floor to send one to.
    */
   if (avatar) {
@@ -558,7 +558,7 @@ const FIRST_CHEST = 60001;
  * lives only here, as the run's own record of what it is owed.
  *
  * Measured rather than assumed, because this was implemented the other way
- * round first. Across the official captures every one of seven increases in
+ * round first. In observed sessions every one of seven increases in
  * `account_chests` follows a TakeChest or an OpenChest, and none happens on any
  * other event: one run collected four treasures, kept one and dropped three,
  * and the account went 6 → 7 — never to 10 and back. The report screen being

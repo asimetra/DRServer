@@ -68,7 +68,7 @@ export const placeableVictims = (session, attackerDoid, colliders = [], { attack
  * One swing of something the hero put on the floor.
  *
  * A floor trap belongs to nobody and hits everything standing in it, the hero
- * included. A placeable belongs to whoever placed it — the official server
+ * included. A placeable belongs to whoever placed it — the game
  * generates it on TEAM.PLAYERS with the hero as its master — so it hits what
  * the hero fights and never the hero, which `placeableVictims` has already
  * settled.
@@ -124,9 +124,9 @@ export const performPlaceableAttack = async (
      *
      * Gated on there being a weapon at all, which is what keeps it off the
      * things that are not one: a floor trap passes none, and neither does a
-     * consumable bomb. The official agrees — `THROW_GARLIC`, `THROW_FIREBOMB`
+     * consumable bomb. The game agrees — `THROW_GARLIC`, `THROW_FIREBOMB`
      * and `THROW_MINE` all crit, while `HEALTH_BOMB_ATTACK` and
-     * `PARTY_BOMB_ATTACK` carry no crit across 623 recorded hits, and no floor
+     * `PARTY_BOMB_ATTACK` carry no crit across 623 observed hits, and no floor
      * trap does either.
      *
      * That the *lingering* half crits is a decision rather than a measurement.

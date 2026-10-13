@@ -9,10 +9,8 @@ import { PacketReader, PacketWriter } from "../src/socket/packet.js";
 /**
  * The wire carries the sender's own name inside the message.
  * `PlayerGameObjectOwner.handleOutgoingChat` builds `screenName + ": " + text`
- * before `send_Chat` ever sees it, which the captures confirm on both
- * directions: every recorded line arrives with its sender's name already
- * prefixed. The names below are invented, because the recorded ones belong to
- * people who did not agree to appear here.
+ * before `send_Chat` ever sees it, so every line arrives with its sender's
+ * name already prefixed. The names below are invented.
  *
  * The dispatcher has already read the doid and the field id by the time a
  * handler runs, so these readers start where it left off.
@@ -23,7 +21,7 @@ const typing = (on) => new PacketReader(new PacketWriter().u8(on).body());
 const sessionWith = (overrides = {}) => ({
   id: 7,
   playerDoid: 70,
-  dungeonAccount: { name: "Simetra" },
+  dungeonAccount: { name: "Rowan" },
   sent: [],
   relayed: [],
   sendDirect(frame) {
@@ -49,13 +47,13 @@ const frameOf = (frame) => {
 
 test("a line is relayed to the rest of the room", async () => {
   const session = withRelay();
-  await handleChat(session, saying("Simetra: hehe"));
+  await handleChat(session, saying("Rowan: hehe"));
 
   assert.equal(session.relayed.length, 1, "one relay");
   const { doid, field, reader } = frameOf(session.relayed[0].frame);
   assert.equal(doid, 70, "on the speaker's own player object");
   assert.equal(field, 182);
-  assert.equal(reader.utf(), "Simetra: hehe", "verbatim, name and all");
+  assert.equal(reader.utf(), "Rowan: hehe", "verbatim, name and all");
 });
 
 /**
@@ -63,13 +61,12 @@ test("a line is relayed to the rest of the room", async () => {
  * sending, so the speaker has already drawn their own line; echoing it would
  * double it.
  *
- * The captures agree without exception. Across 104 outbound chat and typing
- * frames on this account's own player doid, not one came back inbound — every
- * inbound frame carried somebody else's doid.
+ * Observed without exception: a speaker's own chat and typing frames never
+ * come back to them — every inbound frame carries somebody else's doid.
  */
 test("but never back to whoever said it", async () => {
   const session = withRelay();
-  await handleChat(session, saying("Simetra: hehe"));
+  await handleChat(session, saying("Rowan: hehe"));
 
   assert.equal(session.relayed[0].options?.except, session, "the speaker is excluded");
   assert.equal(session.sent.length, 0, "and nothing goes to them directly");
@@ -93,7 +90,7 @@ test("the typing light is relayed the same way", async () => {
  */
 test("an overlong line is refused rather than relayed", async () => {
   const session = withRelay();
-  await handleChat(session, saying(`Simetra: ${"a".repeat(400)}`));
+  await handleChat(session, saying(`Rowan: ${"a".repeat(400)}`));
 
   assert.equal(session.relayed.length, 0);
 });
@@ -144,7 +141,7 @@ test("a command answer does not come from the player's own object", async () => 
   const session = commandSession();
   define({ name: "ping", role: ROLE.PLAYER, summary: "answers", run: ({ reply }) => reply("pong") });
 
-  await handleChat(session, saying("Simetra: /ping"));
+  await handleChat(session, saying("Rowan: /ping"));
 
   assert.ok(session.sent.length, "the caller is answered");
   const answered = frameOf(session.sent.at(-1));
@@ -164,7 +161,7 @@ test("a command answer does not come from the player's own object", async () => 
 test("a refused command answers in the warning voice", async () => {
   const session = commandSession();
 
-  await handleChat(session, saying("Simetra: /nonsense"));
+  await handleChat(session, saying("Rowan: /nonsense"));
 
   const answered = frameOf(session.sent.at(-1));
   assert.match(answered.reader.utf(), /^⚡/, "an unknown command is a refusal");
@@ -174,8 +171,8 @@ test("the two voices are separate objects, so both keep their colour", async () 
   const session = commandSession();
   define({ name: "ping", role: ROLE.PLAYER, summary: "answers", run: ({ reply }) => reply("pong") });
 
-  await handleChat(session, saying("Simetra: /nonsense"));
-  await handleChat(session, saying("Simetra: /ping"));
+  await handleChat(session, saying("Rowan: /nonsense"));
+  await handleChat(session, saying("Rowan: /ping"));
 
   const spoken = session.sent.map((frame) => frameOf(frame).reader.utf());
   assert.ok(spoken.some((line) => line.startsWith("⚡")), "the refusal stayed orange");
@@ -199,10 +196,10 @@ test("the two voices are separate objects, so both keep their colour", async () 
 test("the server answers under the configured name", async () => {
   const { serverVoiceNameFor } = await import("../src/socket/chat.js");
 
-  assert.equal(serverVoiceNameFor("Meydan", false), "★Meydan");
-  assert.equal(serverVoiceNameFor("Meydan", true), "⚡Meydan");
-  assert.equal(serverVoiceNameFor("★Meydan", false), "★Meydan", "not doubled");
-  assert.equal(serverVoiceNameFor("⚡Meydan", false), "★Meydan", "and recoloured, not kept");
+  assert.equal(serverVoiceNameFor("Arena", false), "★Arena");
+  assert.equal(serverVoiceNameFor("Arena", true), "⚡Arena");
+  assert.equal(serverVoiceNameFor("★Arena", false), "★Arena", "not doubled");
+  assert.equal(serverVoiceNameFor("⚡Arena", false), "★Arena", "and recoloured, not kept");
   assert.equal(serverVoiceNameFor("   ", false), "★Server", "an empty name is not a bare colour");
   assert.equal(serverVoiceNameFor(undefined, true), "⚡Server");
 });
@@ -212,7 +209,7 @@ test("a line said in a dungeon is offered to the modes after the room has heard 
   const offered = [];
   t.after(installRankedHooks({ heroEvent: (session, event) => event.type === "said" && offered.push(event.line) }));
   const session = withRelay();
-  await handleChat(session, saying("Simetra: anyone racing?"));
+  await handleChat(session, saying("Rowan: anyone racing?"));
   assert.equal(session.relayed.length, 1, "the room first");
   // The relay's voice carries the name; the line's own would show it twice.
   assert.deepEqual(offered, ["anyone racing?"]);

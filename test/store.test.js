@@ -106,7 +106,7 @@ test("buying a hero adds the avatar", async () => {
   assert.equal(target.premium_currency, 850);
 });
 
-// The capture shows a bought hero arriving with two weapons already in hand.
+// A bought hero arrives with two weapons already in hand.
 test("a bought hero arrives with two equipped starter weapons", async () => {
   const target = account({
     premium_currency: 1000,
@@ -126,9 +126,9 @@ test("a bought hero arrives with two equipped starter weapons", async () => {
  * The Battle Chef's starter knife is the one weapon in the table whose power is
  * not whole — HERO_BUTCHERS_KNIFE is 5.25, its BACON_BOOSTER sibling 12.25 —
  * and a power is a whole number on the account: the database column refused
- * 5.25 and with it the whole purchase ("invalid input syntax"). The official
- * hands a starter over at the table's power (a level-1 HERO_HAND_AXE, power 5,
- * is 5 on its accounts), so the knife is that, rounded.
+ * 5.25 and with it the whole purchase ("invalid input syntax"). A starter is
+ * handed over at the table's power (a level-1 HERO_HAND_AXE, power 5, is 5),
+ * so the knife is that, rounded.
  */
 test("a bought Battle Chef's starter weapons carry whole powers", async () => {
   const target = account({
@@ -268,12 +268,11 @@ test("potions pay nothing, because none of them has a sale price", async () => {
 });
 
 /**
- * Two sales recorded against the live official server, replayed here. These are
- * the only evidence that the formula is the real one rather than a plausible
- * one, so they are pinned exactly — a change that moves either number by a
- * single coin is a change in behaviour the player would see.
+ * Two reference sales. They are what shows the formula is the real one rather
+ * than a plausible one, so they are pinned exactly — a change that moves either
+ * number by a single coin is a change in behaviour the player would see.
  */
-test("matches the payouts the official server gave", async () => {
+test("matches the reference payouts", async () => {
   const gm = await loadGameMaster();
 
   for (const { label, paid, item } of [

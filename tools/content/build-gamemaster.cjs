@@ -8,9 +8,10 @@
  * definition: a knight that keeps a tavern is a knight's row with the knight
  * taken out of it.
  *
- * Only the deltas live here. The base table is the game's, read and written
- * back out whole, so this script is a patch and not a copy — and re-running it
- * after a game-data refresh reapplies the same intent to the new table.
+ * Only the deltas live here. The base table is the operator's own local copy,
+ * read and written back out whole, so this script is a patch and not a copy —
+ * and re-running it after a game-data refresh reapplies the same intent to the
+ * new table.
  */
 const fs = require("fs");
 const path = require("path");
@@ -59,13 +60,13 @@ const asKeeper = (fromConstant, constant, name) => {
  * A buff that does nothing but be seen.
  *
  * The client draws a buff on the actor it names: a looping VFX above it and a
- * `colorMatrixFilter` tween on its body at `repeat: -1, yoyo: true`, so the
- * body pulses between its own colour and this one rather than being flatly
- * painted. That is what makes it read as attention rather than as damage.
+ * repeating colour tween on its body, so the body pulses between its own
+ * colour and this one rather than being flatly painted. That is what makes it
+ * read as attention rather than as damage.
  *
- * `ShowInHUD` is off, and would not matter anyway — the HUD icon is inside an
- * `isOwner` guard, so a buff on a stone never reaches the player's bar. 98 of
- * the game's own 157 rows do not ask for one either.
+ * `ShowInHUD` is off, and would not matter anyway — the client shows a HUD icon
+ * only for the player's own hero, so a buff on a stone never reaches the bar.
+ * 98 of the game's own 157 rows do not ask for one either.
  *
  * No DeltaValues, no Ability, no Exp or Gold: it changes nothing about the
  * thing it marks.
@@ -133,10 +134,10 @@ for (const row of addedBuffs) {
 /**
  * The tavern's own place on the map.
  *
- * Id 50200 is not chosen: `UIMapWorldMap.hackToHandleKeyPressToPlayNode` binds
- * R to it, and the shipped table has no such node — a key left pointing at
- * somewhere that was removed. So the door already exists in the client and only
- * needed something behind it.
+ * Id 50200 is not chosen: the client's map-node debug shortcut
+ * (docs/client-setup.md) binds R to it, and the shipped table has no such
+ * node — a key left pointing at somewhere that was removed. So the door
+ * already exists in the client and only needed something behind it.
  *
  * That is what makes it fit the constraint. Nothing new appears on the map
  * screen, no player edits anything but `ALLOW_HACKS_TO_PLAY_MAP_NODE` in the
@@ -146,8 +147,8 @@ for (const row of addedBuffs) {
  * `avatarCompletedAllNormalNodes` counts, and a hub nobody completes would
  * leave that check permanently unsatisfied; INFINITE turns on depth scaling;
  * TAVERN turns off attacks. An unknown type falls through every client switch
- * to its default — FloorEndingGui to the regular screen, isTavern to false —
- * which is what a hub wants.
+ * to its default — the regular floor-ending screen, not a tavern — which is
+ * what a hub wants.
  */
 const HUB = {
   Id: 50200,
@@ -156,9 +157,8 @@ const HUB = {
   NodeType: "HUB",
   /**
    * A real tier, because the map screen dereferences whatever this names
-   * without checking. `UIMapWorldMap.initializeOpenMapNodes` does
-   * `coliseumTierByConstant.itemFor(TierRank)` and then reads `.TotalFloors`
-   * off it on the next line — an empty string is a null row and a segfault.
+   * without checking: it looks the tier up and reads its floor count, so an
+   * empty string is a null row and a segfault.
    * Nothing here reads it: no enemies are stocked on a floor with no
    * generators, whatever pool the tier names.
    */
@@ -181,7 +181,7 @@ const HUB = {
    *
    * A requirement nobody meets keeps it off that list without a special case,
    * and costs nothing: the door is the R key, which calls
-   * `hackToPlayNode` and never consults the map at all.
+   * the debug shortcut and never consults the map at all.
    */
   LevelReq: 999,
   TrophyReq: 999999,
@@ -199,17 +199,16 @@ if (!gm.MapPage.some((node) => Number(node.Id) === HUB.Id)) gm.MapPage.push(HUB)
 /**
  * The node keeps the type the game gave it.
  *
- * `TAVERN` was tried and handed back. Its only behaviour is that
- * `HeroGameObjectOwner.setupWeapons` swaps in `TavernPlayerOwnerAttackController`,
- * whose `tryAttack` does nothing but change the current weapon — so in a tavern
- * you cannot hit anything, and hitting things is half the vocabulary a room has
- * for being touched. A social space that cannot be interacted with is a
- * corridor with chairs.
+ * `TAVERN` was tried and handed back. Its only behaviour is that the client
+ * swaps in a tavern attack controller whose attack does nothing but change the
+ * current weapon — so in a tavern you cannot hit anything, and hitting things
+ * is half the vocabulary a room has for being touched. A social space that
+ * cannot be interacted with is a corridor with chairs.
  *
- * Nothing else was lost by giving it back: FloorEndingGui's TAVERN case falls
- * through to the regular screen, and an enemy-less floor never completes either
- * way — `checkFloorCleared` returns early on `!enemies`, so a room with nobody
- * to kill is never cleared and never ends.
+ * Nothing else was lost by giving it back: the floor-ending screen's TAVERN
+ * case falls through to the regular screen, and an enemy-less floor never
+ * completes either way — `checkFloorCleared` returns early on `!enemies`, so a
+ * room with nobody to kill is never cleared and never ends.
  */
 
 fs.mkdirSync(path.dirname(target), { recursive: true });

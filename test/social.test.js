@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 
 /**
- * Shapes here are the recorded responses of the official server, not guesses.
+ * Shapes here are the ones the client parses, not guesses.
  * The failure they guard against is specific: before these handlers existed
  * every one of these calls fell through to the permissive empty-array reply,
  * and three of them are supposed to answer with an object — so the client was
@@ -33,7 +33,7 @@ const withAccount = async (id, overrides = {}) => {
   return account;
 };
 
-test("every social endpoint the client calls is registered, under its recorded service", async () => {
+test("every social endpoint the client calls is registered, under the service the client calls it on", async () => {
   // Not all of these live under the service you would guess, and a wrong path
   // is indistinguishable from a missing handler: both answer [].
   for (const [service, method] of [
@@ -51,7 +51,7 @@ test("every social endpoint the client calls is registered, under its recorded s
   }
 });
 
-test("the friend record carries the five fields the live one carries", async () => {
+test("the friend record carries the five fields the client reads", async () => {
   await withAccount(ACCOUNT, {
     ingame_friends: JSON.stringify([FRIEND]),
     ignore_friends: JSON.stringify([IGNORED]),
@@ -87,8 +87,8 @@ test("friend data resolves against the accounts this server actually holds", asy
     completed_mapnode_mask: completed,
   });
   await withAccount(ACCOUNT, {
-    // The second id is nobody: the official server answers about a population
-    // this one does not have, so unknown ids are dropped rather than faked.
+    // The second id is nobody this server holds, so unknown ids are dropped
+    // rather than faked.
     ingame_friends: JSON.stringify([FRIEND, 1000000999]),
     ignore_friends: "[]",
   });
@@ -243,16 +243,15 @@ test("the gift inbox answers with both fields the client reads", async () => {
   assert.ok(Array.isArray(result.excludeIds), "offers the client should not send again");
 });
 
-test("moderation and limited offers answer empty, which is what the live server does", async () => {
+test("moderation and limited offers answer empty, which the client accepts", async () => {
   await withAccount(ACCOUNT, { friend_requests: [] });
   assert.deepEqual(await dispatch("modrpc", "getmod", [3]), []);
   assert.deepEqual(await dispatch("store", "GetLimitedOfferStatus", [ACCOUNT]), []);
 });
 
 /**
- * Nothing pending is `false`, never an empty list. The official answers `false`
- * on every one of 25 calls for an account with no requests and a list of rows
- * on all 199 for one that has them. The client tests the answer for truth, and
+ * Nothing pending is `false`, never an empty list; an account that has requests
+ * is answered with a list of rows. The client tests the answer for truth, and
  * an empty array is true there: it raised the pending flag and switched the
  * panel to a tab with nothing on it.
  */
@@ -309,7 +308,7 @@ test("a friend code creates one pending request and needs recipient approval", a
   // And the real thing: still no friendship until the recipient accepts it.
   const sent = await invite(code);
   assert.equal(sent.to_account_id, FRIEND, "the request names who it reached");
-  // The request itself, as the live server answered: who asked is its subject.
+  // The request itself, as the invite panel reads it: who asked is its subject.
   assert.equal(sent.account_id, ACCOUNT);
 
   const { loadAccount } = await import("../src/accounts.js");

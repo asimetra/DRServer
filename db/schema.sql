@@ -1,14 +1,14 @@
--- Account storage for the private server.
+-- Account storage for the server.
 --
--- Every table here is transcribed from a live capture of the official server's
--- GET /api/dbAccountInfo/accountdetails response, so the column names are the
--- ones the client already knows. They are deliberately *not* tidied up:
+-- Every table here follows the account the client reads from
+-- GET /api/dbAccountInfo/accountdetails, so the column names are the ones the
+-- client already knows. They are deliberately *not* tidied up:
 -- `requiredlevel` and `legendarymodifier` really are single lowercase words,
 -- and renaming them would only mean translating on every read and write.
 --
 -- The mask of completed map nodes lives on the avatar, not the account — the
--- account-level column exists because the payload carries it, but the live
--- server sends null there and keeps progress per hero.
+-- account-level column exists because the payload carries it, but progress is
+-- kept per hero and this one is left null.
 
 CREATE TABLE IF NOT EXISTS accounts (
     id                     BIGINT PRIMARY KEY,
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS account_avatars (
 CREATE INDEX IF NOT EXISTS account_avatars_account ON account_avatars(account_id);
 
 -- Weapons and gear. Equipping is exactly this: set avatar_id and avatar_slot.
--- Both are null while an item sits in the bag, which is how the live server
+-- Both are null while an item sits in the bag, which is how the client
 -- distinguishes equipped from stored.
 CREATE TABLE IF NOT EXISTS account_items (
     id                BIGINT PRIMARY KEY,
@@ -315,9 +315,8 @@ CREATE INDEX IF NOT EXISTS mode_records_accounts ON mode_records USING GIN (acco
 -- captures themselves are mostly on treasure-bearing nodes.
 --
 -- is_new was left out once, on the reasoning that the client computes
--- ChestInfo.isNew by diffing against the list it last held. The captures say
--- otherwise: every chest row the official sends carries it, and every one of
--- them is 1.
+-- ChestInfo.isNew by diffing against the list it last held. It is carried on
+-- each chest row instead, and a new chest is 1.
 CREATE TABLE IF NOT EXISTS account_chests (
     id         BIGINT   PRIMARY KEY,
     account_id BIGINT   NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -410,9 +409,9 @@ ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS ignore_friends TEXT NOT 
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS friend_requests JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS infinite_progress JSONB NOT NULL DEFAULT '{}'::jsonb;
 -- Barred from the market. Its own column rather than a bit in `account_flags`,
--- which is transcribed from captures and goes to the client: this server does
--- not know which bits that field means to it, and guessing at somebody else's
--- format is how a client stops working.
+-- which the client owns and is sent back to it: this server does not know
+-- which bits that field means to it, and guessing at somebody else's format is
+-- how a client stops working.
 ALTER TABLE IF EXISTS accounts ADD COLUMN IF NOT EXISTS market_barred BOOLEAN NOT NULL DEFAULT false;
 -- Gifts waiting to be opened, and whom this account has gifted lately (the
 -- daily limit). Both lived only in account files; against this database they

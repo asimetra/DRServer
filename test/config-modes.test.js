@@ -42,8 +42,8 @@ test("the named mode decides when it is there, and the old flag when it is not",
 
   /**
    * Reach is on unless it is turned off. It only ever drops the one hit, and
-   * across 14479 of the official's hit claims and 4689 of this server's own
-   * not one landed beyond the bound — while with it off, a client that claims
+   * across thousands of observed honest hit claims not one landed beyond the
+   * bound — while with it off, a client that claims
    * a hit on every monster on the floor from where it stands kills all of them.
    */
   assert.equal(of({}).reachMode, "enforce", "nothing set is enforcing");

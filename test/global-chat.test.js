@@ -64,14 +64,14 @@ const withPresence = (connections, body) => {
 };
 
 test("a line reaches people in other dungeons", () => {
-  const speaker = playerOn(1, "Simetra");
+  const speaker = playerOn(1, "Rowan");
   const far = playerOn(2, "Beacon");
 
   withPresence([speaker, far], () => {
     assert.equal(sayGlobally(speaker.context, "anyone about?"), 1);
   });
 
-  assert.equal(spoken(far.context.sent[0]), "Simetra: anyone about?");
+  assert.equal(spoken(far.context.sent[0]), "Rowan: anyone about?");
 });
 
 /**
@@ -79,7 +79,7 @@ test("a line reaches people in other dungeons", () => {
  * echo ordinary chat relies on — so sending it back would double it.
  */
 test("but not back to whoever said it", () => {
-  const speaker = playerOn(1, "Simetra");
+  const speaker = playerOn(1, "Rowan");
 
   withPresence([speaker], () => {
     assert.equal(sayGlobally(speaker.context, "hello?"), 0, "nobody else heard it");
@@ -93,7 +93,7 @@ test("but not back to whoever said it", () => {
  * speaker they were heard when they were not.
  */
 test("somebody who is not on a floor is not counted as having heard", () => {
-  const speaker = playerOn(1, "Simetra");
+  const speaker = playerOn(1, "Rowan");
   const loading = playerOn(2, "Beacon", { onFloor: false });
 
   withPresence([speaker, loading], () => {
@@ -108,7 +108,7 @@ test("somebody who is not on a floor is not counted as having heard", () => {
  * made — and it is made once, not once per sentence.
  */
 test("a distant speaker is given a voice on your floor, once", () => {
-  const speaker = playerOn(1, "Simetra");
+  const speaker = playerOn(1, "Rowan");
   const far = playerOn(2, "Beacon");
 
   withPresence([speaker, far], () => {
@@ -118,18 +118,18 @@ test("a distant speaker is given a voice on your floor, once", () => {
 
   assert.equal(far.context.announced.length, 1, "one player object, not two");
   assert.equal(far.context.sent.length, 2, "but both lines");
-  assert.equal(spoken(far.context.sent[1]), "Simetra: second");
+  assert.equal(spoken(far.context.sent[1]), "Rowan: second");
 });
 
 test("everyone on a floor hears it", () => {
-  const speaker = playerOn(1, "Simetra");
+  const speaker = playerOn(1, "Rowan");
   const others = [playerOn(2, "Beacon"), playerOn(3, "Thistle"), playerOn(4, "Marrow")];
 
   withPresence([speaker, ...others], () => {
     assert.equal(sayGlobally(speaker.context, "hello all"), 3);
   });
   for (const other of others) {
-    assert.equal(spoken(other.context.sent[0]), "Simetra: hello all");
+    assert.equal(spoken(other.context.sent[0]), "Rowan: hello all");
   }
 });
 
@@ -148,15 +148,15 @@ test("an unnamed account still has a name to speak under", () => {
  * and its block list is read only by the blocked panel anyway.
  */
 test("somebody who blocked the speaker does not hear them", () => {
-  const speaker = playerOn(1, "Simetra");
+  const speaker = playerOn(1, "Rowan");
   const blocker = playerOn(2, "Beacon");
   blocker.context.dungeonAccount.ignore_friends = "[1]";
   const other = playerOn(3, "Quill");
 
-  const heard = deliverGlobalLine({ account: 1, name: "Simetra", text: "hello" }, [blocker, other]);
+  const heard = deliverGlobalLine({ account: 1, name: "Rowan", text: "hello" }, [blocker, other]);
   assert.equal(heard, 1);
   assert.deepEqual(blocker.context.sent, []);
-  assert.equal(spoken(other.context.sent.at(-1)), "Simetra: hello");
+  assert.equal(spoken(other.context.sent.at(-1)), "Rowan: hello");
 });
 
 /** Three lines at once, then one every two seconds; the rest is not said. */
@@ -169,7 +169,7 @@ test("the global channel allows three lines at once and one every two seconds af
 });
 
 test("a line over the allowance reaches nobody, and the speaker is told", () => {
-  const speaker = playerOn(1, "Simetra");
+  const speaker = playerOn(1, "Rowan");
   const far = playerOn(2, "Beacon");
   withPresence([speaker, far], () => {
     for (let line = 0; line < 3; line++) assert.equal(sayGlobally(speaker.context, `line ${line}`), 1);

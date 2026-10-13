@@ -121,7 +121,7 @@ const builders = () => ({
  * is: `DistributedDungeonFloor.tiles` is a list, not a stream. Re-sending the
  * tiles the client already has costs nothing, because it dedupes them by
  * (x, y) and only builds placements it has not seen — the same property that
- * lets production repeat the list on every floor after the first.
+ * lets the list be repeated on every floor after the first.
  *
  * Which rooms are withheld, and why only the ones sealed by a *neighbour's*
  * wall, is written down in secrets.js.

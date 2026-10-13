@@ -223,7 +223,7 @@ test("an unopened generator prevents premature victory", async () => {
   assert.deepEqual(sent.map(fieldId), [FLID_DUNGEON_ENDING]);
 });
 
-test("dungeon ending matches the production transition payload", async () => {
+test("dungeon ending matches the transition payload the client expects", async () => {
   const reader = new PacketReader(buildDungeonEnding(4000, true).subarray(2));
 
   assert.equal(reader.u16(), OP.CLIENT_OBJECT_UPDATE_FIELD);
@@ -346,7 +346,7 @@ test("a generator switched off early still clears once its spawns are dead", asy
 /**
  * When the hero comes off the floor, which is the ending and not the party.
  *
- * Four captured endings, separated cleanly by node type:
+ * Observed endings, separated cleanly by node type:
  *
  *   50078, 50081, 50025  DUNGEON  hero disabled 1ms before dungeonEnding
  *   50026                BOSS     heroes disabled 52ms after the summary
@@ -411,9 +411,9 @@ test("the hero is only taken off the floor once", async () => {
 });
 
 /**
- * The defeat countdown, from `socket-20260816-191126.jsonl`: the hero drops and
- * the area is told 10, a bomb brings him back 3.5 seconds later and it is told
- * 0. The one captured ordinary dungeon was told 60 instead.
+ * The defeat countdown, as observed: the hero drops and the area
+ * is told 10, a bomb brings him back 3.5 seconds later and it is told 0. An
+ * ordinary dungeon is told 60 instead.
  */
 const FLID_FLOOR_FAILING = 217;
 
@@ -511,8 +511,8 @@ test("letting it run out is what loses the run", (t) => {
   /**
    * Ten on the wire is thirteen on the clock: FloorEndingGui tweens a start
    * clip away for two seconds before its first tick, and decrements before it
-   * renders, so it needs eleven ticks to pass zero. The official server waited
-   * 62.986s on a captured countdown of 60, which is the same arithmetic.
+   * renders, so it needs eleven ticks to pass zero. A countdown of 60 likewise
+   * runs about 63 seconds.
    */
   t.mock.timers.tick(12_999);
   assert.deepEqual(failures, [], "ending on the bare ten leaves three still showing");

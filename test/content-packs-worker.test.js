@@ -9,7 +9,7 @@ import path from "node:path";
  * thread with the member, and the frames the worker builds reach each client in
  * that client's terms.
  *
- * An official skin stands in for a pack's here — BRAVEHEART_BERSERKER — so the
+ * One of the game's own skins stands in for a pack's here — BRAVEHEART_BERSERKER — so the
  * test does not depend on a deployment's own content.
  */
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dr-content-packs-worker-"));

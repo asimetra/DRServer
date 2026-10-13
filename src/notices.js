@@ -5,8 +5,8 @@
  * entry to town, and draws every row it gets as a popup — headline, body, a
  * picture, a button that opens a part of the game, and a link that opens the
  * browser — paging through them when there are several (`HomeState
- * .getWhatsNewRPC`, `UIWhatsNewPopup`). The live server answered with nothing,
- * so the channel sat unused; it is the most visible one the server has that
+ * .getWhatsNewRPC`, `UIWhatsNewPopup`). Answered with nothing, the channel
+ * sits unused; it is the most visible one the server has that
  * needs no content installed on the client, since the popup, its layouts and
  * its button labels (`WHATS_NEW_MAP` and the rest) ship with the game.
  *

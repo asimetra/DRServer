@@ -176,8 +176,8 @@ test("equipping from the bag still works, and caps at the carry limit", async ()
  *
  * `reconcileConsumables` only visits stacks a slot is bound to, so a key or a
  * potion that hit zero on its own stayed in the bag at x0 — which is the thing
- * the player sees and cannot use, sell or clear. A live account had 60018 x0
- * sitting there.
+ * the player sees and cannot use, sell or clear. An existing account had
+ * 60018 x0 sitting there.
  */
 test("zero rows are swept from the bag, not only the ones a slot names", async () => {
   const avatar = { id: 1, consumable1_id: 0, consumable1_count: 0, consumable2_id: 0, consumable2_count: 0 };

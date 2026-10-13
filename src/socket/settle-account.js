@@ -14,7 +14,7 @@ import { followRunSave } from "./run-saves.js";
  *
  * That is not theoretical. From a captured session, to the second:
  *
- *   11:41:30  chest opened on the report screen, weapon 2073742255 awarded
+ *   11:41:30  chest opened on the report screen, a weapon awarded
  *   11:41:30  the reveal popup sends the player into the inventory, still in
  *             the dungeon — they equip the weapon and drop a spare chest, both
  *             over JSON-RPC, both landing correctly on disk

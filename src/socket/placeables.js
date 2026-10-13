@@ -41,7 +41,7 @@ import { petAiOf } from "./behaviours/pet.js";
 import { inFrontOf, worldColliders } from "./heading.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 
-/** One server simulation turn around creation, measured from official traffic. */
+/** One server simulation turn around creation, as measured. */
 const PLACEABLE_ACTIVATION_DELAY_MS = 80;
 /** Lets the final rendered frame survive the timer that notices completion. */
 const PLACEABLE_RETIRE_GRACE_MS = 50;
@@ -82,8 +82,8 @@ export const timelineDelayMs = (frame, playSpeed = 1) => {
  * firebomb traps, the Ranger's decoy, the Iron Legion clones and every
  * consumable bomb.
  *
- * What one is, was read off the wire rather than guessed. A capture of the
- * Berserker's FISSURE against the official server (five uses, five spawns) says:
+ * What one is, was observed rather than guessed. The Berserker's FISSURE
+ * (five uses, five spawns) shows:
  *
  *   generate clid 27, parent = floor, team = 5 (PLAYERS), masterId = hero doid,
  *   level = the hero's level, hp from the Npc row, weapon from its Weapon1
@@ -146,7 +146,7 @@ export const placeablePosition = (origin, heading, action) =>
  * The hammers' cracks, FISSURE_SMASH and FISSURE_SLOW_SMASH, name one attack as
  * both, and the official plays them as it plays the axe's: hit points 0 and the
  * choreography together on the next turn, once, whether or not anyone is
- * standing there. All thirteen captured say so. Read as a trap that also bursts
+ * standing there. All thirteen observed say so. Read as a trap that also bursts
  * on the way out, the crack showed nothing when it landed on empty floor,
  * showed itself again as it was removed, and stood at 10 hit points meanwhile.
  * The same attack twice is one burst.
@@ -249,7 +249,7 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
    *
    * The official strikes on the authored frames. A slow fissure, whose shapes
    * are on frames 3, 8, 11, 14, 17 and 20 — 125 to 833ms — landed its two
-   * recorded hits 749 and 841ms after its choreography, which is frames 17 and
+   * observed hits 749 and 841ms after its choreography, which is frames 17 and
    * 20 and nothing else.
    *
    * The same beat a swinging trap uses, for the same reason.
@@ -482,7 +482,7 @@ const placerFor = async (session, owner) => {
  * Its type is always the row's own — EN_FISSURE_SMASH_WEAPON on a crack,
  * EN_PLACABLE_TRAPS_WEAPON on the traps — but what a hero puts down carries the
  * rest of the weapon that put it there: power, level, rarity and modifiers. 88
- * of 105 official hero-placed generates match one of the hero's own slots on
+ * of 105 observed hero-placed generates match one of the hero's own slots on
  * all of those, and the other 17 are garlic whose power alone differs. An
  * enemy's, a walking pet's and anything placed without a weapon (a consumable)
  * keep the row's weapon as it is.
@@ -524,7 +524,7 @@ export const summonForSkin = async (constant, skinType) => variantFor(constant, 
  * `owner` is for one an enemy leaves — `{ team, masterDoid, level }`, from
  * summons.js. Without it the placeable is the hero's. None of the monsters that
  * leave one — the red dragon, the rival berserkers and trapper, the heavy red
- * specter — appears in the official recordings, so the enemy side is the hero
+ * specter — has been observed, so the enemy side is the hero
  * side's measured rule turned round: the placer's team, the placer's level, and
  * priced as the floor prices its own traps (see `hitVictims`).
  */
@@ -687,7 +687,7 @@ export const spawnPlaceable = async (
   /**
    * Which way it points, which the generate does not settle.
    *
-   * The generate above sends zero and the official's does too — 158 captured
+   * The generate above sends zero and the game's does too — 158 observed
    * generates of the things a hero puts down (both fissures, the mines, the
    * garlic, the firebombs, the poultry) carry heading 0 without exception,
    * whatever direction they ended up facing. The aim arrives right behind it as
@@ -715,7 +715,7 @@ export const spawnPlaceable = async (
    * exactly the report: the swing plays, the crack in the ground never appears.
    *
    * The official keeps them for as long as they have something to show. Three
-   * axe fissures in one capture lived 907, 919 and 920ms against a 19-frame
+   * axe fissures in one session lived 907, 919 and 920ms against a 19-frame
    * animation, which is 792; three slow ones lived 1400, 1402 and 1424 against
    * 30 frames, which is 1250. Both about a tenth of a second over their own
    * timeline and never under it — the animation, plus the time it takes to
@@ -808,16 +808,16 @@ export const spawnPlaceable = async (
    * A fissure and a bomb begin dying on the next server simulation turn.
    *
    * Both carry their damage on `DeathAttack` and neither has a living attack.
-   * Official traffic leaves a gap between the generate and the HP=0 that
+   * The game leaves a gap between the generate and the HP=0 that
    * follows it, then leaves the actor standing until the choreography has
-   * finished. Across 68 captures, the fifteen placed by a player — fourteen
+   * finished. Across 68 sessions, the fifteen placed by a player — fourteen
    * fissures and a demolition bomb — measure:
    *
    *   generate -> hitPoints=0        min 34   p50 84   max 108
    *   hitPoints=0 -> choreography    min  0   p50  0   max   1
    *
    * The second line is the control, and it is why the first is not lag. These
-   * are client-side receive times off a loaded official server, so the obvious
+   * are client-side receive times off a loaded server, so the obvious
    * objection is that the gap is transport jitter. It is not: the same
    * transport, in the same sessions at the same moments, delivers HP=0 and its
    * choreography 0ms apart fifteen times out of fifteen. A network that can do
@@ -894,7 +894,7 @@ export const FLID_PROPOSE_CREATE_NPC = 177;
 /**
  * How long a permit outlives the cast that issued it.
  *
- * Measured: across the official recordings every placement follows its cast by
+ * Measured: every observed placement follows its cast by
  * between 92 and 1336 milliseconds, which is the throw and the flight. Five
  * seconds is generous by four times over and still far short of a floor.
  */
@@ -914,9 +914,9 @@ const PERMIT_MS = 5000;
  * so those three placeables are the whole of what this field can honestly ask
  * for.
  *
- * An earlier version of this comment credited the official recordings with 32
+ * An earlier version of this comment credited the observed sessions with 32
  * such placements, matched to their casts and slots. They contain none: across
- * all 66 captures there is not one outbound field 177 and not one of those
+ * all 66 sessions there is not one outbound field 177 and not one of those
  * three placeables ever generated. Nobody in them threw one.
  *
  * So the shape of the rule comes from the data and its bounds come from a
@@ -1121,9 +1121,9 @@ export const schedulePlaceables = async (
    * inferred from the slot. A thrown bomb passes slot 0 because the slot it
    * really came from indexes the powerups — so reading `heroWeapons[0]` hands
    * it whatever weapon happens to be in the hero's first slot, and it would
-   * crit and scale on modifiers that have nothing to do with it. The official
+   * crit and scale on modifiers that have nothing to do with it. The game
    * carries no crit on `HEALTH_BOMB_ATTACK` or `PARTY_BOMB_ATTACK` across 623
-   * recorded hits.
+   * observed hits.
    */
   const weapon = fromWeapon ? session.heroWeapons?.[weaponSlot] : null;
   const actions = await spawnNpcActions(attack?.AttackTimeline);
@@ -1132,7 +1132,7 @@ export const schedulePlaceables = async (
   const floorDoid = session.floorDoid;
   const origin = { ...session.heroPosition };
   // Zero until the client turns: the hero is generated facing it, and 51 of 417
-  // official floors swing before any heading arrives. Undefined here was a
+  // observed floors swing before any heading arrives. Undefined here was a
   // crack facing NaN that hit nobody.
   const heading = session.heroHeading ?? 0;
   const placementGroup = { positions: [] };

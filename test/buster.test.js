@@ -378,8 +378,8 @@ test("a hit claimed from across the floor is dropped, and only reported in audit
    * checked the claim, so a modified client could report hitting every monster
    * on the floor from where it stands.
    *
-   * The bound is the official's own play rather than a guess. Over 5445 of its
-   * hit claims, distance to the victim minus the attack's authored reach:
+   * The bound comes from observed honest play rather than a guess. Over 5445
+   * observed hit claims, distance to the victim minus the attack's authored reach:
    *
    *   median -227   p90 -37   p99 +35   p999 +190   worst +253
    *
@@ -461,8 +461,8 @@ test("the hero's own Dungeon Buster fires, and spends the bar it needed", async 
    * Battle Chef's meteor shower does. Berserk, Arrowstorm, Ball Lightning,
    * Garlic Nuke and Iron Legion all passed straight through.
    *
-   * The official fires it as an ordinary proposal like any other — field 172,
-   * slot 0 — and its bar goes 120 to 0 on the frame after.
+   * The client fires it as an ordinary proposal like any other — field 172,
+   * slot 0 — and in the original game its bar goes 120 to 0 on the frame after.
    */
   const { handleProposeAttackChoreography } = await import("../src/socket/buster.js");
   const { PacketWriter, PacketReader } = await import("../src/socket/packet.js");
@@ -555,8 +555,9 @@ test("a hit only lands for an attack this server let the hero make", async () =>
    * that should never have caught it, the meteors never spawned, the bar never
    * emptied, and every press still did its damage.
    *
-   * The official always casts first. Of 5447 hero hit claims, 4998 follow a
-   * choreography of the same attack and the 449 that do not are entirely
+   * An honest client always casts first. Of 5447 observed hero hit claims,
+   * 4998 follow a choreography of the same attack and the 449 that do not are
+   * entirely
    * `HEALTH_BOMB_ATTACK` (308) and `PARTY_BOMB_ATTACK` (141), which go out
    * through the revive path instead.
    */
@@ -830,7 +831,7 @@ test("a malformed or oversized proposal packet is refused whole", async () => {
   await handleProposeCombatResults(manyWorld, new PacketReader(many.body()));
   assert.equal(manyWorld.actors.get(700).hitPoints, 9000, "nor nine at once");
 
-  // And the shape the official actually sends still works.
+  // And the ordinary one-result shape still works.
   const honest = new PacketWriter().u16(RESULT_BYTES).raw(oneResult()).body();
   const honestWorld = world();
   await handleProposeCombatResults(honestWorld, new PacketReader(honest));
@@ -1223,8 +1224,8 @@ test("a Dungeon Buster comes from the slot it is sent on", async () => {
  *
  * A Dungeon Buster costs 120 Crowd and Crowd arrives 2, 6 and 20 at a time, so
  * without these the meter never gets there — in play it crept to 2, then 4, and
- * stopped. The official wire shows the shortcut twice in one fight: the potion,
- * then 120 about 140ms later, then the buster, then 0.
+ * stopped. In the original game the potion is the shortcut: the potion, then
+ * 120 about 140ms later, then the buster, then 0.
  *
  * Both refilling attacks are bottles, so this only ever runs down the consumable
  * branch — which returns before the rest of the cast handling.

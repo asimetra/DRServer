@@ -19,12 +19,12 @@ after(async () => {
 });
 
 /**
- * Buying a bomb from the revive screen, which the official server allows and
- * this one refused.
+ * Buying a bomb from the revive screen, which the game allows and this server
+ * refused.
  *
- * In `rpc-20260816-221117.jsonl` a PurchaseOffer for 51369 — Party Bomb, ten
- * gems, "Revives your whole party to full health & damages enemies!" — lands at
- * 22:12:23.329 and the revive that uses it is proposed 556ms later and granted.
+ * A PurchaseOffer for 51369 — Party Bomb, ten gems, "Revives your whole party
+ * to full health & damages enemies!" — can be followed within a second by the
+ * revive that uses it, and that revive is granted.
  *
  * Here the purchase went through the RPC layer against its own copy of the
  * account while the session held the snapshot it entered the dungeon with, so

@@ -16,22 +16,22 @@ import { emitSignal, trackTriggers } from "../src/socket/triggers.js";
  * handler of its own, so the effect only ever happens when the server says so
  * on the floor: `trigger_camera_shake` and `trigger_camera_zoom`.
  *
- * This server read the objects as nothing and sent neither. A recorded Lava
- * Golem run carries 48 of them, each one accounted for by the map's wiring.
+ * This server read the objects as nothing and sent neither. A Lava Golem run
+ * sends dozens of them, each one accounted for by the map's wiring.
  */
 
 const FLOOR = 42;
 
 const body = (frame) => frame.subarray(2).toString("hex");
 
-test("the two camera messages are byte for byte what was recorded", () => {
-  // Floor 50076848: shake for 8 frames, strength 12, five times.
+test("the two camera messages are byte for byte what the client reads", () => {
+  // Floor 4000: shake for 8 frames, strength 12, five times.
   assert.equal(
-    body(buildCameraShake(50076848, { shakeDuration: 8, shakeStrength: 12, shakeCount: 5 })),
-    "7c00b01cfc02cc00000000410000404105"
+    body(buildCameraShake(4000, { shakeDuration: 8, shakeStrength: 12, shakeCount: 5 })),
+    "7c00a00f0000cc00000000410000404105"
   );
-  // Floor 50078388: pull back to 0.86.
-  assert.equal(body(buildCameraZoom(50078388, 0.86)), "7c00b422fc02cb00f6285c3f");
+  // Floor 4001: pull back to 0.86.
+  assert.equal(body(buildCameraZoom(4001, 0.86)), "7c00a10f0000cb00f6285c3f");
 });
 
 test("the golem's map keeps its camera objects, with what they author", async () => {

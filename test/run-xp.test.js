@@ -7,14 +7,13 @@ import { claimXpStar, beginRunXp, countFloorXp, settleFloorXp, xpWeightOf, xpWor
 import { generatorXpWeight } from "../src/socket/population.js";
 
 /**
- * What a kill is worth, against the official's recordings.
+ * What a kill is worth.
  *
  * Two things were wrong and both were visible on the wire. Which star drops was
- * rolled by rarity, where the official names it on the monster's own row: 5530
- * of 5530 kills of an `XP` 1 monster dropped EXP_SMALL, 1255 of 1255 at `XP` 3
- * dropped EXP_MEDIUM and 366 of 366 at `XP` 10 dropped EXP_LARGE. And the star
- * paid its `Exp` column — 1, 5 or 10 on every node in the game — where the
- * official pays the node: a small star was worth 1 in the tutorial and 19 in
+ * rolled by rarity, where the monster's own row names it: an `XP` 1 monster
+ * drops EXP_SMALL, `XP` 3 EXP_MEDIUM and `XP` 10 EXP_LARGE, every time. And the
+ * star paid its `Exp` column — 1, 5 or 10 on every node in the game — where the
+ * node is what pays: a small star is worth 1 in the tutorial and 19 in
  * Icewater Caverns 2-2, a medium three times a small and a large ten times.
  */
 
@@ -68,10 +67,8 @@ test("a row worth no experience drops no star", () => {
 
 /**
  * One weight unit is the node's `TotalEnemyXP`, spread over its floors and over
- * what stands on the first of them. The official's best-explored runs give it
- * back to within a percent: 4665 on one floor carrying 243 came to 19.04 a
- * unit against 19.20; the Infinite nodes' 50000 over 55 floors of about 106
- * came to 8.57 on five floors running.
+ * what stands on the first of them: 4665 on one floor carrying 243 is about 19
+ * a unit, and the Infinite nodes' 50000 over 55 floors of about 106 is 8.57.
  */
 const runOn = (mapPage, floorCount, rows) => {
   const session = { mapPage, floorCount, floorSettled: false };
@@ -88,7 +85,7 @@ const floorOf = (small, medium, large) => [
 ];
 
 test("a unit of experience is the node's budget over what its floors hold", () => {
-  // 100 + 3 × 31 + 10 × 5 = 243, the floor the 19.04 was measured on.
+  // 100 + 3 × 31 + 10 × 5 = 243.
   const caverns = runOn({ TotalEnemyXP: 4665 }, 1, floorOf(100, 31, 5));
   assert.ok(Math.abs(xpWorthOf(caverns, monster(1, "EXP_SMALL")) - 19.2) < 0.01);
   assert.ok(Math.abs(xpWorthOf(caverns, monster(3, "EXP_MEDIUM")) - 57.6) < 0.01, "three times a small");
@@ -103,8 +100,8 @@ test("a unit of experience is the node's budget over what its floors hold", () =
 
 /**
  * A boss floor is not a second approach. The tutorial is 55 over a first floor
- * of about 48 and a boss room of about 12, and the official's stars there paid
- * 1; counting the boss room as another 48 would have paid a half.
+ * of about 48 and a boss room of about 12, and its stars pay 1; counting the
+ * boss room as another 48 would have paid a half.
  */
 test("the other floors count for what their plan says, when it says", () => {
   const session = { mapPage: { TotalEnemyXP: 55 }, floorCount: 2, floorSettled: false };
@@ -123,7 +120,7 @@ test("the unit is settled on the first floor and kept for the run", () => {
   for (const row of floorOf(50, 0, 0)) countFloorXp(session, row);
   settleFloorXp(session);
 
-  assert.equal(xpWorthOf(session, monster(1, "EXP_SMALL")), first, "both floors of a recorded run paid alike");
+  assert.equal(xpWorthOf(session, monster(1, "EXP_SMALL")), first, "both floors of a run pay alike");
 });
 
 test("a run with nothing to divide pays the star's face value", () => {
@@ -174,8 +171,8 @@ test("the star a kill drops carries the run's price, not its own column", () => 
 });
 
 /**
- * What a monster calls up is not part of the node's budget. The official's
- * summoned lightning orbs dropped nothing on 37 of 37 kills.
+ * What a monster calls up is not part of the node's budget: a summoned
+ * lightning orb drops nothing when killed.
  */
 test("a summoned monster drops no star", () => {
   const session = dropSession();
@@ -245,10 +242,10 @@ test("what the party defends weighs nothing and leaves no star", () => {
 
 /**
  * The tutorial is worth 55 and holds about ninety monsters' weight, so a share
- * is 0.6 — and the official does not pay six tenths of a point. It rounds each
- * monster's share to a whole number by chance: 242 recorded kills there dropped
- * a star that paid exactly 1, 168 dropped none, mixed together from the first
- * kill to the last, and the minotaur's star paid 6.
+ * is 0.6 — and the game does not pay six tenths of a point. It rounds each
+ * monster's share to a whole number by chance: about six kills in ten drop a
+ * star that pays exactly 1 and the rest drop none, mixed together from the
+ * first kill to the last, and the minotaur's star pays 6.
  */
 const pricedAt = (unit) => {
   const session = { mapPage: { TotalEnemyXP: unit * 100 }, floorCount: 1, floorSettled: false };
@@ -284,8 +281,8 @@ test("the monsters with nothing are spread through the run, not left for last", 
 });
 
 /**
- * The same rounding everywhere else: at 9.16 a unit the official's small stars
- * paid 9 thirty-nine times and 10 seven, never 9.16 and never a 9 every time.
+ * The same rounding everywhere else: at 9.16 a unit a small star pays 9 most of
+ * the time and 10 the rest, never 9.16 and never a 9 every time.
  */
 test("above one point every monster carries a star, of one of two neighbouring values", () => {
   const fortress = pricedAt(9.16);

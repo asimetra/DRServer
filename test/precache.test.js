@@ -43,19 +43,18 @@ test("a floor that authors fx placeables preloads the library holding their art"
   assert.ok(temple.cacheSwfs.includes(FX), "the temple authors mines and fire, so it needs the fx library");
 
   /**
-   * And it is not simply appended to everything. The official declares it on
-   * nordic/temple (9 recordings of 12), castle/prison (8 of 9) and jungle/dino
-   * (2 of 3), and on none of the 35 nordic/caves areas, 25 castle/arena or 8
+   * And it is not simply appended to everything. It belongs on nordic/temple,
+   * castle/prison and jungle/dino, and not on nordic/caves, castle/arena or
    * castle/catacombs — the themes whose libraries author no placeable.
    */
   const caves = await preloadFor([CAVES], { gm, tierConstant: "ICE_CAVES" });
-  assert.ok(!caves.cacheSwfs.includes(FX), "the caves author none, and the official does not send it either");
+  assert.ok(!caves.cacheSwfs.includes(FX), "the caves author none, so they do not need it");
 });
 
 test("the environment art a theme draws with is preloaded from the Prop table", async () => {
   /**
-   * The paths are looked up rather than composed. Every one of these was read
-   * out of an area generate the official sent for a nordic/caves run.
+   * The paths are looked up rather than composed. These are the libraries a
+   * nordic/caves area preloads.
    */
   const gm = await loadGameMaster();
   const { cacheSwfs } = await preloadFor([CAVES], { gm, tierConstant: "ICE_CAVES" });

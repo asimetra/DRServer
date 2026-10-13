@@ -35,14 +35,13 @@ Rampage**, covering its HTTP services and multiplayer game socket.
 - **Worker-safe live state:** parties, late joins, presence, market operations,
   and two-account writes follow the thread that currently owns each account
   rather than racing a dungeon save.
-- **Evidence-driven conformance:** schema-based packet decoding, official-floor
-  replay, generated combat matrices, security audits, and synthetic load tests
+- **Evidence-driven conformance:** schema-based packet decoding, floor replay,
+  generated combat matrices, security audits, and synthetic load tests
   keep compatibility claims measurable.
 
 ## Project status
 
-DR Server is beyond a login-only emulator or protocol proof of concept. The
-main play loop works end to end: account creation and persistence, town
+The main play loop works end to end: account creation and persistence, town
 services, matchmaking, shared dungeons, combat, NPC AI, traps, loot, rewards,
 progression, trading, and the player market.
 

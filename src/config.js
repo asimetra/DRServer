@@ -195,6 +195,9 @@ export const loadServerConfig = (environment = process.env) => {
       asInt(setting(environment, "SOCKET_PORT"), defaults.gameSocketPort)
     ),
 
+    /** The desktop's port for `--use-fallback-socket-port`. Advertising only; unset, the desktop's own port. */
+    socketFallbackPort: asInt(setting(environment, "SOCKET_FALLBACK_PORT"), null),
+
     /**
      * The proxies whose `X-Forwarded-For` is believed: addresses and ranges,
      * "127.0.0.1, ::1" for one on the same machine. Without them every player
@@ -263,7 +266,7 @@ export const loadServerConfig = (environment = process.env) => {
      *
      * `audit` is the useful middle: the rule runs and reports and changes
      * nothing, which is how a false-positive rate gets measured on this
-     * server's own players rather than on somebody else's recordings.
+     * server's own players.
      *
      * Both old names still work, since a running deployment may set them.
      */
@@ -273,9 +276,9 @@ export const loadServerConfig = (environment = process.env) => {
      * Reach, which refuses by default like movement does.
      *
      * The other two wait for a false-positive rate measured on this server's
-     * own players. This one has it: across 14479 of the official's hit claims
-     * and 4689 of this server's, the furthest any landed past its attack's
-     * authored reach was 253 units against a bound of 400. It costs an honest
+     * own players. This one has it: across 4689 of this server's hit claims,
+     * the furthest any landed past its attack's authored reach was 253 units
+     * against a bound of 400. It costs an honest
      * player nothing and it only ever drops the hit — while with it off, a
      * client that claims a hit on every monster from where it stands clears
      * the floor in a couple of dozen packets.
@@ -319,7 +322,7 @@ export const loadServerConfig = (environment = process.env) => {
      * environment flag rather than a seeded row so that revoking it is
      * restarting without it.
      *
-     *   ODS_ADMIN_ACCOUNTS=1000000005,1000000006
+     *   ODS_ADMIN_ACCOUNTS=<account-id>,<account-id>
      */
     adminAccounts: String(setting(environment, "ADMIN_ACCOUNTS") ?? "")
       .split(",")
@@ -339,8 +342,8 @@ export const loadServerConfig = (environment = process.env) => {
     contentDir: setting(environment, "CONTENT_DIR") ?? defaultContentDir(),
 
     /**
-     * The browser build of the client (`bin/html5/bin`), served under
-     * /play/, or "" for none. Played from here its page, the discovery answer
+     * The operator's own browser build of the client (`bin/html5/bin`),
+     * served under /play/, or "" for none. Played from here its page, the discovery answer
      * and the web services share one origin, so the browser needs no CORS; the
      * game socket takes the browser's WebSocket on its usual port.
      *
@@ -387,9 +390,9 @@ export const loadServerConfig = (environment = process.env) => {
     /**
      * When true, unknown JSON-RPC methods answer with an empty result instead
      * of an error. It exists to enumerate what the client needs, and that job
-     * is done: of the 29 distinct methods the official recordings show the
-     * client calling, this server now answers all of them — 28 through the RPC
-     * registry and `accountdetails` through the REST layer.
+     * is done: every method the client is known to call, 29 of them, is now
+     * answered — 28 through the RPC registry and `accountdetails` through the
+     * REST layer.
      *
      * So it is off by default. A server reachable by anyone should refuse input
      * it does not recognise rather than answer it, and an unimplemented method
@@ -670,8 +673,8 @@ export const loadServerConfig = (environment = process.env) => {
     ),
 
     /**
-     * Gems paid with a boss trophy, the first time that boss is beaten. The
-     * official paid twenty-five; no table authors it, so it is set here.
+     * Gems paid with a boss trophy, the first time that boss is beaten:
+     * twenty-five by default. No table authors it, so it is set here.
      */
     trophyGems: Math.max(0, asInt(setting(environment, "TROPHY_GEMS"), defaults.trophyGems ?? 25)),
 
@@ -764,8 +767,8 @@ export const loadServerConfig = (environment = process.env) => {
     ),
 
     /**
-     * Standing still in a dungeon. The warning is the official server's: its
-     * "Zzz..." marker (HeroGameObject field 167) came up 30 seconds after a
+     * Standing still in a dungeon. The warning is the client's own "Zzz..."
+     * marker (HeroGameObject field 167), raised by default 30 seconds after a
      * hero last moved, turned or attacked. Sending the player back to town is
      * this server's own rule. Zero turns either off.
      */
@@ -929,7 +932,7 @@ export const configProblems = (environment = process.env) => {
   const warnings = [];
   const settings = loadServerConfig(environment);
 
-  for (const name of ["PORT", "SOCKET_PORT", "INTERNAL_PORT", "PUBLIC_PORT", "PUBLIC_SOCKET_PORT", "DESKTOP_SOCKET_PORT"]) {
+  for (const name of ["PORT", "SOCKET_PORT", "INTERNAL_PORT", "PUBLIC_PORT", "PUBLIC_SOCKET_PORT", "DESKTOP_SOCKET_PORT", "SOCKET_FALLBACK_PORT"]) {
     const given = spelled(environment, name);
     // Assigned nothing is the default, as it always has been.
     if (!given || given.value === "") continue;

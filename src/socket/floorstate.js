@@ -115,7 +115,7 @@ const anyPlayerPresent = (session) => {
  * decrements *before* rendering, so a 60 renders 59 first and needs 61 ticks to
  * pass zero. Sixty on the wire is sixty-three on the clock.
  *
- * The official server waits exactly that long: a captured floorfailing of 60
+ * The game waits exactly that long: an observed floorfailing of 60
  * was followed by dungeonEnding 62.986 seconds later, with nothing from the
  * client in between — the countdown finishing dispatches a local event that
  * only hides the revive panel, so the wait is the server's to get right.

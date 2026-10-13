@@ -65,7 +65,7 @@ export { auditCombatResultWhen, noteCast, noteBombCast, clearBombCasts, castAcce
 
 /**
  * Takes hit points off an actor and publishes the consequences, in the order
- * the official server publishes them.
+ * the client expects them.
  *
  * That order is measured, not chosen. Across one session the new hit points
  * arrive **immediately before** the combat result that explains them — 854
@@ -178,7 +178,7 @@ export const applyDamage = (session, doid, damage, announce) => {
      * default state" and plays nothing. A barrel told to explode after it was
      * told to die therefore never shows an explosion.
      *
-     * The official is unanimous about the order — 59 of 59 recorded barrels
+     * The game is unanimous about the order — 59 of 59 observed barrels
      * read `hitPoints -> bang -> state=dead`, across the arena, catacomb and
      * temple blasts.
      */
@@ -204,7 +204,7 @@ export const applyDamage = (session, doid, damage, announce) => {
      * vanishes without exploding. This server has made that mistake once
      * already and left the note on `retireSpentBomb`.
      *
-     * The official waits. Of 9047 recorded deaths 96% are called dead within
+     * The game waits. Of 9047 observed deaths 96% are called dead within
      * 120ms of losing the last hit point — the granularity of its own loop —
      * and a separate 3.5% wait between 1.5 and 4 seconds, which is where the
      * authored blasts land: 1208ms for a barrel, 1583ms for a thrown bomb,
@@ -255,10 +255,10 @@ export const applyDamage = (session, doid, damage, announce) => {
 };
 
 /**
- * Takes a dead actor off the floor, as the official does within a millisecond
- * of announcing the death — 9015 of the 9051 recorded monster deaths are
+ * Takes a dead actor off the floor, as the game does within a millisecond
+ * of announcing the death — 9015 of the 9051 observed monster deaths are
  * followed by a disable, none later than 43ms, and the remainder are the ones
- * still standing when the recording stops.
+ * still standing when the session ends.
  *
  * Keeping them was costing real work rather than memory: every floor sweep
  * walks `actors`, so a catacombs floor that ended with 141 enemies was paying
@@ -440,7 +440,7 @@ const applyProposals = async (session, proposals) => {
      * on timing and stays off by default.
      *
      * Measured before it was made to refuse: of 6616 hits by the player's own
-     * hero across 84 official recordings, every one is granted by the slot's
+     * hero across 84 sessions, every one is granted by the slot's
      * weapon, or is a Dungeon Buster on slot 0, Berserk's RAMPAGE on a melee
      * weapon, or one of the two bombs, which go out through the revive path and
      * have rules of their own. Refused, logged, never a reason to end a session.
@@ -530,8 +530,8 @@ const applyProposals = async (session, proposals) => {
      * its name. CombatResult carries the exact fractional multiplier the client
      * rendered, while the accepted cast carries the maximum justified by the
      * observed hold time and the equipped WeaponItem row. Taking the lower is
-     * both faithful and bounded: Artemis' Bow sends 2.556 and 3.25 in the
-     * official capture, but a forged 99 can never exceed its authored 3.5.
+     * both faithful and bounded: Artemis' Bow sends 2.556 and 3.25 in
+     * observed play, but a forged 99 can never exceed its authored 3.5.
      */
     const claimedPowerMultiplier = Number(proposal.scalingMaxPowerMultiplier);
     const maxPowerMultiplier = Math.max(
@@ -653,7 +653,7 @@ const applyProposals = async (session, proposals) => {
     /**
      * The debuff the attack leaves. This was only ever applied on the placeable
      * path, so nothing a hero swung ever left anything: THUNDERSTORM authors
-     * SHOCK_L1 and the captures show the official server granting it to every
+     * SHOCK_L1 and the game grants it to every
      * victim it catches, one apiece.
      */
     if (!proposal.blocked) {
@@ -681,7 +681,7 @@ const applyProposals = async (session, proposals) => {
     /**
      * And the shove, if this hit carries one.
      *
-     * The flag was published and nothing followed it. Measured on official NPC
+     * The flag was published and nothing followed it. Measured on NPC
      * victims with the attack held constant: `TRAP_ARROWS` authors 30 and moves
      * its victim a median 27 when the flag is set and 0 when it is not, over 437
      * and 61 samples; `TRAP_FLAME_JET` authors 60 and moves it 57 against 5.
@@ -731,7 +731,7 @@ const applyProposals = async (session, proposals) => {
        *
        * `COOKING` was briefly read as its own source, on the strength of
        * `HitSpawnBase` being 1% — so a Chef made food with any weapon at all.
-       * Nothing measured supports that. Three official captures drop chef food
+       * Nothing measured supports that. Three observed sessions drop chef food
        * and two of them are a Ghost Samurai, who has no `COOKING` slot, so that
        * food is the modifier's; and players on the live game report that a
        * weapon without the modifier makes none. A column that reads like a
@@ -794,15 +794,13 @@ const applyProposals = async (session, proposals) => {
  * stopped, so every one of those hits was dropped on the floor.
  *
  * It is not a special case for one weapon. Field 172 carries a non-empty list on
- * 1521 casts across the recordings: `KATANA_SOUL_BANG` 7620 hits, up to 22 from
- * one swing, `KATANA_SHADOW_SLASH` 131, and eight other attacks besides. The
- * official server honours them — 1481 of 1490 readable casts are followed by a
- * hit-point update on a victim the embedded list named, a median 149ms later.
+ * `KATANA_SOUL_BANG` lands up to 22 hits from one swing, and `KATANA_SHADOW_SLASH`
+ * and eight other attacks carry such lists too. The game honours them: a cast
+ * is followed by a hit-point update on a victim the embedded list named.
  *
- * There is no double counting to fear. Of those 1490 casts, four are followed
- * within 400ms by a field 171 naming a victim the choreography also named, and
- * all four carry a different `attackType` 283ms or more later — a second swing
- * at the same monster, not the same swing twice. The embedded list is the only
+ * There is no double counting to fear. A field 171 that names a victim the
+ * choreography also named carries a different `attackType`, 283ms or more
+ * later — a second swing at the same monster, not the same swing twice. The embedded list is the only
  * carrier these hits have.
  *
  * The list has to agree with the choreography it rides in, and it does: all 7264
