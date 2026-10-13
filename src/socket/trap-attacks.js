@@ -89,21 +89,35 @@ const teamAllowsHit = (attack, attackerTeam, victimTeam) => {
 /**
  * Who a trap can reach, asked of one actor.
  *
- * `includeFallen` is for the one caller that needs a body rather than a target:
+ * `includeBodies` is for the one caller that needs a body rather than a target:
  * a projectile is stopped by a downed player, which is what the client draws.
  * It admits fallen *heroes* only — a dead monster is faded out and is not cover
  * — and everything else asks who can be hurt, which a corpse cannot be.
  *
+ * Nor can anything whose row says IsAttackable 0, and this is the one place
+ * every NPC swing, floor trap and shot chooses its victims. It is the client's
+ * own rule, word for word: `CombatGameObject.collisionCallback` passes over an
+ * actor that is not `isAttackable` before it asks about sides, and
+ * `ProjectileGameObject.enterContact` treats one as a wall. So a shot is still
+ * stopped by one (`includeBodies`) and nothing hurts it. Across the official
+ * corpus 426 such actors with hit points were generated — 84 floor mines, 144
+ * burning patches, 61 garlic, 39 lightning orbs, the 5 consumable bombs — and
+ * not one combat result names any of them as its victim, against 26587 on
+ * attackable NPCs. Ours, with this unasked, let monsters' swings take 2 of 14
+ * of its bombs, which vanished without going off, and on `sim:ai` kill the
+ * temple's and village's floor mines and fire patches.
+ *
  * Returns where the actor stands, or null when the trap cannot reach it.
  */
-const reachablePosition = (session, state, doid, actor, { attack, attackerTeam, includeFallen }) => {
+const reachablePosition = (session, state, doid, actor, { attack, attackerTeam, includeBodies }) => {
   if (!actor) return null;
   if (actor.teleportHidden) return null;
   // Only a fallen *hero* counts as still being there. Killing an NPC leaves
   // its entry in the map with `dead` set — nothing removes it on the ordinary
   // path — so admitting every corpse turned each dead monster into cover and
   // an arrow trap with anything dead in front of it stopped hurting anybody.
-  if (actor.dead && !(includeFallen && isPartyHero(session, doid))) return null;
+  if (actor.dead && !(includeBodies && isPartyHero(session, doid))) return null;
+  if (actor.attackable === false && !includeBodies) return null;
   const clid = state.objects?.get(doid);
   if (!RECEIVE_FIELD_BY_CLID[clid]) return null;
   // A late join installs its actor before replay so its create/state can be
@@ -143,13 +157,13 @@ const reachablePosition = (session, state, doid, actor, { attack, attackerTeam, 
  */
 const eachTrapVictim = (
   session,
-  { attack, attackerTeam, includeFallen = false, candidateDoids = null },
+  { attack, attackerTeam, includeBodies = false, candidateDoids = null },
   visit
 ) => {
   const state = matchStateOf(session);
   const actors = state.actors;
   if (!actors) return;
-  const asked = { attack, attackerTeam, includeFallen };
+  const asked = { attack, attackerTeam, includeBodies };
   const consider = (doid) => {
     const actor = actors.get(doid);
     const position = reachablePosition(session, state, doid, actor, asked);
@@ -747,11 +761,13 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
       {
         attack: projectile.attack,
         attackerTeam: projectile.attackerTeam,
-        includeFallen: true,
+        includeBodies: true,
         candidateDoids: targets.of(projectile),
       },
       (doid, actor, position) =>
         doid !== projectile.ignoreDoid &&
+        // A wall to the client, so a shot that ignores walls ignores it.
+        !(projectile.ignoreWalls && actor.attackable === false) &&
         segmentHitsCircle(
           projectile.position,
           nextPosition,
@@ -765,9 +781,10 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
      * The client draws the bolt hitting the fallen player, so a server that
      * flew it through the corpse and hurt whoever was behind disagreed with
      * what everybody could see. The corpse takes nothing, which is why the
-     * flight ends here rather than falling through to the damage below.
+     * flight ends here rather than falling through to the damage below — and
+     * so does what nothing may attack, which the client stops as a wall.
      */
-    if (struck?.actor?.dead) {
+    if (struck?.actor?.dead || struck?.actor?.attackable === false) {
       end(nextPosition);
       continue;
     }

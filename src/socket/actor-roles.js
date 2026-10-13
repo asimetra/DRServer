@@ -79,9 +79,19 @@ export const rolesOfRow = (npc, { petOwnerDoid = 0, countsForFloor } = {}) => ({
  * pet, as one he brings is; anything else he puts down is on nobody's list
  * and never an enemy — counted, a cloud the player made would hold the floor
  * open until it expired.
+ *
+ * And it is as attackable as its row says, which for nearly every one that
+ * stands still is not at all: 34 of the 35 static rows a timeline or a thrown
+ * projectile places author IsAttackable 0 — the fissures, the five consumable
+ * bombs, the clouds, the garlic, mines and firebombs; the odd one is the ice
+ * dragon's shards, which are scenery. Left unsaid, a bomb was a live
+ * one-hit-point target for the 80ms before it goes off; monsters' swings took
+ * 2 of 14 of ours, where the official's 5 bombs were never hit.
  */
 export const rolesOfPlaceable = (npc, ownerDoid, mobile) =>
-  mobile ? rolesOfRow(npc, { petOwnerDoid: ownerDoid }) : { isEnemy: false, isPet: false };
+  mobile
+    ? rolesOfRow(npc, { petOwnerDoid: ownerDoid })
+    : { isEnemy: false, isPet: false, attackable: Boolean(npc.IsAttackable) };
 
 /** The selector its AI picks with (npc-targeting.js `pickTarget`): a player's pet, a beast, an ally, or an enemy. */
 export const kindOfRow = (npc, { petOwnerDoid = 0 } = {}) =>

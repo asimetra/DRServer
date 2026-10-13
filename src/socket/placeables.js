@@ -12,6 +12,7 @@ import {
   weaponForConstant,
 } from "../gamemaster.js";
 import { heroLevel } from "../progression.js";
+import { consumableBombPower } from "../weapon-power.js";
 import { npcStats } from "../combat-damage.js";
 import { npcMaxHitPoints } from "../npc-stats.js";
 import { petCombatLevel, scaledNpcWeaponPower } from "../pets.js";
@@ -22,7 +23,7 @@ import { isPlausiblePosition } from "./coordinates.js";
 import { RULE, noteViolation } from "./security-events.js";
 import { npcGenerate, objectDisable } from "./objects.js";
 import { variantFor } from "../content-packs.js";
-import { npcHeadingUpdate } from "./npc-move.js";
+import { npcHeadingUpdate, npcPositionUpdate } from "./npc-move.js";
 import { npcAttackChoices, npcAttackSpeed } from "./npc-attacks.js";
 import { isScenery, kindOfRow, rolesOfPlaceable } from "./actor-roles.js";
 import { membersOf } from "./match-world.js";
@@ -223,9 +224,9 @@ const hitVictims = async (session, doid, live, attack, victims) => {
  * silent until something walks into them, and one of the two recorded never
  * animated at all because nothing did.
  */
-const strike = async (session, doid, live, attack, { always = false } = {}) => {
+const strike = async (session, doid, live, attack, { always = false, shape: preset = null } = {}) => {
   if (!attack) return 0;
-  const shape = await attackColliders(attack.AttackTimeline);
+  const shape = preset ?? (await attackColliders(attack.AttackTimeline));
   const colliders = worldColliders(live.position, live.heading, shape);
   const victims = victimsOf(session, doid, live, colliders, attack);
   // Scenery is hit when this goes off but never makes it go off: a mine beside
@@ -346,6 +347,31 @@ const strike = async (session, doid, live, attack, { always = false } = {}) => {
 };
 
 /**
+ * Its DeathAttack, once, however it comes to die: on its own next turn (a
+ * fissure, a bomb), at the end of a life spent attacking, or killed first by
+ * something else. The last used to be lost: the hit took the bomb's one hit
+ * point, the death took the object away, and the activation found it gone and
+ * never struck — a bomb that vanished without going off (recorded on ours,
+ * 184818 at 16:00:57). Nothing may attack one now (actor-roles.js
+ * `rolesOfPlaceable`), so this is the net under that rule rather than a path
+ * the game is expected to take.
+ *
+ * Its shape is resolved when it is placed, so the swing leaves in the same turn
+ * as the hit points that announce it — the official sends hit points 0, the
+ * position and the swing in one frame, 5 of 5 bombs.
+ */
+const goOff = (session, doid, live) => {
+  if (!live.deathAttack || live.deathStarted) return null;
+  live.deathStarted = true;
+  halt(session, live);
+  return runSafely(
+    strike(session, doid, live, live.deathAttack, { always: true, shape: live.deathShape }),
+    session,
+    `${live.constant} ${live.deathAttack.Constant}`
+  );
+};
+
+/**
  * The end of one, which for half of them is the whole point: a bomb does
  * nothing until it goes off, its own attack being authored at DamageMod zero.
  */
@@ -365,9 +391,7 @@ const expirePlaceable = async (session, doid) => {
     session.send(hitPointsUpdate(doid, CLID.DistributedNPCGameObject, 0));
   }
   // Unless it already performed on arrival, which is what a fissure does.
-  if (live.livingAttack) {
-    await strike(session, doid, live, live.deathAttack, { always: true });
-  }
+  if (live.livingAttack) await goOff(session, doid, live);
   session.send(stateUpdate(doid, CLID.DistributedNPCGameObject, "dead"));
   session.send(objectDisable(doid));
   session.objects.delete(doid);
@@ -484,12 +508,17 @@ const placerFor = async (session, owner) => {
  * rest of the weapon that put it there: power, level, rarity and modifiers. 88
  * of 105 observed hero-placed generates match one of the hero's own slots on
  * all of those, and the other 17 are garlic whose power alone differs. An
- * enemy's, a walking pet's and anything placed without a weapon (a consumable)
- * keep the row's weapon as it is.
+ * enemy's and a walking pet's keep the row's weapon as it is. One placed
+ * without a weapon — a consumable bomb — holds the row's weapon at the power
+ * it was thrown with and nothing else: `[27100, 1020, 1, 1, 0, 0, 0]` on the
+ * official's, 5 of 5 (weapon-power.js `consumableBombPower`).
  */
 const placedWeaponDetails = (weapon, nativePower, { owner, mobileSummon, heroWeapon, weaponPower }) => {
-  if (owner || mobileSummon || !heroWeapon) {
+  if (owner || mobileSummon) {
     return { type: weapon.Id, power: nativePower, requiredlevel: 1, rarity: 1 };
+  }
+  if (!heroWeapon) {
+    return { type: weapon.Id, power: weaponPower ?? nativePower, requiredlevel: 1, rarity: 1 };
   }
   return {
     type: weapon.Id,
@@ -562,6 +591,8 @@ export const spawnPlaceable = async (
   placementGroup?.positions.push({ ...position, radius: collisionRadius });
 
   const { living: livingAttack, death: deathAttack } = await attacksOf(npc);
+  const deathShape = deathAttack ? await attackColliders(deathAttack.AttackTimeline) : null;
+  const deathMs = await timelineLengthMs(deathAttack?.AttackTimeline);
   const weapon = npc.Weapon1 && (await weaponForConstant(npc.Weapon1));
   // A monster's walking summons are summons.js's; only a hero's pet comes here.
   const mobileSummon = !owner && npc.CharType === "PET" && Boolean(npc.IsMover);
@@ -579,6 +610,9 @@ export const spawnPlaceable = async (
     Math.min(5, [...membersOf(session)].filter((member) => member?.heroDoid != null).length)
   );
   const gm = mobileSummon ? await loadGameMaster() : null;
+  const held = weapon
+    ? placedWeaponDetails(weapon, nativeWeaponPower, { owner, mobileSummon, heroWeapon, weaponPower })
+    : null;
   const partyHitPoints = mobileSummon
     ? Array.from({ length: 6 }, (_, heroes) =>
         heroes === 0 ? 0 : npcMaxHitPoints(gm, npc, level, heroes)
@@ -655,6 +689,13 @@ export const spawnPlaceable = async (
      * whatever stood where it had been for ten more seconds.
      */
     onGone: () => stopAttacking(session, doid),
+    // Killed first, it still goes off (`goOff`), and stays to be drawn doing
+    // it, as the NPC path keeps a barrel (npc-spawn.js `deathEffectMs`).
+    onDeathAttack: () => {
+      const live = session.placeables?.get(doid);
+      if (live) goOff(session, doid, live);
+    },
+    deathEffectMs: deathAttack ? deathMs + PLACEABLE_RETIRE_GRACE_MS : 0,
   });
 
   session.send(
@@ -668,16 +709,7 @@ export const spawnPlaceable = async (
       heading: 0,
       scale: npc.Scale ?? 1,
       hitPoints,
-      weapons: weapon
-        ? [
-            placedWeaponDetails(weapon, nativeWeaponPower, {
-              owner,
-              mobileSummon,
-              heroWeapon,
-              weaponPower,
-            }),
-          ]
-        : [],
+      weapons: held ? [held] : [],
       // Whoever placed it owns it. Not the row's CharType — see above.
       team,
       triggerState: 1,
@@ -726,10 +758,7 @@ export const spawnPlaceable = async (
    * seconds is already longer than anything they animate.
    */
   const authoredMs = Math.max(0, Number(action.timetolive ?? 0) * 1000);
-  const animationMs = Math.max(
-    await timelineLengthMs(livingAttack?.AttackTimeline),
-    await timelineLengthMs(deathAttack?.AttackTimeline)
-  );
+  const animationMs = Math.max(await timelineLengthMs(livingAttack?.AttackTimeline), deathMs);
   const deathOnly = Boolean(deathAttack && !livingAttack);
   const lifecycleMs = deathOnly
     ? PLACEABLE_ACTIVATION_DELAY_MS + animationMs + PLACEABLE_RETIRE_GRACE_MS
@@ -751,7 +780,20 @@ export const spawnPlaceable = async (
     suicideMs: await suicideDelayMs(livingAttack?.AttackTimeline),
     // The facing it was placed with: collider xOffsets run along it.
     heading,
-    weaponPower: placer.pricesWithOwnWeapon ? nativeWeaponPower : weaponPower,
+    /**
+     * It strikes with the weapon it is generated holding, as an NPC's own
+     * DeathAttack does (npc-spawn.js). A consumable bomb's blast was priced
+     * with the hero's slot 0 while its generate showed the client the row's
+     * bare 20; the official's lands |DamageMod| × the power it generates with,
+     * 36 of 36 hits.
+     */
+    weaponPower:
+      held && !mobileSummon
+        ? held.power
+        : placer.pricesWithOwnWeapon
+          ? nativeWeaponPower
+          : weaponPower,
+    deathShape,
     heroWeapon,
     owner,
     position,
@@ -841,7 +883,6 @@ export const spawnPlaceable = async (
       live.activation = null;
       if (!session.dungeonActive || session.floorDoid !== live.floorDoid) return;
       if (session.objects?.get(doid) !== CLID.DistributedNPCGameObject) return;
-      live.deathStarted = true;
       const actor = session.actors?.get(doid);
       // Dead, not only at zero: victims are chosen by `dead`, and a crack left at
       // zero took monsters' swings for the rest of its life. The official sends
@@ -851,11 +892,13 @@ export const spawnPlaceable = async (
         actor.dead = true;
       }
       session.send(hitPointsUpdate(doid, CLID.DistributedNPCGameObject, 0));
-      runSafely(
-        strike(session, doid, live, deathAttack, { always: true }),
-        session,
-        `${live.constant} activation`
-      );
+      /**
+       * Where it stands, once. The official sends every one of these a single
+       * position update: 43 of 43 fissures, 24 of them with hit points 0 and
+       * the rest right behind the generate, and 5 of 5 bombs with hit points 0.
+       */
+      session.send(npcPositionUpdate(doid, live.position));
+      goOff(session, doid, live);
     }, PLACEABLE_ACTIVATION_DELAY_MS);
   }
 
@@ -1110,7 +1153,6 @@ export const schedulePlaceables = async (
   weaponSlot = 0,
   { playSpeed = 1, fromWeapon = true } = {}
 ) => {
-  const weaponPower = session.heroWeapons?.[weaponSlot]?.power;
   /**
    * And the weapon itself, for what its modifiers say — see `attackMultiplierFor`
    * and `critRollFor`. A placeable's lingering damage is priced from the weapon
@@ -1123,11 +1165,15 @@ export const schedulePlaceables = async (
    * it whatever weapon happens to be in the hero's first slot, and it would
    * crit and scale on modifiers that have nothing to do with it. The game
    * carries no crit on `HEALTH_BOMB_ATTACK` or `PARTY_BOMB_ATTACK` across 623
-   * observed hits.
+   * observed hits. Nor is slot 0 its power, which is the hero's level's
+   * (weapon-power.js `consumableBombPower`).
    */
   const weapon = fromWeapon ? session.heroWeapons?.[weaponSlot] : null;
   const actions = await spawnNpcActions(attack?.AttackTimeline);
   if (!actions.length || !session.floorDoid || !session.heroPosition) return false;
+  const weaponPower = fromWeapon
+    ? weapon?.power
+    : consumableBombPower(await placerLevel(session));
 
   const floorDoid = session.floorDoid;
   const origin = { ...session.heroPosition };
@@ -1162,14 +1208,18 @@ export const schedulePlaceables = async (
  * remaining hits — a bomb killed mid-blast still lands the blast — and the
  * expiry still runs, finding the object gone and only tidying up after it.
  */
-const stopAttacking = (session, doid) => {
-  const live = session.placeables?.get(doid);
-  if (!live) return false;
+const halt = (session, live) => {
   cancelFloorTimer(session, live.ticker, clearInterval);
   live.ticker = null;
   cancelFloorTimer(session, live.activation);
   live.activation = null;
   live.spent = true;
+};
+
+const stopAttacking = (session, doid) => {
+  const live = session.placeables?.get(doid);
+  if (!live) return false;
+  halt(session, live);
   return true;
 };
 

@@ -16,7 +16,7 @@ import { PacketWriter } from "./packet.js";
  * faces is not the step's: see npc-facing.js.
  */
 
-const npcPositionUpdate = (doid, position) =>
+export const npcPositionUpdate = (doid, position) =>
   new PacketWriter(OP.CLIENT_OBJECT_UPDATE_FIELD)
     .u32(doid)
     .u16(132) // DistributedNPCGameObject.position

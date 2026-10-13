@@ -5,6 +5,8 @@ import { tellRevived } from "./combat-events.js";
 import { heroById, attackForConstant, loadGameMaster, mapNode } from "../gamemaster.js";
 import { maxHitPoints, maxManaPoints, effectiveMaxHitPoints, effectiveMaxManaPoints, wireSlotPoints, statTotals } from "../hero-stats.js";
 import { equippedPetSpawn } from "../pets.js";
+import { heroLevel } from "../progression.js";
+import { consumableSlotPower } from "../weapon-power.js";
 import { preloadFor } from "./precache.js";
 import { matchHost } from "./match-host.js";
 import { activeInfiniteModifiers, infiniteDefinitionForNode, infiniteEpoch, infiniteModifierIdsForNode, infiniteProgressFor, plannedModifiers } from "../infinite.js";
@@ -83,10 +85,11 @@ export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * which the client cannot recover from once an attack lands.
  *
  * Slots are filled from the items equipped on this avatar (ItemInfo.avatar_slot);
- * empty slots stay zeroed.
+ * empty slots stay zeroed, except the fourth, which carries the hero's
+ * consumable power at `level` (weapon-power.js `consumableSlotPower`).
  */
-export const weaponsForAvatar = (account, avatar) => {
-  const slots = [{}, {}, {}, {}];
+export const weaponsForAvatar = (account, avatar, level = 1) => {
+  const slots = [{}, {}, {}, consumableSlot(level)];
   if (!avatar) return slots;
 
   for (const item of account.account_items ?? []) {
@@ -118,6 +121,17 @@ export const weaponsForAvatar = (account, avatar) => {
   }
   return slots;
 };
+
+/** The hero's level, as everything generated for him reads it. */
+const avatarLevel = (gm, hero, avatar) =>
+  hero ? heroLevel(gm, hero, Number(avatar?.experience ?? 0)) : 1;
+
+const consumableSlot = (level) => ({
+  type: 0,
+  power: consumableSlotPower(level),
+  requiredlevel: Math.max(1, Number(level) || 1),
+  rarity: 1,
+});
 
 /**
  * The two consumable slots — what the game calls powerups.
@@ -461,7 +475,7 @@ export const prepareDungeonMember = async (
   );
 
   const gm = await loadGameMaster();
-  const weapons = weaponsForAvatar(account, avatar);
+  const weapons = weaponsForAvatar(account, avatar, avatarLevel(gm, hero, avatar));
   const consumables = consumablesForAvatar(avatar);
   session.heroWeapons = weapons;
   session.heroConsumables = consumables;
@@ -764,7 +778,7 @@ export const enterDungeon = async (
   );
   // Health and mana are earned, not flat: the hero's base plus its LV_ growth
   // across levels plus whatever training put into a health slot — if it has one.
-  const weapons = weaponsForAvatar(account, avatar);
+  const weapons = weaponsForAvatar(account, avatar, avatarLevel(gm, hero, avatar));
   session.heroWeapons = weapons;
   session.petSpawn = equippedPetSpawn(gm, account, avatar, hero);
   /**
