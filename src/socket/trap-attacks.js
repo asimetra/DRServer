@@ -63,7 +63,6 @@ export const areaTrapHits = (hazard, position, victim) => {
   );
 };
 
-/** Every actor a trap could hurt, hero included, with its position. */
 /**
  * Whether an attack is allowed to connect at all, by side.
  *
@@ -88,52 +87,117 @@ const teamAllowsHit = (attack, attackerTeam, victimTeam) => {
 };
 
 /**
- * Who a trap can reach.
+ * Who a trap can reach, asked of one actor.
  *
  * `includeFallen` is for the one caller that needs a body rather than a target:
  * a projectile is stopped by a downed player, which is what the client draws.
  * It admits fallen *heroes* only — a dead monster is faded out and is not cover
  * — and everything else asks who can be hurt, which a corpse cannot be.
+ *
+ * Returns where the actor stands, or null when the trap cannot reach it.
  */
-export const trapVictims = (
+const reachablePosition = (session, state, doid, actor, { attack, attackerTeam, includeFallen }) => {
+  if (!actor) return null;
+  if (actor.teleportHidden) return null;
+  // Only a fallen *hero* counts as still being there. Killing an NPC leaves
+  // its entry in the map with `dead` set — nothing removes it on the ordinary
+  // path — so admitting every corpse turned each dead monster into cover and
+  // an arrow trap with anything dead in front of it stopped hurting anybody.
+  if (actor.dead && !(includeFallen && isPartyHero(session, doid))) return null;
+  const clid = state.objects?.get(doid);
+  if (!RECEIVE_FIELD_BY_CLID[clid]) return null;
+  // A late join installs its actor before replay so its create/state can be
+  // composed, but it is not part of live gameplay until snapshot activation.
+  // Without this, shared traps could damage an unseen hero during that gap.
+  if (clid === CLID.HeroGameObject && !isPartyHero(session, doid)) return null;
+  if (attack && !teamAllowsHit(attack, attackerTeam, actor.team)) return null;
+  /**
+   * The session's cached position is preferred for its own hero because it is
+   * the fresher of the two, but it is only a preference. Reading it as the
+   * *only* source dropped that actor out of the list whenever the cache was
+   * empty — and an actor missing from this list is not merely unhurt, it also
+   * stops a projectile from noticing it at all.
+   */
+  return (doid === session.heroDoid ? session.heroPosition : null) ?? actor.position ?? null;
+};
+
+/**
+ * Every actor a trap can reach, in the floor's own order, each handed to
+ * `visit(doid, actor, position)` until one returns true.
+ *
+ * Walked live and built into nothing. This is asked per hazard per contact
+ * tick and per flying shot per 20 ms projectile tick, and it used to answer
+ * with a `{ doid, actor, position }` for every living actor, read off the
+ * actor Map's entries, every time: across the nine libraries x 4000 ticks of
+ * `sim:ai` (loadsim hero, seed 1) that was 3.8M calls, 100M entries walked and
+ * 28.6M records, of which the shots kept 14M only to ask `find` for the first
+ * one in the way. The entry arrays alone were 10.4 GB of 34.5 GB sampled
+ * garbage. Walking the keys allocates nothing, and the callers' own test runs
+ * as it goes, so only an actor that passes it becomes a record.
+ *
+ * The answer is not kept between calls, even within one tick: it changes
+ * between two neighbouring bites — the first one kills, a monster steps, a
+ * thrown trap lands and is an actor — and the actor Map has no version to tell
+ * a stale list from a fresh one. Only the side test is worth keeping, and only
+ * while nothing happens; see `shotTargets`.
+ */
+const eachTrapVictim = (
   session,
-  { attack, attackerTeam, includeFallen = false, candidateDoids = null } = {}
+  { attack, attackerTeam, includeFallen = false, candidateDoids = null },
+  visit
 ) => {
   const state = matchStateOf(session);
-  const victims = [];
-  const entries = candidateDoids
-    ? [...candidateDoids].map((doid) => [doid, state.actors?.get(doid)])
-    : state.actors ?? [];
-  for (const [doid, actor] of entries) {
-    if (!actor) continue;
-    if (actor.teleportHidden) continue;
-    // Only a fallen *hero* counts as still being there. Killing an NPC leaves
-    // its entry in the map with `dead` set — nothing removes it on the ordinary
-    // path — so admitting every corpse turned each dead monster into cover and
-    // an arrow trap with anything dead in front of it stopped hurting anybody.
-    if (actor.dead && !(includeFallen && isPartyHero(session, doid))) continue;
-    const clid = state.objects?.get(doid);
-    if (!RECEIVE_FIELD_BY_CLID[clid]) continue;
-    // A late join installs its actor before replay so its create/state can be
-    // composed, but it is not part of live gameplay until snapshot activation.
-    // Without this, shared traps could damage an unseen hero during that gap.
-    if (clid === CLID.HeroGameObject && !isPartyHero(session, doid)) continue;
-    if (attack && !teamAllowsHit(attack, attackerTeam, actor.team)) continue;
-    /**
-     * The session's cached position is preferred for its own hero because it is
-     * the fresher of the two, but it is only a preference. Reading it as the
-     * *only* source dropped that actor out of the list whenever the cache was
-     * empty — and an actor missing from this list is not merely unhurt, it also
-     * stops a projectile from noticing it at all.
-     */
-    const position =
-      (doid === session.heroDoid ? session.heroPosition : null) ?? actor.position;
-    if (position) victims.push({ doid, actor, position });
+  const actors = state.actors;
+  if (!actors) return;
+  const asked = { attack, attackerTeam, includeFallen };
+  const consider = (doid) => {
+    const actor = actors.get(doid);
+    const position = reachablePosition(session, state, doid, actor, asked);
+    return position ? visit(doid, actor, position) : false;
+  };
+  // Two loops rather than one over either: a loop that meets both a Set and a
+  // Map's keys is generic, and a generic loop allocates a result per step.
+  if (candidateDoids) {
+    for (const doid of candidateDoids) if (consider(doid)) return;
+    return;
   }
+  for (const doid of actors.keys()) if (consider(doid)) return;
+};
+
+const always = () => true;
+
+/**
+ * Who a trap can reach, and of those whoever passes `test(doid, actor, position)`:
+ * the shape a trap asks about, so that nobody who is not in it is ever made
+ * into a record.
+ */
+export const trapVictims = (session, options = {}, test = always) => {
+  const victims = [];
+  eachTrapVictim(session, options, (doid, actor, position) => {
+    if (test(doid, actor, position)) victims.push({ doid, actor, position });
+    return false;
+  });
   return victims;
 };
 
+/** The first actor, in the floor's order, a trap can reach and `test` admits. */
+const firstTrapVictim = (session, options, test) => {
+  let found = null;
+  eachTrapVictim(session, options, (doid, actor, position) => {
+    if (!test(doid, actor, position)) return false;
+    found = { doid, actor, position };
+    return true;
+  });
+  return found;
+};
+
 const HAZARD_ACTOR_CELL = 256;
+/**
+ * A grid cell as one number rather than an "x,y" string: unique while a row
+ * index stays under 2^19 cells (134M units) either side of zero, and it builds
+ * and hashes without making a string per cell per actor per contact tick.
+ */
+const hazardCellKey = (x, y) => x * 1048576 + y;
 
 const hazardColliderBounds = (collider) => {
   if (collider?.type === "circle") {
@@ -160,7 +224,16 @@ const hazardColliderBounds = (collider) => {
   };
 };
 
-/** Builds one actor grid for every sustained hazard sharing this timestamp. */
+/**
+ * Builds one actor grid for every sustained hazard sharing this timestamp.
+ *
+ * Each cell holds its actors in an array, in the floor's order: an actor is
+ * walked once and enters a cell at most once, so a Set per cell bought
+ * nothing. In the run measured at `eachTrapVictim` the build was 7.4 GB of
+ * the 34.5 GB of sampled garbage — the Sets 2.7, the string keys and points
+ * 2.75, the records it was read from 1.0 — and with arrays, numeric keys and
+ * no records it is 3.5.
+ */
 const hazardVictimIndex = (session, now) => {
   const state = matchStateOf(session);
   const actors = state.actors;
@@ -168,7 +241,7 @@ const hazardVictimIndex = (session, now) => {
   if (cached?.at === now && cached.actors === actors && cached.size === actors?.size) return cached;
 
   const cells = new Map();
-  for (const { doid, actor, position } of trapVictims(session)) {
+  eachTrapVictim(session, {}, (doid, actor, position) => {
     const center = collisionPointOf(actor, position);
     const radius = Math.max(0, Number(actor?.collisionRadius ?? 30));
     const fromX = Math.floor((center.x - radius) / HAZARD_ACTOR_CELL);
@@ -177,13 +250,14 @@ const hazardVictimIndex = (session, now) => {
     const toY = Math.floor((center.y + radius) / HAZARD_ACTOR_CELL);
     for (let x = fromX; x <= toX; x++) {
       for (let y = fromY; y <= toY; y++) {
-        const key = `${x},${y}`;
+        const key = hazardCellKey(x, y);
         const bucket = cells.get(key);
-        if (bucket) bucket.add(doid);
-        else cells.set(key, new Set([doid]));
+        if (bucket) bucket.push(doid);
+        else cells.set(key, [doid]);
       }
     }
-  }
+    return false;
+  });
   const index = { at: now, actors, size: actors?.size ?? 0, cells };
   state.hazardVictimIndex = index;
   return index;
@@ -199,7 +273,8 @@ export const hazardCandidateDoids = (session, colliders = [], now = Date.now()) 
       x <= Math.floor(bounds.maxX / HAZARD_ACTOR_CELL); x++) {
       for (let y = Math.floor(bounds.minY / HAZARD_ACTOR_CELL);
         y <= Math.floor(bounds.maxY / HAZARD_ACTOR_CELL); y++) {
-        for (const doid of index.cells.get(`${x},${y}`) ?? []) candidates.add(doid);
+        const bucket = index.cells.get(hazardCellKey(x, y));
+        if (bucket) for (const doid of bucket) candidates.add(doid);
       }
     }
   }
@@ -482,6 +557,40 @@ export const launchCarrierProjectile = (
 };
 
 /**
+ * Who each side's shots may land on, gathered once per projectile tick.
+ *
+ * A shot asks the side test of `reachablePosition` about every actor on the
+ * floor, and on a floor of arrow traps nearly every answer is no — 69.5M of
+ * 83.5M in the run measured at `eachTrapVictim`, the arrows being on the side
+ * of the monsters they fly past. A side's answer does not change while
+ * nothing happens: a team is set when an actor is made, and the actor Map
+ * changes only when something is spawned, killed or leaves. So each side is
+ * sorted out once, in the floor's order, and every shot of that side walks
+ * only those, with everything else still asked live.
+ *
+ * Forgotten whenever a shot does something — lands a hit, which is awaited
+ * and lets the rest of the server run, or ends with an `onDeath`, which puts
+ * a thrown trap down — so the next shot sorts the floor afresh.
+ */
+const shotTargets = (session) => {
+  const bySide = new Map();
+  return {
+    of: ({ attack, attackerTeam }) => {
+      const side = attack ? `${attack.Team}|${attackerTeam}` : "";
+      let doids = bySide.get(side);
+      if (doids) return doids;
+      doids = new Set();
+      matchStateOf(session).actors?.forEach((actor, doid) => {
+        if (actor && (!attack || teamAllowsHit(attack, attackerTeam, actor.team))) doids.add(doid);
+      });
+      bySide.set(side, doids);
+      return doids;
+    },
+    forget: () => bySide.clear(),
+  };
+};
+
+/**
  * Advances server-owned trap projectiles and resolves swept circle contacts.
  * The client runs the same GameMaster speed/range locally for visuals, but a
  * distributed trap has no owner callback that could propose its collision.
@@ -491,9 +600,15 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
   if (!active.length || !(deltaSeconds > 0)) return 0;
 
   const survivors = [];
+  const targets = shotTargets(session);
   let hits = 0;
 
   for (const projectile of active) {
+    const end = (at) => {
+      if (!projectile.onDeath) return;
+      projectile.onDeath(at);
+      targets.forget();
+    };
     const remaining = projectile.range - projectile.traveled;
     if (remaining <= 0) continue;
 
@@ -557,7 +672,7 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
       !projectile.ignoreWalls &&
       !hasLineOfSight(session.navigation, sweepFrom, nextPosition, projectile.radius);
     if (hitWall) {
-      projectile.onDeath?.(projectile.position);
+      end(projectile.position);
       continue;
     }
 
@@ -573,12 +688,15 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
      * feet. Arrow traps never showed this because a zero-hit-point trap is not
      * tracked as an actor at all.
      */
-    const struck = trapVictims(session, {
-      attack: projectile.attack,
-      attackerTeam: projectile.attackerTeam,
-      includeFallen: true,
-    }).find(
-      ({ doid, actor, position }) =>
+    const struck = firstTrapVictim(
+      session,
+      {
+        attack: projectile.attack,
+        attackerTeam: projectile.attackerTeam,
+        includeFallen: true,
+        candidateDoids: targets.of(projectile),
+      },
+      (doid, actor, position) =>
         doid !== projectile.ignoreDoid &&
         segmentHitsCircle(
           projectile.position,
@@ -596,7 +714,7 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
      * flight ends here rather than falling through to the damage below.
      */
     if (struck?.actor?.dead) {
-      projectile.onDeath?.(nextPosition);
+      end(nextPosition);
       continue;
     }
 
@@ -614,14 +732,15 @@ export const tickTrapProjectiles = async (session, deltaSeconds) => {
             projectile.weaponPower
           ));
       if (landed) hits++;
-      projectile.onDeath?.(struck.position ?? nextPosition);
+      targets.forget();
+      end(struck.position ?? nextPosition);
       continue;
     }
 
     projectile.position = nextPosition;
     projectile.traveled += travel;
     if (projectile.traveled < projectile.range) survivors.push(projectile);
-    else projectile.onDeath?.(projectile.position);
+    else end(projectile.position);
   }
 
   session.activeTrapProjectiles = survivors;
@@ -660,14 +779,18 @@ export const startTrapProjectiles = (session) => {
  * it a different one on each frame of the swing, and only the frame that is
  * playing should be able to catch anybody.
  */
-export const hazardVictims = (session, colliders = [], hazard = null, now = Date.now()) =>
-  trapVictims(session, {
-    attack: hazard?.attack,
-    attackerTeam: hazard?.team,
-    candidateDoids: hazardCandidateDoids(session, colliders, now),
-  }).filter(
-    ({ actor, position }) => areaTrapHits({ combatColliders: colliders }, position, actor)
+export const hazardVictims = (session, colliders = [], hazard = null, now = Date.now()) => {
+  const shape = { combatColliders: colliders };
+  return trapVictims(
+    session,
+    {
+      attack: hazard?.attack,
+      attackerTeam: hazard?.team,
+      candidateDoids: hazardCandidateDoids(session, colliders, now),
+    },
+    (doid, actor, position) => areaTrapHits(shape, position, actor)
   );
+};
 
 /**
  * Publishes one trap hit against one victim.
@@ -689,7 +812,7 @@ export const performTrapAttack = async (session, attackerDoid, hazard) => {
   const isProjectile = Boolean(attack?.Projectile);
   const caught = isProjectile
     ? []
-    : trapVictims(session, { attack, attackerTeam: hazard?.team }).filter(({ actor, position }) =>
+    : trapVictims(session, { attack, attackerTeam: hazard?.team }, (doid, actor, position) =>
         areaTrapHits(hazard, position, actor)
       );
   /**

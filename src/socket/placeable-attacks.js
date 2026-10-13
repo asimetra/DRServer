@@ -30,7 +30,6 @@ import { tellHit } from "./combat-events.js";
 export const placeableVictims = (session, attackerDoid, colliders = [], { attack = null } = {}) => {
   if (!colliders.length) return [];
   const hazard = { combatColliders: colliders };
-  const found = [];
   /**
    * Monsters, and the scenery the attack says it breaks.
    *
@@ -51,17 +50,15 @@ export const placeableVictims = (session, attackerDoid, colliders = [], { attack
    * reaches it.
    */
   const breaksScenery = Boolean(attack?.AffectsProps);
-  for (const victim of trapVictims(session)) {
-    if (victim.doid === attackerDoid || victim.doid === session.heroDoid) continue;
-    if (!isHuntable(victim.actor) && !(breaksScenery && isScenery(victim.actor))) continue;
-    const clid = session.objects?.get(victim.doid);
-    if (victim.actor.dead || !RECEIVE_FIELD_BY_CLID[clid]) continue;
+  return trapVictims(session, {}, (doid, actor, position) => {
+    if (doid === attackerDoid || doid === session.heroDoid) return false;
+    if (!isHuntable(actor) && !(breaksScenery && isScenery(actor))) return false;
+    const clid = session.objects?.get(doid);
+    if (actor.dead || !RECEIVE_FIELD_BY_CLID[clid]) return false;
     // The same authored-shape test a floor trap uses, so a placed hazard and a
     // built-in one agree about what standing in it means.
-    if (!areaTrapHits(hazard, victim.position, victim.actor)) continue;
-    found.push(victim);
-  }
-  return found;
+    return areaTrapHits(hazard, position, actor);
+  });
 };
 
 /**
