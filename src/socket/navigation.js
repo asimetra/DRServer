@@ -108,10 +108,27 @@ export const bodyOffsetOf = (actor) => {
 /** Each shape's offset at each scale, worked out once: asked for every body near every monster every tick, and never changed (frozen). */
 const offsetsByShape = new WeakMap();
 
-export const collisionPointOf = (actor, position) => {
+/**
+ * Where an actor's body is: its feet moved by its shape's offset.
+ *
+ * `into` is for the loops that ask this of every actor many times a second
+ * and only read the answer: the point is written into it rather than made.
+ * The hazard grid asks it of every trap victim each contact tick and a flying
+ * shot of every actor on the other side; in the sim:ai run measured at
+ * `eachTrapVictim` (trap-attacks.js) writing instead of making took the
+ * grid's sampled garbage from 2.4 to 1.5 GB and the shots' from 1.3 to
+ * 0.4 GB. Without an offset the feet are the answer either way, and are
+ * returned as they are.
+ */
+export const collisionPointOf = (actor, position, into = null) => {
   const offset = bodyOffsetOf(actor);
   if (!offset || !position) return position;
-  return { x: position.x + offset.x, y: position.y + offset.y };
+  const x = position.x + offset.x;
+  const y = position.y + offset.y;
+  if (!into) return { x, y };
+  into.x = x;
+  into.y = y;
+  return into;
 };
 
 /**

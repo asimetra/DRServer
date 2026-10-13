@@ -38,3 +38,26 @@ test("hazards exact-test only actors in nearby spatial cells and reuse one floor
   );
   assert.equal(session.hazardVictimIndex, index, "each hazard rebuilt the actor grid");
 });
+
+test("a later tick hands the grid on only when every body is where the last one left it", () => {
+  const actors = new Map();
+  const objects = new Map();
+  for (const [doid, x] of [[1, 0], [2, 1000]]) {
+    actors.set(doid, { hitPoints: 100, maxHitPoints: 100, collisionRadius: 20, position: { x, y: 0 }, team: 6 });
+    objects.set(doid, CLID.DistributedNPCGameObject);
+  }
+  const session = { actors, objects };
+  const near = (now) => [...hazardCandidateDoids(session, [{ type: "circle", x: 0, y: 0, radius: 50 }], now)];
+
+  assert.deepEqual(near(100), [1]);
+  const first = session.hazardVictimIndex.cells;
+  assert.deepEqual(near(200), [1]);
+  assert.equal(session.hazardVictimIndex.cells, first, "an unchanged floor rebuilt the grid");
+
+  actors.get(2).position = { x: 10, y: 0 };
+  assert.deepEqual(near(300), [1, 2]);
+  assert.notEqual(session.hazardVictimIndex.cells, first, "a moved body kept the old grid");
+
+  actors.get(1).dead = true;
+  assert.deepEqual(near(400), [2]);
+});
