@@ -87,9 +87,9 @@ out.
 - **Falling:** a downed party has 10 seconds to get back up, not the minute an
   ordinary dungeon gives.
 - **What it pays:** gold and experience as any run does. The bosses' treasure
-  is item boxes — small ones, royal ones from the sixth boss — never chests, and
-  each is the player's the moment it is picked up, since a delve has no report
-  until it ends. No keys, trophy or gems, and no map credit.
+  is item boxes — small ones, royal ones from the sixth boss — never chests: as
+  a boss falls, each player who fought it gets one, theirs at once, since a
+  delve has no report until it ends. No keys, trophy or gems, and no map credit.
 - **Gifts in town:** every third boss beaten leaves a gift for each player who
   fought that boss, by how many of the run's bosses they fought: 5 Health
   Bombs for up to five, a Party Bomb for six to eight, and 5 gems for nine or

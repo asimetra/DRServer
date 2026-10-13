@@ -6,10 +6,11 @@ import { treasureForCategory, dooberById, mapNode, coliseumTier } from "../src/g
  * What a RANDOM_REWARD placement actually pays.
  *
  * A tile carries the placeholder because it cannot know which node it will be
- * laid into. Two columns answer it, and only twelve nodes use the first:
- * MapPage.BossRewardTreasureId names a doober outright, and everything else
- * falls to the tier's Treasure — which is a RewardCategory, not a constant,
- * so reading it as a doober name finds nothing and the chest never appears.
+ * laid into; the node's tier answers it. A tier's Treasure is a RewardCategory,
+ * not a constant, so reading it as a doober name finds nothing and the chest
+ * never appears. MapPage.BossRewardTreasureId, on the twelve BOSS nodes, names
+ * a doober outright — but that is a first clear's chest on the report, not a
+ * spot's (boss-first-clear-chest.test.js).
  */
 
 test("a reward category resolves to its treasure doober", async () => {
@@ -24,7 +25,7 @@ test("an unknown or missing category resolves to nothing", async () => {
   assert.equal(await treasureForCategory(undefined), null);
 });
 
-test("a boss node names its chest outright", async () => {
+test("a boss node names its first-clear chest outright", async () => {
   const node = await mapNode(50009); // Icewater Caverns Boss
   assert.equal(node.BossRewardTreasureId, 30101);
   assert.equal((await dooberById(node.BossRewardTreasureId)).Constant, "SILVER_CHEST");

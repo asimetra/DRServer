@@ -77,7 +77,7 @@ export const DELVE_DEFAULTS = Object.freeze({
   lifeStealMost: 0.4,
   /**
    * What a boss's treasure is, by how deep (a treasure doober, the floor plan's
-   * `treasure`): never a chest — a boss rush draws the same bosses again and
+   * `treasure`, paid to each who fought the boss as it falls): never a chest — a boss rush draws the same bosses again and
    * again, and their chests would come by the dozen — but a small item box,
    * then a royal one. Potions and buffs, the game's own consumables.
    */
@@ -388,6 +388,16 @@ export const createDelve = ({
       const earners = controls.party(session)
         .map((member) => ({ member, fought: beaten - (state.since.get(idOf(member)) ?? state.depth) + 1 }))
         .filter(({ fought }) => fought > 0);
+      /**
+       * The boss's item box, one for each who fought it, theirs at once
+       * (`chestsKept`). Not the boss's chest: that leaves only its own shower,
+       * and the node's chest is a first clear's, which a delve — no map credit —
+       * never is.
+       */
+      const box = difficultyAt(beaten, settings).treasure;
+      if (box) {
+        for (const { member } of earners) Promise.resolve(controls.treasure(member, box)).catch(() => null);
+      }
       for (const { member, fought } of earners) {
         const gift = giftFor(beaten, settings, fought);
         if (!gift) continue;

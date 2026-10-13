@@ -89,6 +89,19 @@ test("runControls.weapon: a weapon gift of the rarity at the mode's level, shown
   assert.deepEqual(account.gifts, [second], "back on the pile, once");
 });
 
+test("runControls.treasure: a treasure owed as if picked up, under the run's rules", async (t) => {
+  const kept = runUnder(t, { chestsKept: "pickup" });
+  kept.member = kept;
+  assert.equal(await runControls.treasure(kept, 30104), 60005);
+  assert.deepEqual(kept.dungeonAccount.account_chests.map((c) => c.chest_id), [60005], "kept at once where the run keeps chests on pickup");
+  const owed = runUnder(t, { chestMost: 1 });
+  owed.member = owed;
+  assert.equal(await runControls.treasure(owed, 30102), 60001, "held to the run's best");
+  assert.deepEqual(owed.dungeonTreasures.map((c) => c.chestId), [60001], "owed on the report otherwise");
+  assert.equal(await runControls.treasure(owed, 30001), null, "a coin is not a treasure");
+  assert.equal(await runControls.treasure(null, 30104), null, "nobody to owe it to");
+});
+
 test("the floor's toughest heal a share of what they deal to a hero; the rest do not", (t) => {
   const run = { npcLifeSteal: 0.25, objects: new Map([[50, CLID.DistributedNPCGameObject], [51, CLID.DistributedNPCGameObject]]), actors: new Map(), sent: [], send(f) { this.sent.push(f); } };
   run.actors.set(50, { hitPoints: 500, maxHitPoints: 1000, isEnemy: true });
@@ -169,11 +182,12 @@ test("\"none\": the reward spots pay gold (a first clear's chest: boss-first-cle
 });
 
 test("treasureCount: how many of the reward spots pay a treasure, in place of the node's MaxTreasure", async (t) => {
-  assert.deepEqual(await rewardSpots(runUnder(t, {}), 50009, 3), [30101, "GOLD_MEDIUM", "GOLD_MEDIUM"], "the node's own: one");
-  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: 2 }), 50009, 3), [30101, 30101, "GOLD_MEDIUM"]);
+  // 50009's tier, ICE_CAVES_BOSS, rolls a WOODEN_CHEST at 0.
+  assert.deepEqual(await rewardSpots(runUnder(t, {}), 50009, 3), [30100, "GOLD_MEDIUM", "GOLD_MEDIUM"], "the node's own: one");
+  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: 2 }), 50009, 3), [30100, 30100, "GOLD_MEDIUM"]);
   assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: 0 }), 50009, 2), ["GOLD_MEDIUM", "GOLD_MEDIUM"], "none at all");
-  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: "2" }), 50009, 3), [30101, 30101, "GOLD_MEDIUM"], "a number as text, as treasure and chestMost take it");
-  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: 1.5 }), 50009, 2), [30101, "GOLD_MEDIUM"], "not a whole number: the node's own");
+  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: "2" }), 50009, 3), [30100, 30100, "GOLD_MEDIUM"], "a number as text, as treasure and chestMost take it");
+  assert.deepEqual(await rewardSpots(runUnder(t, { treasureCount: 1.5 }), 50009, 2), [30100, "GOLD_MEDIUM"], "not a whole number: the node's own");
 });
 
 test("a plan whose floors bring their own node owes each node's allowance on its own floors", async (t) => {
@@ -183,8 +197,8 @@ test("a plan whose floors bring their own node owes each node's allowance on its
     run.floorIndex = index;
     return rewardSpots(run, 50009, 2);
   };
-  assert.deepEqual(await onFloor(0), [30101, "GOLD_MEDIUM"], "the first node's one");
-  assert.deepEqual(await onFloor(1), [30101, "GOLD_MEDIUM"], "the next node has its own");
+  assert.deepEqual(await onFloor(0), [30100, "GOLD_MEDIUM"], "the first node's one");
+  assert.deepEqual(await onFloor(1), [30100, "GOLD_MEDIUM"], "the next node has its own");
   assert.deepEqual(await onFloor(2), ["GOLD_MEDIUM", "GOLD_MEDIUM"], "and its second floor shares it");
 });
 

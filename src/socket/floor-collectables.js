@@ -82,8 +82,15 @@ export const isRewardPlaceholder = (constant) => REWARD_PLACEHOLDERS.has(constan
  *
  * `LEGENDARY_CHEST` is zero on all 55 rows, so a tier roll can never pay one —
  * and no dragon chest appears in 70 observed sessions. The only legendary in
- * the game is node 50083's `BossRewardTreasureId`, which is why that is asked
- * first.
+ * the game is node 50083's `BossRewardTreasureId`.
+ *
+ * The roll is every node's, the twelve BOSS nodes' too. Their
+ * `BossRewardTreasureId` is a first clear's chest on the report (rewards.js),
+ * not what their map spots pay. Asked first here, it put the node's chest on
+ * every spot of every run — a DRAGON on 50083, a GOLD on 50043 and 50069 —
+ * where the official 13 boss-node spot treasures were SMALL_ITEM_BOX 6,
+ * WOODEN 4 and SILVER 3, the tier's roll; of all 223 official spot treasures:
+ * SMALL_ITEM_BOX 63, SILVER 51, WOODEN 49, GOLD 31, ROYAL_ITEM_BOX 29, DRAGON 0.
  */
 const rewardForPlacement = async (session, placement, node) => {
   const random = session.random ?? Math.random;
@@ -105,9 +112,8 @@ const rewardForPlacement = async (session, placement, node) => {
   const planned = plannedTreasure(session);
 
   if (session.treasuresOwed > 0 && planned !== "none") {
-    const rewardId = planned ?? Number(node?.BossRewardTreasureId ?? 0);
     const treasure =
-      (rewardId && (await dooberById(rewardId))) ||
+      (planned && (await dooberById(planned))) ||
       (await treasureForTier(node?.TierRank, random));
     if (treasure) {
       session.treasuresOwed -= 1;
@@ -157,15 +163,10 @@ export const buildCollectables = async (context, placements) => {
     if (!doober) {
       /**
        * RANDOM_REWARD and TREASURE are placeholders for "whatever this map node
-       * pays out", which the tile cannot know. Two places carry it, and only
-       * twelve nodes use the first:
-       *
-       *   MapPage.BossRewardTreasureId  a doober id, on the twelve BOSS nodes
-       *   ColiseumTiers.Treasure        a RewardCategory, on everything else
-       *
-       * The other ninety-four nodes report BossRewardTreasureId 0, so reading
-       * only that left every generated dungeon's chests unresolved and the
-       * placement skipped — the reward simply never appeared on the floor.
+       * pays out", which the tile cannot know: its tier's roll
+       * (rewardForPlacement). Reading MapPage.BossRewardTreasureId instead,
+       * which ninety-four nodes report as 0, once left every generated
+       * dungeon's chests unresolved and the placement skipped.
        */
       const node = await mapNode(session.mapNodeId);
       const reward = await rewardForPlacement(session, placement, node);

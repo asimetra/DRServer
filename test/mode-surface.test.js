@@ -53,7 +53,7 @@ test("the run rules: these knobs and no others, and the game as shipped pays eve
 
 test("the run controls: what a mode may ask the core, these and no others", async () => {
   assert.deepEqual(Object.keys(runControls), [
-    "contextOf", "party", "sessionOf", "win", "lose", "sendHome", "planAhead", "endFloor", "reward", "heal", "gift", "weapon", "say",
+    "contextOf", "party", "sessionOf", "win", "lose", "sendHome", "planAhead", "endFloor", "reward", "treasure", "heal", "gift", "weapon", "say",
     "grantBuff", "relay", "reportOf", "declares",
   ]);
   const held = { accountId: 7 };

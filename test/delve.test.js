@@ -24,10 +24,13 @@ const fakeControls = () => {
   const said = [];
   const gifts = [];
   const weapons = [];
+  const treasures = [];
   return {
     said,
     gifts,
     weapons,
+    treasures,
+    treasure: async (session, dooberId) => treasures.push([session.accountId, dooberId]),
     weapon: async (session, item) => {
       weapons.push([session.accountId, item]);
       return session.pileFull ? null : { weapon: { requiredlevel: item.level } };
@@ -142,6 +145,22 @@ test("a modifier joins every few bosses and stays; a gift waits every few bosses
     [7, 51306, 0], [8, 51306, 0],
     [7, 51369, 0], [8, 51369, 0],
   ], "after the 3rd and the 6th boss, to everybody there, from nobody's account");
+});
+
+test("every boss beaten leaves its item box for whoever fought it: small, then royal from the sixth", async () => {
+  const { enter, clear, controls, delve } = setup({ bosses: [boss(1), boss(2, 2)] });
+  const { session } = await enter();
+  const friend = { accountId: 8, modeEntry: DELVE_MODE, floorIndex: 0, floorPlan: session.floorPlan, floorCount: session.floorCount };
+  delve.hooks.heroRequested(friend);
+  session.party = [session, friend];
+  clear(session); // boss 1
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(controls.treasures, [[7, 30104], [8, 30104]], "one each, on the boss's last map");
+  clear(session); // boss 2's first map: no boss beaten yet
+  assert.equal(controls.treasures.length, 2, "a two-map boss pays once, at its end");
+  while (controls.treasures.length < 12) clear(session); // to the sixth boss beaten
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(controls.treasures.slice(8), [[7, 30104], [8, 30104], [7, 30105], [8, 30105]], "royal from the sixth boss");
 });
 
 test("the tenth boss may drop a weapon gift for whoever fought for it", async () => {

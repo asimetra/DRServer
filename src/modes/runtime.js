@@ -13,7 +13,7 @@ import { completeFloor, reportRunLost, reportRunWon } from "../socket/floorstate
 import { matchHost } from "../socket/match-host.js";
 import { grantBuff as grantBuffOn } from "../socket/buffs.js";
 import { sessionHolding } from "../socket/presence.js";
-import { creditGoldAndExperience, healHero, queueAccountSave, restoreMana } from "../socket/rewards.js";
+import { awardTreasureChest, creditGoldAndExperience, healHero, queueAccountSave, restoreMana } from "../socket/rewards.js";
 import { giveGift, hasWeaponGiftFace, weaponGiftFace } from "../gifts.js";
 import { generateWeapon } from "../chests.js";
 import { loadGameMaster } from "../gamemaster.js";
@@ -127,6 +127,18 @@ export const runControls = Object.freeze({
   reward: (session, { gold = 0, experience = 0 } = {}) => {
     const context = contextOf(session);
     return context ? creditGoldAndExperience(context, gold, experience) : { gold: 0, experience: 0 };
+  },
+
+  /**
+   * Owes the player a treasure as if they had picked it up off the floor: one
+   * of the treasure doobers (30100..30105), the chest it stands for under the
+   * run's rules — `pays.chests`, `chestMost`, and `chestsKept`, on the account
+   * at once or offered on the report. Answers a promise of the chest id, or
+   * null: not a treasure, no account here, or a run that pays no chests.
+   */
+  treasure: async (session, dooberId) => {
+    const context = contextOf(session);
+    return context ? awardTreasureChest(context, dooberId) : null;
   },
 
   /**

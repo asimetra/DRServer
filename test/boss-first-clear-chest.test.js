@@ -16,7 +16,8 @@ import { loadGameMaster } from "../src/gamemaster.js";
  * chests, only its own shower (chest-loot.test.js); the node's
  * BossRewardTreasureId reached the player once, on a first clear, as report
  * chest slot 1 (n=1, node 50002: WOODEN 30100 -> loot 60001, kept), and on 16
- * repeat clears there was no boss chest at all.
+ * repeat clears there was no boss chest at all. Whose first clear — the hero's
+ * or the account's — n=1 cannot say; the hero's is the maintainer's call.
  */
 
 const ACCOUNT_ID = 1000000005;
@@ -109,23 +110,28 @@ test("a treasure picked up on the floor stays where it was; the first clear's co
   assert.deepEqual(session.dungeonTreasures.map((treasure) => treasure.dooberType), [30104, 30101]);
 });
 
-test("a repeat clear owes no chest; neither does another hero of the same account", async () => {
+test("a hero's repeat clear owes no chest; another hero's own first clear of the node does, once", async () => {
   const replay = run();
+  replay.dungeonAvatar = replay.dungeonAccount.account_avatars[0];
+  replay.dungeonAvatar.completed_mapnode_mask = setMapNodeBit("", 0);
   replay.dungeonAccount.completed_mapnode_mask = setMapNodeBit("", 0);
   const paid = await awardDungeonCompletion(replay);
   assert.equal(paid.chest, 0);
   assert.deepEqual(replay.dungeonTreasures, []);
   assert.equal(buildDungeonReport(replay, true).chestType1, undefined, "nothing on the report");
 
-  // The trophy is the account's (map-progress.js), and the chest goes with it.
+  // The chest is the hero's (the client keeps map progress per hero); the trophy stays the account's.
   const first = run();
   first.dungeonAvatar = first.dungeonAccount.account_avatars[0];
-  await awardDungeonCompletion(first);
+  assert.equal((await awardDungeonCompletion(first)).chest, 60001);
   const second = run({ dungeonAccount: first.dungeonAccount });
   second.dungeonAvatar = second.dungeonAccount.account_avatars[1];
-  const again = await awardDungeonCompletion(second);
-  assert.equal(again.trophies, 0);
-  assert.equal(again.chest, 0, "a hero's own first clear, after another hero's, is not a first clear");
+  const other = await awardDungeonCompletion(second);
+  assert.equal(other.trophies, 0, "no second trophy for the account");
+  assert.equal(other.chest, 60001, "but the second hero's own first clear owes the chest");
+  const again = run({ dungeonAccount: first.dungeonAccount });
+  again.dungeonAvatar = again.dungeonAccount.account_avatars[1];
+  assert.equal((await awardDungeonCompletion(again)).chest, 0, "and that hero's repeat does not");
 });
 
 test("an ordinary dungeon's first clear owes no chest", async () => {
@@ -167,4 +173,29 @@ test("a run that pays no chests, or marks no map, owes none; one kept on pickup 
   await awardDungeonCompletion(pickup);
   assert.deepEqual(pickup.dungeonAccount.account_chests.map((row) => row.chest_id), [60001]);
   assert.deepEqual(pickup.dungeonTreasures, [], "nothing left for the report to offer again");
+});
+
+/**
+ * And the boss node's map spots roll their tier, as every node's do.
+ *
+ * Official: the 13 treasures on boss-node maps were SMALL_ITEM_BOX 6, WOODEN 4,
+ * SILVER 3 — the RaritySpawn roll, the node's BossRewardTreasureId in only 2 —
+ * and of all 223 official map-spot treasures not one was a DRAGON chest.
+ */
+test("a boss node's map spot rolls its tier, never the node's own chest; a legendary never", async () => {
+  const { buildCollectables } = await import("../src/socket/floor-collectables.js");
+  const { treasureForTier, mapNode } = await import("../src/gamemaster.js");
+  const node = await mapNode(50083);
+  assert.equal(node.BossRewardTreasureId, 30103, "the one node whose chest is a legendary");
+  const spotAt = async (roll) => {
+    let doid = 1000;
+    const session = { id: "spots", mapNodeId: 50083, dungeonZone: 1, random: () => roll, allocateDoid: () => doid++, doobers: new Map(), send: () => {} };
+    await buildCollectables({ session, floorDoid: 8, isActive: () => true }, [{ constant: "TREASURE", x: 0, y: 0 }]);
+    return [...session.doobers.values()][0].treasure;
+  };
+  for (const roll of [0, 0.05, 0.2, 0.4, 0.55, 0.7, 0.9, 0.999]) {
+    const paid = await spotAt(roll);
+    assert.equal(paid, (await treasureForTier(node.TierRank, () => roll)).Id, `the tier's roll at ${roll}`);
+    assert.notEqual(paid, 30103, `no legendary at ${roll}`);
+  }
 });

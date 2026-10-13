@@ -20,7 +20,7 @@ keep still for it.
 | Surface | Where | What is pinned |
 |---|---|---|
 | The hooks | `src/modes/hooks.js` — `installModeHooks`, `modeHooks`, `MODE_HOOK_NAMES`, `MODE_HOOK_COMBINE` | the 18 names, their arguments, and how several modes' answers combine |
-| Run controls | `src/modes/runtime.js` — `runControls`, `installSessionLookup` | what a mode may ask the core to do: `contextOf`, `party`, `sessionOf`, `win`, `lose`, `sendHome`, `planAhead`, `endFloor`, `reward`, `heal`, `gift`, `weapon`, `say`, `grantBuff`, `relay`, `reportOf`, `declares` |
+| Run controls | `src/modes/runtime.js` — `runControls`, `installSessionLookup` | what a mode may ask the core to do: `contextOf`, `party`, `sessionOf`, `win`, `lose`, `sendHome`, `planAhead`, `endFloor`, `reward`, `treasure`, `heal`, `gift`, `weapon`, `say`, `grantBuff`, `relay`, `reportOf`, `declares` |
 | The friend door | `src/modes/friend-door.js` — `friendDoorHooks`, `friendDoorRow` | how a player enters a mode: a row on every friend list with JOIN beside it, and its place among the doors (`trophies`) |
 | Game data | `src/modes/game-data.js` — `mapNodes`, `mapNode`, `nodePlan`, `planTileLibraries`, `gameTable`, `heroById`, `floorProblem`, `TILE_SIZE` | what a mode may read of the deployment's game data, to draw floors of its own |
 | Players | `src/modes/players.js` — `playerName`, `activeHeroLevel`, `nodeDone` | what a mode may read of an account: a name for a line, what an entry gate asks |
@@ -124,6 +124,7 @@ round, and a mode reaches for nothing else in `src/socket` to do these:
 | `runControls.planAhead(session, floors, { replace })` | Adds plan floors after the plan's last; with `replace`, in place of every floor after this one. The party shares one plan | A function that puts the plan back — only while no later `planAhead` has changed it (true if it did) — or null with no run |
 | `runControls.endFloor(session)` | Ends this floor now, as its exit would: on to the next, or the run won on the last | `false` if it could not (already ending, or held) |
 | `runControls.reward(session, { gold, experience })` | Pays the player now, shown on the report and kept with the account. Whole amounts as given: the run rules and legendaries are for the game's own pickups | `{ gold, experience }` paid |
+| `runControls.treasure(session, dooberId)` | Owes the player a treasure doober (30100..30105) as if picked up off the floor: its chest under the run rules' `pays.chests`, `chestMost` and `chestsKept` | A promise of the chest id, or null (not a treasure, no account, no chests paid) |
 | `runControls.heal(session, { health, mana })` | Gives back a share (0 to 1) of the hero's most health and mana, as food does. A hero that is down is not healed | `{ health, mana }` gained |
 | `runControls.gift(session, offerId, { from })` | Leaves any offer from the game data waiting in town as a gift, said to be from account `from` (required) | A promise of the gift, or null (no `from`, no such offer, no account, too many waiting) |
 | `runControls.say(session, text)` | A line from the server in the player's chat log, to them alone | `false` with nobody to tell |
@@ -405,8 +406,8 @@ first five floors (`strangersUntil`). Every floor is a boss's own map, drawn fro
 three bonuses, a modifier every few bosses) and added from `floorCompleting`
 with `planAhead`; every few bosses leave a gift for whoever fought that boss,
 by how many they fought (`party`, `gift`); its bosses pay item boxes rather
-than chests (`treasure`), and its deep milestones may leave a weapon gift at
-the depth's level (`weapon`); how deep each player went is kept
+than chests, one to each who fought the boss (`treasure`), and its deep
+milestones may leave a weapon gift at the depth's level (`weapon`); how deep each player went is kept
 (`createModeRecords`). It is the one to read for a mode that draws its own floors.
 
 ## The smallest mode: one life

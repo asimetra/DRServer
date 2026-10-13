@@ -517,19 +517,24 @@ export const awardDungeonCompletion = async (session) => {
    * The 16 repeat clears carried no boss chest at all. Dropped at every break,
    * it was a chest farmed by re-running the boss.
    *
-   * On the trophy's condition, not the hero's own first clear: one capture
-   * cannot tell the two apart, and the trophy is the account's
-   * (map-progress.js), so a second hero clearing the node earns neither. Paid
-   * by `pays.chests`, not `pays.trophies` — awardTreasureChest asks, and holds
-   * it to `chestMost`. What it is follows the floor's reward spots
+   * On the hero's own first clear, read off the hero's mask before it is
+   * written below: a second hero clearing a node another hero of the account
+   * has beaten gets the chest, though no trophy (the trophy is the account's,
+   * map-progress.js), and the same hero again gets neither. n=1 cannot tell a
+   * hero's first clear from the account's; per hero is the maintainer's call,
+   * matching the client, which keeps map progress per hero. Paid by
+   * `pays.chests`, not `pays.trophies` — awardTreasureChest asks, and holds it
+   * to `chestMost`. What it is follows the floor's reward spots
    * (plannedTreasure): "none" owes no chest, a treasure named stands in for the
    * node's. `treasureCount` counts the spots, not this. It comes after what
    * was picked up on the floor, in the order earned; a report carrying both
    * has not been captured.
    */
+  const heroMask = (session.dungeonAvatar ?? account).completed_mapnode_mask;
+  const heroFirstClear = rules.mapCredit && (bitIndex === null || !getMapNodeBit(heroMask, bitIndex));
   const planned = plannedTreasure(session);
   const bossChest =
-    firstClear && node.NodeType === "BOSS" && planned !== "none"
+    heroFirstClear && node.NodeType === "BOSS" && planned !== "none"
       ? planned ?? rewardAmount(node.BossRewardTreasureId)
       : 0;
 
