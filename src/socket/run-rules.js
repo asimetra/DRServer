@@ -23,7 +23,7 @@ export const STOCK_RUN_RULES = Object.freeze({
   pays: Object.freeze({
     /** Experience, from stars picked up and the node's completion bonus. */
     experience: true,
-    /** Gold picked up off the floor and carried by a boss's reward. */
+    /** Gold picked up off the floor. */
     gold: true,
     /** The chest a treasure is worth, owed on the report. */
     chests: true,
@@ -74,11 +74,12 @@ export const STOCK_RUN_RULES = Object.freeze({
   defeatCountdownSeconds: null,
   /**
    * What a floor's reward spots (the maps' TREASURE and RANDOM_REWARD) and a
-   * boss's chest pay: null for the node's own; one of the treasure doobers —
-   * WOODEN_CHEST, SILVER_CHEST, GOLD_CHEST, DRAGON_CHEST, SMALL_ITEM_BOX,
-   * ROYAL_ITEM_BOX, by constant or id — for every one of them; or "none", gold
-   * in their place. A floor plan's own `treasure` wins over it. What a map
-   * places by name is placed as it is.
+   * boss node's first-clear chest (rewards.js) pay: null for the node's own;
+   * one of the treasure doobers — WOODEN_CHEST, SILVER_CHEST, GOLD_CHEST,
+   * DRAGON_CHEST, SMALL_ITEM_BOX, ROYAL_ITEM_BOX, by constant or id — for every
+   * one of them; or "none", gold in the spots' place and no first-clear chest.
+   * A floor plan's own `treasure` wins over it. What a map places by name is
+   * placed as it is.
    */
   treasure: null,
   /** How many of a run's reward spots pay a treasure; null for the node's own (MaxTreasure). */

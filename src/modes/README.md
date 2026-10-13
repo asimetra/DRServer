@@ -209,7 +209,7 @@ export const MY_RUN_RULES = runRules({
   together: false,               // true: every run of the mode on one worker (the seat)
   chestsKept: "report",          // "pickup": a chest is on the account as it is picked up
   defeatCountdownSeconds: null,  // seconds to be revived in once all are down; null: the node's own
-  treasure: null,                // what reward spots and boss chests pay: a treasure doober, or "none" for gold
+  treasure: null,                // what reward spots and a boss's first-clear chest pay: a treasure doober, or "none"
   treasureCount: null,           // how many reward spots pay a treasure; null: the node's MaxTreasure
   chestMost: null,               // the best chest a treasure may be, 1 common to 4 legendary
 });
@@ -225,9 +225,11 @@ win over the run's for their floor.
 
 `treasure` takes a treasure doober by id (30100..30105) or constant
 (`WOODEN_CHEST`, `SILVER_CHEST`, `GOLD_CHEST`, `DRAGON_CHEST`, `SMALL_ITEM_BOX`,
-`ROYAL_ITEM_BOX`), or `"none"`: the reward spots pay gold, and a boss's chest is
-its coins in one heap of gold (`GOLD_LARGE`), with no chest earned. What a map
-places by name is placed as it is. `treasureCount`, like the node's
+`ROYAL_ITEM_BOX`), or `"none"`: the reward spots pay gold, and a boss node's
+first clear owes no chest. A boss's chest is never a pickup: breaking it leaves
+its own shower of coins and stars, and the node's chest is owed on the report of
+a first clear only — the trophy's condition, so never in a run without map
+credit (`src/socket/rewards.js`). What a map places by name is placed as it is. `treasureCount`, like the node's
 `MaxTreasure` it stands in for, is an allowance for a stretch of floors of one
 node: the whole run, or each node's floors where the plan's floors bring their
 own (`node`, below) — a boss rush owes each boss its own, though the same boss
@@ -283,8 +285,8 @@ What `planFor` returns is read by the core for any run:
 - `chestMost`: the best chest a treasure on this floor may be, 1 common to 4
   legendary; a better one is held down to it. Item boxes are not a rarity.
 - `treasure`: what every treasure on this floor is instead of the node's own —
-  the tiles' reward spots and a boss's chest alike — as the run rules'
-  `treasure` takes it (above): a treasure doober by id or constant, or
+  the tiles' reward spots and a first clear's boss chest alike — as the run
+  rules' `treasure` takes it (above): a treasure doober by id or constant, or
   `"none"` for gold. It wins over the run rules' for this floor. How many the
   floor pays is the node's, or the run rules' `treasureCount`.
 - `modifiers`: the `DungeonModifier` ids active on this floor, in place of the

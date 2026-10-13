@@ -8,7 +8,6 @@ import { noteFloorEnemy, stealLife } from "../src/socket/life-steal.js";
 import { beginFloorFailing, clearFloorFailing } from "../src/socket/floorstate.js";
 import { CLID } from "../src/socket/opcodes.js";
 import { plannedTreasure } from "../src/socket/floors.js";
-import { spawnBossReward } from "../src/socket/drops.js";
 import { buildCollectables } from "../src/socket/floor-collectables.js";
 import { runControls } from "../src/modes/runtime.js";
 import { giftsFor, grantGift, returnGift } from "../src/gifts.js";
@@ -47,13 +46,10 @@ test("chestsKept pickup: the chest is on the account as it is picked up, owing n
   assert.deepEqual(run.dungeonTreasures, [], "nothing left for the report to offer again");
 });
 
-test("a floor plan's treasure stands in for the node's, a boss's chest included; only the treasure doobers", (t) => {
+test("a floor plan's treasure stands in for the node's; only the treasure doobers", (t) => {
   assert.equal(plannedTreasure(runUnder(t, {}, { treasure: 30104 })), 30104);
   assert.equal(plannedTreasure(runUnder(t, {}, { treasure: 30099 })), null, "not a treasure: the node's as ever");
   assert.equal(plannedTreasure(runUnder(t, {}, {})), null);
-  const run = { ...runUnder(t, {}, { treasure: 30105 }), dungeonZone: 1, allocateDoid: () => 900, send: () => {} };
-  const doid = spawnBossReward(run, { floorDoid: 8, origin: { x: 0, y: 0 }, node: { Id: 50002, BossRewardTreasureId: 30103, TotalEnemyCoin: 10 }, random: () => 0 });
-  assert.equal(run.doobers.get(doid).treasure, 30105, "a royal item box where the legendary chest was");
 });
 
 test("runControls.weapon: a weapon gift of the rarity at the mode's level, shown by the shop's offer for it", async (t) => {
@@ -168,17 +164,7 @@ test("the run rules' treasure: a doober id or constant, or \"none\"; a floor pla
   assert.equal(plannedTreasure(runUnder(t, { treasure: "30105" })), 30105, "an id as text");
 });
 
-test("\"none\": a boss's chest is its coins in one heap, no chest; the reward spots pay gold", async (t) => {
-  const sent = [];
-  const run = { ...runUnder(t, { treasure: "none" }), dungeonZone: 1, allocateDoid: () => 900, send: (frame) => sent.push(frame) };
-  const doid = spawnBossReward(run, { floorDoid: 8, origin: { x: 0, y: 0 }, node: { Id: 50009, BossRewardTreasureId: 30101, TotalEnemyCoin: 10 }, random: () => 0 });
-  const reward = run.doobers.get(doid);
-  assert.equal(reward.treasure, 0, "earns no chest");
-  assert.equal(reward.gold, 10, "the node's coins, all of them");
-  const goldLarge = Buffer.alloc(4);
-  goldLarge.writeUInt32LE(30003);
-  assert.ok(sent[0].includes(goldLarge), "drawn as GOLD_LARGE");
-  assert.equal(spawnBossReward(run, { floorDoid: 8, origin: { x: 0, y: 0 }, node: { Id: 50010, BossRewardTreasureId: 0, TotalEnemyCoin: 10 } }), null, "a node with no chest of its own drops nothing");
+test("\"none\": the reward spots pay gold (a first clear's chest: boss-first-clear-chest.test.js)", async (t) => {
   assert.deepEqual(await rewardSpots(runUnder(t, { treasure: "none" }), 50009, 2), ["GOLD_MEDIUM", "GOLD_MEDIUM"]);
 });
 

@@ -284,10 +284,9 @@ export const trackDoober = (
     /**
      * The chest this pickup stands for, if it is one.
      *
-     * Dropped on the floor here for a long time: both producers set it —
-     * `spawnBossReward` marks the twelve BOSS nodes' rewards and the tiles'
-     * own reward placements mark theirs — and this destructuring listed every
-     * other field, so the flag never survived into the tracked doober.
+     * Dropped on the floor here for a long time: the tiles' reward placements
+     * set it, and this destructuring listed every other field, so the flag
+     * never survived into the tracked doober.
      * `collectDoober` asks `if (doober.treasure)` before awarding, and it was
      * asking a question that could not be true. Every chest a player ever
      * picked up vanished on contact, which is why accounts stayed empty.

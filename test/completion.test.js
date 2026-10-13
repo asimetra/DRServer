@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { repairActiveAvatarProgress } from "../src/accounts.js";
 import { setMapNodeBit, awardDungeonCompletion } from "../src/socket/rewards.js";
-import { spawnBossReward } from "../src/socket/drops.js";
 
 /**
  * Finishing a dungeon has to leave a mark, or the player replays the first one
@@ -37,7 +36,7 @@ const session = (overrides = {}) => ({
     // A trophy is for a boss; the eighty-five ordinary dungeons pay none.
     NodeType: "BOSS",
     BitIndex: 0,
-    TotalEnemyCoin: 750,
+    BossRewardTreasureId: 30100,
     CompletionXPBonus: 55,
     BasicKeys: 1,
   },
@@ -57,6 +56,8 @@ test("completing a node pays it out and records the bit", async () => {
     basicKeys: 1,
     trophies: 1,
     gems: 25,
+    // The node's own chest, owed on the report (boss-first-clear-chest.test.js).
+    chest: 60001,
     firstClear: true,
   });
   assert.equal(target.dungeonAccount.basic_currency, 100, "untouched by completion");
@@ -171,30 +172,6 @@ test("the completion bonus and crew share are both persisted once", async () => 
   assert.equal(target.completionTeamXpBonus, 27);
   assert.equal(target.dungeonAvatar.experience, 1_137);
   assert.equal(await awardDungeonCompletion(target), null, "the bonus cannot be paid twice");
-});
-
-test("a boss chest carries coins and treasure, not a second completion bonus", () => {
-  const target = {
-    id: 7,
-    dungeonZone: 1,
-    allocateDoid: () => 900,
-    send: () => {},
-  };
-  const doid = spawnBossReward(target, {
-    floorDoid: 8,
-    origin: { x: 0, y: 0 },
-    node: {
-      Id: 50002,
-      BossRewardTreasureId: 30100,
-      TotalEnemyCoin: 750,
-      CompletionXPBonus: 55,
-    },
-    random: () => 0,
-  });
-
-  assert.equal(target.doobers.get(doid).gold, 750);
-  assert.equal(target.doobers.get(doid).xp, 0);
-  assert.equal(target.doobers.get(doid).treasure, 30100);
 });
 
 /**

@@ -16,7 +16,7 @@ import { followRunSave } from "./run-saves.js";
 import { membersOf, worldOf } from "./match-world.js";
 import { config } from "../config.js";
 import { runRulesOf } from "./run-rules.js";
-import { plannedChestMost } from "./floors.js";
+import { plannedChestMost, plannedTreasure } from "./floors.js";
 
 export { getMapNodeBit, setMapNodeBit } from "../map-progress.js";
 
@@ -469,8 +469,13 @@ export const awardDungeonCompletion = async (session) => {
   const bitIndex = rules.mapCredit && Number.isFinite(node.BitIndex) ? Number(node.BitIndex) : null;
   const firstClear = rules.mapCredit && (bitIndex === null || !getMapNodeBit(account.completed_mapnode_mask, bitIndex));
 
-  // Coins are collected from the floor. Completion XP is paid here for every
-  // node type; boss chests therefore carry no second copy of it.
+  /**
+   * Coins are collected from the floor, and that is all the gold a run pays.
+   * A boss node's TotalEnemyCoin (600-1125) is paid by nothing: official
+   * goldEarned is exactly the gold of the doobers picked up in 13 of 14 solo
+   * boss runs (the 14th straddles a floor), and the broken chest's shower is
+   * 59 gold on every node. Completion XP is paid here for every node type.
+   */
   const gold = 0;
   const experience = rules.pays.experience ? rewardAmount(node.CompletionXPBonus) : 0;
   const teamExperience = rules.pays.experience ? completionTeamXpBonus(node, account) : 0;
@@ -501,6 +506,32 @@ export const awardDungeonCompletion = async (session) => {
    * server's setting, `trophyGems`, and what the game paid is its default.
    */
   const gems = rules.pays.gems ? trophies * rewardAmount(config.trophyGems) : 0;
+  /**
+   * And a boss's chest: the node's BossRewardTreasureId, owed on the report the
+   * way a treasure picked up off the floor is (awardTreasureChest).
+   *
+   * Never a pickup. Official: breaking REWARD_CHEST_A left no treasure doober
+   * in 0 of 17 opened chests — only its own forty-seven (powerups.js) — and the
+   * node's chest reached the player once, on the one first clear captured, as
+   * report chest slot 1 (n=1: node 50002, WOODEN 30100 -> loot 60001, kept).
+   * The 16 repeat clears carried no boss chest at all. Dropped at every break,
+   * it was a chest farmed by re-running the boss.
+   *
+   * On the trophy's condition, not the hero's own first clear: one capture
+   * cannot tell the two apart, and the trophy is the account's
+   * (map-progress.js), so a second hero clearing the node earns neither. Paid
+   * by `pays.chests`, not `pays.trophies` — awardTreasureChest asks, and holds
+   * it to `chestMost`. What it is follows the floor's reward spots
+   * (plannedTreasure): "none" owes no chest, a treasure named stands in for the
+   * node's. `treasureCount` counts the spots, not this. It comes after what
+   * was picked up on the floor, in the order earned; a report carrying both
+   * has not been captured.
+   */
+  const planned = plannedTreasure(session);
+  const bossChest =
+    firstClear && node.NodeType === "BOSS" && planned !== "none"
+      ? planned ?? rewardAmount(node.BossRewardTreasureId)
+      : 0;
 
   account.basic_currency = (account.basic_currency ?? 0) + gold;
   if (basicKeys) account.basic_keys = (account.basic_keys ?? 0) + basicKeys;
@@ -535,14 +566,17 @@ export const awardDungeonCompletion = async (session) => {
   session.dungeonRewards ??= { gold: 0, gems: 0, xp: 0 };
   session.dungeonRewards.gold += gold;
   session.dungeonRewards.gems = (session.dungeonRewards.gems ?? 0) + gems;
+  // Owed before this call first waits, as everything above is: the report is
+  // drawn the moment it returns (sendDungeonSummary).
+  const chest = bossChest ? (await awardTreasureChest(session, bossChest)) ?? 0 : 0;
 
   await queueAccountSave(session);
   info(
     `[${session.id}] ${firstClear ? "first clear of" : "replayed"} "${node.Name}" — ` +
       `+${gold} gold, +${experience} xp (+${teamExperience} crew), +${basicKeys} basic key(s), ` +
-      `+${trophies} trophy, +${gems} gems, node bit ${node.BitIndex}`
+      `+${trophies} trophy, +${gems} gems, chest ${chest || "none"}, node bit ${node.BitIndex}`
   );
-  return { gold, experience, basicKeys, trophies, gems, firstClear };
+  return { gold, experience, basicKeys, trophies, gems, chest, firstClear };
 };
 
 /** The first treasure doober and the first chest, so the offset lines them up. */

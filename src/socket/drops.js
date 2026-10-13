@@ -4,14 +4,11 @@ import { dooberGenerate } from "./objects.js";
 import { PacketWriter } from "./packet.js";
 import { trackDoober } from "./pickups.js";
 import { xpWeightOf } from "./run-xp.js";
-import { plannedTreasure } from "./floors.js";
 
 export const FLID_DOOBER_SPAWN_FROM = 290;
 
 const positiveNumber = (value) =>
   Number.isFinite(value) ? Math.max(0, Number(value)) : 0;
-
-const rewardAmount = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.trunc(Number(value))) : 0);
 
 const unitRandom = (random) => Math.min(1 - Number.EPSILON, Math.max(0, random()));
 
@@ -177,59 +174,6 @@ export const spawnNpcRewards = (
       spawned.map(({ doober }) => doober.Constant).join(", ")
   );
   return spawned;
-};
-
-/** GOLD_LARGE: what a boss's chest is drawn as when the run pays no treasure. */
-const GOLD_HEAP = 30003;
-
-/**
- * Drops a map node's boss reward where its chest stood.
- *
- * The chest's own GameMaster row pays nothing — DooberProb and Exp are both
- * zero, deliberately, because a reward the client can see is a reward it can
- * forge. What it is worth belongs to the node: BossRewardTreasureId names the
- * pickup and TotalEnemyCoin says what it carries. CompletionXPBonus is paid
- * for every node by awardDungeonCompletion, so putting it here would pay boss
- * nodes twice and ordinary nodes not at all.
- */
-export const spawnBossReward = (session, { floorDoid, origin, node, random = Math.random }) => {
-  if (!node || !floorDoid || !origin) return null;
-
-  // The floor plan's or the run rules' treasure stands in for the node's; with
-  // "none" the chest's coins are a heap of gold, and no chest.
-  const planned = plannedTreasure(session);
-  const treasure = planned === "none" ? 0 : planned ?? Number(node.BossRewardTreasureId ?? 0);
-  if (!treasure && !(planned === "none" && node.BossRewardTreasureId)) return null;
-  const dooberType = treasure || GOLD_HEAP;
-
-  const doid = session.allocateDoid(CLID.DistributedDooberGameObject);
-  trackDoober(session, doid, {
-    ...landingPosition(origin, 0, 1, unitRandom(random) * Math.PI * 2, random),
-    constant: `MAPNODE_${node.Id}_REWARD`,
-    gold: rewardAmount(node.TotalEnemyCoin),
-    xp: 0,
-    crowd: 0,
-    hpPercentage: 0,
-    mpPercentage: 0,
-    // Marks this as a chest to be earned, not just coins on the floor. With
-    // "none" it is 0: the heap is gold like any other, a pet may fetch it, and
-    // picking it up earns no chest (pickups.js, collectNearbyForPet).
-    treasure,
-  });
-  session.send(
-    dooberGenerate({
-      doid,
-      parent: floorDoid,
-      zone: session.dungeonZone,
-      dooberType,
-      position: session.doobers.get(doid),
-    })
-  );
-  info(
-    `[${session.id}] boss reward ${dooberType} dropped — ` +
-      `${rewardAmount(node.TotalEnemyCoin)} gold`
-  );
-  return doid;
 };
 
 /**

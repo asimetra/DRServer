@@ -1154,9 +1154,10 @@ const treasureChoice = (value) => {
 };
 
 /**
- * What this floor's reward spots and boss chest pay instead of the node's own:
- * the floor plan's `treasure`, else the run rules' (run-rules.js) — a treasure
- * doober id, or "none" for gold in their place — or null, the node's as ever.
+ * What this floor's reward spots and a boss node's first-clear chest pay
+ * instead of the node's own: the floor plan's `treasure`, else the run rules'
+ * (run-rules.js) — a treasure doober id, or "none" for gold in the spots'
+ * place and no chest — or null, the node's as ever.
  */
 export const plannedTreasure = (session) =>
   treasureChoice(plannedFloorEntry(session)?.treasure) ?? treasureChoice(runRulesOf(session).treasure);

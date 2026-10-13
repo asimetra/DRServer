@@ -186,7 +186,7 @@ export const buildCollectables = async (context, placements) => {
       crowd: doober.Crowd ?? 0,
       hpPercentage: doober.HP_PERCENTAGE ?? 0,
       mpPercentage: doober.MP_PERCENTAGE ?? 0,
-      // Marks this as a chest to be earned, the way spawnBossReward does.
+      // Marks this as a chest to be earned.
       ...(isTreasureDoober(doober.Id) ? { treasure: doober.Id } : {}),
     });
 

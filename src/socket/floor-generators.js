@@ -3,7 +3,6 @@ import { checkFloorCleared } from "./floorstate.js";
 import { bodyOffsetOf } from "./navigation.js";
 import { bodyBlocked, bodyCageExit, bodyClearSpot, rowBody, rowBodyRadius } from "./body.js";
 import { info, warn } from "../log.js";
-import { spawnBossReward } from "./drops.js";
 import { spawnNpc } from "./npc-spawn.js";
 
 /**
@@ -368,20 +367,12 @@ const spawnGeneratorWave = async (context, runtime) => {
         engaged: true,
         fromGenerator: true,
         resolveSpawn: (npc) => generatorSpawn(session, runtime, npc),
-        onDeath: (deadDoid) => {
+        onDeath: () => {
           runtime.alive = Math.max(0, runtime.alive - 1);
           // A death makes room for one more, on the generator's next beat.
           if (runtime.door?.died()) runtime.wakeDeath?.();
-          // Breaking the chest is what pays the node out; the chest's own row
-          // is blank on purpose.
-          if (session.rewardGenerators?.has(placement.id)) {
-            spawnBossReward(session, {
-              floorDoid: session.floorDoid,
-              origin: session.actors.get(deadDoid)?.position ?? placement,
-              node: session.mapPage,
-              random: session.random ?? Math.random,
-            });
-          }
+          // A broken reward chest leaves its own shower and nothing of the
+          // node's: that chest is a first clear's, on the report (rewards.js).
         },
         /**
          * Cleared when the spawn is *gone*, not when it dies.
