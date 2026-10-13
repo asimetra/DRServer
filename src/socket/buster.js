@@ -1,5 +1,6 @@
 import {
   attackById,
+  attackColliders,
   buffForConstant,
   invulnerableForMs,
   loadGameMaster,
@@ -12,6 +13,9 @@ import { statOffsetsFor } from "../combat-damage.js";
 import { STAT_NAMES } from "../hero-stats.js";
 import { config } from "../config.js";
 import { heroMembersOf } from "./match-world.js";
+import { isHuntable } from "./actor-roles.js";
+import { worldColliders } from "./heading.js";
+import { areaTrapHits } from "./trap-attacks.js";
 import {
   healHero,
   queueAccountSave,
@@ -255,6 +259,43 @@ const spawnSelfBuff = async (session, attack) => {
 };
 
 /**
+ * Who an attack's own effect reaches besides its caster: the actors `admits`
+ * accepts that its timeline's collider covers, laid out from where the caster
+ * stands and the way he faces, the same shape test a trap or a placeable uses
+ * (trap-attacks.js `areaTrapHits`).
+ *
+ * The reach was the party, wherever it stood. Every party potion authors a
+ * circle of 300 round the drinker, and the official reached 2 of the 15 other
+ * heroes present when one was drunk; ours reached all of them, across the
+ * floor. The prank potion authors 3000 round the drinker for the enemies it
+ * makes giants of. An attack that authors no shape reaches nobody else; every
+ * one that names someone else to reach — the party potions, the pulses, the
+ * Berserker's buster — authors one.
+ *
+ * The shape is asked where the caster stands when the cast is accepted, not on
+ * its authored frame: every consumable's sits on frame 0.
+ */
+const reachedBy = async (session, attack, admits) => {
+  const origin = session.heroPosition ?? session.actors?.get(session.heroDoid)?.position;
+  const shape = await attackColliders(attack.AttackTimeline);
+  if (!origin || !shape.length) return [];
+  const zone = { combatColliders: worldColliders(origin, session.heroHeading ?? 0, shape) };
+  const reached = [];
+  for (const [doid, actor] of session.actors ?? []) {
+    if (doid === session.heroDoid || !actor?.position || !admits(doid, actor)) continue;
+    if (areaTrapHits(zone, actor.position, actor)) reached.push(doid);
+  }
+  return reached;
+};
+
+/** The rest of the party inside an attack's reach, when it says it reaches them. */
+const partyReachedBy = async (session, attack) => {
+  if (!attack.AffectsOthers) return [];
+  const party = heroMembersOf(session);
+  return reachedBy(session, attack, (doid) => party.has(doid));
+};
+
+/**
  * The buff a friendly attack puts on whoever it is cast over.
  *
  * `TargetBuff1` is read on the hostile side as the debuff a hit leaves, and
@@ -306,13 +347,33 @@ const buffFriendlyTarget = async (session, attack) => {
    * PARTY_BOMB_HEAL_ATTACK, BATTLE_RAGE, SKELETON_DANCE. Every one of them was
    * buffing only the person who cast it.
    */
-  if (attack.AffectsOthers) {
-    for (const doid of heroMembersOf(session).keys()) {
-      if (doid === session.heroDoid) continue;
-      granted.push(await grantBuff(session, attack.TargetBuff1, { affectedActor: doid }));
-    }
+  for (const doid of await partyReachedBy(session, attack)) {
+    granted.push(await grantBuff(session, attack.TargetBuff1, { affectedActor: doid }));
   }
 
+  return granted.length ? granted : null;
+};
+
+/**
+ * The buff a hostile consumable puts on the enemies it is drunk among.
+ *
+ * Only one does: the prank potion, whose `TargetBuff1` makes giants of every
+ * enemy inside its 3000 and which deals nothing. It was left to the client's
+ * hit proposals, and those are judged against the attack's `Range` — so the
+ * buff reached only what stood within 600, or nothing. A weapon's hostile
+ * buffs still ride on the hits the client proposes; a consumable's are the
+ * server's, as its friendly ones are.
+ */
+const buffHostileTargets = async (session, attack) => {
+  if (attack.Team !== "HOSTILE" || !attack.TargetBuff1) return null;
+  if (!session.floorDoid || !session.heroDoid) return null;
+  const granted = [];
+  const enemies = await reachedBy(session, attack, (doid, actor) => isHuntable(actor) && !actor.dead);
+  for (const doid of enemies) {
+    granted.push(
+      await grantBuff(session, attack.TargetBuff1, { affectedActor: doid, attackerActor: session.heroDoid })
+    );
+  }
   return granted.length ? granted : null;
 };
 
@@ -331,13 +392,10 @@ const partyContext = (session, doid) => {
   return member?.world?.contextFor(member) ?? member;
 };
 
-const grantToParty = (session, attack, grant) => {
+const grantToParty = async (session, attack, grant) => {
   let total = grant(partyContext(session, session.heroDoid) ?? session) || 0;
-  if (attack.AffectsOthers) {
-    for (const doid of heroMembersOf(session).keys()) {
-      if (doid === session.heroDoid) continue;
-      total += grant(partyContext(session, doid)) || 0;
-    }
+  for (const doid of await partyReachedBy(session, attack)) {
+    total += grant(partyContext(session, doid)) || 0;
   }
   return total;
 };
@@ -365,7 +423,7 @@ const grantToParty = (session, attack, grant) => {
  * The party bottle reaches the rest of the group the same way the party buffs
  * do — it is the one of the two that carries `AffectsOthers`.
  */
-const refillDungeonBuster = (session, attack) => {
+const refillDungeonBuster = async (session, attack) => {
   if (!attack.RefillDungeonBuster) return 0;
 
   const fill = (context) => {
@@ -376,12 +434,9 @@ const refillDungeonBuster = (session, attack) => {
 
   fill(session);
   let filled = 1;
-  if (attack.AffectsOthers) {
-    for (const [doid, member] of heroMembersOf(session)) {
-      if (doid === session.heroDoid) continue;
-      fill(member.world?.contextFor(member) ?? member);
-      filled += 1;
-    }
+  for (const doid of await partyReachedBy(session, attack)) {
+    fill(partyContext(session, doid));
+    filled += 1;
   }
   return filled;
 };
@@ -714,16 +769,17 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
   // buffs and the buster bottle do, but healHero/grantMana only ever touched
   // the drinker's own session — the rest of the party got nothing.
   const healed = attack.DoPercentHealthDamage
-    ? grantToParty(session, attack, (context) => healHero(context, attack.PercentHealthDamageValue))
+    ? await grantToParty(session, attack, (context) => healHero(context, attack.PercentHealthDamageValue))
     : 0;
   const buff = attack.SelfBuff ? await grantBuff(session, attack.SelfBuff) : null;
   // And the party's half of it. Twelve of the 33 consumable attacks are party
   // potions naming the same buff in `SelfBuff` and `TargetBuff1`; only the
   // drinker was ever getting one.
   const shared = await buffFriendlyTarget(session, attack);
+  const pranked = await buffHostileTargets(session, attack);
   // Here rather than beside the other grants below, because both attacks that
   // refill are bottles: the consumable branch returns before that code runs.
-  const refilled = refillDungeonBuster(session, attack);
+  const refilled = await refillDungeonBuster(session, attack);
   /*
    * And the Mana, for the same reason and it was missed the first time.
    *
@@ -734,7 +790,7 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
    * negative cost are reached only through here, so here is where it belongs.
    */
   const restored = attack.ManaCost < 0
-    ? grantToParty(session, attack, (context) => grantMana(context, -Number(attack.ManaCost)))
+    ? await grantToParty(session, attack, (context) => grantMana(context, -Number(attack.ManaCost)))
     : 0;
   // A thrown bomb is a placeable like any other; the slot it came from indexes
   // the powerups, so the weapon slot is not this one's to give — and neither is
@@ -747,7 +803,8 @@ const useConsumable = async (session, attack, slot, { playSpeed = 1 } = {}) => {
       (buff ? `; ${attack.SelfBuff}` : "") +
       (refilled ? `; Dungeon Buster refilled for ${refilled}` : "") +
       (restored ? `; restored ${restored} Mana` : "") +
-      (Array.isArray(shared) ? `; ${attack.TargetBuff1} to ${shared.length} others` : "")
+      (Array.isArray(shared) ? `; ${attack.TargetBuff1} to ${shared.length} others` : "") +
+      (Array.isArray(pranked) ? `; ${attack.TargetBuff1} on ${pranked.length} enemies` : "")
   );
   return true;
 };

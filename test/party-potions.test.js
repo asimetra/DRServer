@@ -24,7 +24,10 @@ const HEALTH_PARTY = 70001; // -> CONSUMABLE_HEALTH_POTION_PARTY_ATTACK
 const MANA_PARTY = 70003; // -> CONSUMABLE_MANA_POTION_PARTY_ATTACK
 const HEALTH_SELF = 70000; // -> CONSUMABLE_HEALTH_POTION_ATTACK, AffectsOthers 0
 
-/** A party of two on one floor, both hurt and both out of Mana. */
+/**
+ * A party of two on one floor, both hurt and both out of Mana, standing
+ * within the potions' 300 of each other (see consumable-reach.test.js).
+ */
 const thirstyParty = async () => {
   const { CLID } = await import("../src/socket/opcodes.js");
   const { createMatchWorld } = await import("../src/socket/match-world.js");
@@ -50,8 +53,8 @@ const thirstyParty = async () => {
     [501, CLID.HeroGameObject],
   ]);
   world.actors = new Map([
-    [500, { hitPoints: 100, maxHitPoints: 1000, team: 1 }],
-    [501, { hitPoints: 100, maxHitPoints: 1000, team: 1 }],
+    [500, { hitPoints: 100, maxHitPoints: 1000, team: 1, position: { x: 0, y: 0 } }],
+    [501, { hitPoints: 100, maxHitPoints: 1000, team: 1, position: { x: 150, y: 0 } }],
   ]);
 
   const session = {
@@ -60,6 +63,7 @@ const thirstyParty = async () => {
     world,
     heroDoid: 500,
     floorDoid: 400,
+    heroPosition: { x: 0, y: 0 },
     heroManaPoints: 10,
     maxHeroManaPoints: 200,
     objects: world.objects,
