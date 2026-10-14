@@ -5,6 +5,7 @@ import {
   dealTrapHit,
   hazardVictims,
   hitPointsUpdate,
+  bombTripped,
   npcAttackChoreography,
   performTrapAttack,
   stateUpdate,
@@ -208,24 +209,6 @@ const retireSpentBomb = (session, targetId, doid, hazard) => {
  * own with no cooldown at all, which the capture *can* separate — a mace hits
  * the same victim twice 159ms apart.
  */
-/**
- * Who is standing close enough to set a bomb off — not who its blast reaches.
- *
- * Measured on the mine's own body rather than on its explosion; see the note in
- * `touch`. Everything the blast catches is still worked out from the authored
- * collider once it has gone off.
- */
-const nearEnoughToTrip = (session, hazard, now) => {
-  const trip = Math.max(0, Number(hazard?.npc?.AggroRadius ?? 0));
-  if (!(trip > 0) || !hazard.position) return [];
-  return hazardVictims(
-    session,
-    [{ type: "circle", x: hazard.position.x, y: hazard.position.y, radius: trip }],
-    hazard,
-    now
-  );
-};
-
 const holdZone = (session, targetId, doid, hazard, colliders) => {
   const state = matchStateOf(session);
   const cooldownMs = Math.max(0, Number(hazard?.npc?.AttackTimer ?? 0) * 1000);
@@ -276,28 +259,18 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
      */
     if (hazard.contactBomb && !state.floorSettled) return;
     /**
-     * A bomb is tripped by being stepped near, and hurts much further than that.
-     *
-     * Its timeline authors one shape — a circle of 140 for `TM_TRAP_TRIPMINE`,
-     * 120 for the firebomb — and that is the blast. Using it to decide when the
-     * thing goes off as well makes the mine notice you from the far edge of its
-     * own explosion, so it detonates before the player is anywhere near it and
-     * catches them in the tail of a blast they never reached.
-     *
-     * The row says how close is close enough: `AggroRadius` is 60 on all three
-     * placeables, against a blast more than twice that. So the trip is 60 and
-     * the damage is still the authored shape — you have to walk onto it, and
-     * then it hurts as far as it always did.
+     * A bomb is tripped by being stepped near, and hurts much further than
+     * that: the row's `AggroRadius` decides whether, the authored blast who
+     * (trap-attacks.js `bombTripped`, the rule a placed one keeps too). A bomb
+     * set off by a hero at its edge still catches everything inside the blast,
+     * which is what makes standing next to one with a monster dangerous for
+     * both.
      */
-    /**
-     * The trip decides *whether*; the blast decides *who*. A bomb set off by a
-     * hero standing at its edge still catches everything inside the authored
-     * circle, which is what makes standing next to one with a monster
-     * dangerous for both.
-     */
-    if (hazard.contactBomb && !nearEnoughToTrip(session, hazard, now).length) return;
-    for (const victim of hazardVictims(session, colliders, hazard, now)) {
-      if (hazard.heroOnly && !isPartyHero(session, victim.doid)) continue;
+    if (hazard.contactBomb && !bombTripped(session, hazard, now)) return;
+    const caught = hazardVictims(session, colliders, hazard, now).filter(
+      (victim) => !hazard.heroOnly || isPartyHero(session, victim.doid)
+    );
+    for (const victim of caught) {
       if (now - (lastHitAt.get(victim.doid) ?? -Infinity) < cooldownMs) continue;
       lastHitAt.set(victim.doid, now);
       if (!bit && !hazard.heroOnly) {
@@ -769,19 +742,26 @@ export const classifyHazard = ({ npc, attack, projectile }) => {
     npc?.CharType === "ENEMY" && !npc.IsMover && Boolean(npc.InstantAttack) && Boolean(attack);
 
   /**
-   * A bomb lying on the floor: a mine, a firebomb, a death bomb.
+   * A bomb lying on the floor: a mine, a firebomb, a garlic, a death bomb.
    *
-   * `BEAST` is the placeable family, and `InstantAttack` splits it in two. A
-   * fire patch has it, is wired to a switch, and the corpus generates it at
-   * trigger state 0 and turns it on once — so it is an ordinary toggling hazard
-   * and must stay one. A mine does not have it, is sent no trigger state at all
-   * across 23 recorded instances, and fires exactly once.
+   * The row's shape says so and nothing else: it stands still, it has an
+   * attack, and it has no `InstantAttack`. A fire patch has the last and is an
+   * aura (`burnsOnContact`, or a switched hazard where its row is BEAST); a
+   * mine does not, is sent no trigger state at all across 23 recorded
+   * instances, and fires exactly once. Every PROP trap authors `InstantAttack`
+   * (132 of 132 stationary PROP rows with an attack), so none of them is read
+   * as a bomb.
    *
-   * Only the second half belongs here. Treating the whole family as one armed
-   * the triggered fire patches at build and stopped their switch reaching them.
+   * Not CharType. This read BEAST only, which is the temple's `*_ALL` family,
+   * and left the ENEMY rows — `MINE_`/`FIREBOMB_`/`GARLIC_PLACEABLE_L1`-`L6`,
+   * `GARLIC_NUKE`, `STICKY_MINE` — among the switched traps: raised as the
+   * floor was built, swung once there and then silent. Node 50069 authors 30
+   * of them and the official generates all 30 at trigger 1 on team 6; 7 went
+   * off once when the hero stepped in and 23 stood untouched for the floor's
+   * 131 s. Ours played all 30 explosions before the hero had moved, and never
+   * another.
    */
-  const contactBomb =
-    npc?.CharType === "BEAST" && !npc.IsMover && Boolean(attack) && !npc.InstantAttack;
+  const contactBomb = !npc?.IsMover && Boolean(attack) && !npc?.InstantAttack;
   /**
    * Loki's statue is the launcher that does toggle.
    *

@@ -972,6 +972,7 @@ test("a placed bomb burns with the modifiers of the weapon that threw it", async
       send: () => {},
     };
     await performPlaceableAttack(session, 700, {
+      masterDoid: session.heroDoid,
       attack,
       victims: [{ doid: ENEMY, actor }],
       weaponPower: 30,
@@ -1016,6 +1017,7 @@ test("a bomb crits when the weapon that threw it can, and not otherwise", async 
       send: (packet) => sent.push(packet),
     };
     await performPlaceableAttack(session, 700, {
+      masterDoid: session.heroDoid,
       attack, victims: [{ doid: ENEMY, actor }], weaponPower: 30, weapon,
     });
     const echo = sent.find(
@@ -1128,6 +1130,7 @@ test("a Sticky bomb roots whatever its fire catches, not only what it struck", a
       allocateDoid: () => ++nextDoid, send: () => {},
     };
     await performPlaceableAttack(session, 700, {
+      masterDoid: session.heroDoid,
       attack: gm.raw.Attack.find((row) => row.Constant === "GARLIC_EXPLOSION"),
       victims: [{ doid: ENEMY, actor }],
       weaponPower: 30,
@@ -1163,7 +1166,7 @@ test("the fire a bomb leaves keeps the weapon that lit it", async (t) => {
    * and was satisfied by `FIREBOMB_PLACEABLE_L1` — the bomb — so it passed with
    * the chain never running and with the bug restored.
    */
-  const { spawnPlaceable, clearDungeonPlaceables } = await import(
+  const { spawnPlaceable, clearDungeonPlaceables, heroPlacer } = await import(
     "../src/socket/placeables.js"
   );
   const { CLID } = await import("../src/socket/opcodes.js");
@@ -1191,6 +1194,7 @@ test("the fire a bomb leaves keeps the weapon that lit it", async (t) => {
   t.after(() => clearDungeonPlaceables(session));
 
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: firebomb.Constant, offset: 60, headingOffsetAngle: 0, timetolive: 10, frame: 14 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -1542,6 +1546,7 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
   };
 
   await performPlaceableAttack(session, 700, {
+    masterDoid: session.heroDoid,
     attack: gm.raw.Attack.find((row) => row.Constant === "FISSURE_HAMMER"),
     victims: [{ doid: ENEMY, actor: victim }],
     weaponPower: 30,
@@ -1560,6 +1565,7 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
   victim.position = { x: 1200, y: 1000 };
   session.actors.set(CRACK, { position: { x: 1200, y: 1300 }, collisionRadius: 10 });
   await performPlaceableAttack(session, CRACK, {
+    masterDoid: session.heroDoid,
     attack: gm.raw.Attack.find((row) => row.Constant === "FISSURE_HAMMER"),
     victims: [{ doid: ENEMY, actor: victim }],
     weaponPower: 30,
@@ -1577,6 +1583,7 @@ test("a fissure weapon shoves too, not only a direct swing", async () => {
   const pushed = new Set();
   for (let tick = 0; tick < 3; tick++) {
     await performPlaceableAttack(session, CRACK, {
+      masterDoid: session.heroDoid,
       attack: gm.raw.Attack.find((row) => row.Constant === "FISSURE_HAMMER"),
       victims: [{ doid: ENEMY, actor: victim }],
       weaponPower: 30,
@@ -1620,6 +1627,7 @@ test("a placeable's hits count on the report, pay Mana and drop food", async () 
       sent, send: (packet) => sent.push(packet),
     };
     await performPlaceableAttack(session, 700, {
+      masterDoid: session.heroDoid,
       attack, victims: [{ doid: ENEMY, actor }], weaponPower: 30, weapon,
     });
     return { session, sent, actor };
@@ -1798,6 +1806,7 @@ test("Buster Gen pays a point for a kill, and stops at the bar's top", async () 
     allocateDoid: () => 901, send: () => {},
   };
   await performPlaceableAttack(session, 700, {
+    masterDoid: session.heroDoid,
     attack: gm.raw.Attack.find((row) => row.Constant === "GARLIC_EXPLOSION"),
     victims: [{ doid: ENEMY, actor }],
     weaponPower: 30,

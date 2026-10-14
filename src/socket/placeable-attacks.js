@@ -1,5 +1,5 @@
 import { loadGameMaster } from "../gamemaster.js";
-import { countsAsKill, isHuntable, isScenery } from "./actor-roles.js";
+import { countsAsKill } from "./actor-roles.js";
 import { hasAbility } from "./buffs.js";
 import { grantMana } from "./rewards.js";
 import { heroOnFloor } from "./match-world.js";
@@ -7,68 +7,21 @@ import { spawnFoodDoober } from "./drops.js";
 import { critRollFor, knockbackOf, foodChanceFor, FOOD_ON_HIT, FOOD_ON_DEATH } from "./modifiers.js";
 import { RECEIVE_FIELD_BY_CLID, encodeCombatResults, receiveCombatResult } from "./combat-wire.js";
 import { pushVictim, staggerFor } from "./impact.js";
-import { areaTrapHits, trapVictims } from "./trap-attacks.js";
 import { applyModifierBuffs, applyTargetBuff } from "./combat-effects.js";
 import { priceHit } from "./hit-pricing.js";
 import { applyDamage, payBusterForKill } from "./combat.js";
 import { tellHit } from "./combat-events.js";
 
 /**
- * A placeable's attack — a bomb, a fire, a cloud — as it goes off: whom it
- * reaches (scenery included when the attack says so) and the proposals it
- * applies, as though its owner had swung.
+ * A hero's placeable's attack — a bomb, a fire, a cloud — as it lands: the
+ * results it applies, as though the hero who placed it had swung.
  */
 
 /**
- * Everything a placeable's authored shape is currently covering.
+ * One swing of something a hero put on the floor, priced as the hero's own.
  *
- * Separate from dealing the damage because whether there is anyone in it is the
- * question a trap asks before it goes off, and because an aura that fires into
- * an empty room sends an animation nobody asked for — the captured clouds are
- * silent until something walks in.
- */
-export const placeableVictims = (session, attackerDoid, colliders = [], { attack = null } = {}) => {
-  if (!colliders.length) return [];
-  const hazard = { combatColliders: colliders };
-  /**
-   * Monsters, and the scenery the attack says it breaks.
-   *
-   * The player's own placed things — all of them on TEAM.PLAYERS — do not set
-   * each other off: a firebomb's fire was burning the trap that made it. Nor
-   * does anything nothing may target — an Infinite ice bomb is not put out by
-   * a bomb.
-   *
-   * Barrels and crates were left out altogether, and the official does not
-   * leave them out: its hero placeables land on props as a matter of course —
-   * the axe's fissure 25 times against 54 on monsters, the hammers' cracks 7
-   * against 17, sticky mines 7 against 8, garlic and firebombs too — and every
-   * one of those attacks authors `AffectsProps`. A Berserker's charge that
-   * went through a barrel rack without a splinter looked wrong beside a
-   * Samurai's, whose slash is a projectile the client proposes against
-   * scenery itself. Whether scenery *springs* a waiting trap is the caller's
-   * question (`strike` in placeables.js); here it is only whether the shape
-   * reaches it.
-   */
-  const breaksScenery = Boolean(attack?.AffectsProps);
-  return trapVictims(session, {}, (doid, actor, position) => {
-    if (doid === attackerDoid || doid === session.heroDoid) return false;
-    if (!isHuntable(actor) && !(breaksScenery && isScenery(actor))) return false;
-    const clid = session.objects?.get(doid);
-    if (actor.dead || !RECEIVE_FIELD_BY_CLID[clid]) return false;
-    // The same authored-shape test a floor trap uses, so a placed hazard and a
-    // built-in one agree about what standing in it means.
-    return areaTrapHits(hazard, position, actor);
-  });
-};
-
-/**
- * One swing of something the hero put on the floor.
- *
- * A floor trap belongs to nobody and hits everything standing in it, the hero
- * included. A placeable belongs to whoever placed it — the game
- * generates it on TEAM.PLAYERS with the hero as its master — so it hits what
- * the hero fights and never the hero, which `placeableVictims` has already
- * settled.
+ * Who it reaches is settled before this, by the side test every trap goes
+ * through (placeables.js `victimsOf`); `masterDoid` is the hero who placed it.
  *
  * Damage is priced like the hero's own attack rather than like a floor trap:
  * the hero's offence and the power of the weapon that placed it against the
@@ -81,7 +34,7 @@ export const placeableVictims = (session, attackerDoid, colliders = [], { attack
 export const performPlaceableAttack = async (
   session,
   attackerDoid,
-  { attack, victims = [], weaponPower, weapon = null, pushed = null }
+  { attack, victims = [], masterDoid, weaponPower, weapon = null, pushed = null }
 ) => {
   if (!attack) return 0;
 
@@ -109,7 +62,7 @@ export const performPlaceableAttack = async (
       effectiveness,
     } = await priceHit(
       session,
-      { attacker: session.heroDoid, attackee: victim.doid, attackType: attack.Id },
+      { attacker: masterDoid, attackee: victim.doid, attackType: attack.Id },
       attack,
       weaponPower,
       weapon
@@ -169,7 +122,7 @@ export const performPlaceableAttack = async (
      * Away from the placeable, which is what the official's results name as the
      * attacker on these hits — a mine throws outward from the mine, and a
      * `Trapper` mine reels in to the mine, not to a hero three rooms off. The
-     * hero only when the thing has no position of its own.
+     * hero who placed it only when the thing has no position of its own.
      *
      * The official displaces here too, though less tidily than for a direct
      * hit: its `FISSURE_SMASH_ATTACK` victims, behind a mallet carrying 200,
@@ -181,7 +134,7 @@ export const performPlaceableAttack = async (
      * both, and which is right for the axe is an open question at that n.
      */
     const { distance: shove, durationMs } = knockbackOf(await loadGameMaster(), weapon);
-    const placeable = session.actors?.get(attackerDoid)?.position ? attackerDoid : session.heroDoid;
+    const placeable = session.actors?.get(attackerDoid)?.position ? attackerDoid : masterDoid;
     // And only what walks, as in applyProposals: a crack under a crate shakes it.
     // Once per body for as long as the thing lasts — `pushed` is the placeable's
     // own set, so a cloud that ticks on the same monster throws it once.

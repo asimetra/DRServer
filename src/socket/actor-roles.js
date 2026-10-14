@@ -13,7 +13,7 @@
  * ordinary thing: a monster anybody may fight, that holds its floor.
  */
 
-/** Something the server may pick to hit on its own: a pet's or beast's target, what a hero's placeable catches. */
+/** Something the server may pick to hit on its own: a pet's or beast's target, what a hero's area buff or target lock takes. */
 export const isHuntable = (actor) => Boolean(actor?.isEnemy) && actor.attackable !== false;
 
 /**
@@ -38,7 +38,7 @@ export const countsAsKill = (actor) => Boolean(actor?.isEnemy);
  * the crowd sorts it by (`candidateSetOf`) and the questions above answer.
  *
  * Two questions, and they used to share one answer. Whether this is an
- * enemy is what pets hunt, what the hero's bombs and fissures catch, what
+ * enemy is what pets hunt, what a hero's area buff locks on to, what
  * FLOOR_KILL_ALL_NPCS takes and what counts on the report. Whether it holds
  * the floor open is only the floor's question — a boss's clones and an
  * Infinite modifier's spawns are enemies it did not stock. Answered

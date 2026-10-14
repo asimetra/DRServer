@@ -25,15 +25,16 @@ import { npcGenerate, objectDisable } from "./objects.js";
 import { variantFor } from "../content-packs.js";
 import { npcHeadingUpdate, npcPositionUpdate } from "./npc-move.js";
 import { npcAttackChoices, npcAttackSpeed } from "./npc-attacks.js";
-import { isScenery, kindOfRow, rolesOfPlaceable } from "./actor-roles.js";
+import { kindOfRow, rolesOfPlaceable } from "./actor-roles.js";
 import { membersOf } from "./match-world.js";
 import {
   dealTrapHit,
   hazardVictims,
   hitPointsUpdate,
   npcAttackChoreography,
+  bombTripped,
   performPlaceableAttack,
-  placeableVictims,
+  setsOffTrap,
   stateUpdate,
 } from "./combat.js";
 import { hasLineOfSight } from "./navigation.js";
@@ -172,36 +173,39 @@ const placerLevel = async (session) => {
 };
 
 /**
- * Who it catches, which depends on whose it is.
+ * Who it catches: whatever its owner's side may hurt, by the one test every
+ * floor trap and monster swing goes through (`hazardVictims`, the attack's
+ * `Team` against the owner's team, `IsAttackable`). A rival's burns heroes,
+ * pets and props and never the monster that left it; a hero's catches
+ * monsters and props and never a hero — the official's hero traps name a
+ * hero 0 times in 212 results, its team-6 traps a monster 0 times in ~50.
  *
- * A hero's catches what the hero fights — see `placeableVictims`. An enemy's is
- * a trap on the enemies' side, and catches what any of their attacks would: the
- * same side test `hazardVictims` puts every floor trap and monster swing
- * through, so it burns heroes and pets and never the monster that left it.
+ * A hero's used to have a test of its own — skip `session.heroDoid`, take
+ * only rows marked enemy — which no other side's placeable, floor trap or
+ * swing asked.
  */
 const victimsOf = (session, doid, live, colliders, attack) =>
-  live.owner
-    ? hazardVictims(session, colliders, { attack, team: live.owner.team }).filter(
-        (victim) => victim.doid !== doid
-      )
-    : placeableVictims(session, doid, colliders, { attack });
+  hazardVictims(session, colliders, { attack, team: live.owner.team }).filter(
+    (victim) => victim.doid !== doid
+  );
 
 /**
- * And what it does to them.
+ * And what it does to them, which does depend on whose it is.
  *
- * A hero's is priced from the hero, because its own row's stats are all zero —
- * see `performPlaceableAttack`. An enemy's is priced the way the floor's own
- * traps are, from its row at its level with its own weapon: these rows carry
- * enemy weapons for exactly that (`EN_PLACABLE_TRAPS_WEAPON` on the flames,
- * mines and garlic, `EN_FISSURE_SMASH_WEAPON` on the axe), and the temple's
- * `MINE_PLACEABLE_ALL` and `FIREBOMB_PLACEABLE_ALL` are already traps on a
- * floor priced that way.
+ * A hero's is priced as its master's own swing, with the weapon that placed
+ * it, because its row's stats are all zero — see `performPlaceableAttack`.
+ * Anyone else's is priced the way the floor's own traps are, from its row at
+ * the placer's level with its own weapon: these rows carry enemy weapons for
+ * exactly that (`EN_PLACABLE_TRAPS_WEAPON` on the flames, mines and garlic,
+ * `EN_FISSURE_SMASH_WEAPON` on the axe), and the temple's `MINE_PLACEABLE_ALL`
+ * and `FIREBOMB_PLACEABLE_ALL` are already traps on a floor priced that way.
  */
 const hitVictims = async (session, doid, live, attack, victims) => {
-  if (!live.owner) {
+  if (live.owner.pricedAsMaster) {
     return performPlaceableAttack(session, doid, {
       attack,
       victims,
+      masterDoid: live.owner.masterDoid,
       weaponPower: live.weaponPower,
       weapon: live.heroWeapon,
       // A body is thrown by this thing once in its life — see the push there.
@@ -229,10 +233,15 @@ const strike = async (session, doid, live, attack, { always = false, shape: pres
   const shape = preset ?? (await attackColliders(attack.AttackTimeline));
   const colliders = worldColliders(live.position, live.heading, shape);
   const victims = victimsOf(session, doid, live, colliders, attack);
-  // Scenery is hit when this goes off but never makes it go off: a mine beside
-  // a barrel rack waits for something that fights — a monster for the hero's,
-  // the hero for a dragon's.
-  if (!always && !victims.some((victim) => !isScenery(victim.actor))) return 0;
+  /**
+   * What sets a living one off: an aura bites whatever stands in it, a bomb is
+   * stepped near — the one rule every bomb keeps, a map's included
+   * (trap-attacks.js `bombTripped`). A death attack goes off regardless.
+   */
+  const sprung = live.repeats
+    ? setsOffTrap(victims)
+    : bombTripped(session, { position: live.position, npc: live.npc, attack, team: live.owner.team });
+  if (!always && !sprung) return 0;
 
   const playSpeed = npcAttackSpeed(attack.AttackSpd);
   session.send(
@@ -468,37 +477,25 @@ const timelineLengthMs = async (name) => {
 };
 
 /**
- * Who put it down, answered once. Everything a placeable does differently for a
- * hero and for an enemy is settled here or in `victimsOf` and `hitVictims`.
+ * The hero as a placer: what a hero's cast or throw hands `spawnPlaceable` as
+ * its owner, the same shape summons.js hands it for a monster's.
  *
- *   team, master  the placer's — not the row's CharType, which is why a hero's
- *                 poison pot does not poison the hero who threw it
- *   level         the placer's; a hero's generates at the hero's level
- *   actorLevel    what the actor carries for pricing: an enemy's is priced from
- *                 its own row at this level, a hero's from the hero, so a
- *                 hero's has never carried one
- *   pricesWithOwnWeapon
- *                 an enemy's hits with its own row's weapon, as a floor trap
- *                 does; a hero's with the weapon that placed it
+ *   team, masterDoid  the placer's — not the row's CharType, which is why a
+ *                     hero's poison pot does not poison the hero who threw it
+ *   level             the hero's; the capture shows a hero's generating at 100
+ *                     against a row whose Min_Level is 1
+ *   pricedAsMaster    priced as the hero's own swing (see `hitVictims`); a
+ *                     monster's owner leaves it out and is priced from the row
+ *   skinType          what the hero wears, which can change what is summoned
+ *                     (`summonForSkin`)
  */
-const placerFor = async (session, owner) => {
-  if (owner) {
-    return {
-      team: owner.team,
-      masterDoid: owner.masterDoid,
-      level: owner.level,
-      actorLevel: owner.level,
-      pricesWithOwnWeapon: true,
-    };
-  }
-  return {
-    team: TEAM.PLAYERS,
-    masterDoid: session.heroDoid,
-    level: await placerLevel(session),
-    actorLevel: undefined,
-    pricesWithOwnWeapon: false,
-  };
-};
+export const heroPlacer = async (session) => ({
+  team: TEAM.PLAYERS,
+  masterDoid: session.heroDoid,
+  level: await placerLevel(session),
+  pricedAsMaster: true,
+  skinType: session.heroSpawn?.skinType,
+});
 
 /**
  * The weapon a placeable is generated holding.
@@ -514,7 +511,7 @@ const placerFor = async (session, owner) => {
  * official's, 5 of 5 (weapon-power.js `consumableBombPower`).
  */
 const placedWeaponDetails = (weapon, nativePower, { owner, mobileSummon, heroWeapon, weaponPower }) => {
-  if (owner || mobileSummon) {
+  if (!owner.pricedAsMaster || mobileSummon) {
     return { type: weapon.Id, power: nativePower, requiredlevel: 1, rarity: 1 };
   }
   if (!heroWeapon) {
@@ -550,20 +547,22 @@ export const summonForSkin = async (constant, skinType) => variantFor(constant, 
 /**
  * Builds one placeable and starts its clock.
  *
- * `owner` is for one an enemy leaves — `{ team, masterDoid, level }`, from
- * summons.js. Without it the placeable is the hero's. None of the monsters that
- * leave one — the red dragon, the rival berserkers and trapper, the heavy red
- * specter — has been observed, so the enemy side is the hero
- * side's measured rule turned round: the placer's team, the placer's level, and
- * priced as the floor prices its own traps (see `hitVictims`).
+ * `owner` is whoever put it down, `{ team, masterDoid, level }`: a monster's
+ * from summons.js, the hero's from `heroPlacer`, and a fire a firebomb lights
+ * is its bomb's. The team and level are the placer's, as the official shows
+ * for a hero's (team 5, the hero as master, the hero's level) and for the
+ * Vampire Hunter rival's on node 50069 (team 6, the rival as master: 18 of
+ * the 18 mines, firebombs and nukes it put down).
  */
 export const spawnPlaceable = async (
   session,
-  { action, origin, heading, weaponPower, heroWeapon = null, placementGroup, owner = null }
+  { action, origin, heading, weaponPower, heroWeapon = null, placementGroup, owner }
 ) => {
-  const constant = owner
-    ? action.spawnname
-    : await summonForSkin(action.spawnname, session.heroSpawn?.skinType);
+  if (!owner) {
+    warn(`placeables: ${action.spawnname} placed by nobody`);
+    return null;
+  }
+  const constant = await summonForSkin(action.spawnname, owner.skinType);
   const npc = await npcForConstant(constant);
   if (!npc) {
     warn(`placeables: ${action.spawnname} names no GameMaster NPC`);
@@ -595,9 +594,8 @@ export const spawnPlaceable = async (
   const deathMs = await timelineLengthMs(deathAttack?.AttackTimeline);
   const weapon = npc.Weapon1 && (await weaponForConstant(npc.Weapon1));
   // A monster's walking summons are summons.js's; only a hero's pet comes here.
-  const mobileSummon = !owner && npc.CharType === "PET" && Boolean(npc.IsMover);
-  const placer = await placerFor(session, owner);
-  const { level, team, masterDoid } = placer;
+  const mobileSummon = npc.CharType === "PET" && Boolean(npc.IsMover);
+  const { level, team, masterDoid } = owner;
   const nativeWeaponPower = mobileSummon
     ? scaledNpcWeaponPower(weapon, level)
     : Number(weapon?.Power ?? 1);
@@ -626,8 +624,8 @@ export const spawnPlaceable = async (
   const summonAi = mobileSummon && primaryAttack
     ? {
         ...primaryAttack,
-        kind: kindOfRow(npc, { petOwnerDoid: session.heroDoid }),
-        ownerDoid: session.heroDoid,
+        kind: kindOfRow(npc, { petOwnerDoid: masterDoid }),
+        ownerDoid: masterDoid,
         ...petAiOf(npc),
         targetTimerMs: Math.max(0, Number(npc.ChangeTargetT ?? 2) * 1000),
         targetRandMs: Math.max(0, Number(npc.ChangeTargetRand ?? 0) * 1000),
@@ -667,15 +665,18 @@ export const spawnPlaceable = async (
     abilities: new Set(
       [npc.Ability1, npc.Ability2, npc.Ability3, npc.Ability4, npc.Ability5].filter(Boolean)
     ),
-    ...rolesOfPlaceable(npc, session.heroDoid, mobileSummon),
+    ...rolesOfPlaceable(npc, masterDoid, mobileSummon),
     // The cast it was put down by, shared with whatever else that cast put
     // down: bodies to one another (npc-move.js `bodyRule`).
     spawnGroup: placementGroup ?? null,
-    masterId: mobileSummon ? session.heroDoid : 0,
+    // Whoever put it down, as its generate says below.
+    masterId: masterDoid,
     team,
     // Whether the players on its side are in its way (npc-move.js `bodyRule`).
     collidesWithTeam: Boolean(npc.CollideWithTeam),
-    level: placer.actorLevel,
+    // What a trap priced from its row is priced at; a hero's is priced from
+    // the hero, so it has never carried one.
+    level: owner.pricedAsMaster ? undefined : level,
     stats: mobileSummon ? npcStats(gm, npc, petCombatLevel(level)) : undefined,
     position: { x: position.x, y: position.y },
     collisionRadius,
@@ -772,9 +773,11 @@ export const spawnPlaceable = async (
 
   const live = {
     constant: npc.Constant,
+    npc,
     livingAttack,
     deathAttack,
-    // Authored: true on the clouds and the burning patch, absent on every trap.
+    // Authored: true on the clouds and the burning patch, absent on every
+    // bomb — the same line hazards.js `classifyHazard` draws for the map's.
     repeats: Boolean(npc.InstantAttack),
     // Resolved once, so a beat can decide without awaiting mid-tick.
     suicideMs: await suicideDelayMs(livingAttack?.AttackTimeline),
@@ -790,9 +793,9 @@ export const spawnPlaceable = async (
     weaponPower:
       held && !mobileSummon
         ? held.power
-        : placer.pricesWithOwnWeapon
-          ? nativeWeaponPower
-          : weaponPower,
+        : owner.pricedAsMaster
+          ? weaponPower
+          : nativeWeaponPower,
     deathShape,
     heroWeapon,
     owner,
@@ -1141,6 +1144,7 @@ export const handleProposeCreateNPC = async (session, reader) => {
     heading: session.heroHeading ?? 0,
     weaponPower: session.heroWeapons?.[weaponSlot]?.power,
     heroWeapon: session.heroWeapons?.[weaponSlot],
+    owner: await heroPlacer(session),
   });
   info(`[${session.id}] client landed ${npc.Constant} at ${Math.round(x)},${Math.round(y)}`);
   return true;
@@ -1176,6 +1180,7 @@ export const schedulePlaceables = async (
     : consumableBombPower(await placerLevel(session));
 
   const floorDoid = session.floorDoid;
+  const owner = await heroPlacer(session);
   const origin = { ...session.heroPosition };
   // Zero until the client turns: the hero is generated facing it, and 51 of 417
   // observed floors swing before any heading arrives. Undefined here was a
@@ -1189,7 +1194,7 @@ export const schedulePlaceables = async (
       () => {
         session.placeableSpawnTimers?.delete(timer);
         if (!session.dungeonActive || session.floorDoid !== floorDoid) return;
-        spawnPlaceable(session, { action, origin, heading, weaponPower, heroWeapon: weapon, placementGroup }).catch((error) =>
+        spawnPlaceable(session, { action, origin, heading, weaponPower, heroWeapon: weapon, placementGroup, owner }).catch((error) =>
           warn(`[${session.id}] placeable spawn failed: ${error.message}`)
         );
       },

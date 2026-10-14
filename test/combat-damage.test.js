@@ -739,7 +739,7 @@ test("both heroes are priced from the floor, not from a session", async () => {
   };
 
   const victims = [10, 11, 12].map((doid) => ({ doid, actor: session.actors.get(doid) }));
-  await performPlaceableAttack(session, 20, { attack, victims, weaponPower: 1 });
+  await performPlaceableAttack(session, 20, { masterDoid: session.heroDoid, attack, victims, weaponPower: 1 });
   const lost = (doid) => 4000 - session.actors.get(doid).hitPoints;
 
   assert.equal(lost(11), lost(10), "two armoured heroes pay the same");

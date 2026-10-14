@@ -8,6 +8,7 @@ import { CLID, OP, TEAM } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
 import {
   clearDungeonPlaceables,
+  heroPlacer,
   schedulePlaceables,
   spawnPlaceable,
   timelineDelayMs,
@@ -94,6 +95,7 @@ test("an Iron Legion clone is a levelled mobile summon with its full attack kit"
   });
 
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action,
     origin: session.heroPosition,
     heading: 0,
@@ -165,7 +167,7 @@ const legionOnOneSpot = async (t, spot = null) => {
   // One cast: one placement group, as schedulePlaceables gives its actions.
   const placementGroup = { positions: [] };
   for (const action of await spawnNpcActions("TM_DBUSTER_IRON_LEGION")) {
-    clones.push(await spawnPlaceable(session, { action, origin: session.heroPosition, heading: 0, weaponPower: 10, placementGroup }));
+    clones.push(await spawnPlaceable(session, { owner: await heroPlacer(session), action, origin: session.heroPosition, heading: 0, weaponPower: 10, placementGroup }));
   }
   t.after(() => {
     clearDungeonPlaceables(session);
@@ -303,6 +305,7 @@ test("the poison pot schedules its cloud instead of charging Mana for nothing", 
 test("a placed cloud joins the hero's team, not the team its own row names", async () => {
   const session = sessionWith({ dungeonAvatar: { avatar_id: 104, experience: 875525 } });
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: POISON_ACTION,
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -356,6 +359,7 @@ test("the cloud lands in front of the hero, by the authored offset and heading",
   // Heading is degrees on the wire: ActorGameObject.getHeadingAsVector is
   // (heading + offset) * PI / 180, so 90 faces +y and the offset is 60.
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: POISON_ACTION,
     origin: { x: 1000, y: 1000 },
     heading: 90,
@@ -375,6 +379,7 @@ test("the cloud damages what the hero fights and never the hero", async () => {
     hitPoints: 400,
     maxHitPoints: 400,
     collisionRadius: 30,
+    team: TEAM.PLAYERS,
     position: { x: 1000, y: 1000 },
   });
   session.objects.set(700, CLID.DistributedNPCGameObject);
@@ -402,6 +407,7 @@ test("the cloud damages what the hero fights and never the hero", async () => {
   });
 
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: POISON_ACTION,
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -421,6 +427,7 @@ test("the cloud damages what the hero fights and never the hero", async () => {
 test("a cloud that has burned out dies rather than standing there as a corpse", async () => {
   const session = sessionWith();
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { ...POISON_ACTION, timetolive: 0.01 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -465,7 +472,7 @@ test("a cloud that is killed stops, rather than attacking until it would have ex
     collisionRadius: 30,
     position: { x: 1040, y: 1000 },
   });
-  const doid = await spawnPlaceable(session, { action: POISON_ACTION, origin: { x: 1000, y: 1000 }, heading: 0 });
+  const doid = await spawnPlaceable(session, { owner: await heroPlacer(session), action: POISON_ACTION, origin: { x: 1000, y: 1000 }, heading: 0 });
   await new Promise((resolve) => setTimeout(resolve, 300));
 
   applyDamage(session, doid, 1_000_000);
@@ -591,6 +598,7 @@ test("a crack performs as it lands, and runs along the ground", async () => {
    * cannot has none.
    */
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
     // It lives as long as it animates — 19 frames, 792ms — not the 30ms
     // `timetolive` asks for, which comes to a little over 900ms.
@@ -629,6 +637,7 @@ test("the crack is drawn the way it is dealt", async () => {
   knightAt(session, 701, 1200, 1000);
 
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
     origin: { x: 1000, y: 1000 },
     heading: 90,
@@ -666,6 +675,7 @@ for (const [constant, frames] of [["FISSURE_SMASH", 22], ["FISSURE_SLOW_SMASH", 
   test(`${constant} plays once when it lands, on empty floor too`, async () => {
     const session = sessionWith();
     const doid = await spawnPlaceable(session, {
+      owner: await heroPlacer(session),
       action: { spawnname: constant, offset: 20, timetolive: 0.02, frame: 6 },
       origin: { x: 1000, y: 1000 },
       heading: 0,
@@ -694,6 +704,7 @@ for (const [constant, frames] of [["FISSURE_SMASH", 22], ["FISSURE_SLOW_SMASH", 
 test("a crack that has gone off cannot be hit", async () => {
   const session = sessionWith();
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -718,6 +729,7 @@ test("a hero's crack carries the weapon that made it", async () => {
     modifier1: 70055, modifier2: 70004, legendarymodifier: 6,
   };
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -772,6 +784,7 @@ const knightAt = (session, doid, x, y) => {
 test("a trap left on empty floor stands armed until something reaches it", async () => {
   const session = sessionWith();
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "STICKY_MINE_PLACEABLE", offset: 40, timetolive: 60, frame: 6 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -793,6 +806,7 @@ test("a trap goes off once and is spent, rather than ticking like an aura", asyn
   // sat quiet, exploded once and was dead a second later; ours used to explode
   // every second for the sixty seconds it was authored to stand.
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "STICKY_MINE_PLACEABLE", offset: 40, timetolive: 60, frame: 6 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -829,6 +843,7 @@ test("an aura in an empty room animates for nobody", async () => {
   // No knight anywhere: the captured cloud that landed away from the fight
   // played no choreography at all before it expired.
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: POISON_ACTION,
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -848,6 +863,7 @@ test("an aura keeps hitting for as long as it stands", async () => {
   knightAt(session, 700, 1060, 1000);
 
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { ...POISON_ACTION, timetolive: 10 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -914,6 +930,7 @@ test("a firebomb leaves fire that burns enemies and not the trap that made it", 
   knightAt(session, 700, 1100, 1000);
 
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "FIREBOMB_PLACEABLE_L3", offset: 40, timetolive: 60 },
     origin: { x: 1060, y: 1000 },
     heading: 0,
@@ -959,6 +976,7 @@ test("scenery does not spring a trap", async () => {
   barrelAt(session, 800, { x: 1040, y: 1000 });
 
   const doid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "STICKY_MINE_PLACEABLE", offset: 40, timetolive: 60, frame: 6 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -984,6 +1002,7 @@ test("but a charge that goes off breaks the scenery in its way", async () => {
   barrelAt(session, 800, { x: 1300, y: 1000 });
 
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "FISSURE_SMASH_AXE", offset: 20, timetolive: 0.03, frame: 6 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -999,6 +1018,7 @@ test("a hit leaves the debuff its attack names, once", async () => {
 
   // GARLIC_EXPLOSION names STUN_L4, which is most of what a garlic trap is for.
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "GARLIC_PLACEABLE_L3", offset: 40, timetolive: 60 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -1020,6 +1040,7 @@ test("an aura stacks only to its authored burn limit", async () => {
   session.actors.get(700).maxHitPoints = 900000;
 
   const fireDoid = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "BURNING_FIRE_PLACEABLE", offset: 60, timetolive: 10 },
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -1051,6 +1072,7 @@ test("a burn keeps taking hit points for as long as it is authored to run", asyn
   session.actors.get(700).maxHitPoints = 900000;
 
   await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: { spawnname: "BURNING_FIRE_PLACEABLE", offset: 60, timetolive: 10 },
     origin: { x: 1000, y: 1000 },
     heading: 0,

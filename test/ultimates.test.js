@@ -10,7 +10,7 @@ import {
 } from "../src/gamemaster.js";
 import { CLID } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
-import { clearDungeonPlaceables, spawnPlaceable } from "../src/socket/placeables.js";
+import { clearDungeonPlaceables, heroPlacer, spawnPlaceable } from "../src/socket/placeables.js";
 import { createNavigationState, isPositionBlocked } from "../src/socket/navigation.js";
 
 const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -168,6 +168,7 @@ test("a blocked Garlic Nuke ring fits distinct bombs onto clear ground", async (
 
   for (const action of actions) {
     await spawnPlaceable(session, {
+      owner: await heroPlacer(session),
       action,
       origin: session.heroPosition,
       heading: session.heroHeading,

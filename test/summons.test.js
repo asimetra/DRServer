@@ -6,8 +6,8 @@ import {
   applyDamage,
   expireActor,
   killAllEnemies,
+  hazardVictims,
   performNpcAttack,
-  placeableVictims,
 } from "../src/socket/combat.js";
 import { checkFloorCleared } from "../src/socket/floorstate.js";
 import { clearBuffsOn } from "../src/socket/buffs.js";
@@ -248,7 +248,7 @@ test("on the Dark Barrows boss floor the clones arrive as the boss's own", async
   const onClone = session.actors.get(first.doid).position;
   const blast = [{ type: "circle", x: onClone.x, y: onClone.y, radius: 40, frame: 0 }];
   assert.ok(
-    placeableVictims(session, 9999, blast).some((victim) => victim.doid === first.doid),
+    hazardVictims(session, blast, { attack: await attackForConstant("BOMB_EXPLOSION"), team: TEAM.PLAYERS }).some((victim) => victim.doid === first.doid),
     "a hero's bomb going off on a clone hits it"
   );
 
@@ -409,7 +409,7 @@ test("an Infinite ice bomb is not caught by a hero's bomb", async () => {
   assert.equal(actor.attackable, false);
   const blast = [{ type: "circle", x: actor.position.x, y: actor.position.y, radius: 60 }];
   assert.equal(
-    placeableVictims(session, 9999, blast).some((victim) => victim.doid === bomb.doid),
+    hazardVictims(session, blast, { attack: await attackForConstant("BOMB_EXPLOSION"), team: TEAM.PLAYERS }).some((victim) => victim.doid === bomb.doid),
     false,
     "a hero's bomb going off on it does not catch it"
   );

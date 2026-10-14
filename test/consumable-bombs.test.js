@@ -20,7 +20,7 @@ import { handleProposeAttackChoreography } from "../src/socket/buster.js";
 import { weaponsForAvatar } from "../src/socket/dungeon.js";
 import { CLID, OP, TEAM } from "../src/socket/opcodes.js";
 import { PacketReader, PacketWriter } from "../src/socket/packet.js";
-import { clearDungeonPlaceables, spawnPlaceable } from "../src/socket/placeables.js";
+import { clearDungeonPlaceables, heroPlacer, spawnPlaceable } from "../src/socket/placeables.js";
 import { decodeGenerate } from "../tools/wire.js";
 
 /**
@@ -86,6 +86,7 @@ const standing = (session, doid, actor) => {
 test("a monster's swing that reaches a bomb passes it by: the row says it cannot be attacked", async () => {
   const session = sessionWith();
   const bomb = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: BOMB_ACTION,
     origin: { x: 1000, y: 1000 },
     heading: 0,
@@ -134,6 +135,7 @@ test("a trap's arrow stops at a bomb as at a wall, and the bomb takes nothing", 
     position: { x: 1600, y: 1000 },
   });
   const bomb = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: BOMB_ACTION,
     origin: { x: 1200, y: 1000 },
     heading: 0,
@@ -165,6 +167,7 @@ test("a bomb killed by some other hit before it goes off still goes off, once", 
     position: { x: 1060, y: 1000 },
   });
   const bomb = await spawnPlaceable(session, {
+    owner: await heroPlacer(session),
     action: BOMB_ACTION,
     origin: { x: 1000, y: 1000 },
     heading: 0,

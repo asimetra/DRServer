@@ -326,8 +326,11 @@ const stageScenario = async (modules, session, scenario) => {
 const castLegion = async (modules, session, timeline) => {
   const placementGroup = { positions: [] };
   const origin = { ...session.heroPosition };
+  // The harness drives both roots; a base from before `heroPlacer` took no
+  // owner and placed for the hero.
+  const owner = await modules.placeables.heroPlacer?.(session);
   for (const action of await modules.gamemaster.spawnNpcActions(timeline)) {
-    await modules.placeables.spawnPlaceable(session, { action, origin, heading: 0, weaponPower: 10, placementGroup });
+    await modules.placeables.spawnPlaceable(session, { action, origin, heading: 0, weaponPower: 10, placementGroup, owner });
   }
 };
 

@@ -10,6 +10,7 @@ import { trapStaggerFor } from "./impact.js";
 import { applyTargetBuff } from "./combat-effects.js";
 import { weaponsForHero, priceHit } from "./hit-pricing.js";
 import { applyDamage } from "./combat.js";
+import { isScenery } from "./actor-roles.js";
 
 /**
  * Traps and hazards as attackers: which colliders catch whom (circle, segment
@@ -861,6 +862,43 @@ export const hazardVictims = (session, colliders = [], hazard = null, now = Date
     },
     (doid, actor, position) => areaTrapHits(shape, position, actor)
   );
+};
+
+/**
+ * Whether anything among `victims` sets a waiting trap off: anything the trap
+ * may hurt — its side test and `IsAttackable` are already asked by
+ * `hazardVictims` — that is not scenery.
+ *
+ * Scenery is still hit when one goes off (the official's team-6 bombs on node
+ * 50069 land on props 7 times in 32 results, and on a monster 0 times) but
+ * never makes it go off: a mine beside a barrel rack waits for something that
+ * fights.
+ */
+export const setsOffTrap = (victims) => victims.some(({ actor }) => !isScenery(actor));
+
+/**
+ * Whether a bomb lying in wait is set off now: something `setsOffTrap` admits,
+ * of a side the bomb may hurt, touching the circle its row's `AggroRadius`
+ * draws round it — 60 on every mine, firebomb, garlic and nuke. What it then
+ * hurts is its blast, the authored collider (140 for a mine, 120 for a
+ * firebomb, 250 for the nuke), which is a different and larger question.
+ *
+ * One rule for every bomb, wherever it came from: one the map authors, one a
+ * rival put down, one the hero threw. It used to be two — the map's at 60 and
+ * a placed one at its blast — and the official keeps the first for both. Over
+ * the official corpus, the hero coming within 60 plus their own 25.87 of an
+ * armed bomb was followed by it going off within 1.5 s 26 times in 28;
+ * coming inside its blast while still beyond 116, 15 times in 85, and the
+ * hero stood in that band 78 s in all without one going off (the placed ones
+ * alone: 1 in 31 entries, 59 s). Monsters set off the team-7 map mines the
+ * same way: 11 went off with the hero 838 to 1340 away and a monster 62 to
+ * 110 from them.
+ */
+export const bombTripped = (session, { position, npc, attack, team }, now = Date.now()) => {
+  const radius = Math.max(0, Number(npc?.AggroRadius ?? 0));
+  if (!(radius > 0) || !position) return false;
+  const circle = { type: "circle", x: position.x, y: position.y, radius };
+  return setsOffTrap(hazardVictims(session, [circle], { attack, team }, now));
 };
 
 /**

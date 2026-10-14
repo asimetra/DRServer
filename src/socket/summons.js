@@ -29,9 +29,9 @@
  * What walks is an ordinary enemy once it exists, and goes through the same
  * `spawnNpc` as the floor's own. What stands — a dragon's flames, a rival's
  * mines and garlic, a berserker's axe — is a placeable on the enemies' side,
- * built by placeables.js with the caster as its owner. No recording has any of
- * those casters, so that half follows the hero side's measured rule rather
- * than a measurement of its own.
+ * built by placeables.js with the caster as its owner — as the official
+ * builds the Vampire Hunter rival's on node 50069: team 6, the rival as
+ * master, 18 of 18.
  *
  * A death attack calls from where its caster fell: the heavy red specter
  * leaves an exploding flame as it dies, and by the flame's frame there is no
@@ -109,7 +109,16 @@ export const scheduleSummons = async (
 ) => {
   const actions = await spawnNpcActions(attack?.AttackTimeline);
   const caster = session.actors?.get(casterDoid);
-  // A hero's summons, and a pet's, are placeables and belong to placeables.js.
+  /**
+   * A hero's own summons are placeables and belong to placeables.js. A caster
+   * on the players' side that is not a hero — a pet, an ally — places nothing
+   * here, and that is latent rather than measured: of the 26 PET and HERO rows
+   * and the 66 attacks they and their weapons carry, one names a `spawnnpc`,
+   * `BURNING_EXPLOSION` on the weapon of `BURNING_FLAME`, a stationary flame
+   * that never swings it. If one ever does, its things belong to its side and
+   * should come through `spawnPlaceable` with the caster as owner, as a
+   * monster's do.
+   */
   if (!actions.length || !caster || caster.team === TEAM.PLAYERS) return 0;
 
   const fallen = dying && caster.position
