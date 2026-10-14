@@ -356,6 +356,37 @@ const strike = async (session, doid, live, attack, { always = false, shape: pres
 };
 
 /**
+ * A bomb the map laid, going off: the same strike a placed one's goes through,
+ * so its blast lands on the collider's own frame and its timeline's spawns run.
+ *
+ * The map's used to have a blast of its own, which dealt its hits and read no
+ * `spawnnpc` — so a map firebomb lit nothing, where on node 50069 the
+ * official's lit 6 fires, each on team 6 with the firebomb itself as master
+ * (the rival's own firebombs' fires name the rival). A map bomb has no placer,
+ * so it is its own owner: the row's team, the floor's level, and priced from
+ * its row as any trap not a hero's is. Already tripped by its caller
+ * (hazards.js, through `bombTripped`), so it goes off here regardless.
+ */
+export const strikeLaidBomb = (session, doid, { npc, attack, position, heading, team, weaponPower }) =>
+  strike(
+    session,
+    doid,
+    {
+      constant: npc.Constant,
+      npc,
+      repeats: false,
+      position,
+      heading: heading ?? 0,
+      weaponPower,
+      heroWeapon: null,
+      owner: { team, masterDoid: doid, level: session.npcLevel ?? 1 },
+      floorDoid: session.floorDoid,
+    },
+    attack,
+    { always: true }
+  );
+
+/**
  * Its DeathAttack, once, however it comes to die: on its own next turn (a
  * fissure, a bomb), at the end of a life spent attacking, or killed first by
  * something else. The last used to be lost: the hit took the bomb's one hit

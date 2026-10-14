@@ -243,6 +243,18 @@ export const buildTriggerables = async (context, placements) => {
       triggerState: resting,
       returnDoid: true,
       heading: aimedHeading ?? undefined,
+      /**
+       * A triggerable is the floor's machinery, never its stock: nothing the
+       * floor waits on before it is cleared (actor-roles.js `holdsFloor`).
+       * Every ENEMY row any library authors as a triggerable is a trap — the
+       * rival floor's 30 mines, firebombs and nukes, `BURNING_FIRE_PLACEABLE`
+       * in four libraries, the dino's `GARLIC_PLACEABLE_L4` — while the
+       * stationary ENEMY rows that are fights, the lava golem and the tribal
+       * boss walls, are placed as NPCs. Counted, a mine nobody stepped on held
+       * the floor open: on node 50069 the official left 23 of its 30 untouched
+       * for the floor's 131 s and the floor completed.
+       */
+      countsForFloor: false,
     });
     if (!doid) continue;
 

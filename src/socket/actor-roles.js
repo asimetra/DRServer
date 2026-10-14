@@ -23,7 +23,7 @@ export const isHuntable = (actor) => Boolean(actor?.isEnemy) && actor.attackable
  */
 export const isScenery = (actor) => Boolean(actor?.isProp) && actor.attackable !== false;
 
-/** Something the floor waits on before it is cleared. A boss's summons and Infinite's spawns are not. */
+/** Something the floor waits on before it is cleared. A boss's summons, Infinite's spawns and the floor's own traps are not. */
 export const holdsFloor = (actor) => Boolean(actor?.isEnemy) && actor.holdsFloor !== false;
 
 /**

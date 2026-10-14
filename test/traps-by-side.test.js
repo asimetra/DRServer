@@ -12,7 +12,7 @@ import { classifyHazard, clearHazardBeats, raiseHazard } from "../src/socket/haz
 import { worldColliders } from "../src/socket/heading.js";
 import { CLID, TEAM } from "../src/socket/opcodes.js";
 import { clearDungeonPlaceables, heroPlacer, spawnPlaceable } from "../src/socket/placeables.js";
-import { HERO_DOID, buildFloor, readFrame } from "./helpers/floor.js";
+import { HERO_DOID, buildFloor, readFrame, readNpc } from "./helpers/floor.js";
 
 /**
  * A trap belongs to the side that placed it.
@@ -31,6 +31,12 @@ import { HERO_DOID, buildFloor, readFrame } from "./helpers/floor.js";
 
 const settle = async (turns = 6) => {
   for (let turn = 0; turn < turns; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+};
+
+/** A bomb's damage waits for its collider's authored frame (frame 2, 83 ms). */
+const blastLands = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await settle();
 };
 
 const RIVAL_FLOOR = "castle/catacombs/db_floor_CATACOMBS_VAMPIRE_HUNTER_RIVAL_BATTLE.json";
@@ -143,7 +149,8 @@ test("the rival floor's own traps wait, and go off once on the hero", async (t) 
   placeHero(session, { x: mine.x - 70, y: mine.y });
   const heroHp = session.actors.get(HERO_DOID).hitPoints;
   touch((now += 100));
-  await settle();
+  // The blast lands on its collider's frame, 2 of 24 a second.
+  await blastLands();
   assert.equal(sent.filter((frame) => frame.doid === mineDoid && frame.field === 143).length, 1, "the hero sets it off");
   assert.ok(session.actors.get(HERO_DOID).hitPoints < heroHp, "and takes the blast");
   assert.ok(session.actors.get(PET).hitPoints < 5000, "and so does a pet 120 out, inside the blast");
@@ -224,7 +231,7 @@ test("a team-7 floor bomb still goes off on a monster, and hurts everybody", asy
   assert.equal(goneOff(), 0, "a monster in the blast but not near it waits");
   session.actors.get(MONSTER).position = { x: 520, y: 600 };
   touch(1_200);
-  await settle();
+  await blastLands();
   assert.equal(goneOff(), 1, "a monster sets it off");
   assert.ok(session.actors.get(MONSTER).hitPoints < 900, "and is hurt");
   assert.ok(session.actors.get(heroDoid).hitPoints < 4000, "and so is the hero standing in it");
@@ -331,4 +338,71 @@ test("a rival's trap names its master on the actor too, and expires quietly if n
   assert.equal(sent143(session, doid), 0, "it never went off");
   assert.equal(session.actors.get(701).hitPoints, 900, "its own side's monster is never hurt");
   assert.ok(!session.objects.has(doid), "and at its timetolive it is gone");
+});
+
+test("the rival floor waits for its monsters, not for its traps", async (t) => {
+  /**
+   * The floor's triggerables are its machinery, never its stock. On node
+   * 50069 the official left 23 of its 30 map traps untouched for the floor's
+   * 131 s and the floor completed; ours counted every one of them as an enemy
+   * still standing, so the floor could not be cleared while any was there.
+   */
+  const { floorHolds } = await import("../src/socket/floorstate.js");
+  const world = await rivalFloor(t);
+  const { session, floor } = world;
+  const trapDoids = new Set(
+    floor.placements.triggerable.map((placement) => session.triggerableDoids.get(placement.id)).filter(Boolean)
+  );
+  for (const doid of trapDoids) {
+    const actor = session.actors.get(doid);
+    if (actor) assert.notEqual(actor.holdsFloor, true, `${actor.constant} does not hold the floor`);
+  }
+  for (const [doid, actor] of session.actors) if (!trapDoids.has(doid) && actor.isEnemy) actor.dead = true;
+  const holds = floorHolds(session);
+  assert.ok(holds.enemies > 0, "the floor still knows what it was stocked with");
+  assert.deepEqual(holds.alive.map(({ actor }) => actor.constant), [], "and with its stock down nothing holds it");
+});
+
+test("a map firebomb lights a fire of its own side, with itself as master", async (t) => {
+  /**
+   * `BURNING_EXPLOSION` spawns `BURNING_FIRE_PLACEABLE` on frame 4. On node
+   * 50069 the official's map firebombs that went off lit 6 fires, every one
+   * on team 6 with the firebomb as its master (and the rival's own firebombs'
+   * fires name the rival). Ours ran a map bomb's blast on a path of its own
+   * that never read the timeline's spawns, so a map firebomb lit nothing.
+   */
+  const world = await rivalFloor(t);
+  const { session, floor, gm } = world;
+  const bomb = floor.placements.triggerable.find((placement) => placement.constant === "FIREBOMB_PLACEABLE_L2");
+  const bombDoid = session.triggerableDoids.get(bomb.id);
+  const sent = [];
+  session.send = (frame) => sent.push(readFrame(frame));
+  placeHero(session, { x: bomb.x + 50, y: bomb.y });
+  const heroHp = session.actors.get(HERO_DOID).hitPoints;
+  session.hazardContactZones.get(bomb.id)(2_000_000);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  await settle();
+
+  assert.equal(sent.filter((frame) => frame.doid === bombDoid && frame.field === 143).length, 1, "it goes off");
+  assert.ok(session.actors.get(HERO_DOID).hitPoints < heroHp, "on the hero");
+  const fireRow = gm.raw.Npc.find((row) => row.Constant === "BURNING_FIRE_PLACEABLE");
+  const fires = sent
+    .filter((frame) => frame.kind === "generate" && frame.clid === CLID.DistributedNPCGameObject)
+    .map((frame) => readNpc(frame.body))
+    .filter((npc) => npc.type === fireRow.Id);
+  assert.equal(fires.length, 1, "and lights one fire");
+  assert.equal(fires[0].team, TEAM.ENEMIES, "on its own side");
+  assert.equal(fires[0].masterId, bombDoid, "with the firebomb as master");
+
+  // A mine's blast spawns nothing.
+  const mine = floor.placements.triggerable.find((placement) => placement.constant === "MINE_PLACEABLE_L3");
+  sent.length = 0;
+  placeHero(session, { x: mine.x + 50, y: mine.y });
+  session.hazardContactZones.get(mine.id)(2_100_000);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const lit = sent
+    .filter((frame) => frame.kind === "generate" && frame.clid === CLID.DistributedNPCGameObject)
+    .map((frame) => readNpc(frame.body))
+    .filter((npc) => npc.type === fireRow.Id);
+  assert.equal(lit.length, 0, "a mine lights nothing");
 });

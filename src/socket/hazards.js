@@ -15,6 +15,8 @@ import { objectDisable } from "./objects.js";
 import { CLID } from "./opcodes.js";
 import { cancelScopedTimer } from "./lifecycle-scope.js";
 import { matchStateOf, worldOf } from "./match-world.js";
+import { strikeLaidBomb } from "./placeables.js";
+import { warn } from "../log.js";
 
 /**
  * What a raised trap does while it is up.
@@ -266,7 +268,22 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
      * which is what makes standing next to one with a monster dangerous for
      * both.
      */
-    if (hazard.contactBomb && !bombTripped(session, hazard, now)) return;
+    if (hazard.contactBomb) {
+      if (!bombTripped(session, hazard, now)) return;
+      /**
+       * A mine is spent by going off. The corpus fires each of its 23 recorded
+       * instances exactly once and never switches one on or off, which is what
+       * a bomb lying on the floor does: it waits, it detonates, it is gone.
+       * Its blast is a placed bomb's (placeables.js `strikeLaidBomb`).
+       */
+      hazard.spent = true;
+      stopHazardBeat(session, targetId);
+      strikeLaidBomb(session, doid, hazard).catch((error) =>
+        warn(`[${session.id}] ${hazard.attack?.Constant} blast failed: ${error.message}`)
+      );
+      retireSpentBomb(session, targetId, doid, hazard);
+      return;
+    }
     const caught = hazardVictims(session, colliders, hazard, now).filter(
       (victim) => !hazard.heroOnly || isPartyHero(session, victim.doid)
     );
@@ -278,16 +295,6 @@ const holdZone = (session, targetId, doid, hazard, colliders) => {
         announce(session, doid, hazard);
       }
       dealTrapHit(session, doid, hazard.attack, victim.doid, hazard.weaponPower);
-      /**
-       * A mine is spent by going off. The corpus fires each of its 23 recorded
-       * instances exactly once and never switches one on or off, which is what
-       * a bomb lying on the floor does: it waits, it detonates, it is gone.
-       */
-      if (hazard.contactBomb) {
-        hazard.spent = true;
-        stopHazardBeat(session, targetId);
-        retireSpentBomb(session, targetId, doid, hazard);
-      }
     }
   };
 
