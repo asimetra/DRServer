@@ -529,6 +529,14 @@ const BUSTER_SLOT = 0;
 const isSlot = (slot, count) => Number.isInteger(slot) && slot >= 0 && slot < count;
 
 /**
+ * The one attack a hero casts that no weapon grants: his Dungeon Buster, the
+ * row's `DBuster1`. It names slot 0 on the wire, and nothing in slot 0 is
+ * behind it — not its permission, not its price, not what it puts down.
+ */
+const grantedByNoWeapon = (session, attack) =>
+  Boolean(attack?.Constant) && attack.Constant === session.dungeonBusterAttack;
+
+/**
  * And out of the weapon that is actually in that slot.
  *
  * The coarse rule above only asks whether a player could ever swing this, so a
@@ -564,7 +572,7 @@ export const slotGrantsAttack = async (session, attack, weaponSlot) => {
    * which since the result is priced by the slot that swung is a damage choice
    * rather than a cosmetic one.
    */
-  if (attack.Constant && attack.Constant === session.dungeonBusterAttack) {
+  if (grantedByNoWeapon(session, attack)) {
     return weaponSlot === BUSTER_SLOT;
   }
 
@@ -664,7 +672,7 @@ const hasPowerupWeapon = async (session, attack, weaponSlot) => {
    * so nothing is being waved past here except the question of which weapon it
    * came out of, which for this attack has no answer.
    */
-  if (attack?.Constant && attack.Constant === session.dungeonBusterAttack) return true;
+  if (grantedByNoWeapon(session, attack)) return true;
   const weapon = session.heroWeapons?.[weaponSlot];
   if (!weapon) return false;
   const { raw } = await loadGameMaster();
@@ -992,7 +1000,16 @@ export const handleProposeAttackChoreography = async (
    * attacks — the poison pot, the placed traps, the bombs — have only the
    * second. Reading only `spawndoober` is what left all of those inert.
    */
-  await schedulePlaceables(session, attack, weaponSlot, { playSpeed });
+  /**
+   * A buster's nukes are put down by no weapon, so they hold their own row's
+   * on the hero's level curve and not slot 0's (placeables.js
+   * `swingsAsItself`): the official's are generated holding
+   * `[27042, 51, 1, 1, 0, 0, 0]` at level 100, where slot 0 lent ours its 2195.
+   */
+  await schedulePlaceables(session, attack, weaponSlot, {
+    playSpeed,
+    fromWeapon: !grantedByNoWeapon(session, attack),
+  });
   /**
    * And the hits the packet has been carrying all along.
    *

@@ -21,7 +21,11 @@ import { tellHit } from "./combat-events.js";
  * One swing of something a hero put on the floor, priced as the hero's own.
  *
  * Who it reaches is settled before this, by the side test every trap goes
- * through (placeables.js `victimsOf`); `masterDoid` is the hero who placed it.
+ * through (placeables.js `victimsOf`); `masterDoid` is the hero who placed it,
+ * and `swinger` whose swing it is priced as — him, or the placeable itself when
+ * no weapon put it down (placeables.js `swingsAsItself`). Either way through
+ * `priceHit`, the one pricing every hit goes through: the victim's rating
+ * halves and doubles a trap's hit exactly as it does the hero's own.
  *
  * Damage is priced like the hero's own attack rather than like a floor trap:
  * the hero's offence and the power of the weapon that placed it against the
@@ -34,7 +38,7 @@ import { tellHit } from "./combat-events.js";
 export const performPlaceableAttack = async (
   session,
   attackerDoid,
-  { attack, victims = [], masterDoid, weaponPower, weapon = null, pushed = null }
+  { attack, victims = [], masterDoid, swinger = masterDoid, weaponPower, weapon = null, pushed = null }
 ) => {
   if (!attack) return 0;
 
@@ -55,6 +59,11 @@ export const performPlaceableAttack = async (
      * weapon since the modifiers went in — the recordings show 11 `THROW_MINE`
      * echoes against 11 proposals, and 13 `THROW_GARLIC` echoes against 7,
      * those extra six being the cloud ticking on its own.
+     *
+     * Not settled: whether the official applies a weapon's `DAMAGE` modifier
+     * to these at all. Ours does (a Mighty slot is × 1.4 here); its traps
+     * measure (power + MELEE_ATK) × |DamageMod| × tier on 115 hits, but none of
+     * the weapons behind them carried a `DAMAGE` modifier.
      */
     const {
       damage: plainDamage,
@@ -62,7 +71,7 @@ export const performPlaceableAttack = async (
       effectiveness,
     } = await priceHit(
       session,
-      { attacker: masterDoid, attackee: victim.doid, attackType: attack.Id },
+      { attacker: swinger, attackee: victim.doid, attackType: attack.Id },
       attack,
       weaponPower,
       weapon

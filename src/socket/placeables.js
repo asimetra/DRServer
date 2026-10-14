@@ -12,7 +12,7 @@ import {
   weaponForConstant,
 } from "../gamemaster.js";
 import { heroLevel } from "../progression.js";
-import { consumableBombPower } from "../weapon-power.js";
+import { levelCurvePower } from "../weapon-power.js";
 import { npcStats } from "../combat-damage.js";
 import { npcMaxHitPoints } from "../npc-stats.js";
 import { petCombatLevel, scaledNpcWeaponPower } from "../pets.js";
@@ -193,7 +193,8 @@ const victimsOf = (session, doid, live, colliders, attack) =>
  * And what it does to them, which does depend on whose it is.
  *
  * A hero's is priced as its master's own swing, with the weapon that placed
- * it, because its row's stats are all zero — see `performPlaceableAttack`.
+ * it, because its row's stats are all zero — see `performPlaceableAttack` —
+ * unless no weapon placed it, and then it swings as itself (`swingsAsItself`).
  * Anyone else's is priced the way the floor's own traps are, from its row at
  * the placer's level with its own weapon: these rows carry enemy weapons for
  * exactly that (`EN_PLACABLE_TRAPS_WEAPON` on the flames, mines and garlic,
@@ -206,6 +207,7 @@ const hitVictims = async (session, doid, live, attack, victims) => {
       attack,
       victims,
       masterDoid: live.owner.masterDoid,
+      swinger: live.swinger,
       weaponPower: live.weaponPower,
       weapon: live.heroWeapon,
       // A body is thrown by this thing once in its life — see the push there.
@@ -345,6 +347,7 @@ const strike = async (session, doid, live, attack, { always = false, shape: pres
         // way here is silently accepted and drops the hero's — which is a fire
         // that burns without the modifiers of the bomb that lit it.
         heroWeapon: live.heroWeapon,
+        fromWeapon: live.fromWeapon,
         // And an enemy's firebomb lights an enemy's fire.
         owner: live.owner,
       }).catch((error) =>
@@ -529,6 +532,41 @@ export const heroPlacer = async (session) => ({
 });
 
 /**
+ * Whether a hero's placeable swings as itself rather than as him.
+ *
+ * Put down by a weapon — a thrown or placed trap, a crack, a cloud, the fire a
+ * firebomb lights — it is priced as his swing with that weapon, and generated
+ * holding it (trap ÷ cast-slot power 1.000, n 61). The official's addend on
+ * those is not quite his: hit ÷ |DamageMod| ÷ tier − power reads 18 on the
+ * garlic (n 16) and firebomb (n 42), 32 on the mine (n 15), 130 on the fire
+ * (n 33) and both hammer cracks (n 24) — each row's own MELEE_ATK at his
+ * combat level — where ours adds his MELEE_ATK (21 for a level-100 Vampire
+ * Hunter). Only the Battle Chef's cloud reads as his own (238, n 3). Not
+ * changed here.
+ *
+ * Put down by no weapon — a consumable, a Dungeon Buster — it swings as
+ * itself: its row's stats at his combat level (level^1.5, as a pet's), its
+ * row's weapon on his level curve (weapon-power.js `levelCurvePower`), rounded
+ * up as an NPC's hit is. The official's level-100 Vampire Hunter's nukes:
+ * (51 + GARLIC_NUKE_PLACEABLE's 40 + 1 × 1000) × 0.6 = 654.6, landing 655 on
+ * 15 neutral hits, 328 on 16 rated +1 and 1310 on 5 rated -1. THIN: one
+ * official session of our own hero, 3 casts. A party member's at level 49
+ * lands 242 and 483 (28 hits), where the curve's 18 gives 241 and 482. Priced
+ * as his swing with slot 0, ours landed 1861.
+ *
+ * Unexplained: three level-3 KNIGHTs took 616, not 655 (node 50004), and a
+ * level-80 party member's one hit of 2312 on a weak KNIGHT_BOXERS fits no
+ * reading. Whether his own buffs reach these is not measured; here they do
+ * not. A consumable bomb's blast is a SUPPORT attack with no stat in it, so it
+ * stays |DamageMod| × its weapon — 36 of 36 official hits — and is only
+ * rounded up now where that ends in .25.
+ *
+ * A walking summon is a pet and has its own path (`mobileSummon`).
+ */
+const swingsAsItself = (owner, { fromWeapon, mobileSummon }) =>
+  Boolean(owner?.pricedAsMaster) && !fromWeapon && !mobileSummon;
+
+/**
  * The weapon a placeable is generated holding.
  *
  * Its type is always the row's own — EN_FISSURE_SMASH_WEAPON on a crack,
@@ -537,9 +575,10 @@ export const heroPlacer = async (session) => ({
  * of 105 observed hero-placed generates match one of the hero's own slots on
  * all of those, and the other 17 are garlic whose power alone differs. An
  * enemy's and a walking pet's keep the row's weapon as it is. One placed
- * without a weapon — a consumable bomb — holds the row's weapon at the power
- * it was thrown with and nothing else: `[27100, 1020, 1, 1, 0, 0, 0]` on the
- * official's, 5 of 5 (weapon-power.js `consumableBombPower`).
+ * without a weapon — a consumable bomb, a Dungeon Buster's nuke — holds the
+ * row's weapon at the power it strikes with and nothing else:
+ * `[27100, 1020, 1, 1, 0, 0, 0]` and `[27042, 51, 1, 1, 0, 0, 0]` on the
+ * official's at level 100 (see `swingsAsItself`).
  */
 const placedWeaponDetails = (weapon, nativePower, { owner, mobileSummon, heroWeapon, weaponPower }) => {
   if (!owner.pricedAsMaster || mobileSummon) {
@@ -587,7 +626,7 @@ export const summonForSkin = async (constant, skinType) => variantFor(constant, 
  */
 export const spawnPlaceable = async (
   session,
-  { action, origin, heading, weaponPower, heroWeapon = null, placementGroup, owner }
+  { action, origin, heading, weaponPower, heroWeapon = null, fromWeapon = true, placementGroup, owner }
 ) => {
   if (!owner) {
     warn(`placeables: ${action.spawnname} placed by nobody`);
@@ -638,9 +677,16 @@ export const spawnPlaceable = async (
     1,
     Math.min(5, [...membersOf(session)].filter((member) => member?.heroDoid != null).length)
   );
-  const gm = mobileSummon ? await loadGameMaster() : null;
+  const ownSwing = swingsAsItself(owner, { fromWeapon, mobileSummon });
+  const gm = mobileSummon || ownSwing ? await loadGameMaster() : null;
+  const placedPower = ownSwing ? levelCurvePower(weapon?.Power, level) : weaponPower;
   const held = weapon
-    ? placedWeaponDetails(weapon, nativeWeaponPower, { owner, mobileSummon, heroWeapon, weaponPower })
+    ? placedWeaponDetails(weapon, nativeWeaponPower, {
+        owner,
+        mobileSummon,
+        heroWeapon,
+        weaponPower: placedPower,
+      })
     : null;
   const partyHitPoints = mobileSummon
     ? Array.from({ length: 6 }, (_, heroes) =>
@@ -708,7 +754,8 @@ export const spawnPlaceable = async (
     // What a trap priced from its row is priced at; a hero's is priced from
     // the hero, so it has never carried one.
     level: owner.pricedAsMaster ? undefined : level,
-    stats: mobileSummon ? npcStats(gm, npc, petCombatLevel(level)) : undefined,
+    // Its row at the hero's combat level, which a pet's is too (`swingsAsItself`).
+    stats: mobileSummon || ownSwing ? npcStats(gm, npc, petCombatLevel(level)) : undefined,
     position: { x: position.x, y: position.y },
     collisionRadius,
     heading,
@@ -825,8 +872,11 @@ export const spawnPlaceable = async (
       held && !mobileSummon
         ? held.power
         : owner.pricedAsMaster
-          ? weaponPower
+          ? placedPower
           : nativeWeaponPower,
+    // Whose swing a hit of a hero's is priced as: his, or its own.
+    swinger: ownSwing ? doid : masterDoid,
+    fromWeapon,
     deathShape,
     heroWeapon,
     owner,
@@ -1200,15 +1250,13 @@ export const schedulePlaceables = async (
    * it whatever weapon happens to be in the hero's first slot, and it would
    * crit and scale on modifiers that have nothing to do with it. The game
    * carries no crit on `HEALTH_BOMB_ATTACK` or `PARTY_BOMB_ATTACK` across 623
-   * observed hits. Nor is slot 0 its power, which is the hero's level's
-   * (weapon-power.js `consumableBombPower`).
+   * observed hits. Nor is slot 0 its power: what no weapon puts down holds
+   * its own row's weapon at the hero's level (`swingsAsItself`).
    */
   const weapon = fromWeapon ? session.heroWeapons?.[weaponSlot] : null;
   const actions = await spawnNpcActions(attack?.AttackTimeline);
   if (!actions.length || !session.floorDoid || !session.heroPosition) return false;
-  const weaponPower = fromWeapon
-    ? weapon?.power
-    : consumableBombPower(await placerLevel(session));
+  const weaponPower = weapon?.power;
 
   const floorDoid = session.floorDoid;
   const owner = await heroPlacer(session);
@@ -1225,7 +1273,16 @@ export const schedulePlaceables = async (
       () => {
         session.placeableSpawnTimers?.delete(timer);
         if (!session.dungeonActive || session.floorDoid !== floorDoid) return;
-        spawnPlaceable(session, { action, origin, heading, weaponPower, heroWeapon: weapon, placementGroup, owner }).catch((error) =>
+        spawnPlaceable(session, {
+          action,
+          origin,
+          heading,
+          weaponPower,
+          heroWeapon: weapon,
+          fromWeapon,
+          placementGroup,
+          owner,
+        }).catch((error) =>
           warn(`[${session.id}] placeable spawn failed: ${error.message}`)
         );
       },
